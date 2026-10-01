@@ -24,7 +24,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 			required = at
 		}
 		for _, owner := range memory.owners {
-			if owner.Resource == resource && owner.Manager == memory.source.ID && strings.HasPrefix(owner.Path, "variables/") {
+			if owner.Resource == resource && owner.Manager == memory.source.ID && (strings.HasPrefix(owner.Path, "variables/") || strings.HasPrefix(owner.Path, "secret_refs/")) {
 				needed = true
 				variable := m.envs[envKey{AppID: appID, Scope: memory.source.EnvironmentSlug, Key: strings.TrimPrefix(owner.Path, "variables/")}]
 				if variable.UpdatedAt.After(required) {

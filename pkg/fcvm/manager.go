@@ -2992,6 +2992,14 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 		if err != nil {
 			return nil, fmt.Errorf("open sealed env[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
+		if entry.SourceKey != "" {
+			value, valid := selectedSealedValue(entry, inner)
+			if !valid {
+				return nil, fmt.Errorf("sealed env[%s]: envelope does not match the selected source", logsanitize.Field(entry.Key))
+			}
+			merged[entry.Key] = value
+			continue
+		}
 		for key, value := range inner {
 			merged[key] = value
 		}
@@ -3001,7 +3009,7 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 
 // UnsealRuntimeSecrets opens app-secret ciphertext for keys already selected
 // by an authorization-aware caller. It does not perform authorization and
-// requires each envelope to contain exactly its requested key. Plaintext
+// requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection.
 func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
@@ -3017,8 +3025,8 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		if err != nil {
 			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
-		value, ok := inner[entry.Key]
-		if !ok || len(inner) != 1 {
+		value, valid := selectedSealedValue(entry, inner)
+		if !valid {
 			return nil, fmt.Errorf("runtime secret[%s]: sealed value does not match its authorized key", logsanitize.Field(entry.Key))
 		}
 		if _, duplicate := secrets[entry.Key]; duplicate {
@@ -3027,6 +3035,15 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string, bool) {
+	source := entry.SourceKey
+	if source == "" {
+		source = entry.Key
+	}
+	value, exists := inner[source]
+	return value, exists && len(inner) == 1 && api.ValidateEnvKey(source) == nil && api.ValidateEnvKey(entry.Key) == nil
 }
 
 // prepareSidecarEnvFiles opens direct-env and app-secret ciphertext persisted
@@ -3420,6 +3437,9 @@ type WakeNetworkReadyHook func(WakeNetworkReady)
 type SealedEnvEntry struct {
 	Key        string
 	Ciphertext []byte
+	// SourceKey binds an alias to the single source in its sealed envelope.
+	// Empty retains the legacy envelope merge contract.
+	SourceKey string
 }
 
 // APIEnvEntry is one (key, value) plaintext pair as stored in app_envs

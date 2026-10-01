@@ -113,6 +113,17 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 			continue
 		}
 		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Type: app.Type, WorkloadClass: app.WorkloadClass, Variables: map[string]string{}}
+		row.SecretRefs = m.environmentSecretRefsLocked(app.ID, source.EnvironmentSlug)
+		for key := range m.appEnvironmentSecretRefs {
+			if key.AppID == app.ID {
+				row.SecretRefCount++
+			}
+		}
+		for _, secret := range m.secrets {
+			if secret.AppID == app.ID && secret.AccountID == source.AccountID && secret.Scope == source.EnvironmentSlug {
+				row.SecretNames = append(row.SecretNames, secret.Key)
+			}
+		}
 		for _, binding := range m.queueBindings {
 			if binding.AppID == app.ID && binding.AccountID == source.AccountID && binding.EnvironmentID == source.EnvironmentID {
 				row.QueueBindings = append(row.QueueBindings, m.gitOpsQueueIntentLocked(binding))
@@ -286,6 +297,7 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	policies := map[string][]ProjectEnvironmentEdgeRule{}
 	routes := map[string]api.EnvironmentRouteContract{}
 	variables := map[string]string{}
+	secretRefs := map[string]string{}
 	for _, change := range plan.Changes {
 		if change.Action == "keep" || change.Action == "retain_unmanaged" || change.Action == "overridden" {
 			continue
@@ -317,6 +329,12 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 				routes[change.Resource] = contract
 			case strings.HasPrefix(change.Path, "queue_bindings/"):
 				// Validated on detached queue/consumer maps above.
+			case strings.HasPrefix(change.Path, "secret_refs/"):
+				var ref string
+				if json.Unmarshal(change.After, &ref) != nil || !ValidSecretReference(ref) {
+					return nil, ErrInvalidArgument
+				}
+				secretRefs[change.Resource+"#"+change.Path] = ref
 			case strings.HasPrefix(change.Path, "variables/"):
 				var value string
 				if json.Unmarshal(change.After, &value) != nil {
@@ -358,6 +376,18 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		appID := observed.State.ResourceIDs[change.Resource]
 		key := projectEnvironmentRoutePolicyKey(appID, source.EnvironmentSlug)
 		switch {
+		case strings.HasPrefix(change.Path, "secret_refs/"):
+			refKey := environmentSecretRefKey{appID, source.EnvironmentID, strings.TrimPrefix(change.Path, "secret_refs/")}
+			if m.appEnvironmentSecretRefs == nil {
+				m.appEnvironmentSecretRefs = map[environmentSecretRefKey]environmentSecretRef{}
+			}
+			if change.Action == "remove" {
+				delete(m.appEnvironmentSecretRefs, refKey)
+			} else {
+				m.appEnvironmentSecretRefs[refKey] = environmentSecretRef{secretRefs[change.Resource+"#"+change.Path], now}
+			}
+			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, source.EnvironmentSlug, now)
+
 		case strings.HasPrefix(change.Path, "variables/"):
 			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, source.EnvironmentSlug, now)
 			variableKey := envKey{AppID: appID, Scope: source.EnvironmentSlug, Key: strings.TrimPrefix(change.Path, "variables/")}

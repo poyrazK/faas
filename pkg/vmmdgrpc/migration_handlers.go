@@ -536,7 +536,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 	// production server has a VMM and takes the restore branch below.
 	if s.vmm == nil {
 		s.ops.Observe(op, time.Since(start), nil)
-		return &vmmdpb.AdoptMigratedInstanceResponse{}, nil
+		return &vmmdpb.AdoptMigratedInstanceResponse{SupportsSecretAliases: true}, nil
 	}
 	wakeReq, err := toMigrationWakeRequest(ctx, req)
 	if err != nil {
@@ -569,11 +569,12 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
 	}
 	return &vmmdpb.AdoptMigratedInstanceResponse{
-		HostIp:   addrOrEmpty(inst.Lease.HostIP),
-		Netns:    inst.Net.Netns,
-		GuestUid: int32(inst.Lease.UID),
-		Method:   method,
-		WakeId:   req.GetWakeId(),
+		SupportsSecretAliases: true,
+		HostIp:                addrOrEmpty(inst.Lease.HostIP),
+		Netns:                 inst.Net.Netns,
+		GuestUid:              int32(inst.Lease.UID),
+		Method:                method,
+		WakeId:                req.GetWakeId(),
 	}, nil
 }
 

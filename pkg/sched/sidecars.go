@@ -82,7 +82,8 @@ func (e *Engine) sidecarsForDeployment(ctx context.Context, dep state.Deployment
 		if len(declaration.EnvSecrets) == 0 {
 			continue
 		}
-		loaded, err := e.loadSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets)
+		// Primary workload references do not expand a sidecar's explicit access.
+		loaded, err := e.resolveSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets, false)
 		if err != nil {
 			return nil, nil, fmt.Errorf("sidecar %q secrets: %w", declaration.Name, err)
 		}

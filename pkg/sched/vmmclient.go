@@ -653,6 +653,9 @@ func (c *VMMClient) Close() error {
 }
 
 func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	// issue #517: lift correlation fields (wake_id, app_id, etc.)
 	// from the engine's bootCtx onto both the gRPC outbound
 	// metadata (for vmmd's slog correlation) and the proto
@@ -670,6 +673,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
 	}
 	return outcomeFromProto(resp), nil
 }
@@ -862,6 +868,9 @@ func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance strin
 }
 
 func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
@@ -883,6 +892,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
 	}
 	return outcomeFromProto(resp), nil
 }
@@ -1265,6 +1277,9 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return LiveMigrationAdopt{}, err
+	}
 	fields, _ := wire.FromContext(ctx)
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
@@ -1284,6 +1299,9 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	})
 	if err != nil {
 		return LiveMigrationAdopt{}, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
+		return LiveMigrationAdopt{}, err
 	}
 	return LiveMigrationAdopt{
 		HostIP:   resp.GetHostIp(),
@@ -1439,6 +1457,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		sealed = append(sealed, &vmmdpb.SealedSecret{
 			Key:        e.Key,
 			Ciphertext: e.Ciphertext,
+			SourceKey:  e.SourceKey,
 		})
 	}
 	// Issue #395 / ADR-045: plaintext api_env mirror.
@@ -1462,6 +1481,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			sealedSidecarEnv = append(sealedSidecarEnv, &vmmdpb.SealedSecret{
 				Key:        entry.Key,
 				Ciphertext: entry.Ciphertext,
+				SourceKey:  entry.SourceKey,
 			})
 		}
 		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
@@ -1469,6 +1489,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
 				Key:        entry.Key,
 				Ciphertext: entry.Ciphertext,
+				SourceKey:  entry.SourceKey,
 			})
 		}
 		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
@@ -1710,4 +1731,48 @@ func executionFilesToProto(files []api.ExecutionFile) []*vmmdpb.ExecutionSourceF
 		result = append(result, &vmmdpb.ExecutionSourceFile{Path: file.Path, Content: append([]byte{}, file.Content...)})
 	}
 	return result
+}
+
+// Older vmmd processes ignore additive fields. Refuse alias boots before an
+// RPC can report readiness while staging only the envelope's original name.
+func appNeedsSecretAliasSupport(app AppSpec) bool {
+	for _, entry := range app.SealedEnv {
+		if entry.SourceKey != "" {
+			return true
+		}
+	}
+	for _, sc := range app.Sidecars {
+		for _, entry := range sc.SealedSecrets {
+			if entry.SourceKey != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *VMMClient) requireSecretAliasSupport(ctx context.Context, app AppSpec) error {
+	if !appNeedsSecretAliasSupport(app) {
+		return nil
+	}
+	response, err := c.cli.Ping(ctx, &vmmdpb.PingRequest{})
+	if err != nil {
+		return fmt.Errorf("sched: verify vmmd secret alias support: %w", liftErr(err))
+	}
+	if !response.GetSupportsSecretAliases() {
+		return errors.New("sched: vmmd does not support secret aliases")
+	}
+	return nil
+}
+
+// Fence a process replacement between Ping and boot. An older serving handler
+// cannot acknowledge the additive response field; its VM is never published.
+func (c *VMMClient) confirmSecretAliasSupport(ctx context.Context, app AppSpec, instance string, supported bool) error {
+	if !appNeedsSecretAliasSupport(app) || supported {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.VMMSecretAliasCleanupTimeout)
+	defer cancel()
+	_, cleanupErr := c.cli.Destroy(cleanupCtx, &vmmdpb.DestroyRequest{Instance: instance})
+	return errors.Join(errors.New("sched: vmmd boot did not acknowledge secret alias support"), cleanupErr)
 }

@@ -4089,15 +4089,15 @@ func TestEngine_StreamWarmHintsNilSink(t *testing.T) {
 func TestLoadSealedEnvFor(t *testing.T) {
 	t.Run("delivery metadata carries the exact staged version", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-v1")); err != nil {
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-v1")); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-v2")); err != nil {
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-v2")); err != nil {
 			t.Fatal(err)
 		}
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		loaded, err := e.loadSealedEnvDeliveryFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, nil)
+		loaded, err := e.loadSealedEnvDeliveryFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, nil)
 		if err != nil {
 			t.Fatalf("load delivery metadata: %v", err)
 		}
@@ -4112,18 +4112,18 @@ func TestLoadSealedEnvFor(t *testing.T) {
 
 	t.Run("no override returns all secrets", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-db")); err != nil {
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-db")); err != nil {
 			t.Fatalf("seed DB_URL: %v", err)
 		}
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "API_KEY", []byte("cipher-api")); err != nil {
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "API_KEY", []byte("cipher-api")); err != nil {
 			t.Fatalf("seed API_KEY: %v", err)
 		}
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "OAUTH", []byte("cipher-oauth")); err != nil {
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "OAUTH", []byte("cipher-oauth")); err != nil {
 			t.Fatalf("seed OAUTH: %v", err)
 		}
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		out, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, nil)
+		out, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, nil)
 		if err != nil {
 			t.Fatalf("loadSealedEnvFor: %v", err)
 		}
@@ -4142,18 +4142,18 @@ func TestLoadSealedEnvFor(t *testing.T) {
 
 	t.Run("override filters to requested keys only", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-db")); err != nil {
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-db")); err != nil {
 			t.Fatalf("seed DB_URL: %v", err)
 		}
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "API_KEY", []byte("cipher-api")); err != nil {
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "API_KEY", []byte("cipher-api")); err != nil {
 			t.Fatalf("seed API_KEY: %v", err)
 		}
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "OAUTH", []byte("cipher-oauth")); err != nil {
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "OAUTH", []byte("cipher-oauth")); err != nil {
 			t.Fatalf("seed OAUTH: %v", err)
 		}
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		out, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, map[string]string{
+		out, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, map[string]string{
 			"DB_URL": "secret:DB_URL",
 		})
 		if err != nil {
@@ -4169,12 +4169,12 @@ func TestLoadSealedEnvFor(t *testing.T) {
 
 	t.Run("override requesting missing key fails loud", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-db")); err != nil {
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-db")); err != nil {
 			t.Fatalf("seed DB_URL: %v", err)
 		}
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		_, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, map[string]string{
+		_, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, map[string]string{
 			"NONEXISTENT": "secret:NONEXISTENT",
 		})
 		if err == nil {
@@ -4190,12 +4190,12 @@ func TestLoadSealedEnvFor(t *testing.T) {
 
 	t.Run("override aggregating multiple missing keys reports all in one error", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-db")); err != nil {
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(context.Background(), account.ID, app.ID, "DB_URL", []byte("cipher-db")); err != nil {
 			t.Fatalf("seed DB_URL: %v", err)
 		}
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		_, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, map[string]string{
+		_, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, map[string]string{
 			"MISSING_A": "secret:MISSING_A",
 			"MISSING_B": "secret:MISSING_B",
 			"MISSING_C": "secret:MISSING_C",
@@ -4212,34 +4212,24 @@ func TestLoadSealedEnvFor(t *testing.T) {
 		}
 	})
 
-	t.Run("override referencing existing row with arbitrary ref shape succeeds (apid-trusted)", func(t *testing.T) {
-		// The wake-side resolver trusts the jsonb column's shape — apid
-		// validated it at INSERT time. A ref that doesn't match the
-		// "secret:NAME" grammar still resolves if the env_key has a row.
-		// The existence check is the only wake-side gate; the grammar
-		// check is apid's responsibility.
+	t.Run("malformed reference fails even when destination secret exists", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
-		if err := s.UpsertAppSecret(context.Background(), "acct", app.ID, "DB_URL", []byte("cipher-db")); err != nil {
-			t.Fatalf("seed DB_URL: %v", err)
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		if err := s.UpsertAppSecret(t.Context(), account.ID, app.ID, "DB_URL", []byte("cipher-db")); err != nil {
+			t.Fatal(err)
 		}
-		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		out, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, map[string]string{
-			"DB_URL": "plaintext-no-prefix", // malformed ref, but row exists
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(out) != 1 || out[0].Key != "DB_URL" {
-			t.Errorf("got %+v, want one DB_URL entry (lookup by env_key)", out)
+		e := &Engine{store: s, log: testLog()}
+		out, err := e.loadSealedEnvFor(t.Context(), account.ID, app.ID, api.DefaultEnvScope, map[string]string{"DB_URL": "plaintext-no-prefix"})
+		if err == nil || len(out) != 0 || strings.Contains(err.Error(), "plaintext-no-prefix") {
+			t.Fatalf("malformed reference staged or disclosed: %+v %v", out, err)
 		}
 	})
 
 	t.Run("override empty + no rows returns nil", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		out, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, nil)
+		out, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, nil)
 		if err != nil {
 			t.Fatalf("loadSealedEnvFor: %v", err)
 		}
@@ -4250,9 +4240,9 @@ func TestLoadSealedEnvFor(t *testing.T) {
 
 	t.Run("override present but no rows fails loud", func(t *testing.T) {
 		s := state.NewMemStore()
-		_, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
+		account, app, _ := seedApp(t, s, api.PlanHobby, 256, 1)
 		e := &Engine{store: s, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		_, err := e.loadSealedEnvFor(context.Background(), "acct", app.ID, api.DefaultEnvScope, map[string]string{
+		_, err := e.loadSealedEnvFor(context.Background(), account.ID, app.ID, api.DefaultEnvScope, map[string]string{
 			"DB_URL": "secret:DB_URL",
 		})
 		if err == nil {
@@ -4261,51 +4251,29 @@ func TestLoadSealedEnvFor(t *testing.T) {
 	})
 }
 
-// TestParseEnvSecretName was removed in PR-B review fixes: parseEnvSecretName
-// is gone. The wake-side resolver trusts the jsonb column's shape (apid
-// validated it at INSERT time); only the row-existence check remains at
-// wake. The ref grammar is pinned at pkg/api/dto.go's apid validator and at
-// pkg/api/appmanifest.go's manifest Validate — see TestManifestValidate.
-
-// TestEnvSecretsFromDep_DepConversion pins the helper that converts
-// dep.OverrideEnvSecrets (jsonb → map[string]string) for the wake-side
-// resolver. Pure function test; the actual resolver behaviour is exercised
-// in TestLoadSealedEnvFor above.
+// Corrupt persisted references must not expand the selection to all secrets.
 func TestEnvSecretsFromDep_DepConversion(t *testing.T) {
-	t.Run("empty dep returns nil", func(t *testing.T) {
-		d := state.Deployment{}
-		if got := envSecretsFromDep(d); got != nil {
-			t.Errorf("got %+v, want nil", got)
-		}
-	})
-	t.Run("nil blob returns nil", func(t *testing.T) {
-		d := state.Deployment{OverrideEnvSecrets: nil}
-		if got := envSecretsFromDep(d); got != nil {
-			t.Errorf("got %+v, want nil", got)
-		}
-	})
-	t.Run("empty json object returns nil", func(t *testing.T) {
-		d := state.Deployment{OverrideEnvSecrets: json.RawMessage(`{}`)}
-		if got := envSecretsFromDep(d); got != nil {
-			t.Errorf("got %+v, want nil (empty object — no filter)", got)
-		}
-	})
-	t.Run("valid jsonb round-trips to map", func(t *testing.T) {
-		d := state.Deployment{OverrideEnvSecrets: json.RawMessage(`{"DB_URL":"secret:DB_URL","API_KEY":"secret:API_KEY"}`)}
-		got := envSecretsFromDep(d)
-		if got == nil {
-			t.Fatal("got nil")
-		}
-		if got["DB_URL"] != "secret:DB_URL" || got["API_KEY"] != "secret:API_KEY" {
-			t.Errorf("got %+v, want both refs", got)
-		}
-	})
-	t.Run("malformed jsonb falls back to nil (no-override)", func(t *testing.T) {
-		d := state.Deployment{OverrideEnvSecrets: json.RawMessage(`{"DB_URL":`)} // truncated
-		if got := envSecretsFromDep(d); got != nil {
-			t.Errorf("got %+v, want nil (defensive — apid validated shape)", got)
-		}
-	})
+	for _, test := range []struct {
+		name string
+		raw  json.RawMessage
+		bad  bool
+	}{
+		{"absent", nil, false}, {"empty", json.RawMessage(`{}`), false},
+		{"alias", json.RawMessage(`{"DB_URL":"secret:DATABASE"}`), false},
+		{"truncated", json.RawMessage(`{"DB_URL":`), true},
+		{"wrong shape", json.RawMessage(`[]`), true},
+		{"non-string target", json.RawMessage(`{"DB_URL":3}`), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			refs, err := envSecretsFromDep(state.Deployment{OverrideEnvSecrets: test.raw})
+			if (err != nil) != test.bad {
+				t.Fatalf("decode: %+v %v", refs, err)
+			}
+			if test.name == "alias" && refs["DB_URL"] != "secret:DATABASE" {
+				t.Fatalf("alias lost: %+v", refs)
+			}
+		})
+	}
 }
 
 // --- warm-snapshot capture (issue #470 / PR A / ADR-055) -----------------

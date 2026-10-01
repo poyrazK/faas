@@ -1976,10 +1976,10 @@ END $$;
 
 
 --
--- Name: environment_runtime_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+-- Name: environment_runtime_base_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean) RETURNS boolean
+CREATE FUNCTION public.environment_runtime_base_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
 SELECT
@@ -1997,21 +1997,67 @@ $$;
 
 
 --
+-- Name: environment_runtime_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT environment_runtime_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,observed_all_secrets,'{}'::jsonb);
+$$;
+
+
+--
+-- Name: environment_runtime_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean, observed_secret_refs jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ WITH managed AS (SELECT environment_scoped_secret_refs(target_app,target_scope) AS refs),
+ baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs
+  FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope)
+ SELECT environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,false)
+  AND managed.refs <@ observed_secret_refs
+  AND NOT EXISTS(SELECT 1 FROM jsonb_each(managed.refs) r WHERE observed_variables ? r.key)
+  AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE
+   NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope
+    AND r.value='secret:'||s.key AND observed_secrets->>(target_scope||'/'||s.key)=s.delivery_version::text))
+  AND (NOT observed_all_secrets OR
+   CASE WHEN observed_secret_refs='{}'::jsonb AND managed.refs='{}'::jsonb
+    THEN environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,true)
+    ELSE observed_secret_refs=(baseline.refs||managed.refs) END)
+ FROM managed,baseline;
+$$;
+
+
+--
 -- Name: environment_runtime_receipt_required(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.environment_runtime_receipt_required(target_app uuid, target_scope text) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-SELECT EXISTS (
-    SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
-    JOIN environment_gitops_resources r ON r.source_id = s.id
-    WHERE r.app_id = target_app AND e.slug = target_scope
-    AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id = s.id
-        AND f.resource = r.logical_name AND f.field_path LIKE 'variables/%')
-      OR EXISTS (SELECT 1 FROM environment_gitops_runtime_effects x WHERE x.source_id = s.id
-        AND x.app_id = r.app_id AND x.completed_at IS NULL))
-);
+ SELECT environment_scoped_secret_refs(target_app,target_scope)<>'{}'::jsonb OR EXISTS (
+  SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  JOIN environment_gitops_resources r ON r.source_id=s.id WHERE r.app_id=target_app AND e.slug=target_scope
+  AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id=s.id AND f.resource=r.logical_name
+   AND (f.field_path LIKE 'variables/%' OR f.field_path LIKE 'secret_refs/%'))
+   OR EXISTS (SELECT 1 FROM environment_gitops_runtime_effects x WHERE x.source_id=s.id AND x.app_id=r.app_id AND x.completed_at IS NULL)));
+$$;
+
+
+--
+-- Name: environment_scoped_secret_refs(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_scoped_secret_refs(target_app uuid, target_scope text) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(jsonb_object_agg(r.key,'secret:'||r.secret_name),'{}'::jsonb)
+ FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
+ JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
+ WHERE r.app_id=target_app AND e.slug=target_scope AND e.account_id=r.account_id AND e.project_id=r.project_id;
 $$;
 
 
@@ -2622,6 +2668,95 @@ BEGIN
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_environment_secret_ref_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_secret_ref_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE row_value app_environment_secret_refs%ROWTYPE; src environment_git_sources%ROWTYPE;
+ resource_name text; controller boolean; stamp timestamptz;
+BEGIN
+ IF TG_OP='DELETE' THEN row_value:=OLD; ELSE row_value:=NEW; END IF;
+ -- Parent cascades have already removed their catalog/app identity. Ordinary
+ -- row deletion still passes through ownership enforcement below.
+ IF TG_OP='DELETE' AND NOT EXISTS (SELECT 1 FROM apps a JOIN project_environments e ON e.id=row_value.environment_id
+  WHERE a.id=row_value.app_id AND a.account_id=row_value.account_id AND a.project_id=row_value.project_id
+   AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=row_value.scope) THEN
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
+  OR NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.app_id IS DISTINCT FROM OLD.app_id
+  OR NEW.scope IS DISTINCT FROM OLD.scope OR NEW.key IS DISTINCT FROM OLD.key) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_identity',MESSAGE='secret reference identity is immutable';
+ END IF;
+ SELECT s.* INTO src FROM environment_git_sources s
+ WHERE s.environment_id=row_value.environment_id AND s.account_id=row_value.account_id FOR UPDATE OF s;
+ IF TG_OP<>'DELETE' AND NOT EXISTS (SELECT 1 FROM apps a JOIN project_environments e ON e.id=row_value.environment_id
+  WHERE a.id=row_value.app_id AND a.account_id=row_value.account_id AND a.project_id=row_value.project_id
+   AND a.status<>'deleted' AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=row_value.scope
+  FOR SHARE OF a,e) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_scope',MESSAGE='secret reference requires its account-owned project environment';
+ END IF;
+ IF src.id IS NOT NULL THEN
+  SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=row_value.app_id;
+  controller:=EXISTS (SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id
+   AND j.desired_generation=src.generation AND j.claimed_generation=src.generation AND j.lease_until>clock_timestamp()
+   AND j.lease_token<>'' AND j.lease_token=current_setting('gregale.gitops_lease',true)
+   AND src.approved_revision_id IS NOT NULL AND NOT src.suspended);
+  IF src.mode='enforce' AND NOT controller AND EXISTS (
+   SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=resource_name
+    AND f.field_path='secret_refs/'||row_value.key AND NOT EXISTS (SELECT 1 FROM environment_management_overrides o
+     WHERE o.environment_id=f.environment_id AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_field_owned',MESSAGE='setting is managed by the environment Git source';
+  END IF;
+  UPDATE environment_git_sources SET intent_version=intent_version+1,updated_at=now() WHERE id=src.id;
+  IF src.generation>0 THEN
+   INSERT INTO environment_gitops_jobs(source_id,desired_generation,next_attempt_at) VALUES(src.id,src.generation,now())
+   ON CONFLICT(source_id) DO UPDATE SET next_attempt_at=least(environment_gitops_jobs.next_attempt_at,excluded.next_attempt_at);
+  END IF;
+ END IF;
+ -- Publication and every ordinary writer share the app lock and scoped stamp.
+ IF EXISTS(SELECT 1 FROM apps WHERE id=row_value.app_id FOR UPDATE) THEN
+  stamp:=clock_timestamp();
+  INSERT INTO app_runtime_config_scope_changes(app_id,scope,changed_at) VALUES(row_value.app_id,row_value.scope,stamp)
+   ON CONFLICT(app_id,scope) DO UPDATE SET changed_at=greatest(app_runtime_config_scope_changes.changed_at,excluded.changed_at);
+  UPDATE snapshots p SET stale=true FROM deployments d WHERE p.deployment_id=d.id AND d.app_id=row_value.app_id
+   AND d.scope=row_value.scope AND NOT p.stale;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE NEW.updated_at:=stamp; RETURN NEW; END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_environment_secret_reference_shadow(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_secret_reference_shadow() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE src environment_git_sources%ROWTYPE; resource_name text;
+BEGIN
+ SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+ JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.slug=NEW.scope FOR UPDATE OF s;
+ IF src.id IS NULL OR src.mode<>'enforce' THEN RETURN NEW; END IF;
+ SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=NEW.app_id;
+ IF EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=resource_name
+  AND f.field_path='secret_refs/'||NEW.key AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o
+   WHERE o.environment_id=f.environment_id AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp()))
+ AND NOT EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id AND j.desired_generation=src.generation
+  AND j.claimed_generation=src.generation AND j.lease_token=current_setting('gregale.gitops_lease',true)
+  AND j.lease_token<>'' AND j.lease_until>clock_timestamp() AND NOT src.suspended AND src.approved_revision_id IS NOT NULL) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_field_owned',MESSAGE='setting is managed by the environment Git source';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -4523,8 +4658,6 @@ END;
 $$;
 
 
-SET default_tablespace = '';
-
 SET default_table_access_method = heap;
 
 --
@@ -4981,6 +5114,25 @@ CREATE TABLE public.app_egress_policy_node_status (
     CONSTRAINT app_egress_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_environment_secret_refs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_environment_secret_refs (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    key text NOT NULL,
+    secret_name text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_environment_secret_refs_key_check CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_refs_scope_check CHECK ((scope ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT app_environment_secret_refs_secret_name_check CHECK (((secret_name ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
 );
 
 
@@ -7536,8 +7688,10 @@ CREATE TABLE public.instance_runtime_config_receipts (
     secret_versions jsonb NOT NULL,
     all_secrets boolean NOT NULL,
     acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
+    secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
+    CONSTRAINT instance_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
     CONSTRAINT instance_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
     CONSTRAINT instance_runtime_config_receipts_variables_check CHECK (((jsonb_typeof(variables) = 'object'::text) AND (octet_length((variables)::text) <= 1048576)))
 );
@@ -7616,8 +7770,10 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
     variables jsonb NOT NULL,
     secret_versions jsonb NOT NULL,
     all_secrets boolean NOT NULL,
+    secret_refs jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
     CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
+    CONSTRAINT snapshot_runtime_config_receipts_secret_refs_check CHECK (((jsonb_typeof(secret_refs) = 'object'::text) AND (octet_length((secret_refs)::text) <= 1048576))),
     CONSTRAINT snapshot_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
     CONSTRAINT snapshot_runtime_config_receipts_variables_check CHECK (((jsonb_typeof(variables) = 'object'::text) AND (octet_length((variables)::text) <= 1048576)))
 );
@@ -7676,7 +7832,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.apps a ON (((a.id = r.app_id) AND (a.account_id = s.account_id) AND (a.project_id = s.project_id))))
           WHERE ((EXISTS ( SELECT 1
                    FROM public.environment_managed_fields f
-                  WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND (f.field_path ~~ 'variables/%'::text)))) OR (EXISTS ( SELECT 1
+                  WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND ((f.field_path ~~ 'variables/%'::text) OR (f.field_path ~~ 'secret_refs/%'::text))))) OR (EXISTS ( SELECT 1
                    FROM public.environment_gitops_runtime_effects x
                   WHERE ((x.source_id = s.id) AND (x.app_id = r.app_id) AND (x.completed_at IS NULL)))))
         ), boundaries AS (
@@ -7708,7 +7864,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
           WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text, 'draining'::text])) AND (NOT (EXISTS ( SELECT 1
                    FROM public.instance_runtime_config_receipts r
-                  WHERE ((r.instance_id = i.id) AND (r.wake_id = i.wake_id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))))) AS stale_residents,
+                  WHERE ((r.instance_id = i.id) AND (r.wake_id = i.wake_id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs))))))) AS stale_residents,
     ( SELECT count(*) AS count
            FROM (public.instances i
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
@@ -7718,7 +7874,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.deployments d ON ((d.id = p.deployment_id)))
           WHERE ((d.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (NOT p.stale) AND (NOT p.delete_pending) AND (NOT (EXISTS ( SELECT 1
                    FROM public.snapshot_runtime_config_receipts r
-                  WHERE ((r.snapshot_id = p.id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))))) AS stale_snapshots
+                  WHERE ((r.snapshot_id = p.id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.secret_refs))))))) AS stale_snapshots
    FROM boundaries b;
 
 
@@ -13095,6 +13251,14 @@ ALTER TABLE ONLY public.app_default_domains
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: app_environment_secret_refs app_environment_secret_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_refs
+    ADD CONSTRAINT app_environment_secret_refs_pkey PRIMARY KEY (app_id, environment_id, key);
 
 
 --
@@ -21707,6 +21871,13 @@ CREATE TRIGGER environment_protected_revision_guard BEFORE DELETE OR UPDATE ON p
 
 
 --
+-- Name: app_environment_secret_refs environment_secret_ref_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_secret_ref_intent BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_ref_intent();
+
+
+--
 -- Name: events events_enqueue_fanout; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22449,6 +22620,13 @@ CREATE TRIGGER zz_environment_gitops_guard_queue_consumer BEFORE INSERT OR DELET
 
 
 --
+-- Name: app_envs zz_environment_secret_reference_shadow; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_environment_secret_reference_shadow BEFORE INSERT OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_shadow();
+
+
+--
 -- Name: account_async_quota account_async_quota_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22758,6 +22936,38 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_refs app_environment_secret_refs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_refs
+    ADD CONSTRAINT app_environment_secret_refs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_refs app_environment_secret_refs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_refs
+    ADD CONSTRAINT app_environment_secret_refs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_refs app_environment_secret_refs_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_refs
+    ADD CONSTRAINT app_environment_secret_refs_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_refs app_environment_secret_refs_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_refs
+    ADD CONSTRAINT app_environment_secret_refs_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

@@ -17,15 +17,18 @@ import (
 var _ EnvironmentGitOpsIntentStore = (*PgStore)(nil)
 
 type gitOpsIntentApp struct {
-	ID            string                        `json:"id"`
-	Slug          string                        `json:"slug"`
-	Variables     map[string]string             `json:"variables"`
-	Routes        *api.EnvironmentRouteContract `json:"routes"`
-	Policies      *[]ProjectEnvironmentEdgeRule `json:"policies"`
-	VariableCount int                           `json:"variable_count"`
-	Type          AppType                       `json:"type"`
-	WorkloadClass WorkloadClass                 `json:"workload_class"`
-	QueueBindings []gitOpsQueueIntent           `json:"queue_bindings"`
+	SecretRefs     map[string]string             `json:"secret_refs"`
+	SecretNames    []string                      `json:"secret_names"`
+	SecretRefCount int                           `json:"secret_ref_count"`
+	ID             string                        `json:"id"`
+	Slug           string                        `json:"slug"`
+	Variables      map[string]string             `json:"variables"`
+	Routes         *api.EnvironmentRouteContract `json:"routes"`
+	Policies       *[]ProjectEnvironmentEdgeRule `json:"policies"`
+	VariableCount  int                           `json:"variable_count"`
+	Type           AppType                       `json:"type"`
+	WorkloadClass  WorkloadClass                 `json:"workload_class"`
+	QueueBindings  []gitOpsQueueIntent           `json:"queue_bindings"`
 }
 
 type gitOpsIntentResource struct {
@@ -121,7 +124,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			return out, ErrInvalidArgument
 		}
 		app := byID[out.State.ResourceIDs[resource]]
-		count := app.VariableCount
+		count := app.VariableCount + app.SecretRefCount
 		for key, value := range workload.Variables {
 			if _, present := app.Variables[key]; !present {
 				count++
@@ -132,12 +135,22 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 		if snapshot.Prune {
 			for _, owner := range snapshot.Owners {
-				if owner.Manager != snapshot.SourceID || owner.Resource != resource || !strings.HasPrefix(owner.Path, "variables/") {
+				if owner.Manager != snapshot.SourceID || owner.Resource != resource {
 					continue
 				}
-				key := strings.TrimPrefix(owner.Path, "variables/")
-				_, wanted := workload.Variables[key]
-				_, present := app.Variables[key]
+				var wanted, present bool
+				switch {
+				case strings.HasPrefix(owner.Path, "variables/"):
+					key := strings.TrimPrefix(owner.Path, "variables/")
+					_, wanted = workload.Variables[key]
+					_, present = app.Variables[key]
+				case strings.HasPrefix(owner.Path, "secret_refs/"):
+					key := strings.TrimPrefix(owner.Path, "secret_refs/")
+					_, wanted = workload.SecretRefs[key]
+					_, present = app.SecretRefs[key]
+				default:
+					continue
+				}
 				activeOverride := false
 				for _, override := range snapshot.Overrides {
 					if override.Resource == resource && override.Path == owner.Path && override.ExpiresAt.After(time.Now()) {
@@ -150,6 +163,12 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 				}
 			}
 		}
+		for key := range workload.SecretRefs {
+			if _, present := app.SecretRefs[key]; !present {
+				count++
+			}
+		}
+		validateGitOpsSecretRefs(&out, desired, resource, app)
 		if count > limits.EnvVarsMax {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": variable count exceeds plan quota across environments")
 		}
@@ -167,6 +186,9 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 		add(resource, "presence", true)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
+		for key, value := range app.SecretRefs {
+			add(resource, "secret_refs/"+key, value)
+		}
 		for key, value := range app.Variables {
 			add(resource, "variables/"+key, value)
 		}
@@ -224,7 +246,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 }
 
 func gitOpsScopedFieldSupported(path string) bool {
-	return path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/") || strings.HasPrefix(path, "queue_bindings/")
+	return path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/") || strings.HasPrefix(path, "queue_bindings/") || strings.HasPrefix(path, "secret_refs/")
 }
 
 func desiredEnvironmentRevision(revision EnvironmentDesiredRevision) (environmentsync.DesiredState, error) {
@@ -382,6 +404,12 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 	if err != nil {
 		return nil, err
 	}
+	if _, err := sqlc.New().LockEnvironmentGitOpsIntentApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
+		return nil, mapErr(err)
+	}
+	if _, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, mustPgUUID(lease.Source.AccountID)); err != nil {
+		return nil, mapErr(err)
+	}
 	observed, snapshot, err := readEnvironmentGitOpsIntent(ctx, tx, lease.Source, desired)
 	if err != nil {
 		return nil, err
@@ -494,6 +522,16 @@ func applyEnvironmentGitOpsScopedField(ctx context.Context, tx pgx.Tx, source En
 	q := sqlc.New()
 	account, project, app := mustPgUUID(source.AccountID), mustPgUUID(source.ProjectID), mustPgUUID(appID)
 	switch {
+	case strings.HasPrefix(change.Path, "secret_refs/"):
+		key := strings.TrimPrefix(change.Path, "secret_refs/")
+		if change.Action == "remove" {
+			return q.DeleteEnvironmentGitOpsSecretReference(ctx, tx, sqlc.DeleteEnvironmentGitOpsSecretReferenceParams{AccountID: account, AppID: app, EnvironmentID: mustPgUUID(source.EnvironmentID), Key: key})
+		}
+		var ref string
+		if json.Unmarshal(change.After, &ref) != nil || !ValidSecretReference(ref) {
+			return ErrInvalidArgument
+		}
+		return q.PutEnvironmentGitOpsSecretReference(ctx, tx, sqlc.PutEnvironmentGitOpsSecretReferenceParams{AccountID: account, ProjectID: project, EnvironmentID: mustPgUUID(source.EnvironmentID), AppID: app, Scope: source.EnvironmentSlug, Key: key, SecretName: strings.TrimPrefix(ref, api.SecretRefPrefix)})
 	case strings.HasPrefix(change.Path, "variables/"):
 		key := strings.TrimPrefix(change.Path, "variables/")
 		// The freshness stamp and cache invalidation commit with the env value,

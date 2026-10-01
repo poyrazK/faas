@@ -426,6 +426,17 @@ type AppEnv struct {
 	Scope     string
 }
 
+type AppEnvironmentSecretRef struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	SecretName    string
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppError struct {
 	ID                      pgtype.UUID
 	AccountID               pgtype.UUID
@@ -2216,6 +2227,7 @@ type InstanceRuntimeConfigReceipt struct {
 	SecretVersions []byte
 	AllSecrets     bool
 	AcknowledgedAt pgtype.Timestamptz
+	SecretRefs     []byte
 }
 
 type Invocation struct {
@@ -4305,6 +4317,7 @@ type SnapshotRuntimeConfigReceipt struct {
 	Variables      []byte
 	SecretVersions []byte
 	AllSecrets     bool
+	SecretRefs     []byte
 }
 
 // Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.

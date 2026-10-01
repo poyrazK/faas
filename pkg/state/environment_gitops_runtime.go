@@ -72,7 +72,7 @@ func gitOpsChangedVariableApps(plan environmentsync.Plan, ids map[string]string)
 	seen := map[string]bool{}
 	apps := []string{}
 	for _, change := range plan.Changes {
-		if strings.HasPrefix(change.Path, "variables/") &&
+		if (strings.HasPrefix(change.Path, "variables/") || strings.HasPrefix(change.Path, "secret_refs/")) &&
 			(change.Action == "create" || change.Action == "update" || change.Action == "remove") {
 			app := ids[change.Resource]
 			if !seen[app] {

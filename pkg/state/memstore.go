@@ -772,7 +772,8 @@ type MemStore struct {
 	registryCreds map[registryCredKey]AppRegistryCredential
 	// envs is the plaintext app_envs mirror (issue #395 / ADR-045).
 	// Same composite-key shape as secrets; same ownership semantics.
-	envs map[envKey]AppEnv
+	envs                     map[envKey]AppEnv
+	appEnvironmentSecretRefs map[environmentSecretRefKey]environmentSecretRef
 	// trustedSigners is the in-memory mirror of app_trusted_signers
 	// (issue #472 / ADR-054). Populated by the admin CRUD handlers in
 	// cmd/apid/handlers_trusted_signers.go; not exposed to schedd.
@@ -3130,6 +3131,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 					delete(m.domains, domain)
 				}
 			}
+			m.deleteEnvironmentSecretRefsLocked("", environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3324,6 +3326,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			delete(m.domains, domain)
 		}
 	}
+	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
@@ -6484,6 +6487,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.serviceRecovery, id)
+	m.deleteEnvironmentSecretRefsLocked(id, "")
 	delete(m.apps, id)
 	return nil
 }
@@ -20537,6 +20541,13 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 			n++
 		}
 	}
+	if m.apps[appID].AccountID == accountID {
+		for key := range m.appEnvironmentSecretRefs {
+			if key.AppID == appID {
+				n++
+			}
+		}
+	}
 	return n, nil
 }
 
@@ -20547,7 +20558,7 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 func (m *MemStore) UpsertAppEnvInScope(_ context.Context, accountID, appID, scope, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	memory, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
+	memory, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key, "secret_refs/" + key})
 	if err != nil {
 		return err
 	}
@@ -20619,6 +20630,9 @@ func (m *MemStore) CountAppEnvInScope(_ context.Context, accountID, appID, scope
 		if e.AppID == appID && e.AccountID == accountID && e.Scope == scope {
 			n++
 		}
+	}
+	if m.apps[appID].AccountID == accountID {
+		n += len(m.environmentSecretRefsLocked(appID, scope))
 	}
 	return n, nil
 }
@@ -20968,6 +20982,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for aid, a := range m.apps {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
+			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
 		}

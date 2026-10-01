@@ -19,6 +19,7 @@ type RuntimeConfigInputs struct {
 	Boundary       time.Time         `json:"boundary"`
 	Variables      map[string]string `json:"variables"`
 	SecretVersions map[string]int64  `json:"secret_versions"`
+	SecretRefs     map[string]string `json:"secret_refs"`
 	AllSecrets     bool              `json:"all_secrets"`
 }
 
@@ -39,6 +40,7 @@ type RuntimeConfigReceiptPublisher interface {
 
 func cloneRuntimeConfigInputs(inputs RuntimeConfigInputs) RuntimeConfigInputs {
 	inputs.Variables, inputs.SecretVersions = maps.Clone(inputs.Variables), maps.Clone(inputs.SecretVersions)
+	inputs.SecretRefs = maps.Clone(inputs.SecretRefs)
 	return inputs
 }
 
@@ -51,13 +53,18 @@ func validateRuntimeConfigInputs(inputs RuntimeConfigInputs) error {
 			return ErrInvalidArgument
 		}
 	}
+	for key, ref := range inputs.SecretRefs {
+		if api.ValidateEnvKey(key) != nil || !ValidSecretReference(ref) {
+			return ErrInvalidArgument
+		}
+	}
 	for ref, version := range inputs.SecretVersions {
 		scope, key, ok := strings.Cut(ref, "/")
 		if !ok || api.ValidateScope(scope) != nil || api.ValidateEnvKey(key) != nil || version < 1 {
 			return ErrInvalidArgument
 		}
 	}
-	for _, value := range []any{inputs.Variables, inputs.SecretVersions} {
+	for _, value := range []any{inputs.Variables, inputs.SecretVersions, inputs.SecretRefs} {
 		raw, err := json.Marshal(value)
 		if err != nil || len(raw) > api.EnvironmentGitOpsMaxDefinitionBytes {
 			return ErrInvalidArgument
@@ -81,7 +88,7 @@ func (m *MemStore) runtimeConfigReceiptRequiredLocked(appID, scope string) bool 
 				continue
 			}
 			for _, owner := range memory.owners {
-				if owner.Resource == resource && owner.Manager == memory.source.ID && strings.HasPrefix(owner.Path, "variables/") {
+				if owner.Resource == resource && owner.Manager == memory.source.ID && (strings.HasPrefix(owner.Path, "variables/") || strings.HasPrefix(owner.Path, "secret_refs/")) {
 					return true
 				}
 			}
@@ -92,7 +99,7 @@ func (m *MemStore) runtimeConfigReceiptRequiredLocked(appID, scope string) bool 
 			}
 		}
 	}
-	return false
+	return len(m.environmentSecretRefsLocked(appID, scope)) > 0
 }
 
 func (m *MemStore) RuntimeConfigReceiptRequired(_ context.Context, appID, scope string) (bool, error) {
@@ -121,8 +128,38 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 			current[row.Scope+"/"+row.Key] = row.DeliveryVersion
 		}
 	}
-	if inputs.AllSecrets && !maps.Equal(inputs.SecretVersions, current) {
-		return false
+	managed := m.environmentSecretRefsLocked(appID, inputs.Scope)
+	for key, ref := range managed {
+		if _, shadowed := variables[key]; shadowed {
+			return false
+		}
+		if inputs.SecretRefs[key] != ref {
+			return false
+		}
+	}
+	for _, ref := range inputs.SecretRefs {
+		name := strings.TrimPrefix(ref, api.SecretRefPrefix)
+		version, exists := current[inputs.Scope+"/"+name]
+		if !exists || inputs.SecretVersions[inputs.Scope+"/"+name] != version {
+			return false
+		}
+	}
+	if inputs.AllSecrets {
+		if len(inputs.SecretRefs) == 0 && len(managed) == 0 {
+			if !maps.Equal(inputs.SecretVersions, current) {
+				return false
+			}
+		} else {
+			refs := map[string]string{}
+			for ref := range current {
+				_, name, _ := strings.Cut(ref, "/")
+				refs[name] = api.SecretRefPrefix + name
+			}
+			maps.Copy(refs, managed)
+			if !maps.Equal(inputs.SecretRefs, refs) {
+				return false
+			}
+		}
 	}
 	for ref, version := range inputs.SecretVersions {
 		if current[ref] != version {
@@ -161,7 +198,7 @@ func (m *MemStore) recordInstanceRuntimeConfigReceiptLocked(instanceID, wakeID s
 	}
 	if prior, exists := m.instanceRuntimeConfigReceipts[instanceID]; exists && prior.WakeID == wakeID {
 		if prior.Inputs.Scope != inputs.Scope || !prior.Inputs.Boundary.Equal(inputs.Boundary) || prior.Inputs.AllSecrets != inputs.AllSecrets ||
-			!maps.Equal(prior.Inputs.Variables, inputs.Variables) || !maps.Equal(prior.Inputs.SecretVersions, inputs.SecretVersions) {
+			!maps.Equal(prior.Inputs.Variables, inputs.Variables) || !maps.Equal(prior.Inputs.SecretVersions, inputs.SecretVersions) || !maps.Equal(prior.Inputs.SecretRefs, inputs.SecretRefs) {
 			return ErrConflict
 		}
 		return nil

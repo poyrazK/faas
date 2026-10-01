@@ -5268,6 +5268,9 @@ SELECT jsonb_build_object(
                 'config', t.config, 'batch_size', t.batch_size_max, 'batch_window', t.batch_window_ms,
                 'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
             FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
+        'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
             WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
         'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)
@@ -5391,7 +5394,7 @@ WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope =
 AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
     (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
         SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
-        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))));
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs))));
 
 -- name: InsertEnvironmentGitOpsEffect :exec
 INSERT INTO environment_gitops_effects(source_id, revision_id, generation, intent_version, plan_hash,
@@ -5481,7 +5484,7 @@ UPDATE snapshots p SET stale = true FROM deployments d, stamped c
 WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
 AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
     SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
-    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets)));
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs)));
 
 -- name: AppRuntimeConfigChangedAtInScope :one
 SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
@@ -5500,18 +5503,18 @@ SELECT app_id, deployment_id, started_at FROM instances
 WHERE id = sqlc.arg(instance_id)::uuid FOR UPDATE;
 
 -- name: RecordInstanceRuntimeConfigReceipt :execrows
-INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets)
-SELECT i.id, i.wake_id, d.scope, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
+SELECT i.id, i.wake_id, d.scope, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb
 FROM instances i JOIN deployments d ON d.id = i.deployment_id
 WHERE i.id = sqlc.arg(instance_id)::uuid AND i.wake_id = sqlc.arg(wake_id)::uuid AND i.state = 'running'
 AND d.scope = sqlc.arg(scope)::text FOR UPDATE OF i
 ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
     boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
-    all_secrets = excluded.all_secrets, acknowledged_at = now()
+    all_secrets = excluded.all_secrets,secret_refs=excluded.secret_refs, acknowledged_at = now()
 WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
     (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
      AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
-     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets);
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs=excluded.secret_refs);
 
 -- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = sqlc.arg(instance_id)::uuid;
@@ -5558,15 +5561,15 @@ SELECT * FROM snapshot_runtime_config_receipts WHERE snapshot_id = sqlc.arg(snap
 
 -- name: RuntimeConfigInputsFresh :one
 SELECT environment_runtime_inputs_fresh(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz,
-    sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean)::boolean AS fresh;
+    sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb)::boolean AS fresh;
 
 -- name: RuntimeConfigReceiptRequired :one
 SELECT environment_runtime_receipt_required(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text)::boolean AS required;
 
 -- name: InsertSnapshotRuntimeConfigReceipt :exec
-INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets)
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
 VALUES (sqlc.arg(snapshot_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb,
-    sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean);
+    sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean,sqlc.arg(secret_refs)::jsonb);
 
 -- name: ClaimEnvironmentGitSourcePoll :one
 WITH candidate AS (
@@ -6386,3 +6389,48 @@ SELECT set_config('faas.environment_git_approval_id',sqlc.arg(approval_id)::text
 SELECT source_id FROM environment_git_source_polls
 WHERE source_id=sqlc.arg(source_id)::uuid AND lease_token=sqlc.arg(lease_token)::uuid
   AND lease_until > greatest(sqlc.arg(now_at)::timestamptz,clock_timestamp()) FOR UPDATE;
+
+-- Scoped reference reads do not expose values or fall back to another scope.
+-- name: GetAppEnvironmentSecretReferences :one
+SELECT environment_scoped_secret_refs(a.id,sqlc.arg(scope)::text)::jsonb AS refs FROM apps a
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: LockEnvironmentGitSourceForSecretMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ JOIN project_environments e ON e.id=s.environment_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.slug=sqlc.arg(scope)::text
+ FOR UPDATE OF s;
+
+-- name: LockAppEnvironmentSecretReferenceScope :one
+SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND e.slug=sqlc.arg(scope)::text FOR UPDATE OF a,e;
+
+-- name: PutEnvironmentGitOpsSecretReference :exec
+INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(scope)::text,sqlc.arg(key)::text,sqlc.arg(secret_name)::text)
+ ON CONFLICT(app_id,environment_id,key) DO UPDATE SET secret_name=excluded.secret_name;
+
+-- name: DeleteEnvironmentGitOpsSecretReference :exec
+DELETE FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text;
+
+-- name: EnvironmentSecretReferenceQuota :one
+SELECT ((SELECT count(*) FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid)
+ +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=sqlc.arg(app_id)::uuid))::bigint AS total,
+ EXISTS(SELECT 1 FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text) AS variable_exists,
+ EXISTS(SELECT 1 FROM app_environment_secret_refs WHERE app_id=sqlc.arg(app_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text) AS ref_exists;
+
+-- name: LockEnvironmentGitOpsIntentApps :many
+SELECT a.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ WHERE s.id=sqlc.arg(source_id)::uuid AND a.status<>'deleted' ORDER BY a.id FOR UPDATE OF a;
+
+-- References and plaintext variables share the app's environment-key quota.
+-- name: CountAppEnvironmentIntent :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
+
+-- name: CountAppEnvironmentIntentInScope :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text))::bigint AS count;

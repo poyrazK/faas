@@ -490,7 +490,7 @@ out-of-order replay replaces older admission/retirement functions. Shared
 memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
 real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
 retention. A populated-database migration check exercises the older-function
-interval and replays the twenty-three GitOps migrations alongside six additive
+interval and replays the twenty-four GitOps migrations alongside six additive
 migrations merged from main, preserving captured identities and current leases.
 These checks qualify the internal scope contract. They do not establish GitOps
 queue ownership/recovery or complete environment graph support.
@@ -562,9 +562,48 @@ the GitOps set together with the six additive migrations merged from main. The
 combined-tree invocation check retains environment identity, pinned failure rules,
 and completion classification through admission, claim, and completion.
 
+Environment secret reference intent now stores destination-to-source names under
+an immutable catalog environment UUID, independently of sealed values and delivery
+versions. Observation and reviewed adoption read names only. Adoption preserves
+existing reference values; enforce reconciliation changes owned destinations and
+leaves neighboring environments and secret ciphertext intact. Missing source names
+and plaintext variables that shadow a desired destination block the whole plan.
+References share the cross-environment variable quota, including reviewed removals.
+Report writes schedule durable drift checks; enforce ownership covers ordinary and
+SQL writes, with the existing reasoned temporary override contract.
+
+The primary workload resolver selects the named source in the exact deployment
+scope and delivers it under the declared destination key. Environment reference
+intent overlays individual deployment references. Legacy automatic delivery keeps
+unmanaged secrets, while sidecars retain their explicit secret selections. Invalid
+persisted references fail before an overlay can hide them. Cold wake, prime,
+migration cold fallback and application task projections use the same decoder;
+restored instances retain captured reference evidence. Delivery audit versions use
+actual source names and deduplicate repeated aliases. The VM transport carries
+separate source and destination keys. Alias envelopes must contain exactly the
+selected source; decrypted staging emits only declared destination names. Before
+an alias boot, the client requires node support and checks the serving handler's
+response again. Missing acknowledgement prevents runtime publication and triggers
+bounded teardown, including a node replacement between discovery and boot.
+
+Instance and snapshot runtime receipts now retain the actual destination mapping
+as well as sealed source versions. Current timestamps and versions cannot qualify
+a wrong mapping, a shadowed destination or an older receipt without managed
+reference evidence. Reference mutations commit scoped freshness stamps and cache
+invalidation; the effects transaction retains scoped runtime work. Shared
+memory/PostgreSQL cases cover adoption, stale review rejection, report drift,
+enforcement, quota/pruning, catalog recreation, overrides, immutable receipts and
+serving convergence fences. Scheduler transport fixtures cover aliases, legacy
+inputs, sidecar isolation, wake, prime and migration evidence. Populated replay
+preserves references, ownership, receipts and active controller leases across the
+complete additive migration set. These checks qualify the internal reference
+contract; native guest delivery and lifecycle acceptance remain required. Public
+reference editing, explicit adoption of legacy deployment reference configuration,
+and environment clone integration remain part of the complete adapter gate.
+
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,
-secret-reference and service-binding adapters; reviewed queue pruning/recovery
+complete secret-reference integration and service-binding adapters; reviewed queue pruning/recovery
 and projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
 full staged graph/runtime operational status integration; and native runtime acceptance.

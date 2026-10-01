@@ -38,6 +38,11 @@ const EnvironmentGitOpsMaxPolicies = 20
 // EnvironmentGitProtectedBranchEvidenceMaxAge bounds use of policy observations;
 // automatic approval still requires separately verified merge/review evidence.
 const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
+
+// VMMSecretAliasCleanupTimeout bounds teardown when a boot response fails to
+// acknowledge the alias contract after node capability discovery.
+const VMMSecretAliasCleanupTimeout = 5 * time.Second
+
 const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
 const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
 const EnvironmentGitApprovalMaxReviews = 1000

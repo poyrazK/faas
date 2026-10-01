@@ -17479,10 +17479,10 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, err
 	}
 	if haveReceipt {
-		variables, secrets := runtimeConfigInputsJSON(inputs)
+		variables, secrets, refs := runtimeConfigInputsJSON(inputs)
 		if err := sqlc.New().InsertSnapshotRuntimeConfigReceipt(ctx, tx, sqlc.InsertSnapshotRuntimeConfigReceiptParams{
 			SnapshotID: mustPgUUID(stored.ID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
-			Variables: variables, SecretVersions: secrets, AllSecrets: inputs.AllSecrets,
+			Variables: variables, SecretVersions: secrets, SecretRefs: refs, AllSecrets: inputs.AllSecrets,
 		}); err != nil {
 			return Snapshot{}, mapErr(err)
 		}
@@ -23858,11 +23858,9 @@ func (s *PgStore) ListAppEnv(ctx context.Context, accountID, appID string) ([]Ap
 // per-app semantics). PR-B's per-scope quota enforcement (if it
 // lands) uses CountAppEnvInScope instead.
 func (s *PgStore) CountAppEnv(ctx context.Context, accountID, appID string) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_envs where account_id = $1 and app_id = $2`,
-		accountID, appID).Scan(&n)
-	return n, err
+	n, err := sqlc.New().CountAppEnvironmentIntent(ctx, s.pool, sqlc.CountAppEnvironmentIntentParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+	return int(n), mapErr(err)
 }
 
 // UpsertAppEnvInScope is the scope-aware sibling of UpsertAppEnv.
@@ -23931,11 +23929,9 @@ func (s *PgStore) ListAppEnvInScope(ctx context.Context, accountID, appID, scope
 // Reserved for future per-scope caps (ADR-091 follow-up); PR-A does
 // not call it.
 func (s *PgStore) CountAppEnvInScope(ctx context.Context, accountID, appID, scope string) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from app_envs where account_id = $1 and app_id = $2 and scope = $3`,
-		accountID, appID, scope).Scan(&n)
-	return n, err
+	n, err := sqlc.New().CountAppEnvironmentIntentInScope(ctx, s.pool, sqlc.CountAppEnvironmentIntentInScopeParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope})
+	return int(n), mapErr(err)
 }
 
 // ListAllAppEnv returns every env row on the app across all scopes,

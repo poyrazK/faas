@@ -1339,6 +1339,42 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid))::bigint AS count
+`
+
+type CountAppEnvironmentIntentParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// References and plaintext variables share the app's environment-key quota.
+func (q *Queries) CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error) {
+	row := db.QueryRow(ctx, countAppEnvironmentIntent, arg.AccountID, arg.AppID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countAppEnvironmentIntentInScope = `-- name: CountAppEnvironmentIntentInScope :one
+SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text)
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text))::bigint AS count
+`
+
+type CountAppEnvironmentIntentInScopeParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+func (q *Queries) CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error) {
+	row := db.QueryRow(ctx, countAppEnvironmentIntentInScope, arg.AccountID, arg.AppID, arg.Scope)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
   and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)
@@ -2695,6 +2731,28 @@ func (q *Queries) DeleteEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const deleteEnvironmentGitOpsSecretReference = `-- name: DeleteEnvironmentGitOpsSecretReference :exec
+DELETE FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND environment_id=$3::uuid AND key=$4::text
+`
+
+type DeleteEnvironmentGitOpsSecretReferenceParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Key           string
+}
+
+func (q *Queries) DeleteEnvironmentGitOpsSecretReference(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsSecretReferenceParams) error {
+	_, err := db.Exec(ctx, deleteEnvironmentGitOpsSecretReference,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.Key,
+	)
+	return err
+}
+
 const deleteEnvironmentGitOpsVariable = `-- name: DeleteEnvironmentGitOpsVariable :exec
 DELETE FROM app_envs WHERE account_id = $1::uuid AND app_id = $2::uuid
 AND scope = $3::text AND key = $4::text
@@ -3337,6 +3395,38 @@ func (q *Queries) EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg E
 		&i.OldestCheckAgeSeconds,
 		&i.OldestVerificationAgeSeconds,
 	)
+	return i, err
+}
+
+const environmentSecretReferenceQuota = `-- name: EnvironmentSecretReferenceQuota :one
+SELECT ((SELECT count(*) FROM app_envs WHERE app_id=$1::uuid)
+ +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=$1::uuid))::bigint AS total,
+ EXISTS(SELECT 1 FROM app_envs WHERE app_id=$1::uuid AND scope=$2::text AND key=$3::text) AS variable_exists,
+ EXISTS(SELECT 1 FROM app_environment_secret_refs WHERE app_id=$1::uuid AND environment_id=$4::uuid AND key=$3::text) AS ref_exists
+`
+
+type EnvironmentSecretReferenceQuotaParams struct {
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	EnvironmentID pgtype.UUID
+}
+
+type EnvironmentSecretReferenceQuotaRow struct {
+	Total          int64
+	VariableExists bool
+	RefExists      bool
+}
+
+func (q *Queries) EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error) {
+	row := db.QueryRow(ctx, environmentSecretReferenceQuota,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.EnvironmentID,
+	)
+	var i EnvironmentSecretReferenceQuotaRow
+	err := row.Scan(&i.Total, &i.VariableExists, &i.RefExists)
 	return i, err
 }
 
@@ -5242,6 +5332,25 @@ func (q *Queries) FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 	return result.RowsAffected(), nil
 }
 
+const getAppEnvironmentSecretReferences = `-- name: GetAppEnvironmentSecretReferences :one
+SELECT environment_scoped_secret_refs(a.id,$1::text)::jsonb AS refs FROM apps a
+ WHERE a.id=$2::uuid AND a.account_id=$3::uuid
+`
+
+type GetAppEnvironmentSecretReferencesParams struct {
+	Scope     string
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// Scoped reference reads do not expose values or fall back to another scope.
+func (q *Queries) GetAppEnvironmentSecretReferences(ctx context.Context, db DBTX, arg GetAppEnvironmentSecretReferencesParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getAppEnvironmentSecretReferences, arg.Scope, arg.AppID, arg.AccountID)
+	var refs []byte
+	err := row.Scan(&refs)
+	return refs, err
+}
+
 const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
@@ -7102,9 +7211,9 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 }
 
 const insertSnapshotRuntimeConfigReceipt = `-- name: InsertSnapshotRuntimeConfigReceipt :exec
-INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets)
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
 VALUES ($1::uuid, $2::text, $3::timestamptz, $4::jsonb,
-    $5::jsonb, $6::boolean)
+    $5::jsonb, $6::boolean,$7::jsonb)
 `
 
 type InsertSnapshotRuntimeConfigReceiptParams struct {
@@ -7114,6 +7223,7 @@ type InsertSnapshotRuntimeConfigReceiptParams struct {
 	Variables      []byte
 	SecretVersions []byte
 	AllSecrets     bool
+	SecretRefs     []byte
 }
 
 func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error {
@@ -7124,6 +7234,7 @@ func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBT
 		arg.Variables,
 		arg.SecretVersions,
 		arg.AllSecrets,
+		arg.SecretRefs,
 	)
 	return err
 }
@@ -7295,7 +7406,7 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 }
 
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
-SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
+SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at, r.secret_refs FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
 WHERE r.instance_id = $1::uuid
 `
 
@@ -7311,6 +7422,7 @@ func (q *Queries) InstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, ins
 		&i.SecretVersions,
 		&i.AllSecrets,
 		&i.AcknowledgedAt,
+		&i.SecretRefs,
 	)
 	return i, err
 }
@@ -7326,7 +7438,7 @@ UPDATE snapshots p SET stale = true FROM deployments d, stamped c
 WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
 AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
     SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
-    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets)))
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs)))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams struct {
@@ -7352,7 +7464,7 @@ WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope =
 AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
     (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
         SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
-        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets,r.secret_refs))))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeConfigParams struct {
@@ -12655,6 +12767,30 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const lockAppEnvironmentSecretReferenceScope = `-- name: LockAppEnvironmentSecretReferenceScope :one
+SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+ WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
+ AND e.slug=$3::text FOR UPDATE OF a,e
+`
+
+type LockAppEnvironmentSecretReferenceScopeParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Scope     string
+}
+
+type LockAppEnvironmentSecretReferenceScopeRow struct {
+	ID        pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db DBTX, arg LockAppEnvironmentSecretReferenceScopeParams) (LockAppEnvironmentSecretReferenceScopeRow, error) {
+	row := db.QueryRow(ctx, lockAppEnvironmentSecretReferenceScope, arg.AppID, arg.AccountID, arg.Scope)
+	var i LockAppEnvironmentSecretReferenceScopeRow
+	err := row.Scan(&i.ID, &i.ProjectID)
+	return i, err
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `
@@ -12691,6 +12827,31 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockEnvironmentGitOpsIntentApps = `-- name: LockEnvironmentGitOpsIntentApps :many
+SELECT a.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ WHERE s.id=$1::uuid AND a.status<>'deleted' ORDER BY a.id FOR UPDATE OF a
+`
+
+func (q *Queries) LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockEnvironmentGitOpsIntentApps, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockEnvironmentGitOpsLease = `-- name: LockEnvironmentGitOpsLease :one
@@ -12862,6 +13023,39 @@ type LockEnvironmentGitSourceForScopeParams struct {
 
 func (q *Queries) LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForScopeParams) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, lockEnvironmentGitSourceForScope, arg.AccountID, arg.ProjectID, arg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockEnvironmentGitSourceForSecretMutation = `-- name: LockEnvironmentGitSourceForSecretMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+ JOIN project_environments e ON e.id=s.environment_id
+ WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.slug=$3::text
+ FOR UPDATE OF s
+`
+
+type LockEnvironmentGitSourceForSecretMutationParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Scope     string
+}
+
+func (q *Queries) LockEnvironmentGitSourceForSecretMutation(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForSecretMutationParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockEnvironmentGitSourceForSecretMutation, arg.AppID, arg.AccountID, arg.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -16493,6 +16687,9 @@ SELECT jsonb_build_object(
                 'config', t.config, 'batch_size', t.batch_size_max, 'batch_window', t.batch_window_ms,
                 'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
             FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
+        'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
             WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
         'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)
@@ -17229,6 +17426,36 @@ func (q *Queries) PutEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg P
 		arg.Environment,
 		arg.Enforced,
 		arg.Routes,
+	)
+	return err
+}
+
+const putEnvironmentGitOpsSecretReference = `-- name: PutEnvironmentGitOpsSecretReference :exec
+INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::text,$6::text,$7::text)
+ ON CONFLICT(app_id,environment_id,key) DO UPDATE SET secret_name=excluded.secret_name
+`
+
+type PutEnvironmentGitOpsSecretReferenceParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	SecretName    string
+}
+
+func (q *Queries) PutEnvironmentGitOpsSecretReference(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsSecretReferenceParams) error {
+	_, err := db.Exec(ctx, putEnvironmentGitOpsSecretReference,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.SecretName,
 	)
 	return err
 }
@@ -18849,18 +19076,18 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 }
 
 const recordInstanceRuntimeConfigReceipt = `-- name: RecordInstanceRuntimeConfigReceipt :execrows
-INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets)
-SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets,secret_refs)
+SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean,$5::jsonb
 FROM instances i JOIN deployments d ON d.id = i.deployment_id
-WHERE i.id = $5::uuid AND i.wake_id = $6::uuid AND i.state = 'running'
-AND d.scope = $7::text FOR UPDATE OF i
+WHERE i.id = $6::uuid AND i.wake_id = $7::uuid AND i.state = 'running'
+AND d.scope = $8::text FOR UPDATE OF i
 ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
     boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
-    all_secrets = excluded.all_secrets, acknowledged_at = now()
+    all_secrets = excluded.all_secrets,secret_refs=excluded.secret_refs, acknowledged_at = now()
 WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
     (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
      AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
-     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets)
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets AND instance_runtime_config_receipts.secret_refs=excluded.secret_refs)
 `
 
 type RecordInstanceRuntimeConfigReceiptParams struct {
@@ -18868,6 +19095,7 @@ type RecordInstanceRuntimeConfigReceiptParams struct {
 	Variables      []byte
 	SecretVersions []byte
 	AllSecrets     bool
+	SecretRefs     []byte
 	InstanceID     pgtype.UUID
 	WakeID         pgtype.UUID
 	Scope          string
@@ -18879,6 +19107,7 @@ func (q *Queries) RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBT
 		arg.Variables,
 		arg.SecretVersions,
 		arg.AllSecrets,
+		arg.SecretRefs,
 		arg.InstanceID,
 		arg.WakeID,
 		arg.Scope,
@@ -20985,7 +21214,7 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 
 const runtimeConfigInputsFresh = `-- name: RuntimeConfigInputsFresh :one
 SELECT environment_runtime_inputs_fresh($1::uuid, $2::text, $3::timestamptz,
-    $4::jsonb, $5::jsonb, $6::boolean)::boolean AS fresh
+    $4::jsonb, $5::jsonb, $6::boolean,$7::jsonb)::boolean AS fresh
 `
 
 type RuntimeConfigInputsFreshParams struct {
@@ -20995,6 +21224,7 @@ type RuntimeConfigInputsFreshParams struct {
 	Variables      []byte
 	SecretVersions []byte
 	AllSecrets     bool
+	SecretRefs     []byte
 }
 
 func (q *Queries) RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg RuntimeConfigInputsFreshParams) (bool, error) {
@@ -21005,6 +21235,7 @@ func (q *Queries) RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg Run
 		arg.Variables,
 		arg.SecretVersions,
 		arg.AllSecrets,
+		arg.SecretRefs,
 	)
 	var fresh bool
 	err := row.Scan(&fresh)
@@ -21715,7 +21946,7 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 }
 
 const snapshotRuntimeConfigReceipt = `-- name: SnapshotRuntimeConfigReceipt :one
-SELECT snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets FROM snapshot_runtime_config_receipts WHERE snapshot_id = $1::uuid
+SELECT snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets, secret_refs FROM snapshot_runtime_config_receipts WHERE snapshot_id = $1::uuid
 `
 
 func (q *Queries) SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, snapshotID pgtype.UUID) (SnapshotRuntimeConfigReceipt, error) {
@@ -21728,6 +21959,7 @@ func (q *Queries) SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, sna
 		&i.Variables,
 		&i.SecretVersions,
 		&i.AllSecrets,
+		&i.SecretRefs,
 	)
 	return i, err
 }

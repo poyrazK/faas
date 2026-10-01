@@ -15,20 +15,23 @@ var _ RuntimeConfigReceiptStore = (*MemStore)(nil)
 var _ RuntimeConfigReceiptPublisher = (*PgStore)(nil)
 var _ RuntimeConfigReceiptPublisher = (*MemStore)(nil)
 
-func runtimeConfigInputsJSON(inputs RuntimeConfigInputs) ([]byte, []byte) {
-	variables, secrets := []byte(`{}`), []byte(`{}`)
+func runtimeConfigInputsJSON(inputs RuntimeConfigInputs) ([]byte, []byte, []byte) {
+	variables, secrets, refs := []byte(`{}`), []byte(`{}`), []byte(`{}`)
 	if inputs.Variables != nil {
 		variables, _ = json.Marshal(inputs.Variables)
 	}
 	if inputs.SecretVersions != nil {
 		secrets, _ = json.Marshal(inputs.SecretVersions)
 	}
-	return variables, secrets
+	if inputs.SecretRefs != nil {
+		refs, _ = json.Marshal(inputs.SecretRefs)
+	}
+	return variables, secrets, refs
 }
 
-func runtimeConfigInputsFromSQL(scope string, boundary pgtype.Timestamptz, variables, secrets []byte, all bool) (RuntimeConfigInputs, error) {
+func runtimeConfigInputsFromSQL(scope string, boundary pgtype.Timestamptz, variables, secrets, refs []byte, all bool) (RuntimeConfigInputs, error) {
 	inputs := RuntimeConfigInputs{Scope: scope, Boundary: boundary.Time, AllSecrets: all}
-	if json.Unmarshal(variables, &inputs.Variables) != nil || json.Unmarshal(secrets, &inputs.SecretVersions) != nil || validateRuntimeConfigInputs(inputs) != nil {
+	if json.Unmarshal(variables, &inputs.Variables) != nil || json.Unmarshal(secrets, &inputs.SecretVersions) != nil || json.Unmarshal(refs, &inputs.SecretRefs) != nil || validateRuntimeConfigInputs(inputs) != nil {
 		return RuntimeConfigInputs{}, ErrInvalidArgument
 	}
 	return inputs, nil
@@ -45,7 +48,7 @@ func readInstanceRuntimeConfigReceipt(ctx context.Context, db sqlc.DBTX, id stri
 	if err != nil {
 		return RuntimeConfigInputs{}, false, mapErr(err)
 	}
-	inputs, err := runtimeConfigInputsFromSQL(row.Scope, row.BoundaryAt, row.Variables, row.SecretVersions, row.AllSecrets)
+	inputs, err := runtimeConfigInputsFromSQL(row.Scope, row.BoundaryAt, row.Variables, row.SecretVersions, row.SecretRefs, row.AllSecrets)
 	return inputs, err == nil, err
 }
 
@@ -61,7 +64,7 @@ func (s *PgStore) SnapshotRuntimeConfigReceipt(ctx context.Context, id string) (
 	if err != nil {
 		return RuntimeConfigInputs{}, false, mapErr(err)
 	}
-	inputs, err := runtimeConfigInputsFromSQL(row.Scope, row.BoundaryAt, row.Variables, row.SecretVersions, row.AllSecrets)
+	inputs, err := runtimeConfigInputsFromSQL(row.Scope, row.BoundaryAt, row.Variables, row.SecretVersions, row.SecretRefs, row.AllSecrets)
 	return inputs, err == nil, err
 }
 
@@ -73,10 +76,10 @@ func (s *PgStore) RecordInstanceRuntimeConfigReceipt(ctx context.Context, id, wa
 }
 
 func recordInstanceRuntimeConfigReceipt(ctx context.Context, db sqlc.DBTX, id, wakeID string, inputs RuntimeConfigInputs) error {
-	variables, secrets := runtimeConfigInputsJSON(inputs)
+	variables, secrets, refs := runtimeConfigInputsJSON(inputs)
 	count, err := sqlc.New().RecordInstanceRuntimeConfigReceipt(ctx, db, sqlc.RecordInstanceRuntimeConfigReceiptParams{
 		InstanceID: mustPgUUID(id), WakeID: mustPgUUID(wakeID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
-		Variables: variables, SecretVersions: secrets, AllSecrets: inputs.AllSecrets,
+		Variables: variables, SecretVersions: secrets, SecretRefs: refs, AllSecrets: inputs.AllSecrets,
 	})
 	if err != nil {
 		return mapErr(err)
@@ -126,10 +129,10 @@ func (s *PgStore) PublishInstanceRuntimeWithConfig(ctx context.Context, id, expe
 }
 
 func readRuntimeConfigInputsFresh(ctx context.Context, db sqlc.DBTX, appID string, inputs RuntimeConfigInputs) (bool, error) {
-	variables, secrets := runtimeConfigInputsJSON(inputs)
+	variables, secrets, refs := runtimeConfigInputsJSON(inputs)
 	fresh, err := sqlc.New().RuntimeConfigInputsFresh(ctx, db, sqlc.RuntimeConfigInputsFreshParams{
 		AppID: mustPgUUID(appID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
-		Variables: variables, SecretVersions: secrets, AllSecrets: inputs.AllSecrets,
+		Variables: variables, SecretVersions: secrets, SecretRefs: refs, AllSecrets: inputs.AllSecrets,
 	})
 	return fresh, mapErr(err)
 }

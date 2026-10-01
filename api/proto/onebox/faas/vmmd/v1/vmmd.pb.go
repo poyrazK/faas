@@ -927,9 +927,12 @@ func (x *SidecarProbeSpec) GetGrpcService() string {
 // at wake time and writes the resulting plaintext to the appropriate
 // instance-scoped file.
 type SealedSecret struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Ciphertext    []byte                 `protobuf:"bytes,2,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Key        string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Ciphertext []byte                 `protobuf:"bytes,2,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	// ADR-423: alias destination is key; source_key must match the single key
+	// inside its sealed envelope. Empty preserves the legacy envelope contract.
+	SourceKey     string `protobuf:"bytes,3,opt,name=source_key,json=sourceKey,proto3" json:"source_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -976,6 +979,13 @@ func (x *SealedSecret) GetCiphertext() []byte {
 		return x.Ciphertext
 	}
 	return nil
+}
+
+func (x *SealedSecret) GetSourceKey() string {
+	if x != nil {
+		return x.SourceKey
+	}
+	return ""
 }
 
 // APIEnvEntry is one (key, value) plaintext pair from app_envs
@@ -1262,6 +1272,8 @@ type WakeResponse struct {
 	// Closed value: after_restore_failed. No callback URL or error text crosses
 	// the customer telemetry boundary; empty on other wake paths.
 	RestoreFallbackReason string `protobuf:"bytes,14,opt,name=restore_fallback_reason,json=restoreFallbackReason,proto3" json:"restore_fallback_reason,omitempty"`
+	// ADR-423: the serving handler understands source_key alias delivery.
+	SupportsSecretAliases bool `protobuf:"varint,15,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1392,6 +1404,13 @@ func (x *WakeResponse) GetRestoreFallbackReason() string {
 		return x.RestoreFallbackReason
 	}
 	return ""
+}
+
+func (x *WakeResponse) GetSupportsSecretAliases() bool {
+	if x != nil {
+		return x.SupportsSecretAliases
+	}
+	return false
 }
 
 type CreateFromSnapshotRequest struct {
@@ -3035,11 +3054,13 @@ func (*PingRequest) Descriptor() ([]byte, []int) {
 // informational (the heartbeat loop stamps last_heartbeat_at
 // against its own clock, not this field).
 type PingResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FcVersion     string                 `protobuf:"bytes,1,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
-	ServerTime    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	FcVersion  string                 `protobuf:"bytes,1,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
+	ServerTime *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
+	// Callers require this before sending source_key aliases to this node.
+	SupportsSecretAliases bool `protobuf:"varint,3,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *PingResponse) Reset() {
@@ -3084,6 +3105,13 @@ func (x *PingResponse) GetServerTime() *timestamppb.Timestamp {
 		return x.ServerTime
 	}
 	return nil
+}
+
+func (x *PingResponse) GetSupportsSecretAliases() bool {
+	if x != nil {
+		return x.SupportsSecretAliases
+	}
+	return false
 }
 
 // Header is one (name, value) HTTP header line. Both fields are
@@ -5464,10 +5492,11 @@ type AdoptMigratedInstanceResponse struct {
 	GuestUid int32 `protobuf:"varint,3,opt,name=guest_uid,json=guestUid,proto3" json:"guest_uid,omitempty"`
 	// Actual Manager.Wake result. A requested restore can cold-boot instead.
 	// Older peers omit this field; callers must not infer input acknowledgement.
-	Method        WakeMethod `protobuf:"varint,4,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
-	WakeId        string     `protobuf:"bytes,5,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Method                WakeMethod `protobuf:"varint,4,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
+	WakeId                string     `protobuf:"bytes,5,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	SupportsSecretAliases bool       `protobuf:"varint,6,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *AdoptMigratedInstanceResponse) Reset() {
@@ -5533,6 +5562,13 @@ func (x *AdoptMigratedInstanceResponse) GetWakeId() string {
 		return x.WakeId
 	}
 	return ""
+}
+
+func (x *AdoptMigratedInstanceResponse) GetSupportsSecretAliases() bool {
+	if x != nil {
+		return x.SupportsSecretAliases
+	}
+	return false
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -7873,12 +7909,13 @@ func (x *RestoreAppTaskRequest) GetDeploymentId() string {
 }
 
 type RestoreAppTaskResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	LeaseUid      int32                  `protobuf:"varint,2,opt,name=lease_uid,json=leaseUid,proto3" json:"lease_uid,omitempty"`
-	Method        WakeMethod             `protobuf:"varint,3,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Instance              string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	LeaseUid              int32                  `protobuf:"varint,2,opt,name=lease_uid,json=leaseUid,proto3" json:"lease_uid,omitempty"`
+	Method                WakeMethod             `protobuf:"varint,3,opt,name=method,proto3,enum=onebox.faas.vmmd.v1.WakeMethod" json:"method,omitempty"`
+	SupportsSecretAliases bool                   `protobuf:"varint,4,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RestoreAppTaskResponse) Reset() {
@@ -7930,6 +7967,13 @@ func (x *RestoreAppTaskResponse) GetMethod() WakeMethod {
 		return x.Method
 	}
 	return WakeMethod_WAKE_COLD_BOOT
+}
+
+func (x *RestoreAppTaskResponse) GetSupportsSecretAliases() bool {
+	if x != nil {
+		return x.SupportsSecretAliases
+	}
+	return false
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it
@@ -8742,12 +8786,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0finitial_delay_s\x18\v \x01(\x05R\rinitialDelayS\x12\x18\n" +
 	"\aretries\x18\f \x01(\x05R\aretries\x12$\n" +
 	"\x0estart_period_s\x18\r \x01(\x05R\fstartPeriodS\x12!\n" +
-	"\fgrpc_service\x18\x0e \x01(\tR\vgrpcService\"@\n" +
+	"\fgrpc_service\x18\x0e \x01(\tR\vgrpcService\"_\n" +
 	"\fSealedSecret\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x02 \x01(\fR\n" +
-	"ciphertext\"5\n" +
+	"ciphertext\x12\x1d\n" +
+	"\n" +
+	"source_key\x18\x03 \x01(\tR\tsourceKey\"5\n" +
 	"\vAPIEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"F\n" +
@@ -8762,7 +8808,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vstorage_key\x18\x05 \x01(\tR\n" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x06 \x01(\tR\x11vmstateStorageKey\x12 \n" +
-	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\xcc\x04\n" +
+	"\vnetworkless\x18\a \x01(\bR\vnetworklessJ\x04\b\x02\x10\x03\"\x84\x05\n" +
 	"\fWakeResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -8780,7 +8826,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fnetns_tap_ms\x18\f \x01(\x03R\n" +
 	"netnsTapMs\x12$\n" +
 	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\x126\n" +
-	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\"\xc8\x02\n" +
+	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\x126\n" +
+	"\x17supports_secret_aliases\x18\x0f \x01(\bR\x15supportsSecretAliases\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +
@@ -8912,12 +8959,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"%egress_new_destinations_limit_per_min\x18\x12 \x01(\x03R egressNewDestinationsLimitPerMin\x12W\n" +
 	"\x1aegress_flood_drops_per_min\x18\x13 \x01(\v2\x1b.google.protobuf.Int64ValueR\x16egressFloodDropsPerMin\x12E\n" +
 	" egress_flood_drops_limit_per_min\x18\x14 \x01(\x03R\x1begressFloodDropsLimitPerMin\"\r\n" +
-	"\vPingRequest\"j\n" +
+	"\vPingRequest\"\xa2\x01\n" +
 	"\fPingResponse\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x01 \x01(\tR\tfcVersion\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime\"2\n" +
+	"serverTime\x126\n" +
+	"\x17supports_secret_aliases\x18\x03 \x01(\bR\x15supportsSecretAliases\"2\n" +
 	"\x06Header\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\x12\n" +
@@ -9059,13 +9107,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"fc_version\x18\t \x01(\tR\tfcVersion\x12\x17\n" +
 	"\awake_id\x18\n" +
-	" \x01(\tR\x06wakeId\"\xbd\x01\n" +
+	" \x01(\tR\x06wakeId\"\xf5\x01\n" +
 	"\x1dAdoptMigratedInstanceResponse\x12\x17\n" +
 	"\ahost_ip\x18\x01 \x01(\tR\x06hostIp\x12\x14\n" +
 	"\x05netns\x18\x02 \x01(\tR\x05netns\x12\x1b\n" +
 	"\tguest_uid\x18\x03 \x01(\x05R\bguestUid\x127\n" +
 	"\x06method\x18\x04 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x12\x17\n" +
-	"\awake_id\x18\x05 \x01(\tR\x06wakeId\"_\n" +
+	"\awake_id\x18\x05 \x01(\tR\x06wakeId\x126\n" +
+	"\x17supports_secret_aliases\x18\x06 \x01(\bR\x15supportsSecretAliases\"_\n" +
 	"\x1bAcknowledgeMigrationRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x1f\n" +
@@ -9242,11 +9291,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04plan\x18\x03 \x01(\tR\x04plan\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x04 \x01(\tR\taccountId\x12#\n" +
-	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\"\x8a\x01\n" +
+	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\"\xc2\x01\n" +
 	"\x16RestoreAppTaskResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x127\n" +
-	"\x06method\x18\x03 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\"\xf8\x01\n" +
+	"\x06method\x18\x03 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x126\n" +
+	"\x17supports_secret_aliases\x18\x04 \x01(\bR\x15supportsSecretAliases\"\xf8\x01\n" +
 	"\x15ExecuteAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12\x17\n" +
