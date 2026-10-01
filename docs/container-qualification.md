@@ -556,3 +556,27 @@ TCP lint reports zero issues. Logs `/tmp/gregale-tcp-customer-race.log` and
 `/tmp/gregale-tcp-customer-lint.log`. Remote checks are pending.
 Weighted deployments, durable listener identity, UDP and TLS remain in the
 larger branch and require their own focused reviews. No PR has been merged.
+
+### Completed resource CI and TCP weighted rollout review — 2026-10-01
+
+Cgroup PR #3955 head `3a618cdbc44263d37cb75376f05bf5dd908e95a9` has finished
+remote CI with 25 successes and one conditional skip. Aggregate-memory #3958
+head `793d2361fecdf0faecc4b79c36ab02c1f7ec3dfe` has finished with 24 successes
+and two conditional skips. No checks remain running/queued/failing on those
+heads; both remain drafts and unmerged. Native acceptance is still unexecuted.
+
+Stacked draft [PR #3962](https://github.com/poyrazK/faas/pull/3962), head
+`ebdbb003d`, based on customer-routing #3960, isolates raw TCP connection-level
+serving deployment weights. The reusable selector validates exact total and
+eligible rows; cold admission pins the selected deployment and rejects a
+mismatched response. The decision is ADR-390 in this isolated review, scoped
+to TCP; UDP integration remains in the large branch.
+
+Full TCP/selector/public-gateway race suites pass, including the real-socket
+cold-candidate switch, retained connections, warm candidate reuse and rollback.
+The portable TCP ingress and session-guard end-to-end tests pass (90.542s),
+retaining existing gRPC forwarding composition. Scoped lint, formatting and
+whitespace checks pass. Evidence `/tmp/gregale-tcp-rollout-race.log`,
+`/tmp/gregale-tcp-rollout-e2e.log`, `/tmp/gregale-tcp-rollout-lint.log`.
+Remote checks on #3962 are pending. Native canary/rollback, node loss, cold wakes
+and leak acceptance are not established by substituted guest execution.
