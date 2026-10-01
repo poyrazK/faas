@@ -6711,17 +6711,21 @@ const issueList = `-- name: IssueList :many
 SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1
 AND ($2::text = '' OR state = $2)
 AND ($3::text = '' OR environment = $3)
-AND ($4::timestamptz IS NULL OR (last_seen_at,id) < ($4,$5::uuid))
-ORDER BY last_seen_at DESC,id DESC LIMIT $6
+AND ($4::uuid IS NULL OR assignee_account_id = $4)
+AND (NOT $5::bool OR assignee_account_id IS NULL)
+AND ($6::timestamptz IS NULL OR (last_seen_at,id) < ($6,$7::uuid))
+ORDER BY last_seen_at DESC,id DESC LIMIT $8
 `
 
 type IssueListParams struct {
-	AppID       pgtype.UUID
-	State       string
-	Environment string
-	CursorTime  pgtype.Timestamptz
-	CursorID    pgtype.UUID
-	PageLimit   int32
+	AppID             pgtype.UUID
+	State             string
+	Environment       string
+	AssigneeAccountID pgtype.UUID
+	Unassigned        bool
+	CursorTime        pgtype.Timestamptz
+	CursorID          pgtype.UUID
+	PageLimit         int32
 }
 
 func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]AppIssue, error) {
@@ -6729,6 +6733,8 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 		arg.AppID,
 		arg.State,
 		arg.Environment,
+		arg.AssigneeAccountID,
+		arg.Unassigned,
 		arg.CursorTime,
 		arg.CursorID,
 		arg.PageLimit,

@@ -24,6 +24,11 @@ type dashboardIssuesData struct {
 	AppSlug             string
 	Items               []api.Issue
 	Detail              *api.IssueDetail
+	CurrentAccountID    string
+	StateFilter         string
+	EnvironmentFilter   string
+	AssigneeFilter      string
+	OwnerLabels         map[string]string
 	CSRF                string
 	ReplayCSRF          string
 	Error               string
@@ -65,7 +70,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	if !ok {
 		return
 	}
-	data := dashboardIssuesData{AppSlug: slug}
+	data := dashboardIssuesData{AppSlug: slug, CurrentAccountID: acct.ID}
 	data.Since = strings.TrimSpace(r.URL.Query().Get("since"))
 	data.EventCursor = strings.TrimSpace(r.URL.Query().Get("event_cursor"))
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
@@ -90,6 +95,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	s.populateIssueDashboardChoices(r.Context(), app, acct, &data)
+	populateIssueDashboardOwnerLabels(&data)
 	s.populateIssueDashboardReplay(r.Context(), app, acct, r, &data)
 	count, _ := s.store.CountDeployedApps(r.Context(), acct.ID)
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: slug + " issues", Body: "issues", Account: dashboardAccountView(acct, count), Data: data}); err != nil {
@@ -143,12 +149,20 @@ type dashboardIssueMember struct{ ID, Name string }
 
 func populateIssueDashboardList(w http.ResponseWriter, r *http.Request, app state.App, st state.IssueStore, data *dashboardIssuesData) bool {
 	slug := app.Slug
+	filter, err := parseIssueListFilter(r, data.CurrentAccountID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return false
+	}
+	data.StateFilter = filter.State
+	data.EnvironmentFilter = filter.Environment
+	data.AssigneeFilter = r.URL.Query().Get("assignee")
 	cur, err := state.DecodeIssueCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid issue cursor"))
 		return false
 	}
-	list, err := st.ListIssues(r.Context(), app.ID, r.URL.Query().Get("state"), r.URL.Query().Get("environment"), cur)
+	list, err := st.ListIssues(r.Context(), app.ID, filter, cur)
 	if err != nil {
 		writeIssueError(w, err)
 		return false
@@ -232,6 +246,25 @@ func (s *server) populateIssueDashboardChoices(ctx context.Context, app state.Ap
 			DeploymentID: rule.MirrorDeploymentID,
 			Label:        label,
 		})
+	}
+}
+
+func populateIssueDashboardOwnerLabels(data *dashboardIssuesData) {
+	memberNames := make(map[string]string, len(data.Members))
+	for _, member := range data.Members {
+		memberNames[member.ID] = member.Name
+	}
+	data.OwnerLabels = make(map[string]string, len(data.Items))
+	for _, issue := range data.Items {
+		if issue.AssigneeAccountID == "" {
+			data.OwnerLabels[issue.ID] = "Unassigned"
+			continue
+		}
+		if name, ok := memberNames[issue.AssigneeAccountID]; ok {
+			data.OwnerLabels[issue.ID] = name
+		} else {
+			data.OwnerLabels[issue.ID] = "Account " + issue.AssigneeAccountID
+		}
 	}
 }
 

@@ -14393,6 +14393,13 @@ CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (acc
 
 
 --
+-- Name: app_issues_assignee_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_issues_assignee_list_idx ON public.app_issues USING btree (app_id, assignee_account_id, last_seen_at DESC, id DESC);
+
+
+--
 -- Name: app_issues_list_idx; Type: INDEX; Schema: public; Owner: -
 --
 

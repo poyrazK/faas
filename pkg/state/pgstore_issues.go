@@ -284,8 +284,12 @@ func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.App
 	return q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: activity.ID, AccountID: row.AccountID, AppID: row.AppID, Payload: payload})
 }
 
-func (s *PgStore) ListIssues(ctx context.Context, app, state, environment string, cur IssueCursor) (api.ListIssuesResponse, error) {
-	rows, err := sqlc.New().IssueList(ctx, s.pool, sqlc.IssueListParams{AppID: issueUUID(app), State: state, Environment: environment, CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1})
+func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFilter, cur IssueCursor) (api.ListIssuesResponse, error) {
+	rows, err := sqlc.New().IssueList(ctx, s.pool, sqlc.IssueListParams{
+		AppID: issueUUID(app), State: filter.State, Environment: filter.Environment,
+		AssigneeAccountID: issueUUID(filter.AssigneeAccountID), Unassigned: filter.Unassigned,
+		CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1,
+	})
 	if err != nil {
 		return api.ListIssuesResponse{}, err
 	}

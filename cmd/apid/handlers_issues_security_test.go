@@ -99,7 +99,15 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	token := issueCreateToken(t, e, app.Slug, dep)
 	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: `<script>alert("x")</script>`}
 	result := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
-	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + result.IssueID
+	unassigned := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=unassigned", nil, nil), 200)
+	if len(unassigned.Items) != 1 || unassigned.Items[0].ID != result.IssueID {
+		t.Fatalf("unassigned issue filter = %+v", unassigned.Items)
+	}
+	mine := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=me", nil, nil), 200)
+	if len(mine.Items) != 0 {
+		t.Fatalf("mine filter included unassigned issue: %+v", mine.Items)
+	}
+	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + result.IssueID + "&assignee=unassigned"
 	r := httptest.NewRequest("GET", page, nil)
 	e.addAdminSession(t, r)
 	w := httptest.NewRecorder()
@@ -109,6 +117,11 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatal("exception HTML not escaped")
+	}
+	for _, want := range []string{"<th>Owner</th>", "<th>Recurrences</th>", "Unassigned", `value="unassigned" selected`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("issues inbox missing %q", want)
+		}
 	}
 	var csrf *http.Cookie
 	for _, c := range w.Result().Cookies() {

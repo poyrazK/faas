@@ -1478,6 +1478,7 @@ export class AppsService {
     slug,
     state,
     environment,
+    assignee,
     cursor,
   }: {
     /**
@@ -1493,6 +1494,10 @@ export class AppsService {
      */
     environment?: string,
     /**
+     * Filter by me, unassigned, or an owner account UUID.
+     */
+    assignee?: string,
+    /**
      * Opaque next_cursor from the previous issue page.
      */
     cursor?: string,
@@ -1506,6 +1511,7 @@ export class AppsService {
       query: {
         'state': state,
         'environment': environment,
+        'assignee': assignee,
         'cursor': cursor,
       },
       errors: {

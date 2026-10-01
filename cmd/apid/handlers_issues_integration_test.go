@@ -107,6 +107,20 @@ func TestIssueEndToEndPostgres(t *testing.T) {
 	if len(list.Items) != 1 {
 		t.Fatal("one failure became multiple issues")
 	}
+	if list.Items[0].AssigneeAccountID != e.acct.ID || list.Items[0].RegressionCount != 1 {
+		t.Fatalf("issue list omitted triage fields: %+v", list.Items[0])
+	}
+	mine := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=me", nil, nil), 200)
+	if len(mine.Items) != 1 || mine.Items[0].ID != first.IssueID {
+		t.Fatalf("mine filter = %+v", mine.Items)
+	}
+	unassigned := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=unassigned", nil, nil), 200)
+	if len(unassigned.Items) != 0 {
+		t.Fatalf("unassigned filter = %+v", unassigned.Items)
+	}
+	if w := e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=not-an-account", nil, nil); w.Code != 400 {
+		t.Fatalf("invalid assignee filter status = %d", w.Code)
+	}
 	other := seedPGApp(t, e, "issue-other")
 	if w := issueSend(t, e, other.Slug, fixedToken, event); w.Code != 401 {
 		t.Fatal("ingest token crossed app boundary")

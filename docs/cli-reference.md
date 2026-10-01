@@ -2543,7 +2543,7 @@ Wait for one invocation to finish
 
 Group failures and track ownership and release-aware resolution
 
-`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <UUID>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>]`
+`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <OWNER>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2554,7 +2554,7 @@ Group failures and track ownership and release-aware resolution
 | `--cursor <CURSOR>` | issue-list or occurrence cursor |  |
 | `--release-cursor <CURSOR>` | release history cursor |  |
 | `--activity-cursor <CURSOR>` | activity history cursor |  |
-| `--assignee <UUID>` | owner account |  |
+| `--assignee <OWNER>` | list filter me, unassigned, or account UUID; assignment owner UUID |  |
 | `--since <RFC3339>` | impact window start |  |
 | `--until <RFC3339>` | ignore until |  |
 | `--name <NAME>` | credential name |  |
@@ -2564,6 +2564,8 @@ Examples:
 
 ```sh
 gregale issues list --app my-api
+gregale issues list --app my-api --assignee me
+gregale issues list --app my-api --assignee unassigned
 gregale issues get ISSUE_ID --app my-api
 gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID
 ```
