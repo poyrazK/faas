@@ -353,16 +353,16 @@ func nextStepsFor(tpl string) []string {
 	switch tpl {
 	case "customer-platform":
 		return []string{
-			"Use a PostgreSQL role without superuser or BYPASSRLS privileges.",
-			"Create a 0600 secrets file outside this directory containing DATABASE_URL=...",
-			"Reserve the app before configuring database network access:",
+			"Reserve the app, then attach managed runtime and migration bindings:",
 			"  gregale deploy --create-only --template customer-platform --name <slug>",
-			"For remote PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
-			"First deploy (Hobby or above):",
-			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn --secrets-file <secrets-file>",
-			"The Procfile release command installs the tenant-scoped document schema.",
+			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
+			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
+			"Use a runtime role without superuser or BYPASSRLS privileges.",
+			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn",
+			"The Procfile release command installs the tenant-scoped document schema before activation.",
 			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
-			"Read README.md for credential issuance, rotation, usage, and suspension.",
+			"Read README.md for external database secrets, credential issuance, rotation, usage, and suspension.",
 		}
 	case "s3-uploader":
 		return []string{
@@ -395,15 +395,14 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "rest-api-postgres":
 		return []string{
-			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
-			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
-			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
-			"Or reserve the app before setting secrets separately:",
+			"Reserve the app, then attach managed runtime and migration bindings:",
 			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
-			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
-			"  cd <dest> && gregale deploy",
+			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
+			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
+			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"  cd <dest> && gregale deploy --name <slug>",
+			"The Procfile release command creates the schema before activation.",
+			"For external PostgreSQL, run migrations locally; see README.md for gregale secrets set and --secrets-file setup.",
 		}
 	case "secret-reload-node":
 		return []string{

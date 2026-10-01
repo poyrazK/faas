@@ -8,7 +8,8 @@ import { createStore } from "../app/store.js";
 test("PostgreSQL tenant isolation, rollback and connection reuse", async (t) => {
   assert.ok(process.env.CUSTOMER_DATABASE_URL, "Set CUSTOMER_DATABASE_URL to a disposable non-superuser database");
   const { default: pg } = await import("pg");
-  await migrate(process.env.CUSTOMER_DATABASE_URL);
+  assert.ok(process.env.CUSTOMER_MIGRATION_DATABASE_URL, "Set CUSTOMER_MIGRATION_DATABASE_URL to the schema owner connection");
+  await migrate(process.env.CUSTOMER_MIGRATION_DATABASE_URL);
   const pool = new pg.Pool({ connectionString: process.env.CUSTOMER_DATABASE_URL, max: 1 });
   const store = createStore(pool), alice = randomUUID(), bob = randomUUID();
   let doc;

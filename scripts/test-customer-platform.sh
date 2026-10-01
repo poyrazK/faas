@@ -2,6 +2,7 @@
 set -eu
 
 : "${DATABASE_URL:?Set DATABASE_URL to a disposable Gregale test database}"
+: "${CUSTOMER_MIGRATION_DATABASE_URL:?Set CUSTOMER_MIGRATION_DATABASE_URL to the disposable schema owner connection}"
 : "${CUSTOMER_DATABASE_URL:?Set CUSTOMER_DATABASE_URL to a disposable application database with a non-superuser role}"
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 starter_dir=$(mktemp -d "${TMPDIR:-/tmp}/gregale-customer-platform.XXXXXX")
