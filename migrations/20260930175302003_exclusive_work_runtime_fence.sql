@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-create function exclusive_work_instance_transition() returns trigger language plpgsql as $$
+create or replace function exclusive_work_instance_transition() returns trigger language plpgsql as $$
 declare old_incarnation text;
 begin
   old_incarnation := old.id::text || '/' || old.wake_id::text || '/' || old.node_id::text;
@@ -21,6 +21,7 @@ begin
   return new;
 end;
 $$;
+drop trigger if exists exclusive_work_instance_transition on instances;
 create trigger exclusive_work_instance_transition
   before update of state,wake_id,node_id on instances
   for each row execute function exclusive_work_instance_transition();

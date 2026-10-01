@@ -1149,5 +1149,6 @@ func prefixedAppTaskColumns(alias string) string {
        ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
        ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for,
        ` + alias + `.failure_rules, ` + alias + `.occurrence_id, ` + alias + `.start_deadline_at,
-       ` + alias + `.work_decision, ` + alias + `.outcome_code`
+       ` + alias + `.work_decision, ` + alias + `.outcome_code,
+       ` + alias + `.exclusive_operation_id, ` + alias + `.exclusive_generation`
 }

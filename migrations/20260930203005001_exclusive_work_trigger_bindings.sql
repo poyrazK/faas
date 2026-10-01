@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE exclusive_work_trigger_bindings (
+CREATE TABLE IF NOT EXISTS exclusive_work_trigger_bindings (
   source text NOT NULL CHECK (source IN ('cron', 'inbound_webhook')),
   trigger_id uuid NOT NULL,
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -19,26 +19,28 @@ CREATE TABLE exclusive_work_trigger_bindings (
   FOREIGN KEY (account_id, platform_tenant_id) REFERENCES platform_tenants(account_id, id) ON DELETE CASCADE
 );
 
-CREATE INDEX exclusive_work_trigger_bindings_policy_idx
+CREATE INDEX IF NOT EXISTS exclusive_work_trigger_bindings_policy_idx
   ON exclusive_work_trigger_bindings (account_id, policy_name);
 
-CREATE FUNCTION delete_exclusive_cron_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION delete_exclusive_cron_binding() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM exclusive_work_trigger_bindings WHERE source = 'cron' AND trigger_id = OLD.id;
   RETURN OLD;
 END;
 $$;
+DROP TRIGGER IF EXISTS crons_delete_exclusive_binding ON crons;
 CREATE TRIGGER crons_delete_exclusive_binding
   AFTER DELETE ON crons FOR EACH ROW EXECUTE FUNCTION delete_exclusive_cron_binding();
 
-CREATE FUNCTION delete_exclusive_webhook_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION delete_exclusive_webhook_binding() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = OLD.id;
   RETURN OLD;
 END;
 $$;
+DROP TRIGGER IF EXISTS inbound_webhooks_delete_exclusive_binding ON inbound_webhook_endpoints;
 CREATE TRIGGER inbound_webhooks_delete_exclusive_binding
   AFTER DELETE ON inbound_webhook_endpoints FOR EACH ROW EXECUTE FUNCTION delete_exclusive_webhook_binding();
 -- +goose StatementEnd

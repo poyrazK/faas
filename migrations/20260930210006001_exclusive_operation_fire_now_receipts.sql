@@ -2,7 +2,7 @@
 
 -- +goose Up
 ALTER TABLE cron_fire_now_requests
-  ADD COLUMN operation_id uuid REFERENCES exclusive_work_operations(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS operation_id uuid REFERENCES exclusive_work_operations(id) ON DELETE SET NULL;
 
 -- +goose Down
 ALTER TABLE cron_fire_now_requests DROP COLUMN operation_id;

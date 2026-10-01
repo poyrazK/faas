@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-create table exclusive_work_policies (
+create table if not exists exclusive_work_policies (
   id uuid primary key,
   account_id uuid not null references accounts(id) on delete cascade,
   name text not null check (name ~ '^[a-z][a-z0-9-]{0,62}$'),
@@ -17,7 +17,7 @@ create table exclusive_work_policies (
 
 -- Never delete a key while its account exists: reusing a business key must
 -- never make a historic ownership generation authoritative again.
-create table exclusive_work_keys (
+create table if not exists exclusive_work_keys (
   id uuid primary key,
   account_id uuid not null references accounts(id) on delete cascade,
   policy_id uuid not null,
@@ -31,7 +31,7 @@ create table exclusive_work_keys (
   unique (id, account_id)
 );
 
-create table exclusive_work_operations (
+create table if not exists exclusive_work_operations (
   id uuid primary key,
   account_id uuid not null references accounts(id) on delete cascade,
   key_id uuid not null,
@@ -63,18 +63,18 @@ create table exclusive_work_operations (
              and attempt_deadline is null))
 );
 
-create unique index exclusive_work_idempotency_idx
+create unique index if not exists exclusive_work_idempotency_idx
   on exclusive_work_operations (key_id, idempotency_digest)
   where idempotency_digest is not null;
-create unique index exclusive_work_one_owner_idx
+create unique index if not exists exclusive_work_one_owner_idx
   on exclusive_work_operations (key_id) where state = 'running';
-create index exclusive_work_pending_idx
+create index if not exists exclusive_work_pending_idx
   on exclusive_work_operations (key_id, sequence) where state in ('pending','running');
-create index exclusive_work_expired_owner_idx
+create index if not exists exclusive_work_expired_owner_idx
   on exclusive_work_operations (lease_expires_at) where state = 'running';
 
 -- A joined submission keeps its own retry receipt after the original finishes.
-create table exclusive_work_submissions (
+create table if not exists exclusive_work_submissions (
   key_id uuid not null references exclusive_work_keys(id),
   idempotency_digest bytea not null check (length(idempotency_digest) = 32),
   operation_id uuid not null references exclusive_work_operations(id),
@@ -83,7 +83,7 @@ create table exclusive_work_submissions (
 
 -- Platform-controlled effects are inserted with the result under the same
 -- ownership lock. Consumers deliver them at least once with a stable ID.
-create table exclusive_work_effects (
+create table if not exists exclusive_work_effects (
   id uuid primary key,
   operation_id uuid not null references exclusive_work_operations(id),
   generation bigint not null check (generation > 0),

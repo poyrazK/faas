@@ -3,23 +3,24 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE exclusive_work_trigger_bindings
-  DROP CONSTRAINT exclusive_work_trigger_bindings_source_check,
+  DROP CONSTRAINT IF EXISTS exclusive_work_trigger_bindings_source_check,
   ADD CONSTRAINT exclusive_work_trigger_bindings_source_check
     CHECK (source IN ('cron', 'inbound_webhook', 'broker'));
 
 ALTER TABLE trigger_dead_letter
-  DROP CONSTRAINT trigger_dead_letter_reason_check,
+  DROP CONSTRAINT IF EXISTS trigger_dead_letter_reason_check,
   ADD CONSTRAINT trigger_dead_letter_reason_check
     CHECK (reason IN ('rate_limited', 'poison_record', 'max_attempts', 'broker_error',
                       'plan_quota', 'payload_too_large', 'customer_disabled', 'exclusive_operation_rejected'));
 
-CREATE FUNCTION delete_exclusive_broker_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION delete_exclusive_broker_binding() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM exclusive_work_trigger_bindings WHERE source = 'broker' AND trigger_id = OLD.id;
   RETURN OLD;
 END;
 $$;
+DROP TRIGGER IF EXISTS triggers_delete_exclusive_broker_binding ON triggers;
 CREATE TRIGGER triggers_delete_exclusive_broker_binding
   AFTER DELETE ON triggers FOR EACH ROW EXECUTE FUNCTION delete_exclusive_broker_binding();
 -- +goose StatementEnd
