@@ -1025,3 +1025,11 @@ Monitoring CI job `110278172293` rejected prerequisite fix commits under its Go-
 ### Integration unit regression verification completed
 
 After free disk space recovered, the canonical UDP optional-environment regression passed three runs in integration. Full generation and environment gates also passed. Logs `/tmp/gregale-udp-unit-regression-integrated-final.log` and `/tmp/gregale-udp-unit-regression-env-final.log`. This resolves the earlier disk-exhaustion verification gap; caches and unrelated running work were left intact. Remote CI remains live and native/deployed acceptance is still unverified.
+
+### Combined UDP storage and SDK remote CI completed
+
+Draft PR [#3997](https://github.com/poyrazK/faas/pull/3997), head `b49991b11`, finished with 26 successful checks and one skipped image-build check. Full migration job [110269229264](https://github.com/poyrazK/faas/actions/runs/36831455438/job/110269229264) is authoritatively completed with conclusion `success`. This supersedes earlier snapshots of that job as live. The candidate includes customer API/storage lifecycle, schema, clients and the strict eight-case PostgreSQL gate; it does not include the complete public runtime branch or prove native guest UDP acceptance.
+
+Deployment PR #3991 head `5cadf5c7e` adds `TestUDPFirewallStringOptInStandardJinja` after CI required Go regression coverage for the firewall correction. Ten opt-in strings passed across three deployment-tree runs and one integration run, with standard Jinja2 installed and no skipped test: `/tmp/gregale-udp-firewall-go-regression.log` and `/tmp/gregale-udp-firewall-go-integrated.log`.
+
+Monitoring PR #3998 head `9d66989df` links all four UDP alerts to the checked-in operator guidance. Full alert metadata validation, syntax validation of 239 rules, and UDP alert scenarios passed in both trees: `/tmp/gregale-udp-alert-metadata-final.log` and `/tmp/gregale-udp-alert-metadata-integrated.log`. Public, deployment and updated monitoring remote CI remain pending. No firewall was applied; native KVM, deployed recovery and leak acceptance remain unverified.
