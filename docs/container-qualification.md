@@ -1021,3 +1021,7 @@ Full `make generate-check env-contract-check` passed on the integration tree aft
 ### Canonical UDP environment-file regression
 
 Monitoring CI job `110278172293` rejected prerequisite fix commits under its Go-regression-file rule. PR #3998 commit `de444900c` adds `TestGatewaydPublicLoadsOptionalUDPEnvironment`, which fails if the canonical unit omits the optional `udpd.env` token. Three runs passed in the monitoring tree, log `/tmp/gregale-udp-monitoring-unit-regression.log`. The integration run failed at linking with disk exhaustion, log `/tmp/gregale-udp-unit-regression-integrated.log`; integration verification remains pending. No exception label was used. Updated remote regression-gate acceptance remains pending.
+
+### Integration unit regression verification completed
+
+After free disk space recovered, the canonical UDP optional-environment regression passed three runs in integration. Full generation and environment gates also passed. Logs `/tmp/gregale-udp-unit-regression-integrated-final.log` and `/tmp/gregale-udp-unit-regression-env-final.log`. This resolves the earlier disk-exhaustion verification gap; caches and unrelated running work were left intact. Remote CI remains live and native/deployed acceptance is still unverified.
