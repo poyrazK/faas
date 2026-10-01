@@ -1107,6 +1107,35 @@ cookies from a discarded failure from reaching the client. Local daemon fleet
 tests must inspect the real debugger publisher's emitted RPC records as well as
 guest dispatch. The receiver and VM endpoint remain explicit fixtures.
 
+### Follow-up: bounded request evidence shutdown
+
+Daemon cancellation quiesces ordinary debugger publishing while HTTP handlers
+finish their bounded drain. Explicit publisher stop follows producer shutdown.
+It cancels the current shipping RPC, retains an interrupted collapsed batch with
+its original event IDs, and gives that batch plus queued rows one finite final
+flush context independent of the canceled daemon context. A known success counts
+once. Unconfirmed evidence at the final deadline is counted as dropped by represented
+logical requests. The receiver's existing atomic event ledger deduplicates an
+ambiguous acknowledgment replay. A lost acknowledgment can count as dropped even
+when the receiver already committed the evidence. Financial usage retains its separate fsynced
+outbox; optional debugger delivery remains best effort across process death.
+
+Publisher stop joins the actor for every concurrent caller and cannot extend
+its deadline for each batch. Stop before start is terminal and performs no work.
+Shipping callbacks must honor their context, as the production gRPC client does.
+No canceled guest request is resumed by the independent evidence flush.
+
+The internal daemon shares one cleanup deadline across evidence publishing,
+egress RPC shutdown, trace export and retained-span cleanup. It allows five
+seconds after the 25-second HTTP drain, with that cleanup deadline capped at
+30 seconds from drain start. Startup-error cleanup receives the same finite five-second
+allowance. Publisher flushing uses at most two seconds within that shared
+deadline. Consumers retain independent context cancellation. All operational
+ceilings live in `pkg/api/limits.go`. Deployment must
+verify service-manager stop settings and forced-termination behavior separately.
+These context budgets do not bound every unrelated deferred resource close or
+guarantee evidence from producers that outlive an exhausted HTTP drain.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

@@ -2280,6 +2280,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 // Production calls run → runWithDeps(defaultDeps()); tests inject a custom
 // deps.listen so they can probe a real socket without binding :8080.
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	cleanup := &gatewayShutdownBudget{}
 	cfg := deps.config
 	if cfg == nil {
 		cfg = &Config{}
@@ -2392,16 +2393,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		shutdownCtx, cancel := cleanup.context(ctx)
+		defer cancel()
 		if err := traceShutdown(shutdownCtx); err != nil {
 			log.Warn("gatewayd-internal: trace shutdown failed", "err", err)
 		}
-		cancel()
 		if retainedFlushCancel != nil {
 			retainedFlushCancel()
 			select {
 			case <-retainedFlushDone:
-			case <-time.After(6 * time.Second):
+			case <-shutdownCtx.Done():
 				log.Warn("gatewayd-internal: timed out draining retained spans")
 			}
 		}
@@ -2710,7 +2711,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.egressGRPC == nil {
 			return
 		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := cleanup.context(ctx)
 		defer cancel()
 		_ = deps.egressGRPC.stop(shutdownCtx)
 	}()
@@ -2995,8 +2996,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recorder.SetWakeHook(publisher.Wake)
 		publisher.Start(ctx)
 		handler.WithRequestTelemetryRecorder(recorder)
-		// Stop() drains the final batch synchronously on shutdown.
-		defer publisher.Stop()
+		// Join the publisher's bounded final flush after the HTTP drain.
+		defer func() {
+			shutdownCtx, cancel := cleanup.context(ctx)
+			defer cancel()
+			publisher.StopWithContext(shutdownCtx)
+		}()
 		// Expose counters for the dashboard via /metrics; read by
 		// the existing Prometheus scrape.
 		log.Info("request_telemetry recorder enabled",
@@ -3868,6 +3873,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
+		cleanup.beginDrain()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
 		for _, s := range serviceDiscoveryServers {
@@ -3900,9 +3906,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Issue #587 / PR-A: wait for the per-request drain
 		// tracker to flush before exiting. shutdownCtx has
-		// already been wired to drain.DrainGrace (25s) — that
-		// sits inside systemd's TimeoutStopSec=30s with 5s
-		// headroom. The drain sets its own internal `draining`
+		// already been wired to drain.DrainGrace (25s). Deferred evidence,
+		// egress and trace cleanup share the following 5s, capped at 30s
+		// from drain start. Deployment must verify the service manager's
+		// stop deadline separately. The drain sets its internal `draining`
 		// flag so any post-Shutdown stragglers become no-op
 		// Begin closures (pkg/gateway/drain.Drain doc).
 		//

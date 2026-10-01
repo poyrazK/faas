@@ -860,3 +860,33 @@ outage/recovery, staging or native VM/network/leak acceptance.
 Ordinary response decision evidence uses the budget's wall-clock expiry even
 when transport completion precedes its context timer. A successfully detached
 stream retains its independent lifetime reason.
+
+## Request evidence during gateway shutdown
+
+Daemon cancellation pauses ordinary debugger uploads while HTTP handlers finish
+their existing 25-second drain. The publisher then cancels an interrupted upload
+and flushes its unchanged batch and remaining queued rows with a fresh context.
+The final flush has one two-second budget, shared across all batches and joining
+the interrupted RPC. Concurrent stop callers wait for the same completion.
+Interrupted batches retain their event IDs so the receiver's existing atomic
+ledger can deduplicate a replay after an ambiguous acknowledgment.
+
+Debugger publishing, egress RPC shutdown, trace export and retained-span cleanup
+share one five-second cleanup deadline, capped at 30 seconds from HTTP drain
+start. Startup-error cleanup receives five seconds. These limits are declared in
+`pkg/api/limits.go`; they do not configure the service manager. Confirm the deployed
+stop timeout permits HTTP drain and cleanup, and qualify forced termination before
+release. Other resource closes and producers outliving an exhausted HTTP drain
+still need operational acceptance.
+
+Monitor `gateway_request_telemetry_shipped_total` and
+`gateway_request_telemetry_dropped_total` with shutdown warnings. They count the
+logical requests represented by collapsed rows. Evidence still queued when the
+final deadline expires is dropped and counted; optional debugger records can also
+be lost on process death. An interrupted upload without an acknowledgment counts
+as dropped even if the receiver already committed it. These are delivery-confirmation
+counters. Financial request usage keeps its independent durable
+outbox. Local tests cover canceled uploads, unchanged-ID replay, timeout loss,
+concurrent stop and actual daemon shutdown RPC delivery. The telemetry receiver
+and VM endpoint in those daemon tests are fixtures; deployed persistence,
+forced-termination, load and staging qualification remain pending.

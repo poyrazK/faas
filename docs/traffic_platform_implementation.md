@@ -3,6 +3,80 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Bounded request evidence shutdown — 2026-10-01
+
+The unchanged-runtime baseline reproduced lost shutdown evidence: the publisher
+received an already canceled daemon context, dropped all ten represented requests
+in the unit fixture and emitted zero pending RPC records from either real daemon.
+Cancellation during an ordinary upload also discarded the drained batch.
+
+The publisher now pauses ordinary uploads after daemon cancellation while HTTP
+producers drain. Explicit stop cancels the active RPC, retains its exact collapsed
+payload and event IDs, and flushes that payload plus queued evidence with one
+independent deadline. Every concurrent stop caller joins the same actor. A known
+successful upload counts once; deadline loss counts represented logical requests.
+Stop before start is terminal. Shipping callbacks must honor cancellation.
+
+The final publisher budget is at most two seconds. Debugger publishing, egress
+RPC shutdown, trace export and retained-span cleanup share five seconds after
+HTTP drain, with their cleanup deadline capped at 30 seconds from drain start.
+Startup-error cleanup gets five seconds. Limits live in pkg/api/limits.go. These
+contexts do not configure the service manager, bound every unrelated deferred
+close, or guarantee evidence from producers outliving an exhausted HTTP drain.
+Optional debugger records remain best effort across process death; financial
+request usage retains its separate durable outbox.
+
+Focused fixtures verify parent cancellation, active RPC interruption, exact-ID
+ambiguous acknowledgment replay, multiple queued batches, shared owner deadlines,
+loss accounting, start/stop races, all concurrent waiters and budget configuration.
+Both real daemon processes publish pending request records during stop. Placement,
+VM forwarding and the telemetry receiver remain fixtures. The existing actual
+Postgres telemetry/log ledger replay fixture verifies atomic duplicate suppression
+and rollback. These local checks do not establish deployed fleet or native VM
+acceptance.
+
+Verification against the final 12,507-file source freeze:
+
+- The complete state, internal gateway, scheduler, gateway, trafficrevocation,
+  schedd, public gateway and API unit scope passed 9,068 named checks in
+  154.514 s. Package passes are 2,159, 799, 1,778, 2,307, 33, 86, 93 and 1,813.
+  The 1,435 guarded/skipped results are not accepted passes.
+- The selected Postgres profile passed 130 named checks with no skips in
+  100.676 s: 33 named results under 18 actual Postgres fixture roots, plus
+  97 memory/transport checks. Both daemon shutdowns emit the pending RPC record
+  with the successful guest, app/account/deployment and trace identity. The
+  independent ledger test preserves one telemetry/log event after duplicate
+  replay and rolls back a failed telemetry write atomically.
+- Across both profiles, 9,100 distinct named checks passed; 1,416 guarded results
+  remain without acceptance. Lint v2.4.0 checks all eight complete packages with
+  tests and reports zero issues in 74.351 s. SQLC v1.31.1 reproduces all four
+  generated files exactly. Runbook SQL, text encoding, shell quoting and ADR
+  uniqueness gates pass in 29.514 s, retaining the 71 pre-existing duplicate groups.
+- Go and lint ran serially with one package compiler, CGO disabled, GOMAXPROCS=2,
+  GOGC=50 and disabled inlining/DWARF. Test binaries are stripped. Source scope,
+  assertions and profiles were not weakened. Only this tracker changed after
+  the accepted source freeze. The disposable source database stayed unmigrated,
+  with fsync, synchronous_commit and full_page_writes enabled.
+
+The failed baseline, disk-full fixed-core linker run and disk-full preliminary
+lint are preserved as whole diagnostics. A later lint diagnostic found the nil
+stop context and context replacement; explicit context inheritance under the
+lifecycle lock fixed both before the final freeze without suppressions. Earlier
+focused handler/daemon checks and the diagnostic source freeze remain excluded
+from accepted final counts.
+
+Two cache cleanups ran only after owned heavy sessions terminated. The first
+removed two obsolete API archives totaling 1,345,605,690 bytes. The second removed
+1,182 older repository archives totaling 3,339,743,890 bytes, retaining newer
+archives and standard dependencies. No sibling cache, process or Postgres cluster
+was changed. Exact source, staged/committed content, diagnostics and gate receipts
+are in the evidence directory:
+`outputs/traffic-evidence-shutdown-20261001/` relative to the checkout's parent.
+
+All six release requirements below remain open. Native Linux x86_64 KVM host
+availability, complete path agreement, deployed load/outage/recovery,
+forced-termination and staging qualification remain pending.
+
 ## Retry completion ownership — 2026-10-01
 
 The unchanged-runtime baseline reproduced a second retry ownership bug. The

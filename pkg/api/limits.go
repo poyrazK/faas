@@ -4598,9 +4598,17 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// GatewayShutdownCleanupGraceSeconds is one shared allowance for egress,
+	// debugger and trace cleanup after HTTP drains. It also bounds startup-error
+	// cleanup. Its deadline is at most drain plus cleanup (30s) from drain start.
+	GatewayShutdownCleanupGraceSeconds = 5
+	// GatewayRequestTelemetryShutdownTimeoutSeconds caps the final debugger
+	// flush, including an interrupted RPC and every queued batch. It consumes
+	// the shared cleanup allowance rather than extending it.
+	GatewayRequestTelemetryShutdownTimeoutSeconds = 2
+	ReplicaHeartbeatIntervalSeconds               = 5
+	WarmHintCacheSize                             = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.
