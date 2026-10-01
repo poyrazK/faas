@@ -22,17 +22,21 @@ import (
 
 // Operations protocol limits apply before customer schemas are evaluated.
 const (
-	OperationJSONMaxDepth             = 64
-	OperationJSONMaxNumberBytes       = 256
-	OperationJSONMaxExponent          = 10000
-	OperationNameMaxBytes             = 64
-	OperationPathMaxBytes             = 2048
-	OperationIdempotencyKeyMaxBytes   = 128
-	OperationReportIDMaxBytes         = 128
-	OperationRecoveryEvidenceMaxBytes = 4096
-	OperationEventsPageMax            = 100
-	OperationRetentionPageMax         = 500
-	OperationDefinitionBodyMaxBytes   = 140000
+	OperationJSONMaxDepth               = 64
+	OperationJSONMaxNumberBytes         = 256
+	OperationJSONMaxExponent            = 10000
+	OperationNameMaxBytes               = 64
+	OperationPathMaxBytes               = 2048
+	OperationIdempotencyKeyMaxBytes     = 128
+	OperationReportIDMaxBytes           = 128
+	OperationRecoveryEvidenceMaxBytes   = 4096
+	OperationEventsPageMax              = 100
+	OperationRetentionPageMax           = 500
+	OperationDefinitionBodyMaxBytes     = 140000
+	OperationWorkflowDispatchRetryDelay = time.Second
+	OperationWorkflowDefaultAttempts    = 3
+	OperationWorkflowRetryShiftMax      = 8
+	OperationWorkflowRetryBackoffMax    = 5 * time.Minute
 	// Monotonic workflow coordinator fences use a PostgreSQL integer counter.
 	OperationWorkflowClaimsMaxPerRun           = 1<<31 - 1
 	OperationWorkflowStepAttemptsMax           = 1<<31 - 1
