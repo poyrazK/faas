@@ -1017,3 +1017,7 @@ Public PR #3992 commit `bcc6d87e7` includes the standard-Jinja firewall fix; sev
 ### Integrated environment registry and unit consistency
 
 Full `make generate-check env-contract-check` passed on the integration tree after correcting the canonical UDP environment-file spec. The bind-host catalog wording was previously edited only in generated Markdown; its IPv4 validation description now lives in the source registry and regenerates identically. Log `/tmp/gregale-udp-integrated-env-gates-final.log`. This proves local generation/delivery declarations, not deployed startup or native qualification.
+
+### Canonical UDP environment-file regression
+
+Monitoring CI job `110278172293` rejected prerequisite fix commits under its Go-regression-file rule. PR #3998 commit `de444900c` adds `TestGatewaydPublicLoadsOptionalUDPEnvironment`, which fails if the canonical unit omits the optional `udpd.env` token. Three runs passed in monitoring and integration trees, logs `/tmp/gregale-udp-monitoring-unit-regression.log` and `/tmp/gregale-udp-unit-regression-integrated.log`. No exception label was used. Updated remote regression-gate acceptance remains pending.
