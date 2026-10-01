@@ -526,6 +526,13 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
+	cgroupFile, err := attachWorkloadCgroup(cmd, mainLeaf)
+	if err != nil {
+		return fmt.Errorf("attach main workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -540,11 +547,6 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 			}
 		}
 		sup.markHealthy()
-	}
-	// Place the forked child into the leaf. Same race
-	// posture as runSidecar — see placeIntoLeaf's doc.
-	if mainLeaf != "" {
-		placeIntoLeaf(mainLeaf, cmd.Process.Pid, slog.Default())
 	}
 	// Cluster C / ADR-121: spawn the per-workload cgroup.events
 	// oom_kill listener (guest/init/cgroup_partition_linux.go::
