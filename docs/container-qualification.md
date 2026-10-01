@@ -857,3 +857,7 @@ Isolated API lifecycle/read-only/quota fixtures passed three race repetitions wi
 ### Go UDP client HTTP contracts (2026-10-01)
 
 Dedicated real-HTTP Go client fixtures now exercise list/create/update/delete, bearer authentication, escaped app/listener path segments, create request fields, explicit enabled=false encoding, response decoding and 204 deletion. A quota fixture confirms HTTP409 is returned as a typed APIError carrying the UDP listener-limit code. Both client fixtures passed three race repetitions without skips and scoped lint reported zero issues (`/tmp/gregale-udp-client-{tests,lint}.log`). All launched handles are terminal. No client implementation change was required. Client/CLI/schema isolated publication and native/deployed acceptance remain pending.
+
+### Isolated Go UDP client publication (2026-10-01)
+
+Draft [#3994](https://github.com/poyrazK/faas/pull/3994), commit `e110dee0e`, stacks on customer API #3993 and isolates the four Go client methods with real-HTTP contract fixtures. Isolated contracts passed three race repetitions without skips and scoped lint found zero issues (`/tmp/gregale-udp-client-isolated-{tests,lint}.log`). All launched handles are terminal. CLI/schema publication and native/deployed acceptance remain pending; no merge or rollout occurred.
