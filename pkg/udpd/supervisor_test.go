@@ -2,6 +2,7 @@ package udpd
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -17,17 +18,19 @@ import (
 type udpIntentSource struct {
 	mu   sync.Mutex
 	rows []state.UDPListener
+	err  error
 }
 
 func (s *udpIntentSource) ListEnabledUDPListeners(context.Context) ([]state.UDPListener, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]state.UDPListener(nil), s.rows...), nil
+	return append([]state.UDPListener(nil), s.rows...), s.err
 }
 func (s *udpIntentSource) set(rows ...state.UDPListener) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rows = rows
+	s.err = nil
 }
 
 type peerObservation struct {
@@ -296,6 +299,15 @@ func TestSupervisorInitialReadHasDeadline(t *testing.T) {
 }
 
 func TestSupervisorInvalidRefreshPreservesSocketThenRecovers(t *testing.T) {
+	testSupervisorRefreshRecovery(t, false)
+}
+
+func TestSupervisorSourceOutagePreservesSocketThenRecovers(t *testing.T) {
+	testSupervisorRefreshRecovery(t, true)
+}
+
+func testSupervisorRefreshRecovery(t *testing.T, sourceOutage bool) {
+	t.Helper()
 	source := &udpIntentSource{}
 	row := udpIntent("listener", "app", "account", api.UDPListenerPublicPortMin)
 	source.set(row)
@@ -337,10 +349,20 @@ func TestSupervisorInvalidRefreshPreservesSocketThenRecovers(t *testing.T) {
 	invalid := row
 	invalid.GuestPort = 0
 	source.set(invalid)
+	outage := errors.New("listener state unavailable")
+	if sourceOutage {
+		source.mu.Lock()
+		source.rows = nil
+		source.err = outage
+		source.mu.Unlock()
+	}
 	select {
-	case <-reported:
+	case err := <-reported:
+		if sourceOutage && !errors.Is(err, outage) {
+			t.Fatalf("outage error lost: %v", err)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("invalid refresh not reported")
+		t.Fatal("failed refresh not reported")
 	}
 	if _, err := client.Write([]byte("retained")); err != nil {
 		t.Fatal(err)
