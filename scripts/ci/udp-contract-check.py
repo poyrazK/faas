@@ -16,6 +16,7 @@ FILES = {
     "pkg/gateway": "udpforward_test.go",
     "pkg/vmmdgrpc": ["forward_udp_test.go", "forward_udp_grpc_test.go", "bridge_readiness_test.go"],
     "cmd/apid": "handlers_udp_listeners_test.go",
+    "pkg/api": "client_udp_listeners_test.go",
     "cmd/gregale": "commands_app_udp_test.go",
     "cmd/gatewayd-public": "udp_ingress_test.go",
     "pkg/state": ["memstore_udp_listeners_test.go", "listener_app_purge_test.go"],
