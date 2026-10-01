@@ -511,6 +511,8 @@
     "columns": ["account_id", "config_hash", "config_json", "created_at", "environment_slug", "id", "project_id", "version"]},
   {"table": "project_environment_edge_policies", "kind": "configuration",
     "columns": ["account_id", "app_id", "created_at", "environment_slug", "project_id", "rules", "updated_at"]},
+  {"table": "project_environment_promotion_feature_flags", "kind": "operational",
+    "columns": ["previous_target_hash", "previous_target_snapshot", "promotion_id", "rollback_version", "source_hash", "source_snapshot", "target_version"]},
   {"table": "project_environment_promotion_workload_specs", "kind": "operational",
     "columns": ["app_id", "deployment_id", "prepared_spec_id", "previous_hash", "previous_settings", "previous_spec_id", "promotion_id", "source_hash"]},
   {"table": "project_environment_promotion_workloads", "kind": "operational",

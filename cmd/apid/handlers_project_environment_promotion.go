@@ -40,21 +40,23 @@ type projectEnvironmentPromotionTokenWire struct {
 }
 
 type projectEnvironmentPromotionPlan struct {
-	ProjectID             string
-	Preview               api.ProjectEnvironmentPromotionPreviewResponse
-	Apps                  map[string]state.App
-	Sources               map[string]state.Deployment
-	Targets               map[string]state.Deployment
-	FromReleaseSet        *state.ProjectReleaseSet
-	ToReleaseSet          *state.ProjectReleaseSet
-	Qualification         *state.ProjectEnvironmentQualification
-	QualificationRequired bool
-	ReleaseGraphMode      bool
-	ReleaseTTLSeconds     int
-	FallbackTargetMembers []state.ProjectReleaseMember
-	SyncConfig            bool
-	SourceConfig          state.ProjectEnvironmentConfig
-	TargetConfig          state.ProjectEnvironmentConfig
+	ProjectID              string
+	Preview                api.ProjectEnvironmentPromotionPreviewResponse
+	Apps                   map[string]state.App
+	Sources                map[string]state.Deployment
+	Targets                map[string]state.Deployment
+	FromReleaseSet         *state.ProjectReleaseSet
+	ToReleaseSet           *state.ProjectReleaseSet
+	Qualification          *state.ProjectEnvironmentQualification
+	QualificationRequired  bool
+	ReleaseGraphMode       bool
+	ReleaseTTLSeconds      int
+	FallbackTargetMembers  []state.ProjectReleaseMember
+	SyncConfig             bool
+	SourceConfig           state.ProjectEnvironmentConfig
+	TargetConfig           state.ProjectEnvironmentConfig
+	SourceFeatureFlagsHash string
+	TargetFeatureFlagsHash string
 }
 
 func (s *server) previewProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -112,6 +114,9 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 		return plan, problem
 	}
 	plan.SourceConfig, plan.TargetConfig = fromConfig, toConfig
+	if problem := s.loadPromotionFeatureFlagIdentities(ctx, &plan, from, to); problem != nil {
+		return plan, problem
+	}
 	configChanges, err := projectEnvironmentConfigDiff(fromConfig.Values, toConfig.Values)
 	if err != nil {
 		return plan, api.ErrInternal("could not compare environment configurations")
@@ -269,7 +274,7 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 	qualificationID := projectEnvironmentPromotionQualificationID(plan.Qualification)
 
 	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, configDiff, syncConfig,
-		fromReleaseSet.ID, toReleaseSet.ID, qualificationID, changes)
+		fromReleaseSet.ID, toReleaseSet.ID, qualificationID, changes, plan.SourceFeatureFlagsHash, plan.TargetFeatureFlagsHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not create promotion identity")
 	}
@@ -509,11 +514,14 @@ func (s *server) buildProjectEnvironmentPromotionResumePlan(ctx context.Context,
 		}
 	}
 	identityConfigDiff := configDiff
+	if problem := s.resumePromotionFeatureFlagIdentities(ctx, &plan, promotion, from, to); problem != nil {
+		return plan, problem
+	}
 	if promotion.SyncConfig && promotion.TargetConfigVersion != 0 {
 		identityConfigDiff.ToHash = promotion.PreviousTargetConfigHash
 	}
 	promotionHash, err := projectEnvironmentPromotionHash(project.Slug, from.Slug, to.Slug, identityConfigDiff, promotion.SyncConfig,
-		promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID, promotion.SourceQualificationID, changes)
+		promotion.SourceReleaseSetID, promotion.PreviousTargetReleaseSetID, promotion.SourceQualificationID, changes, plan.SourceFeatureFlagsHash, plan.TargetFeatureFlagsHash)
 	if err != nil {
 		return plan, api.ErrInternal("could not recreate promotion identity")
 	}
@@ -699,6 +707,8 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		promotionRecord.PreviousTargetConfigHash = plan.Preview.ConfigDiff.ToHash
 		promotionRecord.SourceConfigSnapshot = projectEnvironmentConfigSnapshot(plan.SourceConfig)
 		promotionRecord.PreviousTargetConfigSnapshot = projectEnvironmentConfigSnapshot(plan.TargetConfig)
+		promotionRecord.SourceFeatureFlagsHash = plan.SourceFeatureFlagsHash
+		promotionRecord.PreviousTargetFeatureFlagsHash = plan.TargetFeatureFlagsHash
 	}
 	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), promotionRecord,
 		projectEnvironmentPromotionWorkloads(plan))
@@ -708,6 +718,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		promotion, workloads, err = s.store.ProjectEnvironmentPromotionByIdempotencyKey(r.Context(), acct.ID, projectSlug, idempotencyKey)
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, promotionResumeConflict("environment configuration or feature flags changed during promotion creation; preview again"))
+			return
+		}
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
 			return
@@ -919,7 +933,18 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 	if problem != nil {
 		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, errors.New("could not inspect active target release graph"))
 	}
-	if previousGraph != nil && active.ID != "" && projectReleaseSetMatchesMembers(active, previousMembers) {
+	if previousGraph != nil && active.ID != "" && projectReleaseSetMatchesMembers(active, previousMembers) &&
+		(!promotion.SyncConfig || active.ID != promotion.TargetReleaseSetID) {
+		if promotion.SyncConfig {
+			configPublisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+			if !ok {
+				return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, errors.New("atomic promotion config rollback is unavailable"))
+			}
+			if _, err := configPublisher.RollbackProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, previousGraph.TTLSeconds, previousGraph.Members); err != nil {
+				return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
+					fmt.Errorf("%w: restored graph has no matching configuration receipt", state.ErrConflict))
+			}
+		}
 		// Recover if the rollback graph was activated immediately before the
 		// process stopped and its promotion checkpoint was not saved.
 		promotion, err = s.store.UpdateProjectEnvironmentPromotionReleaseSets(ctx, acct.ID, promotion.ID, "", active.ID)
@@ -1336,7 +1361,10 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 				return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target configuration changed after cutover; inspect the target before retrying")
 			}
 		}
-	case promotion.TargetReleaseSetID == "" && active.ID != "" && projectReleaseSetMatchesMembers(active, members):
+	case promotion.TargetReleaseSetID == "" && active.ID != "" && active.ID != expectedID && projectReleaseSetMatchesMembers(active, members):
+		if promotion.SyncConfig {
+			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target graph has no atomic configuration receipt; inspect the target before retrying")
+		}
 		// Recover the commit/checkpoint gap if the graph was published but
 		// the durable promotion row was not yet updated.
 		target = active
@@ -1353,7 +1381,7 @@ func (s *server) activateProjectEnvironmentPromotionGraph(ctx context.Context, a
 				promotion.ToEnvironment, expectedID, plan.FallbackTargetMembers, plan.ReleaseTTLSeconds, members)
 		}
 		if errors.Is(err, state.ErrConflict) {
-			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the target route changed after preview; preview and promote again")
+			return promotion, s.failProjectEnvironmentPromotionGraph(ctx, acct, promotion, "the release or environment configuration changed after preview; preview and promote again")
 		}
 		if err != nil {
 			return promotion, api.ErrCapacity("could not atomically activate the promoted release graph")
@@ -1476,6 +1504,15 @@ func (s *server) verifyProjectEnvironmentPromotionGraph(ctx context.Context, acc
 	}
 	if !projectReleaseSetMatchesMembers(active, members) {
 		return errors.New("active target release graph does not match the promotion checkpoints")
+	}
+	if promotion.SyncConfig {
+		publisher, ok := s.store.(state.ProjectEnvironmentPromotionReleaseSetStore)
+		if !ok {
+			return errors.New("atomic promotion configuration verification is unavailable")
+		}
+		if _, err := publisher.PublishProjectEnvironmentPromotionReleaseSet(ctx, acct.ID, promotion.ID, plan.ReleaseTTLSeconds, members); err != nil {
+			return errors.New("target configuration or feature flags changed during promotion verification")
+		}
 	}
 	return nil
 }
@@ -1842,23 +1879,34 @@ func projectEnvironmentPromotionHash(
 	syncConfig bool,
 	fromReleaseSetID, toReleaseSetID, sourceQualificationID string,
 	changes []api.ProjectEnvironmentPromotionChange,
+	featureFlagsHashes ...string,
 ) (string, error) {
+	var sourceFlagsHash, targetFlagsHash string
+	if len(featureFlagsHashes) != 0 {
+		if len(featureFlagsHashes) != 2 {
+			return "", state.ErrInvalidArgument
+		}
+		sourceFlagsHash, targetFlagsHash = featureFlagsHashes[0], featureFlagsHashes[1]
+	}
 	identity := struct {
-		ProjectSlug           string                                  `json:"project_slug"`
-		FromEnvironment       string                                  `json:"from_environment"`
-		ToEnvironment         string                                  `json:"to_environment"`
-		FromConfigHash        string                                  `json:"from_config_hash"`
-		ToConfigHash          string                                  `json:"to_config_hash"`
-		SyncConfig            bool                                    `json:"sync_config,omitempty"`
-		FromReleaseSetID      string                                  `json:"from_release_set_id,omitempty"`
-		ToReleaseSetID        string                                  `json:"to_release_set_id,omitempty"`
-		SourceQualificationID string                                  `json:"source_qualification_id,omitempty"`
-		Changes               []api.ProjectEnvironmentPromotionChange `json:"changes"`
+		ProjectSlug            string                                  `json:"project_slug"`
+		FromEnvironment        string                                  `json:"from_environment"`
+		ToEnvironment          string                                  `json:"to_environment"`
+		FromConfigHash         string                                  `json:"from_config_hash"`
+		ToConfigHash           string                                  `json:"to_config_hash"`
+		SyncConfig             bool                                    `json:"sync_config,omitempty"`
+		FromReleaseSetID       string                                  `json:"from_release_set_id,omitempty"`
+		ToReleaseSetID         string                                  `json:"to_release_set_id,omitempty"`
+		SourceQualificationID  string                                  `json:"source_qualification_id,omitempty"`
+		Changes                []api.ProjectEnvironmentPromotionChange `json:"changes"`
+		SourceFeatureFlagsHash string                                  `json:"source_feature_flags_hash,omitempty"`
+		TargetFeatureFlagsHash string                                  `json:"target_feature_flags_hash,omitempty"`
 	}{
 		ProjectSlug: projectSlug, FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		FromConfigHash: configDiff.FromHash, ToConfigHash: configDiff.ToHash, SyncConfig: syncConfig,
 		FromReleaseSetID: fromReleaseSetID, ToReleaseSetID: toReleaseSetID,
 		SourceQualificationID: sourceQualificationID, Changes: changes,
+		SourceFeatureFlagsHash: sourceFlagsHash, TargetFeatureFlagsHash: targetFlagsHash,
 	}
 	raw, err := json.Marshal(identity)
 	if err != nil {

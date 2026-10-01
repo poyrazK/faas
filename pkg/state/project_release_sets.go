@@ -644,6 +644,9 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, false, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
@@ -656,6 +659,9 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		if err := validatePromotionFallbackTx(ctx, tx, promotion); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, false); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	targetConfigVersion, err := applyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
 	if err != nil {
@@ -755,10 +761,16 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, true, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, true, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		return release, nil
+	}
+	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, true, false); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	rollbackConfigVersion, err := rollbackProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
 	if err != nil {

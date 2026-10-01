@@ -2706,3 +2706,66 @@ Atomic copying of the tested flags into the target release graph and rollback
 to its retained previous flags are still required. The complete-clone feature
 and the flag schema strategy remain unqualified until that activation contract
 and the remaining data/resource/native acceptance gates are implemented.
+
+
+### Atomic flag activation and rollback (2026-10-02)
+
+`sync_config` promotion now freezes the source flag configuration and previous
+target configuration when its durable operation is created. The private
+`project_environment_promotion_feature_flags` row retains both environment
+UUIDs, exact versions, authenticated payloads, hashes, and committed target and
+rollback version receipts. Creation reads both environments under the same
+project/environment lock order used by cutover. Preview and approval identity
+include both flag snapshots, including the never-published version-zero state.
+The store checks the preview identities while creating the operation, so a
+change between approval and creation cannot silently become its new snapshot.
+
+Forward activation authenticates the retained snapshots and requires unchanged
+source and previous-target heads. It appends one independent target flag
+version together with project configuration, workload settings, release graph,
+and operation receipts in the existing cutover transaction. The exact tested
+configuration retains its rollout seeds. A key independently created in both
+environments with different seeds causes a conflict. Referenced customers must
+still belong to the account; PostgreSQL locks those identities through commit.
+Artifact-only promotion leaves the target flag history untouched.
+
+Rollback requires the exact promoted target flag version and configuration,
+then appends a new version containing the retained previous configuration in
+its graph/configuration transaction. Its restore pointer refers only to the
+target's own history. Replay verifies the committed version, configuration,
+actor, and restore pointer; a later flag publication with identical contents
+still invalidates both cutover and rollback replay. Source changes after a
+committed cutover cannot change its replay or retained rollback configuration.
+Missing or corrupt snapshots fail closed, including legacy operations that
+would otherwise recover by reading current source flags.
+
+The API now sends the preview flag hashes to operation creation and reconstructs
+resume identity from authenticated retained metadata. Configuration verification
+also revalidates the atomic cutover receipt. Recovery paths cannot identify a
+synced cutover or rollback from matching deployments alone. A flag-only change
+with unchanged project settings and artifacts still publishes a new graph and
+restores flags on rollback. A revision changed during operation creation returns
+a stale-preview conflict without retaining an operation or changing the graph.
+
+The new migration is recorded in the schema registry as operational state;
+operation snapshots and receipts are not copied into another environment. It
+is included in the live schema dump and generated SQLC bindings. Full clone
+admission/publication remain closed. This increment does not qualify the flag
+schema strategy without its remaining resource/runtime audit, or replace the
+coordinated database/object checkpoint, other resource strategies, compensation,
+provider, and native acceptance requirements.
+
+
+Verification passed against both stores and the task-owned local PostgreSQL 16
+instance: flag promotion/rollback, source and target revision drift, first
+source publication, empty configurations, conflicting seeds, unchanged-content
+revisions, corrupt and missing snapshot evidence, failed graph atomicity,
+workload promotion, qualification, flag lock-order, and schema coverage contracts
+(`pkg/state`, 19.062 s). API promotion/qualification/state regressions passed
+(`cmd/apid`, 1.370 s), including unchanged-artifact flag-only cutover/rollback,
+stale target approval, and flag drift injected after validation but before
+operation creation. Independent SQLC regeneration matched all generated files;
+whitespace checks passed. Earlier attempts encountered a test fixture reserved
+slug and shared-host disk exhaustion; the final runs passed after correcting the
+fixture and reclaiming this task's stale build cache artifacts. No whole-repo,
+provider, or native KVM acceptance is claimed.

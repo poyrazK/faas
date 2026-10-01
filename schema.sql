@@ -10473,6 +10473,28 @@ CREATE TABLE public.project_environment_edge_policies (
 
 
 --
+-- Name: project_environment_promotion_feature_flags; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_feature_flags (
+    promotion_id uuid NOT NULL,
+    source_snapshot jsonb NOT NULL,
+    previous_target_snapshot jsonb NOT NULL,
+    source_hash text NOT NULL,
+    previous_target_hash text NOT NULL,
+    target_version bigint DEFAULT 0 NOT NULL,
+    rollback_version bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environment_promotion_fe_previous_target_snapshot_check CHECK ((jsonb_typeof(previous_target_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_featur_previous_target_hash_check CHECK ((previous_target_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_feature_fl_rollback_version_check CHECK (((rollback_version >= 0) AND (rollback_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_fla_source_snapshot_check CHECK ((jsonb_typeof(source_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_feature_flag_target_version_check CHECK (((target_version >= 0) AND (target_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_flags_check CHECK (((rollback_version = 0) OR ((target_version > 0) AND (rollback_version > target_version)))),
+    CONSTRAINT project_environment_promotion_feature_flags_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: project_environment_promotion_workload_specs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15134,6 +15156,14 @@ ALTER TABLE ONLY public.project_environment_config_versions
 
 ALTER TABLE ONLY public.project_environment_edge_policies
     ADD CONSTRAINT project_environment_edge_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+--
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_pkey PRIMARY KEY (promotion_id);
 
 
 --
@@ -25387,6 +25417,14 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 ALTER TABLE ONLY public.project_environment_edge_policies
     ADD CONSTRAINT project_environment_edge_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
 
 
 --

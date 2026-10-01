@@ -7208,6 +7208,29 @@ ORDER BY version DESC LIMIT 100;
 INSERT INTO feature_flag_versions (account_id, project_id, environment_id, version, config, actor, restored_from)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
 
+-- name: LockPromotionFeatureFlagCustomer :one
+SELECT id FROM platform_tenants
+WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid
+FOR KEY SHARE;
+
+-- name: InsertPromotionFeatureFlags :exec
+INSERT INTO project_environment_promotion_feature_flags
+ (promotion_id, source_snapshot, previous_target_snapshot, source_hash, previous_target_hash)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: ReadPromotionFeatureFlags :one
+SELECT f.* FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.id = sqlc.arg(promotion_id)::uuid AND p.account_id = sqlc.arg(account_id)::uuid;
+
+-- name: UpdatePromotionFeatureFlagReceipt :one
+UPDATE project_environment_promotion_feature_flags
+SET target_version = sqlc.arg(target_version)::bigint, rollback_version = sqlc.arg(rollback_version)::bigint
+WHERE promotion_id = sqlc.arg(promotion_id)::uuid
+ AND target_version = sqlc.arg(previous_target_version)::bigint
+ AND rollback_version = sqlc.arg(previous_rollback_version)::bigint
+RETURNING promotion_id;
+
 -- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid) AS owned;

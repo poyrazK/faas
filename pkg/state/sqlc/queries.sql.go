@@ -8019,6 +8019,31 @@ func (q *Queries) InsertProjectEnvironmentQueueRuntimeSet(ctx context.Context, d
 	return err
 }
 
+const insertPromotionFeatureFlags = `-- name: InsertPromotionFeatureFlags :exec
+INSERT INTO project_environment_promotion_feature_flags
+ (promotion_id, source_snapshot, previous_target_snapshot, source_hash, previous_target_hash)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertPromotionFeatureFlagsParams struct {
+	PromotionID            pgtype.UUID
+	SourceSnapshot         []byte
+	PreviousTargetSnapshot []byte
+	SourceHash             string
+	PreviousTargetHash     string
+}
+
+func (q *Queries) InsertPromotionFeatureFlags(ctx context.Context, db DBTX, arg InsertPromotionFeatureFlagsParams) error {
+	_, err := db.Exec(ctx, insertPromotionFeatureFlags,
+		arg.PromotionID,
+		arg.SourceSnapshot,
+		arg.PreviousTargetSnapshot,
+		arg.SourceHash,
+		arg.PreviousTargetHash,
+	)
+	return err
+}
+
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 
 INSERT INTO request_telemetry (
@@ -15499,6 +15524,24 @@ func (q *Queries) LockProjectEnvironmentQueuePreparationSpec(ctx context.Context
 	return i, err
 }
 
+const lockPromotionFeatureFlagCustomer = `-- name: LockPromotionFeatureFlagCustomer :one
+SELECT id FROM platform_tenants
+WHERE account_id = $1::uuid AND id = $2::uuid
+FOR KEY SHARE
+`
+
+type LockPromotionFeatureFlagCustomerParams struct {
+	AccountID pgtype.UUID
+	TenantID  pgtype.UUID
+}
+
+func (q *Queries) LockPromotionFeatureFlagCustomer(ctx context.Context, db DBTX, arg LockPromotionFeatureFlagCustomerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockPromotionFeatureFlagCustomer, arg.AccountID, arg.TenantID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRuntimeConfigWorkloadSpec = `-- name: LockRuntimeConfigWorkloadSpec :many
 SELECT s.id FROM project_environment_workload_specs s
 JOIN project_environment_workload_deployment_specs p ON p.spec_id=s.id
@@ -22030,6 +22073,32 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readPromotionFeatureFlags = `-- name: ReadPromotionFeatureFlags :one
+SELECT f.promotion_id, f.source_snapshot, f.previous_target_snapshot, f.source_hash, f.previous_target_hash, f.target_version, f.rollback_version FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.id = $1::uuid AND p.account_id = $2::uuid
+`
+
+type ReadPromotionFeatureFlagsParams struct {
+	PromotionID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) ReadPromotionFeatureFlags(ctx context.Context, db DBTX, arg ReadPromotionFeatureFlagsParams) (ProjectEnvironmentPromotionFeatureFlag, error) {
+	row := db.QueryRow(ctx, readPromotionFeatureFlags, arg.PromotionID, arg.AccountID)
+	var i ProjectEnvironmentPromotionFeatureFlag
+	err := row.Scan(
+		&i.PromotionID,
+		&i.SourceSnapshot,
+		&i.PreviousTargetSnapshot,
+		&i.SourceHash,
+		&i.PreviousTargetHash,
+		&i.TargetVersion,
+		&i.RollbackVersion,
+	)
+	return i, err
+}
+
 const readRuntimeAppEnvForDeployment = `-- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id,
@@ -26736,6 +26805,36 @@ type UpdateOrgStatusParams struct {
 func (q *Queries) UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error {
 	_, err := db.Exec(ctx, updateOrgStatus, arg.ID, arg.Status)
 	return err
+}
+
+const updatePromotionFeatureFlagReceipt = `-- name: UpdatePromotionFeatureFlagReceipt :one
+UPDATE project_environment_promotion_feature_flags
+SET target_version = $1::bigint, rollback_version = $2::bigint
+WHERE promotion_id = $3::uuid
+ AND target_version = $4::bigint
+ AND rollback_version = $5::bigint
+RETURNING promotion_id
+`
+
+type UpdatePromotionFeatureFlagReceiptParams struct {
+	TargetVersion           int64
+	RollbackVersion         int64
+	PromotionID             pgtype.UUID
+	PreviousTargetVersion   int64
+	PreviousRollbackVersion int64
+}
+
+func (q *Queries) UpdatePromotionFeatureFlagReceipt(ctx context.Context, db DBTX, arg UpdatePromotionFeatureFlagReceiptParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, updatePromotionFeatureFlagReceipt,
+		arg.TargetVersion,
+		arg.RollbackVersion,
+		arg.PromotionID,
+		arg.PreviousTargetVersion,
+		arg.PreviousRollbackVersion,
+	)
+	var promotion_id pgtype.UUID
+	err := row.Scan(&promotion_id)
+	return promotion_id, err
 }
 
 const updateSpansSummary = `-- name: UpdateSpansSummary :exec

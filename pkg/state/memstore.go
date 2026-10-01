@@ -854,6 +854,7 @@ type MemStore struct {
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
+	projectEnvironmentPromotionFlags          map[string]promotionFeatureFlags
 	projectEnvironmentQualifications          map[string][]ProjectEnvironmentQualification
 	projectReleaseSets                        map[string]ProjectReleaseSet
 	activeProjectReleaseSets                  map[string]string
@@ -3192,6 +3193,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	for key, policy := range m.projectEnvironmentEdgePolicies {
 		if policy.ProjectID == projectID {
 			delete(m.projectEnvironmentEdgePolicies, key)
+		}
+	}
+	for id := range m.projectEnvironmentPromotionFlags {
+		if m.projectEnvironmentPromotions[id].ProjectID == projectID {
+			delete(m.projectEnvironmentPromotionFlags, id)
 		}
 	}
 	return nil

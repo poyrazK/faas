@@ -3809,6 +3809,16 @@ type ProjectEnvironmentPromotion struct {
 	SourceQualificationID        pgtype.UUID
 }
 
+type ProjectEnvironmentPromotionFeatureFlag struct {
+	PromotionID            pgtype.UUID
+	SourceSnapshot         []byte
+	PreviousTargetSnapshot []byte
+	SourceHash             string
+	PreviousTargetHash     string
+	TargetVersion          int64
+	RollbackVersion        int64
+}
+
 type ProjectEnvironmentPromotionWorkload struct {
 	ID                           pgtype.UUID
 	PromotionID                  pgtype.UUID

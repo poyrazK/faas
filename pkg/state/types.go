@@ -6883,6 +6883,10 @@ type ProjectEnvironmentPromotion struct {
 	PreviousTargetConfigSnapshot json.RawMessage
 	TargetConfigVersion          int64
 	RollbackConfigVersion        int64
+	// Expected flag identities supplied by a preview. The store freezes the
+	// actual snapshots atomically with creation; callers cannot supply payloads.
+	SourceFeatureFlagsHash         string
+	PreviousTargetFeatureFlagsHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.

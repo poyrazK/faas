@@ -294,6 +294,9 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 		if _, err := m.promotionWorkloadActivationsLocked(promotion, release.Members, false, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if _, err := m.preparePromotionFeatureFlagsLocked(promotion, false, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return cloneProjectReleaseSet(release), nil
 	}
 	if activeID != promotion.PreviousTargetReleaseSetID {
@@ -325,11 +328,16 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, false, false)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	m.applyPromotionWorkloadActivationsLocked(changes)
+	m.applyPromotionFeatureFlagsLocked(promotion, flagVersion, false)
 	promotion.TargetReleaseSetID = release.ID
 	if promotion.SyncConfig {
 		promotion.TargetConfigVersion = m.appendProjectEnvironmentPromotionConfigLocked(promotion, false)
@@ -365,6 +373,9 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 		if _, err := m.promotionWorkloadActivationsLocked(promotion, release.Members, true, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if _, err := m.preparePromotionFeatureFlagsLocked(promotion, true, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		return cloneProjectReleaseSet(release), nil
 	}
 	if activeID != promotion.TargetReleaseSetID {
@@ -377,11 +388,16 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, true, false)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	release, err := m.publishProjectReleaseSetLocked(accountID, promotion.ProjectID, promotion.ToEnvironment, ttlSeconds, members)
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	m.applyPromotionWorkloadActivationsLocked(changes)
+	m.applyPromotionFeatureFlagsLocked(promotion, flagVersion, true)
 	promotion.RollbackReleaseSetID = release.ID
 	if promotion.SyncConfig {
 		promotion.RollbackConfigVersion = m.appendProjectEnvironmentPromotionConfigLocked(promotion, true)
