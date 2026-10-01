@@ -4084,6 +4084,7 @@ groups:
           component: gatewayd-public
           family: udp_ingress
         annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/deploy/ansible/roles/prometheus/README.md"
           summary: "Public UDP listener reconciliation is failing"
           description: "Inspect gatewayd-public errors for durable-state reads, invalid endpoint identities or bind failures. Check enabled UDP intents and reserved port ownership before restarting the gateway."
       - alert: FaasUDPPeerFailuresHigh
@@ -4094,6 +4095,7 @@ groups:
           component: gatewayd-public
           family: udp_ingress
         annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/deploy/ansible/roles/prometheus/README.md"
           summary: "UDP admission or forwarding failures are sustained"
           description: "Inspect the scheduler and VMMD transport, current declared UDP ports and the deployed vmmd-udp-bridge helper. Source-policy rejection and normal idle expiry are excluded."
       - alert: FaasUDPResourceDropsHigh
@@ -4104,6 +4106,7 @@ groups:
           component: gatewayd-public
           family: udp_ingress
         annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/deploy/ansible/roles/prometheus/README.md"
           summary: "UDP peer, queue or rate limits are dropping traffic"
           description: "Inspect client retry behavior, admission latency and active peer count. The bounded UDP queues and account rate limits intentionally drop traffic under pressure; do not raise limits without checking memory and amplification behavior."
       - alert: FaasUDPPeerResourceExhaustionHigh
@@ -4114,5 +4117,6 @@ groups:
           component: gatewayd-public
           family: udp_ingress
         annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/deploy/ansible/roles/prometheus/README.md"
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
