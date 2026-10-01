@@ -929,3 +929,7 @@ Supervisor draft PR #3988 commit `eb8a761c0` adds a real-loopback-socket recover
 ### UDP listener source outage recovery
 
 Supervisor PR #3988 commit `667ad5c30` tests an explicit listener-source error, including error identity preservation, retention of the existing real UDP socket, and retirement after a successful deletion refresh. Both malformed-intent and source-outage scenarios passed five race-detector runs on the isolated branch; scoped lint reported zero issues. Logs `/tmp/gregale-udp-source-outage-tests.log` and `/tmp/gregale-udp-source-outage-lint.log`. The source error is injected, so actual PostgreSQL outage and reconnection remain unqualified.
+
+### Current integrated portable UDP gate
+
+Integration commit `05d46cfff` expands the required gate to include both Go client HTTP contract tests. Full `make udp-contract-check` completed successfully on that tree: all 81 required portable race contracts passed, with no skipped cases accepted, plus deployment-policy and alert fixtures. Log `/tmp/gregale-udp-full-current-contract.log`. This includes the newly added socket and listener-source recovery regressions; native KVM, deployed dependency recovery, firewall load and scrape acceptance remain unverified.
