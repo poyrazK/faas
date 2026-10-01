@@ -1,4 +1,4 @@
-# ADR-384 · Customer operations above execution ledgers
+# ADR-385 · Customer operations above execution ledgers
 
 - **Status:** accepted for implementation; not launched
 - **Date:** 2026-09-30
@@ -80,7 +80,8 @@ the native attempt is running, to a running instance of the pinned app and
 deployment. A consumed binding survives instance deletion with a null instance
 reference; deletion cannot authorize another dispatch of an unresolved attempt.
 Only its digest is durable. Raw guest and coordinator capabilities are omitted
-from JSON, and neither capability substitutes for the other.
+from state/read JSON; authenticated private dispatch explicitly carries the
+guest credential. Neither capability substitutes for the other.
 
 Guest authority names the real workflow run, native step and native attempt;
 it does not fabricate an HTTP invocation. Its hard deadline derives from the
@@ -99,9 +100,32 @@ steps or retries cannot collide under one coordinator claim. Events and blob
 receipts retain the real backend identity. API artifact preflight checks this
 authority before reading or copying source bytes; attachment checks it again.
 The Node runtime keeps typed execution context isolated to the delivered
-request and forwards workflow fields without an invocation header. These
-reporting seams remain internal; dispatch, aggregate progress, business
-settlement and explicit confirmed-step recovery still gate public admission.
+request and forwards workflow fields without an invocation header.
+
+Controlled handler delivery uses a dedicated authenticated
+`POST /v1/workflow-operations:dispatch` contract. It carries real operation,
+run, step, attempt and selected instance/node identities plus the guest proof;
+it cannot override handler method, path, input, release or deployment. The
+gateway requires a signed `schedd` service JWT even for an open app. Under the
+native run/operation locks it validates current custody, guest proof, active
+tenant and actual pinned running instance, then atomically consumes
+`dispatch_started_at` before forwarding. That receipt is never released by a
+timeout, proxy error, process crash or missing response. Concurrent or repeated
+delivery cannot repeat an uncertain external effect.
+
+The scheduler renews coordinator custody during both the pinned wake and
+handler call. Wake occurs before the native step starts; failed wake therefore
+does not imply a running business effect. Delivery preserves downstream status
+and raw bytes independently of business settlement. The handler's retained
+hard deadline bounds forwarding; the client removes the legacy synth timeout
+and does not follow redirects or retry. Request and response envelopes use
+`OperationWorkflowDispatchBodyMaxBytes` (16 KiB) and
+`OperationWorkflowDispatchResponseMaxBytes` (two times the 1 MiB submission cap
+plus the 16 KiB report envelope) in `pkg/api/limits.go`; customer response bytes
+also obey the admitted operation value bound before buffering. These internal
+seams still need the DAG coordinator loop, fenced waits/retries, aggregate
+progress, business settlement, explicit confirmed-step recovery and native VM
+qualification before public workflow admission can be enabled.
 
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified

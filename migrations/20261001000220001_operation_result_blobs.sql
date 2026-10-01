@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-384. A write intent precedes external storage I/O. No cascading FKs:
+-- ADR-385. A write intent precedes external storage I/O. No cascading FKs:
 -- account/app/result deletion must leave the cleanup receipt discoverable.
 CREATE TABLE IF NOT EXISTS customer_operation_result_blobs (
     id uuid PRIMARY KEY,

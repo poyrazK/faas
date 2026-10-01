@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- ADR-384. Execution ledgers stay authoritative for execution, while a durable
+-- ADR-385. Execution ledgers stay authoritative for execution, while a durable
 -- customer operation connects identity, progress, business outcome and delivery.
 CREATE TABLE IF NOT EXISTS customer_operation_definitions (
     id uuid PRIMARY KEY,

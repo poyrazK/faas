@@ -5293,10 +5293,22 @@ sqlc.arg(generation)::integer,sqlc.arg(coordinator_attempt)::integer,sqlc.arg(in
 sqlc.arg(capability_digest)::text,sqlc.arg(deadline_at)::timestamptz);
 
 -- name: CustomerOperationWorkflowGuestInstance :one
-SELECT i.id,i.app_id,i.deployment_id,i.state FROM instances i
+SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
 JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=sqlc.arg(instance_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
+
+-- The parent run lock serializes this consumption with guest reporting and
+-- coordinator transitions. A missing HTTP response never releases delivery.
+-- name: ConsumeCustomerOperationWorkflowGuest :execrows
+UPDATE customer_operation_workflow_guest_claims SET dispatch_started_at=now()
+WHERE workflow_run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+ AND step_attempt=sqlc.arg(step_attempt)::integer AND dispatch_started_at IS NULL;
+
+-- name: CustomerOperationWorkflowDeliveryDeployment :one
+SELECT d.id,d.app_id,coalesce(d.override_port,0)::integer AS port,
+ coalesce(d.commit_sha,'')::text AS commit_sha,coalesce(d.tag,'')::text AS tag,d.created_at,d.image_digest
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid;
 
 -- name: InsertCustomerOperationJobExecution :execrows
 INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)

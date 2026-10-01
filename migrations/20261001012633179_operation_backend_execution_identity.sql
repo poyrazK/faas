@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-384. A logical generation binds a real backend execution, never a
+-- ADR-385. A logical generation binds a real backend execution, never a
 -- synthetic HTTP invocation standing in for a workflow or a Job.
 ALTER TABLE customer_operation_executions ALTER COLUMN invocation_id DROP NOT NULL;
 ALTER TABLE customer_operation_executions ADD COLUMN IF NOT EXISTS workflow_run_id uuid REFERENCES workflow_runs(id) ON DELETE RESTRICT;

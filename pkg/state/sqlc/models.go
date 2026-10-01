@@ -1296,6 +1296,7 @@ type CustomerOperationWorkflowGuestClaim struct {
 	CapabilityDigest   string
 	DeadlineAt         pgtype.Timestamptz
 	BoundAt            pgtype.Timestamptz
+	DispatchStartedAt  pgtype.Timestamptz
 }
 
 type DataUpstream struct {
