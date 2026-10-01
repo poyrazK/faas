@@ -272,9 +272,15 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		return fmt.Errorf("acquire host ports: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, app.ID, state.StateWaking, wakeID)
+	owner, err := e.runtimeScalingStateForDeployment(ctx, app, dep)
+	if err != nil {
+		cleanup("original_environment_unavailable")
+		return fmt.Errorf("warm pool: original environment: %w", err)
+	}
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+		EnvironmentKey: runtimeEnvironmentAdmissionKey(owner.Scope, owner.EnvironmentID),
+		RAMMB:          app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		NodeID: placement.NodeID, NodeCeilingMB: placement.CeilingMB,
 		VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores, Kind: KindWarmPool,
 	}); err != nil {

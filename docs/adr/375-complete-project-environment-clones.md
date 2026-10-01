@@ -2156,3 +2156,50 @@ adapters and configuration/data strategies, coordinated customer-data capture
 and full-clone activation/qualification remain open. The public complete-clone
 command remains unavailable; repository-wide tests/lint and native x86_64 KVM
 test-metal, leakcheck and provider acceptance remain unverified.
+
+### Serving counts and startup recovery retain environment ownership
+
+The scheduler ledger now retains an authenticated original environment key
+alongside each instance reservation. Deployment generations share a serving
+count only within that lifetime. Admit, snapshot transition, warm promotion
+and release maintain it under the existing ledger mutex; paused/primes/tasks
+continue to consume resident node capacity without serving concurrency.
+Legacy production reservations retain their compatibility key.
+
+Ordinary admission uses its own environment's count for cooldown cold-start
+bypass and the no-signal minimum-floor decision. Production running replicas
+therefore cannot hold a parked stage on cooldown or satisfy its no-signal
+floor. The scaling-history and runtime-value reads must agree on the original
+lifetime before a new VM is admitted; reaping also checks that agreement.
+The actual selected deployment's scaling history is read once on ordinary
+admission, avoiding the previous redundant read during logical resolution.
+
+Startup recovery rebuilds original environment and deployment counters from
+resident rows, caches policy per deployment, and restores CPU sizing from the
+deployed pin. Already-resident over-cap rows remain accounted for through a
+recovery-only concurrency bypass; subsequent normal admits still see the full
+count. A deleted original stage is assigned an orphan deployment key, so its
+resident RAM stays charged without contributing to a replacement lifetime.
+Transient ownership failures abort startup instead of adopting a fallback.
+Warm fills and missing-reservation repairs retain the owned environment key.
+
+Verification: the focused environment/lifecycle/recovery gate passed in 1.197
+seconds and the final full scheduler package passed in 18.318 seconds on
+macOS. Contracts cover a stage cold-start beside running production, scoped
+no-signal floors, cross-generation counts, snapshot/warm/release lifecycle,
+recreated lifetime separation, retained orphan capacity, pinned CPU recovery,
+over-cap recovery and transient ownership failures. A concurrent property
+test matches environment counts to successful admissions, preserves the shared
+plan cap and checks complete counter/RAM release. Existing literal-ledger
+callers are supported through lazy index reconstruction. VM calls remain
+test fakes; no native KVM/provider acceptance is claimed.
+
+The configured concurrency ceilings and rollout grants still use aggregate
+app counts; their environment policy is the next admission requirement.
+Explicit deployment reconciliation retains its existing gate bypass. Scoped
+minimum/warm fills, load/prewarm feeds, billing, debugger/audit aggregation,
+resource cleanup, captured configuration/warm publication fences, remaining
+adapters and clone strategies, coordinated data capture and full-clone
+activation/qualification remain open. The public complete-clone command
+remains unavailable. Repository-wide tests/lint and native test-metal,
+leakcheck and provider acceptance remain unverified.

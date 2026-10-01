@@ -2676,13 +2676,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		dep = explicitDep
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	var scaling state.RuntimeScalingState
 	if err == nil {
-		app, err = e.resolveRuntimeScalingPolicy(ctx, app, dep)
+		scaling, err = e.runtimeScalingStateForDeployment(ctx, app, dep)
+		app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
 	}
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: resolve deployment settings: %w", err)
 	}
+	environmentKey := runtimeEnvironmentAdmissionKey(scaling.Scope, scaling.EnvironmentID)
 	if err := securityQuarantineErr(dep); err != nil {
 		release()
 		return WakeResult{}, err
@@ -2792,7 +2795,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.log.Info("sched: released stale admission before cap decision", "app", app.ID, "instances", repaired)
 			}
 		}
-		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits, dep.ID)
+		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGateForEnvironment(ctx, &app, limits, dep.ID, environmentKey)
 	}
 	if outcome != wakeAdmit {
 		release()
@@ -2889,6 +2892,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load runtime values: %w", err)
+	}
+	if runtimeValues.Snapshot.EnvironmentID != scaling.EnvironmentID {
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: original environment changed during admission: %w", state.ErrConflict)
 	}
 	ephemeralSecret := runtimeValuesHaveEphemeralSecrets(runtimeValues.Snapshot)
 	secretPolicyBlocksSnapshots := ephemeralSecret
@@ -3106,7 +3113,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		EnvironmentKey: environmentKey,
+		RAMMB:          app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
@@ -7076,9 +7084,18 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
+		deploymentPolicies := make(map[string]ledgerDeploymentPolicy)
 		for _, ins := range instances {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
+			}
+			policy, found := deploymentPolicies[ins.DeploymentID]
+			if !found {
+				policy, err = e.seedLedgerDeploymentPolicy(ctx, app, ins.DeploymentID)
+				if err != nil {
+					return fmt.Errorf("sched: seed ledger: deployment policy: %w", err)
+				}
+				deploymentPolicies[ins.DeploymentID] = policy
 			}
 			nodeID := ins.NodeID
 			if nodeID == "" {
@@ -7093,13 +7110,14 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				kind = KindWarmPool
 			}
 			request := Request{
-				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
-				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-				// Recovery must account for the one candidate/stable overlap
-				// that deployment smoke may have admitted before a restart.
+				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
+				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
+				// Recovery must account for all already-resident serving rows,
+				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
 				// resident, and the reconstructed count blocks normal admits.
 				AllowConcurrencyOverlap:    true,
+				AllowConcurrencyRecovery:   true,
 				NodeID:                     nodeID,
 				NodeCeilingMB:              loadCeiling(ctx, nodeID),
 				VCPUBudget:                 loadVCPUBudget(ctx, nodeID),
@@ -7737,9 +7755,6 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 			fmt.Errorf("sched: resolve app: live deployment: %w", err)
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
-	if err == nil {
-		app, err = e.resolveRuntimeScalingPolicy(ctx, app, dep)
-	}
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, fmt.Errorf("sched: resolve workload settings: %w", err)
 	}
@@ -9384,7 +9399,7 @@ const (
 //     (AdmitInstance) or *api.Problem CodePlanLimitConcur (Wake).
 //
 //   - wakeCooldownHeld: now - original environment last_scale_out_at <
-//     ScalingPolicy.ScaleOutCooldownS AND Concurrency(appID) > 0.
+//     ScalingPolicy.ScaleOutCooldownS AND environment serving concurrency > 0.
 //     Cold-start wakes (concurrency == 0) bypass cooldown — the
 //     discriminator is load-bearing for the customer's "scale on
 //     demand" use case. Caller short-circuits; the existing wake
@@ -9392,7 +9407,7 @@ const (
 //     pre-PR-C shape). PR-D adds a dedicated CodeWaitForWarm RFC
 //     7807 code and the customer-facing 503 surface.
 //
-//   - wakeMinFloorAlready: Concurrency >= ScalingPolicy.MinInstances
+//   - wakeMinFloorAlready: environment concurrency >= ScalingPolicy.MinInstances
 //     AND a no-signal wake. Today this is the "wake arrived with
 //     no inflight reading" branch — the targets trigger did not
 //     enqueue this wake. Caller short-circuits with no INSERT.
@@ -9490,7 +9505,12 @@ func (e *Engine) maxConcurrencyForWake(app state.App, limits api.Limits, deploym
 }
 
 func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string) (wakeOutcome, int64, int64, int, bool) {
+	return e.admitGateForEnvironment(ctx, app, limits, deploymentID, "")
+}
+
+func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, limits api.Limits, deploymentID, environmentKey string) (wakeOutcome, int64, int64, int, bool) {
 	concurrency := e.ledger.Concurrency(app.ID)
+	environmentConcurrency := e.ledger.ConcurrencyForEnvironment(app.ID, environmentKey)
 	// Mirror admission.go:149-152: apps created via store.CreateApp
 	// without a subsequent UpdateApp leave MaxConcurrency at 0.
 	// Clamp against the plan ceiling so legacy / pre-PR-A apps still
@@ -9508,13 +9528,13 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 		}
 		return wakeRejectAtCap, 0, 0, concurrency, false
 	}
-	if !isScaleOutBurstContinuation(ctx) && e.isOnScaleOutCooldown(app, concurrency) {
+	if !isScaleOutBurstContinuation(ctx) && e.isOnScaleOutCooldown(app, environmentConcurrency) {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "cooldown_held")
 		}
 		return wakeCooldownHeld, 0, 0, concurrency, false
 	}
-	if e.atMinFloorWithNoSignal(app, concurrency) {
+	if e.atMinFloorWithNoSignal(app, environmentConcurrency) {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "min_floor_already")
 		}
@@ -9541,11 +9561,11 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 
 // isOnScaleOutCooldown (PR-C, issue #462) returns true when
 // (a) the resolved environment LastScaleOutAt is non-NIL,
-// (b) Concurrency(appID) > 0, and (c) the stamp is within ScaleOutCooldownS.
+// (b) environment serving concurrency > 0, and (c) the stamp is within ScaleOutCooldownS.
 //
-// The Concurrency > 0 discriminator is load-bearing: it lets a
+// The environment concurrency > 0 discriminator is load-bearing: it lets a
 // cold start (zero concurrency) bypass cooldown even when
-// apps.LastScaleOutAt is freshly stamped. Without this check, a
+// the environment's LastScaleOutAt is freshly stamped. Without this check, a
 // request-driven wake would always hit cooldown and defeat the
 // customer's "rate-limit scale-outs" use case. The "stamp
 // missed" direction (LastScaleOutAt == nil → bypass) is safe —

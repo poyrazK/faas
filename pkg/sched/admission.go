@@ -35,11 +35,12 @@ import (
 // The entries map preserves the legacy O(1) Release(instance) lookup
 // because each reservation remembers its nodeID.
 type NodeLedger struct {
-	mu               sync.Mutex
-	resident         map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
-	perApp           map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
-	perAppDeployment map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
-	entries          map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	mu                sync.Mutex
+	resident          map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
+	perApp            map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
+	perAppDeployment  map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
+	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-375)
+	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
 }
 
 type nodeReservation struct {
@@ -56,12 +57,13 @@ type nodeReservation struct {
 // the box-wide counter in that case so the migration is non-breaking
 // for tests that don't plumb node IDs.
 type reservation struct {
-	appID         string
-	deploymentID  string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
-	nodeID        string // empty = legacy box-wide accounting (test seams)
-	admissionMB   int    // ram_mb + PerVMOverheadMB
-	vcpu          int
-	cpuMillicores int
+	appID          string
+	deploymentID   string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
+	environmentKey string // authenticated original lifetime; empty = legacy production
+	nodeID         string // empty = legacy box-wide accounting (test seams)
+	admissionMB    int    // ram_mb + PerVMOverheadMB
+	vcpu           int
+	cpuMillicores  int
 	// cpuBoostMillicores is the temporary delta above the sustained quota.
 	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
 	cpuBoostMillicores int
@@ -74,10 +76,11 @@ type reservation struct {
 // NewLedger everywhere) compile unchanged — the rename is gradual.
 func NewNodeLedger() *NodeLedger {
 	return &NodeLedger{
-		resident:         map[string]*nodeReservation{},
-		perApp:           map[string]int{},
-		perAppDeployment: map[string]int{},
-		entries:          map[string]*reservation{},
+		resident:          map[string]*nodeReservation{},
+		perApp:            map[string]int{},
+		perAppDeployment:  map[string]int{},
+		perAppEnvironment: map[string]int{},
+		entries:           map[string]*reservation{},
 	}
 }
 
@@ -159,8 +162,12 @@ type Request struct {
 	// (test seams + pre-#557 reservations); the per-deployment
 	// concurrency counter is only incremented when this is non-empty.
 	DeploymentID string
-	Plan         api.Plan
-	RAMMB        int // the app's ram_mb (already validated ≤ plan cap)
+	// EnvironmentKey is derived by schedd from retained deployment ownership.
+	// Guests and gateway scope hints cannot supply it. Empty retains legacy
+	// production accounting; stages use their original environment UUID.
+	EnvironmentKey string
+	Plan           api.Plan
+	RAMMB          int // the app's ram_mb (already validated ≤ plan cap)
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
@@ -191,6 +198,10 @@ type Request struct {
 	// and by startup recovery to reconstruct that already-running pair; node
 	// RAM/vCPU limits and the max+1 bound still apply.
 	AllowConcurrencyOverlap bool
+	// AllowConcurrencyRecovery accounts for already-resident startup rows even
+	// when their deployed cap was lowered. It never authorizes a new VM; the
+	// full reconstructed count prevents subsequent ordinary admissions.
+	AllowConcurrencyRecovery bool
 	// Kind discriminates the reservation shape (see Kind doc). Zero
 	// value (KindWake) is the standard wake path; KindMigration is
 	// the Tier A5 destination-side reservation.
@@ -315,6 +326,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expireCPUBoosts_locked(time.Now())
+	l.ensureEnvironmentConcurrencyLocked()
 
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
@@ -347,7 +359,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 			maxConc = limits.MaxConcurrency
 		}
-		if have := l.perApp[r.AppID]; have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
+		if have := l.perApp[r.AppID]; !r.AllowConcurrencyRecovery && have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
 			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
 		}
 	}
@@ -430,7 +442,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 
 	l.entries[r.Instance] = &reservation{
-		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
+		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
@@ -440,6 +452,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	node.usedCPUMillicores += reservedCPU
 	if kindCountsConcurrency(r.Kind) {
 		l.perApp[r.AppID]++
+		l.perAppEnvironment[r.AppID+"\x00"+r.EnvironmentKey]++
 		if r.DeploymentID != "" {
 			l.perAppDeployment[r.AppID+"\x00"+r.DeploymentID]++
 		}
@@ -530,11 +543,13 @@ func (l *NodeLedger) totalUsedVCPU_locked() int {
 func (l *NodeLedger) BeginSnapshot(instance string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.ensureEnvironmentConcurrencyLocked()
 	e := l.entries[instance]
 	if e != nil && e.countsConc {
 		e.countsConc = false
 		l.perApp[e.appID]--
 		l.cleanupApp(e.appID)
+		l.releaseEnvironmentConcurrencyLocked(e)
 		if e.deploymentID != "" {
 			key := e.appID + "\x00" + e.deploymentID
 			l.perAppDeployment[key]--
@@ -556,12 +571,14 @@ func (l *NodeLedger) PromoteWarm(instance string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.ensureEnvironmentConcurrencyLocked()
 	e := l.entries[instance]
 	if e == nil || e.countsConc {
 		return false
 	}
 	e.countsConc = true
 	l.perApp[e.appID]++
+	l.perAppEnvironment[e.appID+"\x00"+e.environmentKey]++
 	if e.deploymentID != "" {
 		l.perAppDeployment[e.appID+"\x00"+e.deploymentID]++
 	}
@@ -599,6 +616,7 @@ func (l *NodeLedger) Release(instance string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.ensureEnvironmentConcurrencyLocked()
 	e := l.entries[instance]
 	if e == nil {
 		return
@@ -624,6 +642,7 @@ func (l *NodeLedger) Release(instance string) {
 	if e.countsConc {
 		l.perApp[e.appID]--
 		l.cleanupApp(e.appID)
+		l.releaseEnvironmentConcurrencyLocked(e)
 		if e.deploymentID != "" {
 			key := e.appID + "\x00" + e.deploymentID
 			l.perAppDeployment[key]--

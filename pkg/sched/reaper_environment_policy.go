@@ -64,7 +64,12 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 					policy.environmentID = owner.EnvironmentID
 				}
 				if policy.err == nil {
-					policy.app, policy.err = l.engine.resolveRuntimeScalingPolicy(ctx, policy.app, policy.deployment)
+					var scaling state.RuntimeScalingState
+					scaling, policy.err = l.engine.runtimeScalingStateForDeployment(ctx, policy.app, policy.deployment)
+					if policy.err == nil && scaling.EnvironmentID != policy.environmentID {
+						policy.err = state.ErrConflict
+					}
+					policy.app.LastScaleInAt, policy.app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
 				}
 				policies[row.DeploymentID] = policy
 				if policy.err != nil {

@@ -6,16 +6,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (e *Engine) resolveRuntimeScalingPolicy(ctx context.Context, app state.App, deployment state.Deployment) (state.App, error) {
+func (e *Engine) runtimeScalingStateForDeployment(ctx context.Context, app state.App, deployment state.Deployment) (state.RuntimeScalingState, error) {
 	scaling, err := e.store.RuntimeScalingStateForDeployment(ctx, app.AccountID, app.ID, deployment.ID)
 	if err != nil {
-		return state.App{}, err
+		return state.RuntimeScalingState{}, err
 	}
 	if scaling.AccountID != app.AccountID || scaling.AppID != app.ID || scaling.DeploymentID != deployment.ID || scaling.Scope != normalizedDeploymentScope(deployment.Scope) {
-		return state.App{}, state.ErrConflict
+		return state.RuntimeScalingState{}, state.ErrConflict
 	}
-	app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
-	return app, nil
+	return scaling, nil
 }
 
 // A compatibility instance without a deployment can stamp production. All
