@@ -1410,3 +1410,52 @@ admission/dispatch ownership and activation proof remain required. Qualification
 and clone publication reject queue collections until that proof exists, including
 complete empty collections. These contracts do not establish native runtime or
 provider data-copy acceptance.
+
+### 2026-10-01: scoped queue configuration API and CLI
+
+Stage workloads expose GET and PUT at
+`/v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings`.
+Both methods verify the account, project, registered stage and workload ownership.
+The PUT body contains `expected_revision` for the complete workload settings head
+and a required complete `bindings` array. An empty array clears definitions;
+an omitted/null array is invalid. Protected stages and stale revisions conflict.
+The response contains logical definitions, collection/workload revisions and the
+configuration hash, without production binding IDs. An uninitialized collection
+returns `environment_queue_collection_unavailable` and the workload revision in
+`X-Gregale-Workload-Revision`, including zero for a new settings head.
+
+The CLI exposes the same collection through:
+
+```sh
+gregale projects environments queues get shop staging shop-worker
+gregale projects environments queues set shop staging shop-worker --file queues.json
+```
+
+`queues.json` contains the workload revision observed before editing and all
+desired bindings, for example `{"expected_revision":4,"bindings":[]}`. The set
+command also accepts stdin. It requires an explicit stage and revision and never
+uses the production queue API. Existing deployments keep their pinned collection.
+Responses and human output report consumer activation as unavailable; saving a
+definition does not provision a consumer or enable qualification/promotion.
+
+Legacy queue-binding CRUD, status and the simple queue-workload endpoint now
+reject stage/ambiguous environment or scope queries before production access.
+Create validates selection before idempotency reservation/replay, so a stage
+refusal cannot poison a production receipt and a production receipt cannot answer
+a stage request. Existing production receipt identity is preserved.
+
+Contracts cover complete replacement and clearing, no-op/stale/protected writes,
+foreign account/project ownership, function push validation, plan restrictions,
+no accidental consumer creation, legacy selector/replay isolation and CLI routing.
+OpenAPI and generated Node/Python clients describe the scoped API. The generated
+CLI reference now includes queue commands and preserves the full-copy/status
+commands through their source manifest rather than hand-edited generated text.
+Full consumer isolation, data checkpoint orchestration and promotion acceptance
+remain required for fully copyable stages.
+
+Selected MemStore/migrated PostgreSQL queue, capture and qualification contracts
+pass, including worker release membership with revision retention configured.
+Selected API/CLI, scope, idempotency and generated-reference contracts pass.
+OpenAPI lint passes with warnings, the Node SDK builds, and nine selected Python
+SDK contracts pass. These local gates do not establish full native/provider
+acceptance or complete configuration coverage.

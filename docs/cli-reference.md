@@ -2030,7 +2030,9 @@ Clone project environments or manage app runtime env/secrets
 
 ### env create
 
-Clone a project environment with isolated managed data by default
+Clone a project environment with isolated managed data by default; full-copy admission currently returns environment_full_clone_unavailable with named blockers
+
+`gregale env create <stage> --from <ENV> [--project <SLUG>] [--protected] [--share-resources] [--full] [--wait] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2038,12 +2040,11 @@ Clone a project environment with isolated managed data by default
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
-| `--full` | require complete configuration, workload, policy and isolated data coverage |  |
-| `--wait` | wait for a full clone operation to finish | requires `--full` |
-| `--timeout <SECONDS>` | maximum wait time; the server operation continues after timeout |  |
+| `--full` | require complete configuration, workloads, policies and isolated data coverage; never fall back to a partial clone |  |
+| `--wait` | wait for a full clone operation to finish (requires --full) |  |
+| `--timeout <SECONDS>` | maximum local wait time; the durable server operation continues after timeout |  |
 
-Full-copy admission currently returns `environment_full_clone_unavailable` with
-named blockers. It never falls back to a partial clone. The command contract is:
+Examples:
 
 ```sh
 gregale env create staging --from production --full --wait
@@ -2051,16 +2052,21 @@ gregale env create staging --from production --full --wait
 
 ### env clone-status
 
-Read durable clone progress, including before the target environment exists.
+Read durable clone progress before or after the target exists; timeout exits 3 with a resume command, failed or compensated operations exit 1
+
+`gregale env clone-status <operation-id> [--project <SLUG>] [--wait] [--timeout <SECONDS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--wait` | wait for the same durable clone operation to finish |  |
+| `--timeout <SECONDS>` | maximum local wait time |  |
+
+Examples:
 
 ```sh
-gregale env clone-status <operation-id> --project <project-slug> --wait
+gregale env clone-status <operation-id> --project shop --wait
 ```
-
-`--project` defaults to the linked project. `--wait` polls the same operation;
-`--timeout <SECONDS>` bounds the local wait. JSON output contains one receipt.
-Timeout returns exit code 3 with a resume command; failed or compensated
-operations return exit code 1.
 
 ### env pull
 
@@ -2861,7 +2867,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
 
 #### projects environments list
 
@@ -2956,6 +2962,24 @@ Manage environment routes
 Manage environment policies
 
 `gregale projects environments policies`
+
+#### projects environments queues
+
+Read or replace a stage workload&#39;s complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions
+
+`gregale projects environments queues <get|set> <project> <stage> <workload> [--file <PATH>] [--stdin]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | set reads this JSON file (choose --file or --stdin) |  |
+| `--stdin` | set reads JSON from stdin |  |
+
+Examples:
+
+```sh
+gregale projects environments queues get shop staging shop-worker
+gregale projects environments queues set shop staging shop-worker --file queues.json
+```
 
 #### projects environments diff
 

@@ -14,6 +14,8 @@ type environmentQueueTestStore interface {
 	state.Store
 	state.ProjectEnvironmentWorkPolicyStore
 	state.DeploymentWorkloadSpecReader
+	state.ProjectEnvironmentWorkloadQualificationStore
+	state.ProjectReleaseSetStore
 }
 
 func TestMemEnvironmentQueueSettingsAreIsolatedAndPinned(t *testing.T) {
@@ -31,7 +33,7 @@ func testEnvironmentQueueSettings(t *testing.T, store environmentQueueTestStore)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "queue-worker", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 4, Manifest: state.AppManifest{Env: map[string]string{"MODE": "retained"}}})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "queue-worker", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 4, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600, Env: map[string]string{"MODE": "retained"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,5 +116,15 @@ func testEnvironmentQueueSettings(t *testing.T, store environmentQueueTestStore)
 	}
 	if _, err := state.ReplaceEnvironmentQueueBindings(ctx, store, app, "production", 0, nil); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("stage API edited production: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, pinned.ID); err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "stage", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: pinned.ID}})
+	if err != nil {
+		t.Fatalf("worker stage release: %v", err)
+	}
+	if _, _, err := store.ProjectEnvironmentWorkloadConfigHashes(ctx, account.ID, project.ID, "stage", release.ID); !errors.Is(err, state.ErrProjectEnvironmentQueueActivationUnavailable) {
+		t.Fatalf("queue definitions qualified without consumer proof: %v", err)
 	}
 }

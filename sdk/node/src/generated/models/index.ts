@@ -708,6 +708,8 @@ export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvir
 export type { ProjectEnvironmentQualificationCheck } from './ProjectEnvironmentQualificationCheck.js';
 export type { ProjectEnvironmentQualificationResponse } from './ProjectEnvironmentQualificationResponse.js';
 export type { ProjectEnvironmentQualificationResult } from './ProjectEnvironmentQualificationResult.js';
+export type { ProjectEnvironmentQueueBinding } from './ProjectEnvironmentQueueBinding.js';
+export type { ProjectEnvironmentQueueBindingsResponse } from './ProjectEnvironmentQueueBindingsResponse.js';
 export type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 export type { ProjectEnvironmentReleaseListResponse } from './ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
@@ -776,6 +778,7 @@ export type { RegisterEventSchemaResponse } from './RegisterEventSchemaResponse.
 export type { RegisterScenarioTestRequest } from './RegisterScenarioTestRequest.js';
 export type { RekeyProgress } from './RekeyProgress.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
+export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './ReplaceProjectEnvironmentQueueBindingsRequest.js';
 export type { ReplayEventFanoutFailureRequest } from './ReplayEventFanoutFailureRequest.js';
 export type { ReplayEventFanoutFailureResponse } from './ReplayEventFanoutFailureResponse.js';
 export type { ReplayRetryableEventFanoutFailuresRequest } from './ReplayRetryableEventFanoutFailuresRequest.js';

@@ -15023,6 +15023,74 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the workload and stage.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered stage. Production is managed through the app queue-bindings API.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload application slug belonging to this project.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentQueueBindings
+      summary: Read a stage workload's complete desired queue configuration.
+      description: |
+        Returns logical definitions and the current workload revision. A missing
+        collection returns 409 environment_queue_collection_unavailable and never
+        inherits production queues. X-Gregale-Workload-Revision identifies the
+        head to use when initializing or replacing the collection.
+        Consumer activation is currently unavailable; saved definitions do not
+        activate delivery or qualify the stage for promotion.
+      responses:
+        '200':
+          description: Complete stage-owned desired queue collection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [projects]
+      operationId: replaceProjectEnvironmentQueueBindings
+      summary: Replace a stage workload's complete desired queue configuration.
+      description: |
+        Requires expected_revision to match the complete workload settings head,
+        with zero for an uninitialized workload. An explicit empty bindings list
+        removes all stage definitions. Stale revisions and protected stages
+        return 409, including protected no-op writes. Definitions have logical
+        names and no production consumer IDs. Existing deployments retain their
+        pinned definitions. Consumer activation is currently unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceProjectEnvironmentQueueBindingsRequest' }
+      responses:
+        '200':
+          description: Stored desired queue definitions and their workload revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/diff:
     parameters:
       - name: slug
@@ -18271,6 +18339,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-workload:
+    description: Production queue workload profile. Stage environment or scope queries are rejected before changing production resources; stage definitions use the project environment workload queue-bindings endpoint.
     put:
       tags: [queues]
       operationId: configureQueueWorkload
@@ -18306,6 +18375,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings:
+    description: Production queue bindings. Stage environment or scope queries are rejected before production access or idempotent replay. Stage definitions use the project environment workload queue-bindings endpoint.
     get:
       tags: [queues]
       operationId: listQueueBindings
@@ -18324,6 +18394,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -18352,6 +18423,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}:
+    description: Production queue binding identity. Stage environment or scope queries are rejected; stage definitions use logical names in the project environment workload queue-bindings endpoint.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -18365,6 +18437,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -18394,11 +18467,13 @@ paths:
       summary: Delete one queue binding.
       responses:
         '204': { description: Queue binding deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}/status:
+    description: Production consumer status. Stage environment or scope queries are rejected before reading production counters.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -18419,6 +18494,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -32382,6 +32458,46 @@ components:
           type: array
           maxItems: 50
           items: { $ref: '#/components/schemas/DeclaredRoute' }
+
+    ProjectEnvironmentQueueBinding:
+      description: Desired logical queue binding without runtime consumer identity or messages. HTTP consumers require push mode and a function workload.
+      type: object
+      required: [name, queue_name, mode, workload_class, enabled, max_concurrency]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job, http] }
+        enabled: { type: boolean }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+
+    ReplaceProjectEnvironmentQueueBindingsRequest:
+      description: Complete stage queue replacement fenced by the workload revision, not the queue collection clock.
+      type: object
+      required: [expected_revision, bindings]
+      additionalProperties: false
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
+
+    ProjectEnvironmentQueueBindingsResponse:
+      description: Desired stage queue definitions. Consumer activation is currently unavailable and these definitions do not enable delivery or qualify promotion.
+      type: object
+      required: [environment, workload, revision, workload_revision, config_hash, activation_state, bindings]
+      properties:
+        environment: { type: string }
+        workload: { type: string }
+        revision: { type: integer, format: int64, minimum: 1, description: Queue collection clock. }
+        workload_revision: { type: integer, format: int64, minimum: 1, description: Complete workload revision to use as expected_revision on replacement. }
+        config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        activation_state: { type: string, enum: [unavailable] }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
 
     ProjectEnvironmentSharedResourceResponse:
       description: Application-scoped resource that is shared by all environments.

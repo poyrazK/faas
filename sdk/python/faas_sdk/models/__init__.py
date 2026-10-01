@@ -1399,6 +1399,13 @@ from .project_environment_qualification_response_workload_config_hashes import (
 from .project_environment_qualification_result import ProjectEnvironmentQualificationResult
 from .project_environment_qualification_result_error_code import ProjectEnvironmentQualificationResultErrorCode
 from .project_environment_qualification_result_status import ProjectEnvironmentQualificationResultStatus
+from .project_environment_queue_binding import ProjectEnvironmentQueueBinding
+from .project_environment_queue_binding_mode import ProjectEnvironmentQueueBindingMode
+from .project_environment_queue_binding_workload_class import ProjectEnvironmentQueueBindingWorkloadClass
+from .project_environment_queue_bindings_response import ProjectEnvironmentQueueBindingsResponse
+from .project_environment_queue_bindings_response_activation_state import (
+    ProjectEnvironmentQueueBindingsResponseActivationState,
+)
 from .project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
 from .project_environment_release_diff_response_kind import ProjectEnvironmentReleaseDiffResponseKind
 from .project_environment_release_list_response import ProjectEnvironmentReleaseListResponse
@@ -1514,6 +1521,7 @@ from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
 from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailureResponseState
@@ -3232,6 +3240,11 @@ __all__ = (
     "ProjectEnvironmentQualificationResult",
     "ProjectEnvironmentQualificationResultErrorCode",
     "ProjectEnvironmentQualificationResultStatus",
+    "ProjectEnvironmentQueueBinding",
+    "ProjectEnvironmentQueueBindingMode",
+    "ProjectEnvironmentQueueBindingsResponse",
+    "ProjectEnvironmentQueueBindingsResponseActivationState",
+    "ProjectEnvironmentQueueBindingWorkloadClass",
     "ProjectEnvironmentReleaseDiffResponse",
     "ProjectEnvironmentReleaseDiffResponseKind",
     "ProjectEnvironmentReleaseListResponse",
@@ -3347,6 +3360,7 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplaceProjectEnvironmentQueueBindingsRequest",
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",
     "ReplayEventFanoutFailureResponseState",
