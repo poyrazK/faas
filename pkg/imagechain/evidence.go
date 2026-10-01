@@ -1,5 +1,5 @@
 // Package imagechain validates retained OCI metadata without registry, state,
-// storage or daemon dependencies. // adr: 387
+// storage or daemon dependencies. // adr: 393
 package imagechain
 
 import (

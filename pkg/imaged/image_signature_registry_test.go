@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 387
+// adr: 393
 
-// ADR-387: exercise the production RegistryClient and real P256 verifier as
+// ADR-393: exercise the production RegistryClient and real P256 verifier as
 // one deploy admission path. A signed index covers only its digest-verified
 // selected child; mutable tags and registry headers cannot substitute content.
 

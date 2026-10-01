@@ -1,6 +1,6 @@
 package oci
 
-// adr: 387. Reference parsing is shared with private evidence storage.
+// adr: 393. Reference parsing is shared with private evidence storage.
 import "github.com/onebox-faas/faas/pkg/ociref"
 const (
  defaultRegistry = "docker.io"

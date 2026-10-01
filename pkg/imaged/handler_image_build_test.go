@@ -755,7 +755,7 @@ func envMapToSlice(env map[string]string) []string {
 	return out
 }
 
-// adr: 387
+// adr: 393
 // Resolves main and sidecar references independently and rejects all later
 // main-image reads of the mutable customer tag, including full-rootfs fallback.
 type fullRootfsResolvedTestPuller struct {

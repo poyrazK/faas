@@ -369,6 +369,10 @@ export class DeploymentsService {
       dockerfile?: boolean;
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
       handler?: string;
+      /**
+       * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
+       */
+      healthcheck?: string;
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.

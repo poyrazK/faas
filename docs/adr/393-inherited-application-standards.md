@@ -1,4 +1,4 @@
-# ADR-387 · Versioned inherited application standards
+# ADR-393 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -11,6 +11,11 @@
   enrollment. Company logging and security requirements should follow service
   ownership, survive every deployment entry point, and update through a visible,
   recoverable process.
+
+This decision originally used ADR-387 on the implementation branch. It was
+renumbered after upstream assigned that number to FOCUS invoice projection.
+Already committed migration comments retain their original citation; the
+migration files remain immutable.
 
 ## Contract
 

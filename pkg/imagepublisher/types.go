@@ -1,6 +1,6 @@
 // Package imagepublisher verifies keyed registry publisher evidence without
 // depending on transport, storage, daemons or state. Both imaged and the private
-// evidence store use the same byte/claim verification boundary (ADR-387).
+// evidence store use the same byte/claim verification boundary (ADR-393).
 package imagepublisher
 
 import (

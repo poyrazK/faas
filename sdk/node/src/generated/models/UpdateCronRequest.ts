@@ -5,7 +5,7 @@
 import type { FailureRules } from './FailureRules.js';
 import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
- * Partial cron update.
+ * Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only.
  */
 export type UpdateCronRequest = {
   schedule?: string | null;

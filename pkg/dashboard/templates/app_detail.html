@@ -969,15 +969,17 @@
                       <option value="coalesce_latest" {{if eq .MissedRunsPolicy "coalesce_latest"}}selected{{end}}>Coalesce to latest</option>
                     </select>
                   </label>
-                  <label>Failure rules JSON <span style="color:#888">(blank preserves current rules; exit_codes or outcome_codes)</span><br>
-                    <textarea name="failure_rules_json" rows="5" cols="60" placeholder='{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'>{{.FailureRulesJSON}}</textarea>
-                  </label>
+                  {{if .IsCommandCron}}
+                    <label>Failure rules JSON <span style="color:#888">(blank preserves current rules; exit_codes or outcome_codes)</span><br>
+                      <textarea name="failure_rules_json" rows="5" cols="60" placeholder='{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'>{{.FailureRulesJSON}}</textarea>
+                    </label>
+                  {{end}}
                   <button type="submit">Save policy</button>
                 </form>
                 <h4>Last {{.OccurrencesCount}} scheduled occurrences</h4>
                 {{if .HistoryAvailable}}
                   {{if .Occurrences}}
-                    <ul>{{range .Occurrences}}<li><span class="badge {{.StatusClass}}">{{.Status}}</span> {{.ScheduledFor}}{{if .DeadlineAt}} · deadline {{.DeadlineAt}}{{end}}{{if .Reason}}<br><small style="color:#888">{{.Reason}}</small>{{end}}{{if .BlockingID}}<br><small>Blocking occurrence <code>{{.BlockingID}}</code></small>{{end}}{{if .TaskID}}<br><small>Task <code>{{.TaskID}}</code></small>{{end}}</li>{{end}}</ul>
+                    <ul>{{range .Occurrences}}<li><span class="badge {{.StatusClass}}">{{.Status}}</span> {{.ScheduledFor}}{{if .DeadlineAt}} · deadline {{.DeadlineAt}}{{end}}{{if .Reason}}<br><small style="color:#888">{{.Reason}}</small>{{end}}{{if .BlockingID}}<br><small>Blocking occurrence <code>{{.BlockingID}}</code></small>{{end}}{{if .TaskID}}<br><small>Task <code>{{.TaskID}}</code></small>{{end}}{{if .InvocationID}}<br><small>Invocation <code>{{.InvocationID}}</code></small>{{end}}</li>{{end}}</ul>
                   {{else}}<p style="color:#888">No scheduled occurrences recorded.</p>{{end}}
                 {{else}}<p style="color:#888">Occurrence history is temporarily unavailable.</p>{{end}}
               </details>

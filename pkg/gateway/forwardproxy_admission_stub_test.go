@@ -1,7 +1,7 @@
-// adr: 387
+// adr: 393
 package gateway
 
-// ADR-387: the gateway forwarding fake implements the expanded generated
+// ADR-393: the gateway forwarding fake implements the expanded generated
 // client without granting privileged admission authority or inventing native
 // receipts. A mistaken call to these capabilities must refuse explicitly.
 

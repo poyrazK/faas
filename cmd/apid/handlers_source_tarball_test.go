@@ -151,6 +151,7 @@ companions:
 	)
 	body, ct := multipartUpload(t, map[string]multipartPart{
 		"tarball": {filename: "src.tar.gz", body: tarBytes},
+		"sidecar": {body: []byte(`{"healthcheck":{"grpc":{"service":"audit.Echo"}}}`)},
 	})
 	req := httptest.NewRequest("POST", "/v1/apps/manifest-deps/deployments/source-tarball", body)
 	req.Header.Set("Authorization", "Bearer "+e.key)
@@ -167,6 +168,10 @@ companions:
 	deployment, err := e.store.LatestDeployment(t.Context(), response.AppID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
+	}
+	var probe api.DeploymentHealthcheck
+	if err := json.Unmarshal(deployment.OverrideHealthcheck, &probe); err != nil || probe.GRPC == nil || probe.GRPC.Service != "audit.Echo" {
+		t.Fatalf("manifest dependencies dropped explicit probe: %s (%v)", deployment.OverrideHealthcheck, err)
 	}
 	var dependencies []api.WorkloadDependency
 	if err := json.Unmarshal(deployment.OverrideMainDependsOn, &dependencies); err != nil {

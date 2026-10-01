@@ -273,6 +273,13 @@ func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
 // Tick is the per-cycle drain walk. Public so tests can drive it
 // without spinning Run().
 func (d *Drain) Tick(ctx context.Context) {
+	if expirer, ok := d.store.(state.ScheduledInvocationDeadlineStore); ok {
+		if count, err := expirer.ExpireUnstartedScheduledCronInvocations(ctx, d.now(), d.batchSize); err != nil {
+			d.log.Warn("drain: expire scheduled cron invocations", "err", err)
+		} else if count > 0 {
+			d.log.Info("drain: expired scheduled cron invocations past start deadline", "count", count)
+		}
+	}
 	if expirer, ok := d.store.(interface {
 		ExpirePendingKeyedInvocations(context.Context, time.Time, int) (int, error)
 	}); ok {

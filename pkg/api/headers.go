@@ -14,7 +14,8 @@ const (
 	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
 	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
 	// FlagContextHeader carries bounded, SDK-generated decisions across an
-	// authorized Gregale service call. Public ingress always clears it.
+	// authorized Gregale service call or a customer-bound durable invocation.
+	// Public ingress always clears it.
 	FlagContextHeader = "X-Faas-Flag-Context"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel

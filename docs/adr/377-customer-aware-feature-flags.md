@@ -65,16 +65,18 @@ changed by this decision. SDK allocation vectors and
 rollout monotonicity, optimistic concurrency, tenant ownership, history, rollback,
 workload-token audience and scope, and evidence stripping are separate gates.
 
-Multivariate flags, arbitrary user attributes, automatic progressive release,
-and inheritance through queued work are future extensions. For synchronous
-managed service calls, the Node SDK can explicitly propagate only decisions
-marked used. The service proxy forwards a bounded, canonical envelope only
-after its existing caller identity and binding checks; public ingress removes
-caller-supplied copies. Downstream SDK evidence records the original app,
-environment, config version and rule with source `inherited`. This envelope
-carries application behavior context and never grants access or entitlements.
-Other downstream and asynchronous work continues to evaluate its own
-configuration using its existing verified tenant identity.
+Multivariate flags, arbitrary user attributes, and automatic progressive
+release are future extensions. For synchronous managed service calls, the Node
+SDK can explicitly propagate only decisions marked used. The service proxy
+forwards a bounded, canonical envelope only after its existing caller identity
+and binding checks; public ingress removes caller-supplied copies. Downstream
+SDK evidence records the original app, environment, config version and rule
+with source `inherited`. For `queues/send` and the app inbox, producers may
+attach that same bounded envelope. apid binds its customer to the durable
+invocation, and synthetic delivery restores the tenant and canonical flag
+context on every attempt. This envelope carries application behavior context
+and never grants access or entitlements. Other asynchronous work continues to
+evaluate its own configuration using its existing verified tenant identity.
 
 Operational owner: apid and SDK maintainers. Recover by publishing a known good
 version with the current expected version, or using explicit application defaults

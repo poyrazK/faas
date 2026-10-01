@@ -444,7 +444,7 @@ func (h *Handler) imageSignaturePublishers(app state.App) ([]cosign.TrustedPubli
 // verifyImageSignature authenticates the exact resolved source before build
 // reads. Only a missing attachment is classified as missing; registry failures
 // remain failures. The signed source may be an index whose verified child is
-// selected by the resolver (ADR-387).
+// selected by the resolver (ADR-393).
 func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref, expectedDigest string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
 	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
 	if err == nil && proof.SubjectDigest != expectedDigest {

@@ -4332,16 +4332,26 @@ $$;
 CREATE FUNCTION public.sync_invocation_schedule_occurrence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+ missed_deadline boolean;
 BEGIN
  IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
+ SELECT o.started_at IS NULL AND NEW.start_deadline_at IS NOT NULL
+        AND NEW.start_deadline_at < COALESCE(NEW.completed_at, clock_timestamp())
+   INTO missed_deadline
+   FROM schedule_occurrences o WHERE o.id = NEW.occurrence_id;
  UPDATE schedule_occurrences o SET
-   status = CASE NEW.state
-     WHEN 'pending' THEN 'queued' WHEN 'dispatching' THEN 'running'
-     WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed'
-     WHEN 'cancelled' THEN 'cancelled' WHEN 'dead_letter' THEN 'failed' ELSE o.status END,
-   reason = CASE WHEN o.started_at IS NULL AND NEW.start_deadline_at IS NOT NULL
-       AND NEW.start_deadline_at < COALESCE(NEW.completed_at, clock_timestamp())
-       AND NEW.state = 'failed' THEN 'invocation did not start before the occurrence start deadline' ELSE o.reason END,
+   status = CASE
+     WHEN COALESCE(missed_deadline, false) AND NEW.state = 'failed' THEN 'missed_deadline'
+     WHEN NEW.state = 'pending' THEN CASE WHEN o.started_at IS NULL THEN 'queued' ELSE 'running' END
+     WHEN NEW.state = 'dispatching' THEN 'running'
+     WHEN NEW.state = 'completed' THEN 'succeeded'
+     WHEN NEW.state = 'failed' THEN 'failed'
+     WHEN NEW.state = 'cancelled' THEN 'cancelled'
+     WHEN NEW.state = 'dead_letter' THEN 'failed'
+     ELSE o.status END,
+   reason = CASE WHEN COALESCE(missed_deadline, false) AND NEW.state = 'failed'
+       THEN 'invocation did not start before the occurrence start deadline' ELSE o.reason END,
    started_at = CASE WHEN NEW.state = 'dispatching' THEN COALESCE(o.started_at, clock_timestamp()) ELSE o.started_at END,
    finished_at = CASE WHEN NEW.state IN ('completed','failed','cancelled','dead_letter') THEN COALESCE(NEW.completed_at, clock_timestamp()) ELSE NULL END,
    updated_at = clock_timestamp()
@@ -8280,7 +8290,7 @@ CREATE TABLE public.invocations (
     occurrence_id uuid,
     start_deadline_at timestamp with time zone,
     work_decision jsonb,
-    CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text])))),
+    CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text])))),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
@@ -8354,12 +8364,18 @@ CREATE TABLE public.invoices (
     amount_refunded_cents bigint DEFAULT 0 NOT NULL,
     credits_applied_cents bigint DEFAULT 0 NOT NULL,
     amount_refund_pending_cents bigint DEFAULT 0 NOT NULL,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    detail_lifecycle jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
     CONSTRAINT invoices_amount_refund_pending_cents_check CHECK ((amount_refund_pending_cents >= 0)),
     CONSTRAINT invoices_amount_refunded_cents_check CHECK ((amount_refunded_cents >= 0)),
     CONSTRAINT invoices_credits_applied_cents_check CHECK (((credits_applied_cents >= 0) AND (credits_applied_cents <= amount_refunded_cents))),
     CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
-    CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT invoices_detail_lifecycle_object_check CHECK ((jsonb_typeof(detail_lifecycle) = 'object'::text)),
+    CONSTRAINT invoices_detail_lifecycle_records_check CHECK (((NOT (detail_lifecycle ? 'records'::text)) OR ((jsonb_typeof((detail_lifecycle -> 'records'::text)) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(detail_lifecycle, '$."records".keyvalue()'::jsonpath)) <= 20002)))),
+    CONSTRAINT invoices_details_object_check CHECK ((jsonb_typeof(details) = 'object'::text)),
+    CONSTRAINT invoices_details_seen_line_limit_check CHECK ((jsonb_array_length(jsonb_path_query_array(details, '$."line_first_seen".keyvalue()'::jsonpath)) <= 10000)),
+    CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text, 'unknown'::text]))),
     CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT invoices_refund_totals_within_paid_check CHECK (((amount_refunded_cents + amount_refund_pending_cents) <= GREATEST(amount_paid_cents, total_cents))),
     CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
@@ -25568,3 +25584,5 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+

@@ -209,6 +209,26 @@ const (
 	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
 	// MaxWorkPoliciesPerApp bounds durable named policy configuration.
 	MaxWorkPoliciesPerApp = 64
+	// FOCUS invoice exports are complete snapshots, never truncated pages.
+	MaxFOCUSExportInvoices    = 1000
+	MaxFOCUSExportFieldBytes  = 256
+	MaxFOCUSExportRows        = 10000
+	MaxInvoiceLineItems       = 1000
+	MaxInvoiceSeenLineIDs     = 10000
+	MaxInvoiceDetailTextBytes = 4096
+	// Independent charge/tax records plus both aggregate fallback records.
+	MaxInvoiceLifecycleRecords = 2*MaxInvoiceSeenLineIDs + 2
+	MaxInvoiceRefreshRequests  = 32
+	// MaxInvoiceHistoryPageSize caps one authenticated provider discovery read.
+	MaxInvoiceHistoryPageSize       = 25
+	StripeInvoicePageSize           = 100
+	MaxInvoiceProviderResponseBytes = 4 << 20
+	InvoiceProviderRequestTimeout   = 20 * time.Second
+	InvoiceRefreshTimeout           = 2 * time.Minute
+	// InvoiceHistoryTimeout bounds one provider page and its local import.
+	InvoiceHistoryTimeout = 2 * time.Minute
+	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
+	MaxFOCUSExportBytes = 3 << 20
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

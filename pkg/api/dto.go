@@ -169,9 +169,13 @@ type SendAppMessageRequest struct {
 	Time            *time.Time      `json:"time,omitempty"`
 	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	QueueName       string          `json:"queue_name,omitempty"`
-	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
-	Work            *InvokeWork     `json:"work,omitempty"`
+	// FlagContext carries a bounded Gregale Flags context from the producer
+	// request into the queued synthetic request. It is validated and bound to
+	// an active platform tenant before admission.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
@@ -5248,7 +5252,10 @@ func (p *RetryPolicyDTO) Validate() *Problem {
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// FlagContext carries decisions explicitly marked used by the producer.
+	// The queue handler validates it and retains the customer attribution.
+	FlagContext string          `json:"flag_context,omitempty"`
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
@@ -6436,14 +6443,15 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason                 string            `json:"reason,omitempty"`
-	Tag                    string            `json:"tag,omitempty"`
-	DeployedBy             string            `json:"deployed_by,omitempty"`
-	PRNumber               int               `json:"pr_number,omitempty"`
-	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -6465,14 +6473,15 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason                 string            `json:"reason,omitempty"`
-	Tag                    string            `json:"tag,omitempty"`
-	DeployedBy             string            `json:"deployed_by,omitempty"`
-	PRNumber               int               `json:"pr_number,omitempty"`
-	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).

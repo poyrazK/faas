@@ -173,7 +173,41 @@ await flags.runRequest(request.headers, async () => {
 Downstream evidence reports `source: "inherited"` and the originating app and
 environment under `inherited_from`; its configuration version and rule ID refer
 to the original decision. The envelope carries behavior context, not permission
-or entitlement. It does not propagate through queues or background jobs yet.
+or entitlement.
+
+## Carry decisions into queued work
+
+For work created while handling a customer request, include the SDK's bounded
+context in `flag_context` when sending a queue message or app-inbox message:
+
+```ts
+await flags.runRequest(request.headers, async () => {
+  const decision = flags.boolean('new-export', false);
+  flags.used('new-export');
+  const flagContext = flags.propagationHeader();
+  await QueuesService.queueSend({
+    slug: 'export-worker',
+    requestBody: {
+      payload: { exportId },
+      ...(flagContext ? { flag_context: flagContext } : {}),
+    },
+  });
+});
+```
+
+Gregale validates the bounded envelope, binds its customer to an active
+platform tenant in the app's account, and stores it with the durable invocation.
+Each attempt, including retries, reaches the app as a synthetic request carrying
+the original `X-Faas-Platform-Tenant-Id` and `X-Faas-Flag-Context`. The worker
+can use the regular `flags.runRequest(request.headers, handler)` wrapper. A
+marked decision keeps its original value, rule, configuration version, app,
+and environment; decisions that were not marked used are not carried forward.
+Subsequent managed service calls can propagate the same context using
+`createGregaleFetch`.
+
+This applies to `queues/send` and the app inbox. Cron, delayed-task, and external
+broker deliveries continue to evaluate flags using their existing request
+identity unless the producer explicitly creates a new customer-bound invocation.
 
 ## Inspect decisions and request outcomes
 

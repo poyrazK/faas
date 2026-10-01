@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authcode"
 	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -1504,6 +1505,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if billingProv != nil {
 			srv.WithBillingProvider(billingProv)
+		} else if loadedName == "stripe" {
+			srv.legacyStripeInvoiceReader = stripe.NewClient(nil, nil, billingCfg.Stripe.APIKey, "", log)
 		}
 		log.Info("billing provider loaded", "provider", provName)
 	} else {

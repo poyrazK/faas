@@ -384,7 +384,7 @@ operations:
     messages:
       - $ref: '#/channels/internalEventPublish/messages/internalEventPublish'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -401,7 +401,7 @@ operations:
     messages:
       - $ref: '#/channels/workflowExternalEvent/messages/workflowExternalEvent'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -415,7 +415,7 @@ operations:
     messages:
       - $ref: '#/channels/queueSend/messages/queueSend'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -429,7 +429,7 @@ operations:
     messages:
       - $ref: '#/channels/applicationInbox/messages/applicationInbox'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -443,7 +443,7 @@ operations:
     messages:
       - $ref: '#/channels/applicationOutbox/messages/applicationOutbox'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -462,7 +462,7 @@ operations:
     messages:
       - $ref: '#/channels/queueReceive/messages/queueReceive'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -476,7 +476,7 @@ operations:
     messages:
       - $ref: '#/channels/queueAck/messages/queueAck'
     security:
-      - bearerAuth: []
+      - $ref: '#/components/securitySchemes/bearerAuth'
     bindings:
       http:
         method: POST
@@ -918,7 +918,7 @@ components:
         - time
         - datacontenttype
         - data
-        - account_id
+        - accountid
       properties:
         specversion:
           type: string
@@ -944,7 +944,7 @@ components:
         datacontenttype:
           type: string
           enum: ['application/json']
-        account_id:
+        accountid:
           type: string
           description: Account owning the webhook subscription.
         data:

@@ -3663,8 +3663,8 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
-	if len(cronCommand) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
-		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
+	if len(cronCommand) == 0 && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("failure rules require a deployment command cron"))
 		return
 	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
@@ -3808,8 +3808,8 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
 	}
-	if len(c.Command) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
-		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
+	if len(c.Command) == 0 && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("failure rules require a deployment command cron"))
 		return
 	}
 	var retryOptions []state.CronOptions
@@ -5006,6 +5006,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -5013,7 +5014,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -5202,6 +5203,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
