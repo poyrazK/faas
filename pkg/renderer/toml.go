@@ -64,7 +64,9 @@ type tomlRenderCtx struct {
 	// PostgreSQL DSN. Compute-only boxes receive the DSN through their
 	// root-owned systemd EnvironmentFile; embedding it in every daemon
 	// TOML would duplicate a credential into world-readable config.
-	HostRole string
+	HostRole   string
+	HostRegion string
+	HostZone   string
 }
 
 // controlPlanePostgresSocketDSN is intentionally credential-free. The
@@ -113,6 +115,11 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	// for the dial target, hostSANs for the per-host SAN overlay).
 	if err := emitComputeNodeBlock(ctx.Daemon, ctx.DC, host.ComputeNodeBlock, ctx.HostSANs, ctx.HostName, ctx.HostAddress, flat); err != nil {
 		return nil, nil, err
+	}
+
+	if hostKey == "vmmd" {
+		flat["compute_node.region"] = ctx.HostRegion
+		flat["compute_node.zone"] = ctx.HostZone
 	}
 
 	// Validator gate. The renderer calls the SAME validator the
@@ -209,6 +216,8 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return dc.APIDLoopback, nil
 	case "route_metrics_enabled":
 		return boolConfigValue(dc.RouteMetricsEnabled, true), nil
+	case "regional_compute_enabled":
+		return boolConfigValue(dc.RegionalComputeEnabled, false), nil
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
 	case "service_proxy_https_listen":
@@ -402,6 +411,8 @@ func emitComputeNodeBlock(daemon string, dc *manifest.DaemonConfig, keys []manif
 // hostSANs sidecar.
 func computeNodeValue(daemon string, dc *manifest.DaemonConfig, k manifest.TableKey, hostSANs []string, hostName, hostAddress string) (string, error) {
 	switch k.Key {
+	case "region", "zone":
+		return "", nil // per-host values are applied by renderTOML
 	case "name":
 		// vmmd's self-registered identity is the manifest host name.
 		// This keeps the database identity and the rendered systemd
@@ -572,7 +583,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 }
 
 func isTOMLBoolKey(key string) bool {
-	return key == "route_metrics_enabled" || key == "streaming_enabled"
+	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "regional_compute_enabled"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

@@ -146,6 +146,9 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	)
 	for i := range nodes {
 		n := nodes[i]
+		if r.RequiredRegion != "" && stringValue(n.Region) != r.RequiredRegion {
+			continue
+		}
 		// Workstream B (issue #1184 / ADR-137): placement
 		// rejects nodes whose lifecycle is not in
 		// {active, recovering}. The legacy bool `active` is a

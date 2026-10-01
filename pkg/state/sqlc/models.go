@@ -373,6 +373,7 @@ type App struct {
 	WakeTransitionID       pgtype.UUID
 	EgressPorts            []int32
 	PlatformTenantRequired bool
+	ComputeRegion          string
 }
 
 type AppApiRoute struct {

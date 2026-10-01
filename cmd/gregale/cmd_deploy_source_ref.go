@@ -97,6 +97,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 }
 
 type sourceRefAppPolicy struct {
+	ComputeRegion          string
 	AppProtocol            *string
 	PlatformTenantRequired *bool
 	RequireAuthn           *bool
@@ -185,6 +186,9 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 		policy = appPolicy[0]
 	}
 	configure := func(app api.AppResponse) (api.AppResponse, error) {
+		if policy.ComputeRegion != "" && app.ComputeRegion != policy.ComputeRegion {
+			return api.AppResponse{}, fmt.Errorf("app %q has immutable compute region %q; create a new app to use %q", slug, app.ComputeRegion, policy.ComputeRegion)
+		}
 		if policy.PlatformTenantRequired == nil && policy.RequireAuthn == nil && policy.PublicAuth == nil && policy.AppProtocol == nil {
 			return app, nil
 		}
@@ -201,6 +205,7 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 		return api.AppResponse{}, err
 	}
 	createReq := buildCreateRequest(slug, shapeApp, "", nil, policy.AppProtocol)
+	createReq.ComputeRegion = policy.ComputeRegion
 	createReq.PlatformTenantRequired = policy.PlatformTenantRequired
 	createReq.RequireAuthn = policy.RequireAuthn
 	if app, err := client.CreateApp(ctx, createReq); err == nil {

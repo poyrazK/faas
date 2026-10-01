@@ -1204,7 +1204,7 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
 		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "platform-tenant-required": {}, "no-platform-tenant-required": {}, "app-protocol": {},
 		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
-		"json": {},
+		"json": {}, "region": {},
 	}
 	var incompatible []string
 	for name := range explicit {
@@ -1255,6 +1255,9 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 }
 
 func configureExistingApp(ctx context.Context, client *Client, existing api.AppResponse, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock) error {
+	if req.ComputeRegion != "" && req.ComputeRegion != existing.ComputeRegion {
+		return fmt.Errorf("app %q has immutable compute region %q; create a new app to use %q", req.Slug, existing.ComputeRegion, req.ComputeRegion)
+	}
 	requestedType := req.Type
 	if requestedType == "" {
 		requestedType = "app"
@@ -2138,6 +2141,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	defer stop()
 	developerSync := execution.developerSource
 	fs := newFlagSet("deploy", flag.ContinueOnError)
+	computeRegion := fs.String("region", "", "immutable compute region for a new standalone app")
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
@@ -2374,6 +2378,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["region"] && (*computeRegion == "" || !api.ValidComputeRegion(*computeRegion)) {
+		return printErr("Invalid --region", fmt.Errorf("use a canonical region from gregale regions list"))
+	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
 	if sourceModeErr != nil {
@@ -2408,6 +2415,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
+	if *computeRegion != "" && (projectRequested || *diff || *dryRun || *serverDiff || *simplePlan || *githubSnippet) {
+		return printErr("Invalid --region", fmt.Errorf("--region currently supports standalone deployments; project, preview, and snippet flows are not region-aware"))
+	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -2459,6 +2469,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *createOnly && existingApp {
 		return printErr("Invalid flags", fmt.Errorf("--create-only cannot be used from an existing developer app"))
+	}
+	if *computeRegion != "" && existingApp {
+		return printErr("Invalid --region", fmt.Errorf("developer app deployments preserve the app's existing compute region"))
 	}
 	if *createOnly {
 		if incompatible := incompatibleCreateOnlyFlags(explicit); len(incompatible) > 0 {
@@ -2888,7 +2901,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			RollbackOn5xx:          rollbackOn5xxPtr,
 			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
-			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
+			sourceRefAppPolicy{ComputeRegion: *computeRegion, PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 
@@ -3093,6 +3106,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// creation so an unrelated working tree cannot affect create-only latency.
 	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.ComputeRegion = *computeRegion
 		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
@@ -3762,6 +3776,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.ComputeRegion = *computeRegion
 		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		if resolvedSimplePlan != nil {
 			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)

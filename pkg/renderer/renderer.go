@@ -251,6 +251,8 @@ func render(opts RenderOptions) (RenderReport, error) {
 			HostName:    host.Name,
 			HostAddress: host.Address,
 			HostRole:    host.Role,
+			HostRegion:  host.Region,
+			HostZone:    host.Zone,
 		})
 		if err != nil {
 			return report, err

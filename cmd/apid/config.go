@@ -38,9 +38,12 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
-	FlagsEnabled          bool   `toml:"flags_enabled"`
-	FlagsWorkloadJWKSPath string `toml:"flags_workload_jwks_path"`
-	FlagsWorkloadIssuer   string `toml:"flags_workload_issuer"`
+	// RegionalComputeEnabled admits new region-bound apps after fleet qualification.
+	// Existing constraints remain enforced when this is turned off.
+	RegionalComputeEnabled bool   `toml:"regional_compute_enabled"`
+	FlagsEnabled           bool   `toml:"flags_enabled"`
+	FlagsWorkloadJWKSPath  string `toml:"flags_workload_jwks_path"`
+	FlagsWorkloadIssuer    string `toml:"flags_workload_issuer"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in

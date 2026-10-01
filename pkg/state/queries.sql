@@ -5213,9 +5213,21 @@ ORDER BY id FOR SHARE;
 -- name: ReassignOrphanedAppOwner :execrows
 UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
 WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = sqlc.arg(to_node_id)::uuid AND n.region = apps.compute_region))
   AND status IN ('active', 'evicted_cold')
   AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL
-       OR reassigned_at < now() - make_interval(secs => sqlc.arg(cooldown_seconds)::integer));
+        OR reassigned_at < now() - make_interval(secs => sqlc.arg(cooldown_seconds)::integer));
+
+-- name: SetAppNodeID :execrows
+UPDATE apps SET node_id=sqlc.arg(node_id)::uuid
+WHERE id=sqlc.arg(app_id)::uuid AND node_id IS NULL
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = sqlc.arg(node_id)::uuid AND n.region = apps.compute_region));
+
+-- name: ReassignAppOwner :execrows
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
+  AND status IN ('active', 'evicted_cold')
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = sqlc.arg(to_node_id)::uuid AND n.region = apps.compute_region));
 
 -- name: ServiceCapacityProtection :one
 SELECT service_capacity_snapshot()::jsonb AS snapshot;

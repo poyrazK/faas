@@ -1021,8 +1021,10 @@ type DeployToken struct {
 // runner-scaffold payload (env, healthz path, entrypoint) the guest-init
 // consumes inside the microVM (spec §4.6, §4.9).
 type App struct {
-	ID        string
-	AccountID string
+	// ComputeRegion is an immutable hard constraint; empty keeps legacy placement.
+	ComputeRegion string
+	ID            string
+	AccountID     string
 	// OrgID is the owning organization persisted on the app row. AccountID
 	// remains the creator/legacy authorization identity; activity attribution
 	// must follow OrgID, never the caller's active org or API-key scope.

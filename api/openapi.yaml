@@ -3902,6 +3902,24 @@ paths:
 
   # ─── Apps ─────────────────────────────────────────────────────────────────
 
+  /v1/regions:
+    get:
+      tags: [apps]
+      operationId: listComputeRegions
+      summary: List registered active compute regions.
+      description: "Lists compute locality identifiers and registered active node counts. These counts do not promise spare capacity or independent regional control planes."
+      responses:
+        '200':
+          description: Registered active compute regions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ComputeRegionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps:
     get:
       tags: [apps]
@@ -26625,6 +26643,12 @@ components:
       type: object
       required: [id, slug, type, ram_mb, vcpu, cpu_millicores, configured_resources, max_concurrency, concurrency_per_vm, effective_limits, min_instances, status, build_cache_hit_rate_pct, url, manifest, autoscale_target_rps, autoscale_target_cpu_pct]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          example: eu-fsn
+          description: "Immutable compute placement constraint selected at creation. Omitted or empty preserves unconstrained placement. Every app instance and owner must remain in this region; this does not constrain builds, secrets, logs or customer data."
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
@@ -28464,11 +28488,24 @@ components:
         target_invalid: { type: integer, format: int64, minimum: 0, description: "Selected app failures with an invalid target header." }
         target_fallback: { type: integer, format: int64, minimum: 0, description: "Valid target failures observed with process-local fallback because central coordination was unavailable." }
 
+    ComputeRegionResponse:
+      type: object
+      description: Registered compute locality and active node count.
+      required: [id, active_nodes]
+      properties:
+        id: { type: string, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', example: eu-fsn }
+        active_nodes: { type: integer, minimum: 0, example: 2 }
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
       type: object
       required: [slug]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          example: eu-fsn
+          description: "Select an immutable compute region from GET /v1/regions. Requires operator-enabled regional compute placement. Omit or use an empty value for unconstrained placement. This choice applies to app execution and does not establish data residency or regional control-plane independence."
         slug:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'

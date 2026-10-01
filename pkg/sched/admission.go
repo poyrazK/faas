@@ -238,6 +238,8 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// RequiredRegion is a hard compute constraint, applied before affinity and capacity scoring.
+	RequiredRegion string
 	// restorePressureAware marks snapshot restores whose placement may account
 	// for other in-flight restore RPCs on each node. The Engine sets this only
 	// for real snapshot restores; cold boots and deployment smokes keep their

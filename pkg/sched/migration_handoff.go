@@ -308,6 +308,17 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		return fmt.Errorf("sched: migrate one: load app spec: deployment id is empty")
 	}
 
+	if appSpec.ComputeRegion != "" {
+		destination, err := h.store.ComputeNodeByID(leaseCtx, h.newOwnerNodeID)
+		if err != nil {
+			return fmt.Errorf("sched: migrate one: read destination region: %w", err)
+		}
+		if !state.ComputeRegionAllowsNode(appSpec.ComputeRegion, destination) {
+			h.metrics.LiveMigrationDecisions("conflict").Inc()
+			return fmt.Errorf("sched: migrate one: destination is outside compute region %s: %w", appSpec.ComputeRegion, state.ErrConflict)
+		}
+	}
+
 	// Phase 1: PrepareLiveMigration on the dying vmmd. The
 	// dying vmmd pauses the VM, writes the snapshot to the
 	// canonical storage backend, and returns the storage keys

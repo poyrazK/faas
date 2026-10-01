@@ -510,9 +510,10 @@ var methodRouteMap = map[string]string{
 	// `GetAppsSlugCustom-metrics` because of the literal hyphen in the
 	// path segment, which is not a Go identifier. Same treatment as
 	// env-diff above: drop the slug placeholder and the hyphen.
-	"GET /v1/apps/{slug}/custom-metrics":           "GetAppCustomMetrics",
-	"PUT /v1/apps/{slug}/custom-metrics/{name}":    "PutAppCustomMetric",
-	"DELETE /v1/apps/{slug}/custom-metrics/{name}": "DeleteAppCustomMetric",
+	"GET /v1/apps/{slug}/custom-metrics":                                                    "GetAppCustomMetrics",
+	"PUT /v1/apps/{slug}/custom-metrics/{name}":                                             "PutAppCustomMetric",
+	"DELETE /v1/apps/{slug}/custom-metrics/{name}":                                          "DeleteAppCustomMetric",
+	"GET /v1/regions":                                                                       "ListComputeRegions",
 	"GET /v1/apps":                                                                          "ListApps",
 	"POST /v1/apps":                                                                         "CreateApp",
 	"GET /v1/apps/{slug}/consumers":                                                         "ListAPIConsumers",

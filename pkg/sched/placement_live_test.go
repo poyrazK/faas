@@ -28,8 +28,10 @@ import (
 func seedTwoNodes(t *testing.T, store state.Store) (defaultLocal, remote string) {
 	t.Helper()
 	ctx := context.Background()
+	region := "local"
 	a, err := store.UpsertComputeNode(ctx, state.ComputeNode{
-		Name: state.DefaultLocalNodeName, TargetURL: "unix:///run/faas/vmmd.sock",
+		Region: &region,
+		Name:   state.DefaultLocalNodeName, TargetURL: "unix:///run/faas/vmmd.sock",
 		VPCPUs: 160, MemMB: 56000, MaxConcurrency: 200,
 		AdmissionCeilingMB: api.RAMAdmissionCeilingMB, VCPUBudget: api.VCPUSlots, Active: true,
 	})
@@ -37,7 +39,8 @@ func seedTwoNodes(t *testing.T, store state.Store) (defaultLocal, remote string)
 		t.Fatalf("seed default-local: %v", err)
 	}
 	b, err := store.UpsertComputeNode(ctx, state.ComputeNode{
-		Name: "remote-1", TargetURL: "tcp://10.0.0.42:50051",
+		Region: &region,
+		Name:   "remote-1", TargetURL: "tcp://10.0.0.42:50051",
 		VPCPUs: 160, MemMB: 56000, MaxConcurrency: 200,
 		AdmissionCeilingMB: api.RAMAdmissionCeilingMB, VCPUBudget: api.VCPUSlots, Active: true,
 	})

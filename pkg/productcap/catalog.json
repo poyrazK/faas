@@ -332,6 +332,17 @@
       "acceptance_test": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"
     },
     {
+      "id": "regional-compute-placement",
+      "name": "Regional compute placement",
+      "category": "runtime",
+      "description": "Keep a standalone app and its recovery or migration inside its selected compute region. The control plane and managed data remain shared.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/424-regional-compute-placement",
+      "operator_flag": "regional_compute_enabled",
+      "acceptance_test": "pkg/sched/compute_region_test.go::TestComputeRegionClaimAndRecovery"
+    },
+    {
       "id": "request-retry",
       "name": "Request retry",
       "category": "edge",

@@ -62,6 +62,10 @@ class CreateAppRequest:
 
     slug: str
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
+    compute_region: str | Unset = UNSET
+    """Select an immutable compute region from GET /v1/regions. Requires operator-enabled regional compute
+    placement. Omit or use an empty value for unconstrained placement. This choice applies to app execution and does
+    not establish data residency or regional control-plane independence."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
@@ -208,6 +212,8 @@ class CreateAppRequest:
 
     def to_dict(self) -> dict[str, Any]:
         slug = self.slug
+
+        compute_region = self.compute_region
 
         type_: str | Unset = UNSET
         if not isinstance(self.type_, Unset):
@@ -377,6 +383,8 @@ class CreateAppRequest:
                 "slug": slug,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if type_ is not UNSET:
             field_dict["type"] = type_
         if visibility is not UNSET:
@@ -498,6 +506,8 @@ class CreateAppRequest:
 
         d = dict(src_dict)
         slug = d.pop("slug")
+
+        compute_region = d.pop("compute_region", UNSET)
 
         _type_ = d.pop("type", UNSET)
         type_: CreateAppRequestType | Unset
@@ -726,6 +736,7 @@ class CreateAppRequest:
 
         create_app_request = cls(
             slug=slug,
+            compute_region=compute_region,
             type_=type_,
             visibility=visibility,
             allowed_service_callers=allowed_service_callers,

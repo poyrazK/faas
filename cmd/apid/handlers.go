@@ -182,6 +182,10 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// AccountID remains the creator and the current quota/billing identity;
 	// the org-scoped route stamps the workspace attribution that activity
 	// producers and timeline reads treat as canonical.
+	if prob := s.validateComputeRegionAvailable(r.Context(), req.ComputeRegion); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	app.OrgID = orgID
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
@@ -226,6 +230,7 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		"runtime":                  created.Runtime,
 		"visibility":               string(created.Visibility),
 		"platform_tenant_required": created.PlatformTenantRequired,
+		"compute_region":           created.ComputeRegion,
 	})
 	s.emitAppCreated(r.Context(), created)
 	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
@@ -236,6 +241,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 // buildApp applies defaults and validates a create request, returning the App to
 // persist or a *Problem describing the first violation.
 func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits api.Limits) (state.App, *api.Problem) {
+	if !api.ValidComputeRegion(req.ComputeRegion) {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid compute region", "compute_region must be at most 63 lowercase letters, digits or hyphens, with no leading or trailing hyphen")
+	}
 	if api.IsReservedAppSlug(req.Slug) {
 		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
@@ -565,6 +573,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		RequireAuthn:           requireAuthn,
 		PublicAuthMode:         publicAuthMode,
 		PlatformTenantRequired: req.PlatformTenantRequired != nil && *req.PlatformTenantRequired,
+		ComputeRegion:          req.ComputeRegion,
 		// Coerce to the plan minimums when the request asked for a
 		// warm config but the plan says warm-snapshot is off: the
 		// store ignores them anyway (the cold-boot path doesn't
@@ -953,6 +962,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		RequireAuthn:           a.RequireAuthn,
 		ConsumerAuthMode:       consumerAuthMode,
 		PlatformTenantRequired: a.PlatformTenantRequired,
+		ComputeRegion:          a.ComputeRegion,
 		// Issue #477 / ADR-079: per-app public-URL auth.
 		// Surfaced so dashboards can show "public auth: open /
 		// bearer / basic" alongside the require_authn pill and

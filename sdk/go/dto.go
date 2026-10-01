@@ -18,6 +18,7 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // DTOs in internal/api should be added here on the next PR.
 type (
 	// App lifecycle.
+	ComputeRegionResponse     = api.ComputeRegionResponse
 	CreateAppRequest          = api.CreateAppRequest
 	UpdateAppRequest          = api.UpdateAppRequest
 	RenameAppRequest          = api.RenameAppRequest

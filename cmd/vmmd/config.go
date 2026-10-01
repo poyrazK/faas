@@ -240,6 +240,8 @@ type Config struct {
 // fallback (legacy default-local single-box path) is
 // `unix://`+SocketPath.
 type ComputeNodeConfig struct {
+	Region             string `toml:"region"`
+	Zone               string `toml:"zone"`
 	NodeName           string `toml:"name"`                 // defaults to short hostname when empty
 	TargetURL          string `toml:"target_url"`           // dial target written to compute_nodes.target_url
 	VPCPUs             int    `toml:"vpcpus"`               // total vCPUs this box offers
@@ -685,6 +687,9 @@ func LoadConfig(path string) (*Config, error) {
 	// zero is an operator error", register = "zero is the omitted-
 	// field-default sentinel". Unifying them is fine, but pin the
 	// test that exercises the fallback before doing so.
+	if !api.ValidComputeRegion(c.ComputeNode.Region) || !api.ValidComputeRegion(c.ComputeNode.Zone) || (c.ComputeNode.Zone != "" && c.ComputeNode.Region == "") {
+		return nil, fmt.Errorf("vmmd: compute_node region/zone must be canonical lowercase identifiers; zone requires region")
+	}
 	if c.ComputeNode.VCPUBudget <= 0 {
 		return nil, fmt.Errorf("vmmd: [compute_node].vcpu_budget must be > 0 (got %d)", c.ComputeNode.VCPUBudget)
 	}

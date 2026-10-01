@@ -1002,6 +1002,29 @@ $$;
 
 
 --
+-- Name: enforce_app_compute_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_app_compute_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE node_region text;
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.compute_region IS DISTINCT FROM OLD.compute_region THEN
+        RAISE EXCEPTION 'compute region is immutable' USING ERRCODE = '23514', CONSTRAINT = 'apps_compute_region_immutable';
+    END IF;
+    IF NEW.compute_region <> '' AND NEW.node_id IS NOT NULL THEN
+        SELECT region INTO node_region FROM compute_nodes WHERE id = NEW.node_id FOR SHARE;
+        IF node_region IS DISTINCT FROM NEW.compute_region THEN
+            RAISE EXCEPTION 'app owner is outside selected compute region' USING ERRCODE = '23514', CONSTRAINT = 'apps_compute_region_owner';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enforce_app_task_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1063,6 +1086,27 @@ BEGIN
 
     RETURN NEW;
 END
+$$;
+
+
+--
+-- Name: enforce_bound_compute_node_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_bound_compute_node_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.region IS DISTINCT FROM OLD.region AND (
+        EXISTS (SELECT 1 FROM apps WHERE compute_region = OLD.region AND compute_region <> '') OR
+        EXISTS (SELECT 1 FROM instances i JOIN apps a ON a.id = i.app_id
+                WHERE i.node_id = OLD.id AND a.compute_region <> ''
+                AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm_paused'))
+    ) THEN
+        RAISE EXCEPTION 'node region is in use by region-bound apps' USING ERRCODE = '23514', CONSTRAINT = 'compute_nodes_region_in_use';
+    END IF;
+    RETURN NEW;
+END;
 $$;
 
 
@@ -1249,6 +1293,27 @@ BEGIN
         NEW.rollout_completed_at := NULL;
         NEW.rollout_aborted_at := COALESCE(NEW.rollout_aborted_at, now());
         NEW.rollout_aborted_reason := COALESCE(NULLIF(NEW.rollout_aborted_reason, ''), NULLIF(NEW.error, ''), 'deployment failed');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_instance_compute_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_instance_compute_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE required_region text; node_region text;
+BEGIN
+    SELECT compute_region INTO required_region FROM apps WHERE id = NEW.app_id;
+    IF coalesce(required_region, '') <> '' THEN
+        SELECT region INTO node_region FROM compute_nodes WHERE id = NEW.node_id FOR SHARE;
+        IF node_region IS DISTINCT FROM required_region THEN
+            RAISE EXCEPTION 'instance is outside selected compute region' USING ERRCODE = '23514', CONSTRAINT = 'instances_compute_region';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -4555,10 +4620,12 @@ CREATE TABLE public.apps (
     wake_transition_id uuid,
     egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
     platform_tenant_required boolean DEFAULT false NOT NULL,
+    compute_region text DEFAULT ''::text NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_compute_region_chk CHECK (((compute_region = ''::text) OR ((length(compute_region) <= 63) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
@@ -14932,6 +14999,13 @@ CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webho
 
 
 --
+-- Name: apps_compute_region_in_use_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_compute_region_in_use_idx ON public.apps USING btree (compute_region) WHERE (compute_region <> ''::text);
+
+
+--
 -- Name: apps_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19187,6 +19261,13 @@ CREATE TRIGGER apps_bump_scaling_policy_revision_trg BEFORE UPDATE OF min_instan
 
 
 --
+-- Name: apps apps_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_compute_region_guard BEFORE INSERT OR UPDATE OF compute_region, node_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.enforce_app_compute_region();
+
+
+--
 -- Name: apps apps_declared_routes_policy_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19289,6 +19370,13 @@ CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON public.compute
 --
 
 CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON public.compute_node_keys FOR EACH STATEMENT EXECUTE FUNCTION public.compute_node_keys_notify();
+
+
+--
+-- Name: compute_nodes compute_nodes_bound_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_nodes_bound_region_guard BEFORE UPDATE OF region ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.enforce_bound_compute_node_region();
 
 
 --
@@ -19506,6 +19594,13 @@ CREATE TRIGGER instance_readiness_notify_trg AFTER INSERT ON public.events FOR E
 --
 
 CREATE TRIGGER instances_billing_interval_trigger AFTER INSERT OR UPDATE OF state, mode ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_billing_interval();
+
+
+--
+-- Name: instances instances_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instances_compute_region_guard BEFORE INSERT OR UPDATE OF app_id, node_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.enforce_instance_compute_region();
 
 
 --

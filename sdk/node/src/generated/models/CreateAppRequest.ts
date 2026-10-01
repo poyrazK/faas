@@ -18,6 +18,10 @@ import type { WorkloadPort } from './WorkloadPort.js';
  */
 export type CreateAppRequest = {
   /**
+   * Select an immutable compute region from GET /v1/regions. Requires operator-enabled regional compute placement. Omit or use an empty value for unconstrained placement. This choice applies to app execution and does not establish data residency or regional control-plane independence.
+   */
+  compute_region?: string;
+  /**
    * The tag- prefix is reserved for stable deployment-alias hostnames.
    */
   slug: string;

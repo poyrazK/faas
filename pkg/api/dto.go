@@ -380,9 +380,18 @@ type ServiceReliabilityPolicy struct {
 	AllowNonIdempotent bool `json:"allow_non_idempotent,omitempty" yaml:"allow_non_idempotent,omitempty"`
 }
 
+// ComputeRegionResponse describes registered compute locality, not a promise
+// of spare capacity or regional control-plane independence.
+type ComputeRegionResponse struct {
+	ID          string `json:"id"`
+	ActiveNodes int    `json:"active_nodes"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug string `json:"slug"`
+	// ComputeRegion constrains every instance to this registered region. Immutable after creation.
+	ComputeRegion string `json:"compute_region,omitempty"`
+	Slug          string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
 	// defaults to public; internal is available on every plan.
 	Visibility string `json:"visibility,omitempty"`
@@ -1497,9 +1506,10 @@ const (
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Type string `json:"type"`
+	ComputeRegion string `json:"compute_region,omitempty"`
+	ID            string `json:"id"`
+	Slug          string `json:"slug"`
+	Type          string `json:"type"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`

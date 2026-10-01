@@ -33,6 +33,27 @@ import (
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+func TestRegisterComputeNode_ComputeRegion(t *testing.T) {
+	st := state.NewMemStore()
+	cfg := ComputeNodeConfig{NodeName: "regional-worker", Region: "eu-fsn", Zone: "eu-fsn-a", VPCPUs: 16, MemMB: 4096, MaxConcurrency: 20, AdmissionCeilingMB: 3000}
+	got, err := registerComputeNode(t.Context(), st, cfg, "unix:///regional", nil, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Region == nil || *got.Region != cfg.Region || got.Zone == nil || *got.Zone != cfg.Zone {
+		t.Fatalf("registered locality = %+v", got)
+	}
+	// Omitting optional locality during a restart preserves operator metadata.
+	cfg.Region, cfg.Zone = "", ""
+	restarted, err := registerComputeNode(t.Context(), st, cfg, "unix:///regional", nil, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Region == nil || *restarted.Region != "eu-fsn" || restarted.Zone == nil || *restarted.Zone != "eu-fsn-a" {
+		t.Fatalf("restart lost locality = %+v", restarted)
+	}
+}
+
 func TestRegisterComputeNode_HappyPath(t *testing.T) {
 	st := state.NewMemStore()
 	cfg := ComputeNodeConfig{

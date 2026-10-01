@@ -21,6 +21,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
 export type AppResponse = {
+  /**
+   * Immutable compute placement constraint selected at creation. Omitted or empty preserves unconstrained placement. Every app instance and owner must remain in this region; this does not constrain builds, secrets, logs or customer data.
+   */
+  compute_region?: string;
   id: string;
   slug: string;
   type: 'app' | 'function';

@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"gopkg.in/yaml.v3"
 )
 
@@ -386,6 +387,8 @@ func (f Fleet) ComputeNodeCount() int {
 // per-host override is optional; StorageDevice is an explicit path
 // override and is empty when the host already owns its fast-root mount.
 type Host struct {
+	Region  string  `yaml:"region,omitempty"`
+	Zone    string  `yaml:"zone,omitempty"`
 	Name    string  `yaml:"name"`
 	Role    string  `yaml:"role"`
 	Address string  `yaml:"address,omitempty"`
@@ -425,6 +428,7 @@ type Daemons struct {
 // the daemon uses to talk to remote daemons (e.g. schedd → vmmd on
 // a split-box fleet).
 type DaemonConfig struct {
+	RegionalComputeEnabled *bool `yaml:"regional_compute_enabled,omitempty"`
 	// Bind is the local listen address (e.g. `unix:///run/faas/schedd.sock`
 	// or `tcp://0.0.0.0:7100`). The renderer writes this into the
 	// daemon's TOML `socket_path` / `listen_addr` field.
@@ -1082,6 +1086,12 @@ func (f *Fleet) validate() Errors {
 				fmt.Sprintf("duplicate host %q (host names must be unique)", h.Name)})
 		}
 		seen[h.Name] = true
+		if !api.ValidComputeRegion(h.Region) {
+			errs = append(errs, Error{path + ".region", "must be a canonical lowercase region identifier"})
+		}
+		if !api.ValidComputeRegion(h.Zone) || (h.Zone != "" && h.Region == "") {
+			errs = append(errs, Error{path + ".zone", "must be a canonical identifier and requires region"})
+		}
 		if h.Role == "" {
 			errs = append(errs, Error{path + ".role", "is required"})
 		} else if !roleKnown(h.Role) {

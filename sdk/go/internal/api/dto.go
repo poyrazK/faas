@@ -71,7 +71,8 @@ type SendAppMessageResponse struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug string `json:"slug"`
+	ComputeRegion string `json:"compute_region,omitempty"`
+	Slug          string `json:"slug"`
 	// Outbound service bindings and per-binding reliability policy.
 	ServiceBindingTargets *[]string                           `json:"service_binding_targets,omitempty"`
 	ServiceBindingPolicy  *ServiceBindingPolicy               `json:"service_binding_policy,omitempty"`
@@ -467,6 +468,7 @@ type RepoResponse struct {
 }
 
 type AppResponse struct {
+	ComputeRegion   string `json:"compute_region,omitempty"`
 	ID              string `json:"id"`
 	Slug            string `json:"slug"`
 	Type            string `json:"type"`

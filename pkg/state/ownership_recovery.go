@@ -151,7 +151,7 @@ func (m *MemStore) ReassignOrphanedAppOwner(_ context.Context, appID, fromNodeID
 		return ErrConflict
 	}
 	destination, ok := m.computeNodes[toNodeID]
-	if !ok || destination.Lifecycle != NodeLifecycleActive {
+	if !ok || destination.Lifecycle != NodeLifecycleActive || !ComputeRegionAllowsNode(app.ComputeRegion, destination) {
 		return ErrConflict
 	}
 	now := time.Now()

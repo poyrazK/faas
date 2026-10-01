@@ -267,6 +267,7 @@ var templateNames13 = []string{
 // catches the omission; the manifest-drift guard is the load-bearing
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
+	{Name: "regions", DocSlug: "regions", Short: "List registered active compute regions", Subcommands: []cliSub{{Name: "list", Short: "List registered active compute regions"}}},
 	{
 		Name:    "account",
 		DocSlug: "account",
@@ -1081,6 +1082,7 @@ var cliCommands = []cliCommand{
 		Short:    "Deploy an app, function, or project",
 		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
+			{Name: "region", Short: "immutable compute region for a new standalone app", Value: "REGION"},
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},

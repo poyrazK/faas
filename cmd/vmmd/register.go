@@ -195,6 +195,8 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 	}
 
 	row := state.ComputeNode{
+		Region:             nilStringPtrForRegion(cfg.Region),
+		Zone:               nilStringPtrForRegion(cfg.Zone),
 		Name:               name,
 		TargetURL:          targetURL,
 		VPCPUs:             cfg.VPCPUs,
@@ -413,4 +415,11 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func nilStringPtrForRegion(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

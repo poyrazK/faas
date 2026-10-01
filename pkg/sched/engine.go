@@ -4322,6 +4322,7 @@ func effectiveAppCPUMillicores(app state.App) int {
 }
 
 type placementSnapshot struct {
+	requiredRegion    string
 	nodes             []state.ComputeNode
 	usedMB            map[string]int64
 	usedVCPU          map[string]int64
@@ -4329,10 +4330,19 @@ type placementSnapshot struct {
 }
 
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	r.RequiredRegion = s.requiredRegion
 	return choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
 }
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
+	var app state.App
+	if r.AppID != "" {
+		var err error
+		app, err = e.store.AppByID(ctx, r.AppID)
+		if err != nil {
+			return placementSnapshot{}, fmt.Errorf("sched: placement: read app region: %w", err)
+		}
+	}
 	// Phase 2 / Gate A: authorize the app against this schedd's owner and
 	// prefer that node for locality. Capacity remains fleet-wide: a saturated
 	// owner may spill to a peer through the routed VMM. An empty ownerNodeID
@@ -4344,7 +4354,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		// gateway partitions by apps.node_id before dialling);
 		// this is the second-line filter for direct Engine
 		// calls (the engine_test.go wake-locality tests).
-		if app, err := e.store.AppByID(ctx, r.AppID); err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+		if app.NodeID != "" && app.NodeID != e.ownerNodeID {
 			return placementSnapshot{}, api.ErrCapacity(fmt.Sprintf(
 				"placement: app %s is owned by node %s; this schedd owns %s",
 				r.AppID, app.NodeID, e.ownerNodeID))
@@ -4397,7 +4407,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
 	return placementSnapshot{
-		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
+		requiredRegion: app.ComputeRegion, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
 	}, nil
 }
@@ -4878,7 +4888,7 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 	neededMB := int64(app.RAMMB) + int64(api.PerVMOverheadMB)
 	usedByNode := e.nodeUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
-		if n.ID == e.ownerNodeID {
+		if n.ID == e.ownerNodeID || !state.ComputeRegionAllowsNode(app.ComputeRegion, n) {
 			continue
 		}
 		used := usedByNode[n.ID]
@@ -4937,7 +4947,7 @@ func (e *Engine) findOverflowPeerWithHeadroom(ctx context.Context, app state.App
 		}
 		return "", nil
 	}
-	if !n.Active {
+	if !n.Active || !state.ComputeRegionAllowsNode(app.ComputeRegion, n) {
 		return "", nil
 	}
 	used := e.nodeUsageForNodes(ctx, []state.ComputeNode{n})[n.ID]
@@ -5083,6 +5093,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
+		ComputeRegion: app.ComputeRegion,
 		BaseKey:       baseKey(app.Runtime),
 		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:     int32(limits.VCPU),

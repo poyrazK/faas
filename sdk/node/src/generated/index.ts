@@ -173,6 +173,7 @@ export type { ClaimAPIConsumerUsageStatementRequest } from './models/ClaimAPICon
 export type { ClearObsoleteReport } from './models/ClearObsoleteReport.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
+export type { ComputeRegionResponse } from './models/ComputeRegionResponse.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';
 export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';

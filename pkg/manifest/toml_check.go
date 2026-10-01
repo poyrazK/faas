@@ -145,6 +145,8 @@ var HostKeys = map[string]HostBlock{
 			// schedd who it is. These are the `[compute_node]`
 			// keys and they DO NOT belong at top level.
 			{Table: "compute_node", Key: "name", Owner: "vmmd", Scope: "public"},
+			{Table: "compute_node", Key: "region", Owner: "vmmd", Scope: "public"},
+			{Table: "compute_node", Key: "zone", Owner: "vmmd", Scope: "public"},
 			{Table: "compute_node", Key: "target_url", Owner: "vmmd", Scope: "public"},
 			{Table: "compute_node", Key: "overlay_ip", Owner: "vmmd", Scope: "public"},
 			{Table: "compute_node", Key: "vpcpus", Owner: "vmmd", Scope: "public"},
@@ -192,6 +194,7 @@ var HostKeys = map[string]HostBlock{
 	"apid": {
 		Daemon: "apid",
 		PrivateKeys: []string{
+			"regional_compute_enabled",
 			"socket_path",
 			"metrics_addr",
 			"db_url",

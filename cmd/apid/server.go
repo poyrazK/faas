@@ -50,11 +50,12 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	devBridgeEnabled      bool
-	devBridgeURL          string
-	devBridgeObserver     *devbridge.Observer
-	featureFlagsEnabled   bool
-	flagsWorkloadVerifier *workloadidentity.Verifier
+	devBridgeEnabled       bool
+	devBridgeURL           string
+	devBridgeObserver      *devbridge.Observer
+	featureFlagsEnabled    bool
+	regionalComputeEnabled bool
+	flagsWorkloadVerifier  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
@@ -1416,6 +1417,7 @@ func (s *server) handler() http.Handler {
 
 	// Apps. Internal metrics discovery is mounted only on the dedicated
 	// loopback metrics listener; see metricsDiscoveryHandler.
+	mux.HandleFunc("GET /v1/regions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listComputeRegions))))
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createPreview))))))

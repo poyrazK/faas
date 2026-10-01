@@ -93,6 +93,10 @@ class AppResponse:
     """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
     ADR-037."""
+    compute_region: str | Unset = UNSET
+    """Immutable compute placement constraint selected at creation. Omitted or empty preserves unconstrained
+    placement. Every app instance and owner must remain in this region; this does not constrain builds, secrets,
+    logs or customer data."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
     service routing. Available on every plan."""
@@ -289,6 +293,8 @@ class AppResponse:
         autoscale_target_rps = self.autoscale_target_rps
 
         autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        compute_region = self.compute_region
 
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
@@ -537,6 +543,8 @@ class AppResponse:
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if workload_class is not UNSET:
@@ -696,6 +704,8 @@ class AppResponse:
         autoscale_target_rps = d.pop("autoscale_target_rps")
 
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
+
+        compute_region = d.pop("compute_region", UNSET)
 
         _visibility = d.pop("visibility", UNSET)
         visibility: AppResponseVisibility | Unset
@@ -1076,6 +1086,7 @@ class AppResponse:
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            compute_region=compute_region,
             visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,

@@ -299,6 +299,13 @@ func (c *Client) ListApps(ctx context.Context) ([]AppResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/apps", nil, &out)
 }
 
+// ListComputeRegions lists registered active compute localities.
+func (c *Client) ListComputeRegions(ctx context.Context) ([]ComputeRegionResponse, error) {
+	var out []ComputeRegionResponse
+	err := c.do(ctx, "GET", "/v1/regions", nil, &out)
+	return out, err
+}
+
 // CreateApp creates an app.
 func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppResponse, error) {
 	var out AppResponse

@@ -192,6 +192,8 @@ func run(args []string) (status int) {
 		return cmdAdd(args[1:])
 	case "bindings":
 		return cmdBindings(args[1:])
+	case "regions":
+		return cmdRegions(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
 	case "diff":

@@ -3483,6 +3483,11 @@ func (m *MemStore) ApplyProjectPlan(
 	if _, ok := m.accounts[project.AccountID]; !ok {
 		return Project{}, nil, nil, ErrNotFound
 	}
+	for _, app := range apps {
+		if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+			return Project{}, nil, nil, err
+		}
+	}
 
 	// 2. Project slug collision guard.
 	for _, p := range m.projects {
@@ -3681,6 +3686,9 @@ func (m *MemStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
+			if err := m.checkComputeRegionLocked(mutation.App, mutation.App.NodeID); err != nil {
+				return rollback(err)
+			}
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
 				return rollback(ErrConflict)
 			}
@@ -3952,6 +3960,9 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+		return App{}, err
+	}
 	for _, a := range m.apps {
 		if a.Slug == app.Slug && a.Status != AppDeleted {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
@@ -4108,6 +4119,9 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 }
 
 func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
+	if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+		return App{}, err
+	}
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
@@ -5104,6 +5118,9 @@ func (m *MemStore) SetAppNodeID(_ context.Context, appID, nodeID string) error {
 	if a.NodeID != "" {
 		return ErrConflict
 	}
+	if err := m.checkComputeRegionLocked(a, nodeID); err != nil {
+		return err
+	}
 	a.NodeID = nodeID
 	a.ScalingPolicyRevision++
 	m.apps[appID] = a
@@ -5194,6 +5211,9 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	if a.Status != AppActive && a.Status != AppEvictedCold {
 		return ErrConflict
+	}
+	if err := m.checkComputeRegionLocked(a, toNodeID); err != nil {
+		return err
 	}
 	now := time.Now()
 	a.NodeID = toNodeID
@@ -5306,6 +5326,9 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	// 'running' does), so the ceiling applies to the transfer exactly as it
 	// does to an admission. m.mu is held, which is what makes the
 	// check-then-move atomic here.
+	if err := m.checkComputeRegionLocked(m.apps[ins.AppID], toNodeID); err != nil {
+		return err
+	}
 	if err := m.checkNodeReservationLocked(toNodeID, string(StateRunning), ins.RAMMB); err != nil {
 		return err
 	}
@@ -13455,6 +13478,12 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// the FK divergence noted above, an un-seeded nodeID is still a pass —
 	// the guard only fires for a node whose compute_nodes row exists and
 	// carries a positive ceiling.
+	if err := m.checkComputeRegionLocked(m.apps[appID], nodeID); err != nil {
+		return Instance{}, err
+	}
+	if m.apps[appID].ComputeRegion != "" && nodeID == "" {
+		return Instance{}, ErrConflict
+	}
 	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
@@ -15306,6 +15335,16 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	}
 	n := node
 	if existing != nil {
+		if n.Region == nil {
+			n.Region = existing.Region
+		}
+		if n.Zone == nil {
+			n.Zone = existing.Zone
+		}
+		if err := m.checkNodeRegionChangeLocked(*existing, n); err != nil {
+			m.computeNodes[existing.ID] = *existing
+			return ComputeNode{}, err
+		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
 		if existing.Lifecycle == NodeLifecycleRetired {
@@ -15402,6 +15441,16 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		if !preserveTargetURLOnConflict && existing.Lifecycle == NodeLifecycleRetired {
 			m.computeNodes[existing.ID] = *existing
 			return ComputeNode{}, ErrConflict
+		}
+		if n.Region == nil {
+			n.Region = existing.Region
+		}
+		if n.Zone == nil {
+			n.Zone = existing.Zone
+		}
+		if err := m.checkNodeRegionChangeLocked(*existing, n); err != nil {
+			m.computeNodes[existing.ID] = *existing
+			return ComputeNode{}, err
 		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt

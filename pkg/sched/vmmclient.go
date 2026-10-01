@@ -405,6 +405,8 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	// ComputeRegion is scheduler-only intent used to fence live handoff destinations.
+	ComputeRegion string
 	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
 	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
 	VCPUCount     int32  // 2, or 4 for Scale

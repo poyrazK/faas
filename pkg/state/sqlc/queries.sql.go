@@ -15576,12 +15576,34 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 	return items, nil
 }
 
-const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
+const reassignAppOwner = `-- name: ReassignAppOwner :execrows
 UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
 WHERE id=$2::uuid AND node_id=$3::uuid
   AND status IN ('active', 'evicted_cold')
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = $1::uuid AND n.region = apps.compute_region))
+`
+
+type ReassignAppOwnerParams struct {
+	ToNodeID   pgtype.UUID
+	AppID      pgtype.UUID
+	FromNodeID pgtype.UUID
+}
+
+func (q *Queries) ReassignAppOwner(ctx context.Context, db DBTX, arg ReassignAppOwnerParams) (int64, error) {
+	result, err := db.Exec(ctx, reassignAppOwner, arg.ToNodeID, arg.AppID, arg.FromNodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
+UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
+WHERE id=$2::uuid AND node_id=$3::uuid
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = $1::uuid AND n.region = apps.compute_region))
+  AND status IN ('active', 'evicted_cold')
   AND ($4::integer < 0 OR reassigned_at IS NULL
-       OR reassigned_at < now() - make_interval(secs => $4::integer))
+        OR reassigned_at < now() - make_interval(secs => $4::integer))
 `
 
 type ReassignOrphanedAppOwnerParams struct {
@@ -17897,6 +17919,25 @@ type SetAppManifestParams struct {
 func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error {
 	_, err := db.Exec(ctx, setAppManifest, arg.ID, arg.Manifest)
 	return err
+}
+
+const setAppNodeID = `-- name: SetAppNodeID :execrows
+UPDATE apps SET node_id=$1::uuid
+WHERE id=$2::uuid AND node_id IS NULL
+  AND (compute_region = '' OR EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id = $1::uuid AND n.region = apps.compute_region))
+`
+
+type SetAppNodeIDParams struct {
+	NodeID pgtype.UUID
+	AppID  pgtype.UUID
+}
+
+func (q *Queries) SetAppNodeID(ctx context.Context, db DBTX, arg SetAppNodeIDParams) (int64, error) {
+	result, err := db.Exec(ctx, setAppNodeID, arg.NodeID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
