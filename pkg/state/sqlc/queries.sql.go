@@ -4696,6 +4696,71 @@ func (q *Queries) FinishEnvironmentQueueDeliveryInvocation(ctx context.Context, 
 	return result.RowsAffected(), nil
 }
 
+const finishManagedPostgresCloneRestoreWithProof = `-- name: FinishManagedPostgresCloneRestoreWithProof :one
+WITH ready AS (
+    UPDATE managed_postgres_databases d SET state='ready', observed_generation=desired_generation,
+        last_error_code=NULL, lease_token=NULL, lease_until=NULL, attempt_count=0,
+        retry_at=$2::timestamptz, updated_at=$2::timestamptz
+    WHERE d.id=$3::uuid AND d.account_id=$4::uuid
+        AND d.state='provisioning' AND d.deleted_at IS NULL AND d.lease_token=$5::text
+        AND d.lease_until>$2::timestamptz AND d.lease_until>clock_timestamp()
+        AND d.environment_clone_operation_id=$6::uuid
+        AND d.backend_id=$7::text AND d.backend_fingerprint=$8::text
+        AND d.provider_resource_id=$9::text
+        AND d.restore_source_database_id=$10::uuid
+        AND d.restore_source_resource_id=$11::text
+        AND d.restore_point_in_time=$12::timestamptz
+        AND d.desired_generation=$13::bigint
+        AND $1::jsonb=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+            'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+            'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+    RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id
+)
+INSERT INTO managed_postgres_restore_proofs(database_id,account_id,operation_id,backend_id,backend_fingerprint,
+    provider_resource_id,source_database_id,source_resource_id,point_in_time,spec,generation,observed_at)
+SELECT id,account_id,environment_clone_operation_id,backend_id,backend_fingerprint,provider_resource_id,
+    restore_source_database_id,restore_source_resource_id,restore_point_in_time,$1::jsonb,
+    observed_generation,$2::timestamptz FROM ready
+ON CONFLICT(database_id) DO NOTHING RETURNING database_id
+`
+
+type FinishManagedPostgresCloneRestoreWithProofParams struct {
+	Spec               []byte
+	ObservedAt         pgtype.Timestamptz
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	LeaseToken         string
+	OperationID        pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	SourceDatabaseID   pgtype.UUID
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Generation         int64
+}
+
+func (q *Queries) FinishManagedPostgresCloneRestoreWithProof(ctx context.Context, db DBTX, arg FinishManagedPostgresCloneRestoreWithProofParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, finishManagedPostgresCloneRestoreWithProof,
+		arg.Spec,
+		arg.ObservedAt,
+		arg.DatabaseID,
+		arg.AccountID,
+		arg.LeaseToken,
+		arg.OperationID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.SourceDatabaseID,
+		arg.SourceResourceID,
+		arg.PointInTime,
+		arg.Generation,
+	)
+	var database_id pgtype.UUID
+	err := row.Scan(&database_id)
+	return database_id, err
+}
+
 const finishProductionQueueTriggerInvocations = `-- name: FinishProductionQueueTriggerInvocations :exec
 with targets as (
 			select unnest($4::text[]) as id, unnest($5::int[]) as attempt
@@ -16017,6 +16082,47 @@ func (q *Queries) ReadInvocationWorkEnvironmentDomain(ctx context.Context, db DB
 	var environment_id pgtype.UUID
 	err := row.Scan(&environment_id)
 	return environment_id, err
+}
+
+const readManagedPostgresCloneRestoreProof = `-- name: ReadManagedPostgresCloneRestoreProof :one
+SELECT p.database_id, p.account_id, p.operation_id, p.backend_id, p.backend_fingerprint, p.provider_resource_id, p.source_database_id, p.source_resource_id, p.point_in_time, p.spec, p.generation, p.observed_at FROM managed_postgres_restore_proofs p
+JOIN managed_postgres_databases d ON d.id=p.database_id
+WHERE d.id=$1::uuid AND d.account_id=$2::uuid
+    AND d.state='ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id=d.account_id AND p.operation_id=d.environment_clone_operation_id
+    AND p.backend_id=d.backend_id AND p.backend_fingerprint=d.backend_fingerprint
+    AND p.provider_resource_id=d.provider_resource_id AND p.source_database_id=d.restore_source_database_id
+    AND p.source_resource_id=d.restore_source_resource_id AND p.point_in_time=d.restore_point_in_time
+    AND p.generation=d.desired_generation AND p.generation=d.observed_generation
+    AND p.spec=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+FOR SHARE OF d,p
+`
+
+type ReadManagedPostgresCloneRestoreProofParams struct {
+	DatabaseID pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+func (q *Queries) ReadManagedPostgresCloneRestoreProof(ctx context.Context, db DBTX, arg ReadManagedPostgresCloneRestoreProofParams) (ManagedPostgresRestoreProof, error) {
+	row := db.QueryRow(ctx, readManagedPostgresCloneRestoreProof, arg.DatabaseID, arg.AccountID)
+	var i ManagedPostgresRestoreProof
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.AccountID,
+		&i.OperationID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.SourceDatabaseID,
+		&i.SourceResourceID,
+		&i.PointInTime,
+		&i.Spec,
+		&i.Generation,
+		&i.ObservedAt,
+	)
+	return i, err
 }
 
 const readProductionDeadLetterEvent = `-- name: ReadProductionDeadLetterEvent :one

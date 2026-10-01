@@ -312,6 +312,46 @@ func TestPGCloneCoordinatorResumesPreparationAcrossCommitAndHandoffFailures(t *t
 	}
 }
 
+func TestPGCloneCredentialPreparationRequiresDurableRestoreReceipt(t *testing.T) {
+	for _, fault := range []string{"missing_receipt", "changed_spec", "changed_provider_identity"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newCloneCoordinatorFixture(t, true)
+			lease, ready, err := f.srv.prepareProjectEnvironmentCloneDatabases(t.Context(), f.lease)
+			if err != nil || !ready {
+				t.Fatalf("database preparation = %v, %v", ready, err)
+			}
+			var databaseID string
+			for _, resource := range lease.Operation.Resources {
+				if resource.Kind == "managed_postgres" {
+					databaseID = resource.TargetID
+				}
+			}
+			if databaseID == "" {
+				t.Fatal("database preparation omitted physical target")
+			}
+			statement := map[string]string{
+				"missing_receipt":           `delete from managed_postgres_restore_proofs where database_id=$1`,
+				"changed_spec":              `update managed_postgres_databases set storage_limit_bytes=storage_limit_bytes+1 where id=$1`,
+				"changed_provider_identity": `update managed_postgres_databases set provider_resource_id='changed-private-resource' where id=$1`,
+			}[fault]
+			if _, err := f.pool.Exec(t.Context(), statement, databaseID); err != nil {
+				t.Fatal(err)
+			}
+			issuedBefore := len(f.database.issued)
+			if _, _, _, err := f.srv.prepareProjectEnvironmentClonePostgresBindings(t.Context(), lease); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("unproved restore created credentials: %v", err)
+			}
+			if len(f.database.issued) != issuedBefore || len(f.database.restores) != 1 {
+				t.Fatal("failed restore receipt issued credentials or repeated the physical copy")
+			}
+			op := lease.Operation
+			if _, err := f.store.ProjectEnvironmentBySlug(t.Context(), op.AccountID, op.ProjectID, op.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+				t.Fatal("unproved restore materialized a target environment")
+			}
+		})
+	}
+}
+
 func TestPGCloneCoordinatorWaitsForEveryWorkloadAndPolicyActivation(t *testing.T) {
 	f := newCloneCoordinatorFixture(t, false)
 	f.makeRunnable(t)

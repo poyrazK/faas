@@ -1642,6 +1642,21 @@ type ManagedPostgresDatabase struct {
 	EnvironmentCloneOperationID pgtype.UUID
 }
 
+type ManagedPostgresRestoreProof struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	OperationID        pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	SourceDatabaseID   pgtype.UUID
+	SourceResourceID   string
+	PointInTime        pgtype.Timestamptz
+	Spec               []byte
+	Generation         int64
+	ObservedAt         pgtype.Timestamptz
+}
+
 type MeterGatewayUsageEvent struct {
 	NodeID     pgtype.UUID
 	EventID    pgtype.UUID

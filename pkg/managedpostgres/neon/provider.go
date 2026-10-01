@@ -49,11 +49,14 @@ type operation struct {
 }
 
 type branch struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	ParentID     string `json:"parent_id"`
-	CurrentState string `json:"current_state"`
-	Default      bool   `json:"default"`
+	ID              string `json:"id"`
+	ProjectID       string `json:"project_id"`
+	Name            string `json:"name"`
+	ParentID        string `json:"parent_id"`
+	ParentTimestamp string `json:"parent_timestamp"`
+	InitSource      string `json:"init_source"`
+	CurrentState    string `json:"current_state"`
+	Default         bool   `json:"default"`
 }
 
 type endpoint struct {
@@ -90,6 +93,7 @@ type createBranchRequest struct {
 		Name            string `json:"name"`
 		ParentID        string `json:"parent_id"`
 		ParentTimestamp string `json:"parent_timestamp"`
+		InitSource      string `json:"init_source"`
 	} `json:"branch"`
 }
 
@@ -228,12 +232,13 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if existing.ID != "" {
-		return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: existing.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+		return restoredBranchObservation(source.projectID, parentID, branchName, existing, request)
 	}
 	payload := createBranchRequest{}
 	payload.Branch.Name = branchName
 	payload.Branch.ParentID = parentID
 	payload.Branch.ParentTimestamp = request.PointInTime.UTC().Format(time.RFC3339Nano)
+	payload.Branch.InitSource = "parent-data"
 	payload.Endpoints = []struct {
 		Type string `json:"type"`
 	}{{Type: "read_write"}}
@@ -246,15 +251,12 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 				return managedpostgres.ObservedDatabase{}, recoveryErr
 			}
 			if recovered.ID != "" {
-				return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: recovered.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+				return restoredBranchObservation(source.projectID, parentID, branchName, recovered, request)
 			}
 		}
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if !validProviderID.MatchString(created.Branch.ID) || created.Branch.Name != branchName {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
-	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: source.projectID, branchID: created.Branch.ID}).String(), Status: managedpostgres.ProviderStatusPending, Spec: request.Spec}, nil
+	return restoredBranchObservation(source.projectID, parentID, branchName, created.Branch, request)
 }
 
 func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (managedpostgres.ObservedDatabase, error) {
@@ -293,7 +295,11 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec}, nil
+	lineage, err := observedBranchLineage(ref.projectID, selectedBranch)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec, RestoreLineage: lineage}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.
@@ -397,6 +403,9 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	providerResourceID := request.ProviderResourceID
 	if providerResourceID == "" {
 		if request.RestoreSourceResourceID != "" {
+			if request.RestorePointInTime.IsZero() {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
+			}
 			source, sourceErr := parseResourceRef(request.RestoreSourceResourceID)
 			if sourceErr != nil {
 				return managedpostgres.DeleteResult{}, sourceErr
@@ -408,7 +417,19 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 			if candidate.ID == "" {
 				return managedpostgres.DeleteResult{Done: true}, nil
 			}
-			providerResourceID = (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String()
+			parentID := source.branchID
+			if parentID == "" {
+				parentID, sourceErr = p.defaultBranch(ctx, source.projectID)
+				if sourceErr != nil {
+					return managedpostgres.DeleteResult{}, sourceErr
+				}
+			}
+			observed, lineageErr := restoredBranchObservation(source.projectID, parentID, p.restoreBranchName(request.ResourceID), candidate,
+				managedpostgres.RestoreRequest{PointInTime: request.RestorePointInTime})
+			if lineageErr != nil {
+				return managedpostgres.DeleteResult{}, lineageErr
+			}
+			providerResourceID = observed.ProviderResourceID
 		}
 	}
 	if providerResourceID == "" {

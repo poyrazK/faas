@@ -115,6 +115,36 @@ type ObservedDatabase struct {
 	Status             ProviderStatus
 	ComputeState       ComputeState
 	Spec               Spec
+	// RestoreLineage comes from the provider's actual target metadata, never
+	// from echoing a RestoreRequest. A missing observation cannot qualify an
+	// isolated stage database. SourceResourceID must identify the exact source
+	// (for example a Neon branch), not a mutable default selector.
+	RestoreLineage *RestoreLineage
+}
+
+type RestoreLineage struct {
+	SourceResourceID string
+	PointInTime      time.Time
+}
+
+// RestoreProof is a private receipt of a successful provider observation.
+// It contains no credential material and is tied to one target generation.
+type RestoreProof struct {
+	DatabaseID, AccountID, OperationID string
+	BackendID, BackendFingerprint      string
+	ProviderResourceID                 string
+	SourceDatabaseID                   string
+	Lineage                            RestoreLineage
+	Spec                               Spec
+	Generation                         int64
+	ObservedAt                         time.Time
+}
+
+// CloneRestoreProofStore atomically commits the receipt with readiness.
+// Separate stores cannot substitute a ready state for provider evidence.
+type CloneRestoreProofStore interface {
+	FinishCloneRestoreProvision(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
+	GetCloneRestoreProof(context.Context, string, string) (RestoreProof, error)
 }
 
 // ScaleToZeroProbeResult is the non-sensitive evidence produced by an
@@ -142,7 +172,10 @@ type DeleteRequest struct {
 	// RestoreSourceResourceID lets an adapter recover a restore branch when
 	// the target provider ID was not persisted before a worker crashed.
 	RestoreSourceResourceID string
-	IdempotencyKey          string
+	// RestorePointInTime fences discovery-based cleanup of a restore whose
+	// target identity was never acknowledged. The name alone is insufficient.
+	RestorePointInTime time.Time
+	IdempotencyKey     string
 }
 
 // RestoreRequest creates a new logical database from a source provider

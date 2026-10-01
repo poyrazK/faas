@@ -6726,3 +6726,45 @@ WITH app_stamp AS (UPDATE apps SET last_scale_in_at=now() WHERE id=$1 RETURNING 
     scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_in_at=app_stamp.last_scale_in_at
         FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
 SELECT id FROM app_stamp;
+
+-- name: FinishManagedPostgresCloneRestoreWithProof :one
+WITH ready AS (
+    UPDATE managed_postgres_databases d SET state='ready', observed_generation=desired_generation,
+        last_error_code=NULL, lease_token=NULL, lease_until=NULL, attempt_count=0,
+        retry_at=sqlc.arg(observed_at)::timestamptz, updated_at=sqlc.arg(observed_at)::timestamptz
+    WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid
+        AND d.state='provisioning' AND d.deleted_at IS NULL AND d.lease_token=sqlc.arg(lease_token)::text
+        AND d.lease_until>sqlc.arg(observed_at)::timestamptz AND d.lease_until>clock_timestamp()
+        AND d.environment_clone_operation_id=sqlc.arg(operation_id)::uuid
+        AND d.backend_id=sqlc.arg(backend_id)::text AND d.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
+        AND d.provider_resource_id=sqlc.arg(provider_resource_id)::text
+        AND d.restore_source_database_id=sqlc.arg(source_database_id)::uuid
+        AND d.restore_source_resource_id=sqlc.arg(source_resource_id)::text
+        AND d.restore_point_in_time=sqlc.arg(point_in_time)::timestamptz
+        AND d.desired_generation=sqlc.arg(generation)::bigint
+        AND sqlc.arg(spec)::jsonb=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+            'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+            'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+    RETURNING d.*
+)
+INSERT INTO managed_postgres_restore_proofs(database_id,account_id,operation_id,backend_id,backend_fingerprint,
+    provider_resource_id,source_database_id,source_resource_id,point_in_time,spec,generation,observed_at)
+SELECT id,account_id,environment_clone_operation_id,backend_id,backend_fingerprint,provider_resource_id,
+    restore_source_database_id,restore_source_resource_id,restore_point_in_time,sqlc.arg(spec)::jsonb,
+    observed_generation,sqlc.arg(observed_at)::timestamptz FROM ready
+ON CONFLICT(database_id) DO NOTHING RETURNING database_id;
+
+-- name: ReadManagedPostgresCloneRestoreProof :one
+SELECT p.* FROM managed_postgres_restore_proofs p
+JOIN managed_postgres_databases d ON d.id=p.database_id
+WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid
+    AND d.state='ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id=d.account_id AND p.operation_id=d.environment_clone_operation_id
+    AND p.backend_id=d.backend_id AND p.backend_fingerprint=d.backend_fingerprint
+    AND p.provider_resource_id=d.provider_resource_id AND p.source_database_id=d.restore_source_database_id
+    AND p.source_resource_id=d.restore_source_resource_id AND p.point_in_time=d.restore_point_in_time
+    AND p.generation=d.desired_generation AND p.generation=d.observed_generation
+    AND p.spec=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+FOR SHARE OF d,p;

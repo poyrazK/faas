@@ -2468,3 +2468,70 @@ proofs are unavailable; the coordinator does not bypass those existing guards.
 Coordinated data capture, complete resource/policy strategies, compensation,
 qualified full promotion/rollback, real-provider acceptance and native x86_64 KVM
 `test-metal`/`leakcheck` remain required before the requested feature is complete.
+
+### Observed PostgreSQL restore lineage and durable receipts (2026-10-01)
+
+Neon restoration now checks the actual target branch's project, parent branch,
+recovery timestamp and full-data initialization before returning an adoptable
+identity. The same checks apply to fresh creation, deterministic-name recovery,
+an accepted creation whose response was lost, and discovery-based cleanup before
+the target identity was acknowledged. Cleanup retains the original requested
+point, including provider qualification cleanup. A matching name alone cannot
+authorize adoption or deletion of an unrelated fork.
+
+Inspection reports lineage from actual branch metadata. It does not echo the
+restore request. The timestamp must represent the exact captured instant;
+equivalent time zones are accepted, while different instants reject adoption.
+Neon's API permits branch lineage without a `parent_timestamp`. Such an
+observation carries no timestamp proof; an LSN requires a separately verified
+mapping before it can establish this timestamp contract. The adapter also
+requires observed full-data initialization rather than accepting a schema-only
+fork. See the [Neon branch API schema](https://neon.com/api_spec/release/v2.json).
+
+Clone-owned lifecycle reconciliation requires observed lineage before recording
+a provider identity and again before asynchronous readiness. A private
+`managed_postgres_restore_proofs` receipt then commits atomically with the ready
+generation. It retains the original account/operation, backend fingerprint,
+source and target physical identities, recovery point, observed specification
+and generation. PostgreSQL reads its clock after obtaining the target row lock,
+checks the still-live worker lease, and timestamps the receipt with that server
+clock. A failed or conflicting receipt insertion rolls back readiness. The
+receipt's lifetime belongs to the target; retained source/account/operation
+identities do not introduce additional parent-lock ordering during this write.
+MemoryStore implements the same atomic receipt contract for local tests.
+
+Ready-state recovery requires the original matching receipt, including after a
+committed-but-lost acknowledgement. A missing receipt or changed backend,
+physical identity, recovery point, specification or generation cannot be
+adopted as verified readiness. A Store without the receipt capability rejects
+clone reconciliation before provider calls. Credential preparation and captured
+configuration materialization/publication lock and check this same durable
+receipt against the actual target row. No credential material is stored in it.
+
+This establishes an individual PostgreSQL restore observation and its durable
+control-plane receipt. Complete publication still requires the coordinated
+database/object checkpoint, retained immutable source identities, object data
+and access-policy proofs, remaining configuration/resource strategies,
+compensation, qualified promotion/rollback, native acceptance and real-provider
+acceptance. In particular, a Neon project ID selects a mutable default branch;
+the coordinated capture protocol must pin the exact source branch. The adapter
+reports that exact branch identity, and clone reconciliation rejects a bare
+project selector as equivalent evidence. Complete-mode admission remains closed.
+
+Verification: focused managed PostgreSQL contracts pass (82.657 s), including
+four real PostgreSQL receipt contracts, provider observation failures before
+adoption and asynchronous readiness, and qualification cleanup retaining the
+original point after an ambiguous restore. They cover atomic readiness/receipt
+commit, a lost acknowledgement followed by service restart, missing receipts,
+account isolation, target/backend/spec/point/generation drift, rollback on
+receipt conflict and an expired worker waiting on an unchanged locked row.
+The separate capability check verifies that a Store without atomic receipts
+rejects both provisioning and legacy-ready clones before provider calls.
+The full Neon test package passes (1.073 s), using HTTP fixtures and leaving
+paid live-provider qualification disabled. API clone/coordinator/materialization
+regressions also pass against real migrated PostgreSQL (12.765 s), including
+missing or stale receipts rejected before target credential issuance or target
+environment materialization. Independent SQLC generation matches and whitespace
+checks pass. These focused control-plane/adapter contracts do not establish
+cross-provider checkpoint consistency, real-provider acceptance, a complete
+state/repository test run, lint, or native KVM acceptance.

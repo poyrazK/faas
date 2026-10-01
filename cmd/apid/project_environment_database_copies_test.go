@@ -34,7 +34,8 @@ func (p *environmentClonePostgresProvider) Restore(_ context.Context, request ma
 		}
 	}
 	return managedpostgres.ObservedDatabase{ProviderResourceID: "restore-" + request.ResourceID,
-		Status: managedpostgres.ProviderStatusReady, ComputeState: managedpostgres.ComputeStateActive, Spec: request.Spec}, nil
+		Status: managedpostgres.ProviderStatusReady, ComputeState: managedpostgres.ComputeStateActive, Spec: request.Spec,
+		RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}}, nil
 }
 
 func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testing.T) {

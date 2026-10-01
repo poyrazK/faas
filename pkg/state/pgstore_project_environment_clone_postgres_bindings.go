@@ -49,6 +49,15 @@ func clonePostgresBindingTargetTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 	if resource.Status != "ready" || resource.TargetID != pgUUIDString(database.ID) || database.State != "ready" {
 		return ProjectEnvironmentClonePostgresBindingTarget{}, ErrConflict
 	}
+	// Ready intent is not a provider restore receipt. Keep the exact physical
+	// origin, point, backend, spec and generation locked through credentials
+	// and through configuration materialization/publication.
+	if _, err := q.ReadManagedPostgresCloneRestoreProof(ctx, tx, sqlc.ReadManagedPostgresCloneRestoreProofParams{AccountID: database.AccountID, DatabaseID: database.ID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectEnvironmentClonePostgresBindingTarget{}, ErrConflict
+		}
+		return ProjectEnvironmentClonePostgresBindingTarget{}, err
+	}
 	want := ProjectEnvironmentClonePostgresBindingTarget{OperationID: op.ID, SourceBindingID: source.ID, AccountID: op.AccountID, AppID: appID, DatabaseID: pgUUIDString(database.ID),
 		Scope: op.TargetEnvironment, EnvironmentKey: source.EnvironmentKey, Access: source.Access, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint,
 		DatabaseProviderResourceID: database.ProviderResourceID.String, SourceDatabaseVersion: resource.SourceVersion, CapturePoint: resource.CapturePoint, CredentialGeneration: 1, State: "provisioning"}

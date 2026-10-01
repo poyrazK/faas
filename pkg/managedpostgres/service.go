@@ -363,6 +363,19 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	}
 	switch database.State {
 	case StateReady:
+		if database.EnvironmentCloneOperationID != "" {
+			proofs, ok := s.store.(CloneRestoreProofStore)
+			if !ok {
+				return Database{}, ErrUnsupported
+			}
+			proof, err := proofs.GetCloneRestoreProof(ctx, accountID, databaseID)
+			if err != nil {
+				return Database{}, err
+			}
+			if err := validateCloneRestoreProof(database, proof); err != nil {
+				return Database{}, err
+			}
+		}
 		return database, nil
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
@@ -372,6 +385,11 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 	default:
 		return Database{}, ErrConflict
+	}
+	if database.EnvironmentCloneOperationID != "" {
+		if _, ok := s.store.(CloneRestoreProofStore); !ok {
+			return Database{}, ErrUnsupported
+		}
 	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
@@ -405,14 +423,6 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 				IdempotencyKey: "provision-" + database.ID,
 			})
 		}
-		if err == nil {
-			if observed.ProviderResourceID == "" {
-				err = ErrUnavailable
-			} else {
-				err = s.recordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID)
-				database.ProviderResourceID = observed.ProviderResourceID
-			}
-		}
 	} else {
 		observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
 		if errors.Is(err, ErrNotFound) {
@@ -427,6 +437,22 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
+	if err := validateCloneRestoreObservation(database, observed); err != nil {
+		code := "restore_lineage_unavailable"
+		if errors.Is(err, ErrConflict) {
+			code = "restore_lineage_mismatch"
+		}
+		return Database{}, s.releaseKnownError(ctx, database, StateProvisioning, code, err, retryDelay(err, database.AttemptCount))
+	}
+	if database.ProviderResourceID == "" {
+		if observed.ProviderResourceID == "" {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, ErrUnavailable)
+		}
+		if err := s.recordProviderResource(ctx, database.ID, leaseToken, observed.ProviderResourceID); err != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
+		}
+		database.ProviderResourceID = observed.ProviderResourceID
+	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
 		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", s.pollInterval); err != nil {
@@ -437,12 +463,40 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		if observed.Spec != database.Spec {
 			return Database{}, s.releaseKnownError(ctx, database, StateFailed, "spec_mismatch", ErrConflict, time.Hour)
 		}
+		if database.EnvironmentCloneOperationID != "" {
+			finishContext, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+			defer finishCancel()
+			result, finishErr := s.store.(CloneRestoreProofStore).FinishCloneRestoreProvision(finishContext, database, observed, s.now())
+			if finishErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, finishErr)
+			}
+			return result, nil
+		}
 		return s.finishProvision(ctx, database.ID, leaseToken)
 	case ProviderStatusFailed:
 		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "provider_failed", ErrUnavailable, time.Hour)
 	default:
 		return Database{}, s.releaseProviderError(ctx, database, StateFailed, ErrUnavailable)
 	}
+}
+
+// Clone-owned reservations must prove their physical origin before adopting a
+// provider identity, and again when asynchronous provisioning becomes ready.
+// The publication gate separately requires durable, coordinated data evidence.
+func validateCloneRestoreObservation(database Database, observed ObservedDatabase) error {
+	if database.EnvironmentCloneOperationID == "" {
+		return nil
+	}
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" {
+		return ErrUnavailable
+	}
+	if database.RestoreSourceDatabaseID == "" || database.RestoreSourceResourceID == "" || database.RestorePointInTime.IsZero() ||
+		observed.ProviderResourceID == database.RestoreSourceResourceID ||
+		observed.RestoreLineage.SourceResourceID != database.RestoreSourceResourceID ||
+		!observed.RestoreLineage.PointInTime.Equal(database.RestorePointInTime) {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -469,6 +523,7 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 		ResourceID:              database.ID,
 		ProviderResourceID:      database.ProviderResourceID,
 		RestoreSourceResourceID: database.RestoreSourceResourceID,
+		RestorePointInTime:      database.RestorePointInTime,
 		IdempotencyKey:          "delete-" + database.ID,
 	})
 	if errors.Is(err, ErrNotFound) {

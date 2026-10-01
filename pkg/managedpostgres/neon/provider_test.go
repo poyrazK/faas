@@ -204,10 +204,10 @@ func TestRestoreCreatesPointInTimeBranchWithOwnOpaqueResource(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode restore branch: %v", err)
 			}
-			if payload.Branch.ParentID != "br-main-123" || payload.Branch.ParentTimestamp != pointInTime.Format(time.RFC3339) || len(payload.Endpoints) != 1 || payload.Endpoints[0].Type != "read_write" {
+			if payload.Branch.ParentID != "br-main-123" || payload.Branch.ParentTimestamp != pointInTime.Format(time.RFC3339) || payload.Branch.InitSource != "parent-data" || len(payload.Endpoints) != 1 || payload.Endpoints[0].Type != "read_write" {
 				t.Fatalf("restore payload = %+v", payload)
 			}
-			writeResponse(t, writer, http.StatusCreated, map[string]any{"branch": map[string]any{"id": "br-restore-123", "name": payload.Branch.Name, "current_state": "init"}, "operations": []map[string]any{{"id": "op-restore", "status": "running"}}})
+			writeResponse(t, writer, http.StatusCreated, map[string]any{"branch": map[string]any{"id": "br-restore-123", "project_id": "quiet-river-12345678", "name": payload.Branch.Name, "parent_id": payload.Branch.ParentID, "parent_timestamp": payload.Branch.ParentTimestamp, "init_source": "parent-data", "current_state": "init"}, "operations": []map[string]any{{"id": "op-restore", "status": "running"}}})
 		default:
 			t.Errorf("unexpected restore method: %s", request.Method)
 			writeResponse(t, writer, http.StatusMethodNotAllowed, nil)
@@ -224,6 +224,9 @@ func TestRestoreCreatesPointInTimeBranchWithOwnOpaqueResource(t *testing.T) {
 	if observed.ProviderResourceID != "quiet-river-12345678/br-restore-123" || observed.Status != managedpostgres.ProviderStatusPending || observed.Spec != request.Spec {
 		t.Fatalf("restore observed = %+v", observed)
 	}
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID != "quiet-river-12345678/br-main-123" || !observed.RestoreLineage.PointInTime.Equal(pointInTime) {
+		t.Fatalf("restore lineage = %+v", observed.RestoreLineage)
+	}
 }
 
 func TestInspectRoutesRestoredResourceToBranch(t *testing.T) {
@@ -235,7 +238,7 @@ func TestInspectRoutesRestoredResourceToBranch(t *testing.T) {
 				"history_retention_seconds": 86400, "settings": map[string]any{"quota": map[string]any{"logical_size_bytes": 10 << 30}},
 			}})
 		case "/api/v2/projects/quiet-river-12345678/branches":
-			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-restore-123", "name": "restore", "current_state": "ready"}}})
+			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-restore-123", "project_id": "quiet-river-12345678", "name": "restore", "parent_id": "br-main-123", "parent_timestamp": "2026-09-05T11:00:00Z", "init_source": "parent-data", "current_state": "ready"}}})
 		case "/api/v2/projects/quiet-river-12345678/endpoints":
 			writeResponse(t, writer, http.StatusOK, map[string]any{"endpoints": []map[string]any{{"id": "ep-restore-123", "branch_id": "br-restore-123", "type": "read_write", "current_state": "idle", "autoscaling_limit_min_cu": 0.25, "autoscaling_limit_max_cu": 2, "suspend_timeout_seconds": 300}}})
 		case "/api/v2/projects/quiet-river-12345678/operations":
@@ -251,6 +254,9 @@ func TestInspectRoutesRestoredResourceToBranch(t *testing.T) {
 	}
 	if observed.Status != managedpostgres.ProviderStatusReady || observed.ProviderResourceID != "quiet-river-12345678/br-restore-123" || observed.Spec != testDatabaseSpec() {
 		t.Fatalf("inspected restored resource = %+v", observed)
+	}
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID != "quiet-river-12345678/br-main-123" || observed.RestoreLineage.PointInTime.Format(time.RFC3339) != "2026-09-05T11:00:00Z" {
+		t.Fatalf("inspected restore lineage = %+v", observed.RestoreLineage)
 	}
 }
 
