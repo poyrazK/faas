@@ -598,8 +598,25 @@ inputs, sidecar isolation, wake, prime and migration evidence. Populated replay
 preserves references, ownership, receipts and active controller leases across the
 complete additive migration set. These checks qualify the internal reference
 contract; native guest delivery and lifecycle acceptance remain required. Public
-reference editing, explicit adoption of legacy deployment reference configuration,
-and environment clone integration remain part of the complete adapter gate.
+reference editing and explicit adoption of legacy deployment reference
+configuration remain part of the complete adapter gate.
+
+Environment clones now copy the current destination-to-source references under
+the new catalog environment UUID alongside their scoped sealed sources. They
+preserve incident or pending-drift values rather than applying the source's
+approved definition. Git source bindings, field ownership, overrides and runtime
+receipts remain attached to the original environment. References share the
+cross-environment variable quota during clone preflight; concurrent clones
+serialize through source-first application locks and cannot spend the same
+remaining slots. Reference copy failure rolls back the catalog, values and
+freshness stamps in the same PostgreSQL transaction. Clone saga compensation
+also removes the new references, so recreation of its slug cannot inherit them.
+The API, CLI and generated Node/Python clients report a separate
+`secret_references_copied` count; generated clients accept older responses that
+omit it. Shared-store cases cover quota rejection, current-value preservation,
+independent ownership and rollback/recreation. PostgreSQL cases exercise an
+uncommitted source write, a forced copy failure and concurrent quota admission;
+HTTP and SDK checks cover the public count and transport compatibility.
 
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,

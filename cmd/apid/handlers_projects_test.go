@@ -182,6 +182,9 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "production", "STRIPE_KEY", "age1-source", "1111111111111111", []byte("sealed-source")); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.PutAppEnvironmentSecretReference(ctx, acct.ID, app.ID, "production", "PAYMENTS_TOKEN", "secret:STRIPE_KEY"); err != nil {
+		t.Fatal(err)
+	}
 
 	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","from_environment":"production"}`))
 	srv.createProjectEnvironment(rec, req, acct)
@@ -192,7 +195,7 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.ClonedFrom != "production" || response.Clone == nil || !response.Clone.ConfigurationCopied || response.Clone.VariablesCopied != 1 || response.Clone.SecretsCopied != 1 {
+	if response.ClonedFrom != "production" || response.Clone == nil || !response.Clone.ConfigurationCopied || response.Clone.VariablesCopied != 1 || response.Clone.SecretsCopied != 1 || response.Clone.SecretReferencesCopied != 1 {
 		t.Fatalf("clone response=%+v", response)
 	}
 	if strings.Contains(rec.Body.String(), "sealed-source") || strings.Contains(rec.Body.String(), "age1-source") {
@@ -209,6 +212,10 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	secrets, err := store.ListAppSecretsInScope(ctx, acct.ID, app.ID, "staging")
 	if err != nil || len(secrets) != 1 || string(secrets[0].Ciphertext) != "sealed-source" || secrets[0].ValueHash != "1111111111111111" {
 		t.Fatalf("cloned secrets=%+v err=%v", secrets, err)
+	}
+	refs, err := store.AppEnvironmentSecretReferences(ctx, acct.ID, app.ID, "staging")
+	if err != nil || refs["PAYMENTS_TOKEN"] != "secret:STRIPE_KEY" {
+		t.Fatalf("cloned references=%+v err=%v", refs, err)
 	}
 }
 

@@ -1339,6 +1339,41 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const copyProjectEnvironmentSecretReferences = `-- name: CopyProjectEnvironmentSecretReferences :one
+WITH copied AS (
+ INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key,r.secret_name
+ FROM app_environment_secret_refs r JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
+ JOIN project_environments source ON source.id=r.environment_id AND source.project_id=r.project_id AND source.account_id=r.account_id
+ JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=$1::text
+ WHERE r.account_id=$2::uuid AND r.project_id=$3::uuid
+  AND source.slug=$4::text AND a.status<>'deleted'
+ RETURNING 1
+)
+SELECT count(*) FROM copied
+`
+
+type CopyProjectEnvironmentSecretReferencesParams struct {
+	TargetSlug string
+	AccountID  pgtype.UUID
+	ProjectID  pgtype.UUID
+	SourceSlug string
+}
+
+// Values and source versions stay in app_secrets; references receive a new
+// catalog identity. Ownership and runtime evidence are deliberately absent.
+func (q *Queries) CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error) {
+	row := db.QueryRow(ctx, copyProjectEnvironmentSecretReferences,
+		arg.TargetSlug,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.SourceSlug,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid)
  + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid))::bigint AS count
@@ -13316,6 +13351,76 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
+SELECT id FROM apps WHERE account_id=$1::uuid AND project_id=$2::uuid
+ AND status<>'deleted' ORDER BY id FOR UPDATE
+`
+
+type LockProjectEnvironmentCloneAppsParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneAppsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockProjectEnvironmentCloneApps, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockProjectEnvironmentCloneGitSources = `-- name: LockProjectEnvironmentCloneGitSources :many
+SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+WHERE s.account_id=$1::uuid AND s.project_id=$2::uuid
+ AND e.slug IN ($3::text,$4::text)
+ORDER BY s.id FOR UPDATE OF s
+`
+
+type LockProjectEnvironmentCloneGitSourcesParams struct {
+	AccountID  pgtype.UUID
+	ProjectID  pgtype.UUID
+	SourceSlug string
+	TargetSlug string
+}
+
+// Clone locking follows source -> app -> catalog, matching reference writes.
+func (q *Queries) LockProjectEnvironmentCloneGitSources(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneGitSourcesParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockProjectEnvironmentCloneGitSources,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.SourceSlug,
+		arg.TargetSlug,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockSnapshotRuntimePublicationScope = `-- name: LockSnapshotRuntimePublicationScope :one
 SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE d.id = $1::uuid FOR UPDATE OF a
@@ -17158,6 +17263,64 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	for rows.Next() {
 		var i PerAccountRateLimitAggregateRow
 		if err := rows.Scan(&i.AccountID, &i.Hits, &i.LastEventAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectEnvironmentCloneQuota = `-- name: ProjectEnvironmentCloneQuota :many
+SELECT a.slug,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id)::bigint AS secret_count,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=$1::text)::bigint AS source_secrets,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=$1::text
+  AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL))::bigint AS source_managed,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+  +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS env_count,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope=$1::text)
+  +(SELECT count(*) FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=$1::text))::bigint AS source_env
+FROM apps a WHERE a.account_id=$2::uuid AND a.project_id=$3::uuid AND a.status<>'deleted'
+ORDER BY a.slug
+`
+
+type ProjectEnvironmentCloneQuotaParams struct {
+	SourceSlug string
+	AccountID  pgtype.UUID
+	ProjectID  pgtype.UUID
+}
+
+type ProjectEnvironmentCloneQuotaRow struct {
+	Slug          string
+	SecretCount   int64
+	SourceSecrets int64
+	SourceManaged int64
+	EnvCount      int64
+	SourceEnv     int64
+}
+
+// Counts include reference intent in the shared environment-key quota.
+func (q *Queries) ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error) {
+	rows, err := db.Query(ctx, projectEnvironmentCloneQuota, arg.SourceSlug, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneQuotaRow{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneQuotaRow
+		if err := rows.Scan(
+			&i.Slug,
+			&i.SecretCount,
+			&i.SourceSecrets,
+			&i.SourceManaged,
+			&i.EnvCount,
+			&i.SourceEnv,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

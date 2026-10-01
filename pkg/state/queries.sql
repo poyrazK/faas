@@ -6434,3 +6434,44 @@ SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uu
 -- name: CountAppEnvironmentIntentInScope :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
  + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text))::bigint AS count;
+
+-- Clone locking follows source -> app -> catalog, matching reference writes.
+-- name: LockProjectEnvironmentCloneGitSources :many
+SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.project_id=sqlc.arg(project_id)::uuid
+ AND e.slug IN (sqlc.arg(source_slug)::text,sqlc.arg(target_slug)::text)
+ORDER BY s.id FOR UPDATE OF s;
+
+-- name: LockProjectEnvironmentCloneApps :many
+SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND project_id=sqlc.arg(project_id)::uuid
+ AND status<>'deleted' ORDER BY id FOR UPDATE;
+
+-- Counts include reference intent in the shared environment-key quota.
+-- name: ProjectEnvironmentCloneQuota :many
+SELECT a.slug,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id)::bigint AS secret_count,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=sqlc.arg(source_slug)::text)::bigint AS source_secrets,
+ (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id AND s.scope=sqlc.arg(source_slug)::text
+  AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL))::bigint AS source_managed,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+  +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS env_count,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope=sqlc.arg(source_slug)::text)
+  +(SELECT count(*) FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text))::bigint AS source_env
+FROM apps a WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.project_id=sqlc.arg(project_id)::uuid AND a.status<>'deleted'
+ORDER BY a.slug;
+
+-- Values and source versions stay in app_secrets; references receive a new
+-- catalog identity. Ownership and runtime evidence are deliberately absent.
+-- name: CopyProjectEnvironmentSecretReferences :one
+WITH copied AS (
+ INSERT INTO app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name)
+ SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key,r.secret_name
+ FROM app_environment_secret_refs r JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
+ JOIN project_environments source ON source.id=r.environment_id AND source.project_id=r.project_id AND source.account_id=r.account_id
+ JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
+ WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
+  AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted'
+ RETURNING 1
+)
+SELECT count(*) FROM copied;

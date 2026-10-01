@@ -35207,6 +35207,10 @@ components:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
         secrets_copied: { type: integer, minimum: 0 }
+        secret_references_copied:
+          type: integer
+          minimum: 0
+          description: Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }
