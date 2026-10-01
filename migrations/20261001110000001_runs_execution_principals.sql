@@ -15,10 +15,9 @@ BEGIN
         SELECT runs_principal_id INTO predecessor_principal
           FROM api_keys
          WHERE id = NEW.rotated_from_id;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'rotated API key predecessor % does not exist', NEW.rotated_from_id;
+        IF FOUND THEN
+            NEW.runs_principal_id := predecessor_principal;
         END IF;
-        NEW.runs_principal_id := predecessor_principal;
     END IF;
     RETURN NEW;
 END;

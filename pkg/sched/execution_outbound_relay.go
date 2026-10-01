@@ -80,7 +80,7 @@ func (r *loopbackExecutionOutboundRelay) Call(ctx context.Context, request execu
 	if err != nil {
 		return zero, errors.New("outbound integration request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, executionproto.MaxOutboundBodyBytes+1))
 	if err != nil || len(body) > executionproto.MaxOutboundBodyBytes {
 		return zero, errors.New("outbound integration response exceeds the Runs limit")

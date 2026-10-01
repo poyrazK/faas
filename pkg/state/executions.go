@@ -317,10 +317,10 @@ type ExecutionPrincipalListStore interface {
 
 func validateCreateExecution(params CreateExecutionParams) error {
 	if _, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs); err != nil {
-		return fmt.Errorf("%w: %v", ErrExecutionInvalid, err)
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
 	}
 	if err := api.ValidateExecutionWorkflowMetadata(params.WorkflowID, params.StepLabel); err != nil {
-		return fmt.Errorf("%w: %v", ErrExecutionInvalid, err)
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
 	}
 	if err := params.Request.Profile.Validate(params.Request.Runtime); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)

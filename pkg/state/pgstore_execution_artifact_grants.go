@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -84,7 +85,7 @@ func (s *PgStore) CreateExecutionArtifactGrant(ctx context.Context, params Creat
 		params.ArtifactName, creatorID, params.TokenHash, executionTime(params.ExpiresAt), executionTime(params.CreatedAt))
 	grant, err := scanExecutionArtifactGrant(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ExecutionArtifactGrant{}, ErrNotFound
 		}
 		return ExecutionArtifactGrant{}, fmt.Errorf("create execution artifact grant: %w", err)
@@ -101,7 +102,7 @@ func (s *PgStore) ExecutionArtifactGrantByToken(ctx context.Context, accountID s
 		WHERE account_id = $1 AND token_hash = $2 AND revoked_at IS NULL
 		  AND redeemed_at IS NULL AND expires_at > $3`, mustPgUUID(accountID), tokenHash, executionTime(at)))
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ExecutionArtifactGrant{}, ErrNotFound
 		}
 		return ExecutionArtifactGrant{}, fmt.Errorf("load execution artifact grant: %w", err)
@@ -124,7 +125,7 @@ func (s *PgStore) RevokeExecutionArtifactGrant(ctx context.Context, accountID, g
 		RETURNING `+executionArtifactGrantColumns,
 		mustPgUUID(grantID), mustPgUUID(accountID), accountWide, executionTime(at), creatorID))
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ExecutionArtifactGrant{}, ErrNotFound
 		}
 		return ExecutionArtifactGrant{}, fmt.Errorf("revoke execution artifact grant: %w", err)

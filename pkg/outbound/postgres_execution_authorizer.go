@@ -25,13 +25,13 @@ func (a *PostgresExecutionAuthorizer) AuthorizeExecution(ctx context.Context, id
 	if a == nil || a.pool == nil {
 		return false, fmt.Errorf("outbound execution authorizer is unavailable")
 	}
-	accountID, accountErr := uuid.Parse(identity.AccountID)
-	executionID, executionErr := uuid.Parse(identity.ExecutionID)
-	leaseToken, leaseErr := uuid.Parse(identity.LeaseToken)
-	outboundIntegrationID, integrationErr := uuid.Parse(integrationID)
-	if accountErr != nil || executionErr != nil || leaseErr != nil || integrationErr != nil {
+	if !validExecutionAuthorizationUUIDs(identity, integrationID) {
 		return false, nil
 	}
+	accountID, _ := uuid.Parse(identity.AccountID)
+	executionID, _ := uuid.Parse(identity.ExecutionID)
+	leaseToken, _ := uuid.Parse(identity.LeaseToken)
+	outboundIntegrationID, _ := uuid.Parse(integrationID)
 	var allowed bool
 	err := a.pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -60,6 +60,14 @@ func (a *PostgresExecutionAuthorizer) AuthorizeExecution(ctx context.Context, id
 		return false, err
 	}
 	return allowed, nil
+}
+
+func validExecutionAuthorizationUUIDs(identity ExecutionIdentity, integrationID string) bool {
+	_, accountErr := uuid.Parse(identity.AccountID)
+	_, executionErr := uuid.Parse(identity.ExecutionID)
+	_, leaseErr := uuid.Parse(identity.LeaseToken)
+	_, integrationErr := uuid.Parse(integrationID)
+	return accountErr == nil && executionErr == nil && leaseErr == nil && integrationErr == nil
 }
 
 var _ ExecutionAuthorizer = (*PostgresExecutionAuthorizer)(nil)

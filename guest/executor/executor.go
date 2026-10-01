@@ -160,7 +160,7 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 		if err != nil {
 			return executionproto.Result{}, err
 		}
-		defer helper.Close()
+		defer helper.Close(commandCtx)
 	}
 	cmd := e.build(commandCtx, interpreter, args...)
 	if cmd == nil {

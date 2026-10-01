@@ -127,7 +127,7 @@ func invokeOutboundHelper(t *testing.T, broker executionproto.OutboundBroker, in
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer helper.Close()
+	defer helper.Close(ctx)
 	request, err := http.NewRequest(http.MethodPost, helper.endpoint+"/i/"+integrationID+path, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

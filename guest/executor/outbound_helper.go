@@ -52,11 +52,11 @@ func startExecutionOutboundHelper(ctx context.Context, broker executionproto.Out
 	return helper, nil
 }
 
-func (h *executionOutboundHelper) Close() {
+func (h *executionOutboundHelper) Close(ctx context.Context) {
 	if h == nil || h.server == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	if err := h.server.Shutdown(ctx); err != nil && h.listener != nil {
 		_ = h.listener.Close()

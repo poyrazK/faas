@@ -324,13 +324,16 @@ func executionWorkflowPlanID(plan executionWorkflowPlan) (string, map[string]str
 	return planID, labels, nil
 }
 
-func loadExecutionWorkflowPlan(path string) (executionWorkflowPlan, error) {
-	var plan executionWorkflowPlan
+func loadExecutionWorkflowPlan(path string) (plan executionWorkflowPlan, retErr error) {
 	file, err := openWorkflowPlanFile(path)
 	if err != nil {
 		return plan, err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close workflow manifest: %w", closeErr))
+		}
+	}()
 	decoder := json.NewDecoder(io.LimitReader(file, executionWorkflowPlanMaxBytes+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&plan); err != nil {
@@ -490,7 +493,7 @@ func runExecutionWorkflow(ctx context.Context, client executionWorkflowClient, p
 				submitErr := err
 				latest, listErr := listExecutionWorkflowRuns(ctx, client, plan.WorkflowID)
 				if listErr != nil {
-					return out, fmt.Errorf("submit workflow step %q: %v (checking for an existing receipt failed: %w)", step.Label, submitErr, listErr)
+					return out, fmt.Errorf("submit workflow step %q: %w (checking for an existing receipt failed: %w)", step.Label, submitErr, listErr)
 				}
 				for _, candidate := range latest {
 					if candidate.StepLabel == storageLabel {
