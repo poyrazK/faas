@@ -78,12 +78,16 @@ func (s *PgStore) ExpireRevisionPins(ctx context.Context) (int64, error) {
 func (m *MemStore) ResolveRevisionPin(_ context.Context, appID, scope, deploymentID string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.resolveRevisionPinLocked(appID, scope, deploymentID)
+}
+
+func (m *MemStore) resolveRevisionPinLocked(appID, scope, deploymentID string) (Deployment, error) {
 	app, ok := m.apps[appID]
-	if !ok || app.Status == AppDeleted || app.Manifest.RevisionPinTTLSeconds <= 0 {
+	if !ok || app.Status == AppDeleted || app.DeletedAt != nil || app.Manifest.RevisionPinTTLSeconds <= 0 {
 		return Deployment{}, ErrNotFound
 	}
 	dep, ok := m.deployments[deploymentID]
-	if !ok || dep.AppID != appID || normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) || dep.Status != DeployLive {
+	if !ok || dep.AppID != appID || normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) || dep.Status != DeployLive || dep.DeletedAt != nil {
 		return Deployment{}, ErrNotFound
 	}
 	if dep.TrafficPercent == 0 {

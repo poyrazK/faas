@@ -959,6 +959,29 @@ protected response evidence; ordinary customer-authored spans are not platform p
 Managed realtime, raw TCP and detached execution retain their separate owners.
 Runtime/preview agreement and real daemon/native acceptance remain required.
 
+### Follow-up: durable invocation version view
+
+Durable and synthetic invocation resolution reads the app identity, project
+release membership, scoped live target and direct revision eligibility from one
+committed view. PostgreSQL uses the existing short read-only repeatable-read
+transaction; memory uses its existing mutex. The transaction ends before enqueue,
+wake or forwarding. The app projection contains only version-selection identity,
+status and preview metadata, without environment, credentials or service policy.
+
+A saved nonempty invocation account must still own the app in that view. The
+scheduler carries that saved account through the trusted single-invocation HTTP
+dispatch envelope; it is not reconstructed from guest headers. The optional
+field preserves older callers and decoders that ignore unknown fields. Deleted
+apps refuse even when no explicit pin is present. Older envelopes without an
+account retain their existing trusted-delivery compatibility. Selected release
+or revision headers remain canonical and are revalidated at delivery after wake;
+an expired or withdrawn pin never falls through to newer code. Snapshot failure
+refuses without a second pool-read resolution or partially published selection.
+
+Full equivalence with public HTTP edge policy, shared public rate accounting,
+managed realtime and trigger batches needs separate path evidence. Full
+daemon/customer/staging and native VM/network acceptance remain required.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

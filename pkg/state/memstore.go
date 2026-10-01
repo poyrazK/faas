@@ -4133,6 +4133,10 @@ func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps
 func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.appByIDLocked(id)
+}
+
+func (m *MemStore) appByIDLocked(id string) (App, error) {
 	a, ok := m.apps[id]
 	if !ok {
 		// Production UUID columns accept canonical dashed UUIDs while

@@ -12716,6 +12716,35 @@ func (q *Queries) ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, n
 	return i, err
 }
 
+const readInvocationVersionApp = `-- name: ReadInvocationVersionApp :one
+SELECT id, account_id, project_id, preview_of_slug, status, deleted_at
+FROM apps WHERE id = $1::uuid
+`
+
+type ReadInvocationVersionAppRow struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	PreviewOfSlug pgtype.Text
+	Status        string
+	DeletedAt     pgtype.Timestamptz
+}
+
+// ADR-375: identity-only projection for a durable invocation version snapshot.
+func (q *Queries) ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgtype.UUID) (ReadInvocationVersionAppRow, error) {
+	row := db.QueryRow(ctx, readInvocationVersionApp, id)
+	var i ReadInvocationVersionAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.PreviewOfSlug,
+		&i.Status,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
 SELECT count(*)::bigint AS observed,
     coalesce(bool_or(app_id = $1::uuid), false)::boolean AS replacement

@@ -18,11 +18,6 @@ type InvocationVersion struct {
 	Scope        string
 }
 
-type invocationVersionStore interface {
-	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
-	ResolveRevisionPin(context.Context, string, string, string) (Deployment, error)
-}
-
 type invocationAppReader interface {
 	AppByID(context.Context, string) (App, error)
 }
@@ -33,9 +28,31 @@ type invocationAppReader interface {
 // explicit pin at enqueue and checking it again here prevents a delayed task
 // from silently moving to a newer graph after the old one expires.
 func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
+	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
+		var prepared Invocation
+		var version InvocationVersion
+		err := snapshot.WithInvocationVersionSnapshot(ctx, func(reader InvocationVersionReader) error {
+			var err error
+			prepared, version, err = resolveInvocationVersion(ctx, reader, inv)
+			return err
+		})
+		if err != nil {
+			return inv, InvocationVersion{}, err
+		}
+		return prepared, version, nil
+	}
+	// Compatibility for minimal unpinned adapters. Hide optional pool resolvers:
+	// a pin requires a committed snapshot and cannot use independent reads.
+	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv)
+}
+
+func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
 	app, err := store.AppByID(ctx, inv.AppID)
 	if err != nil {
 		return inv, InvocationVersion{}, err
+	}
+	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
+		return inv, InvocationVersion{}, ErrNotFound
 	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
@@ -63,7 +80,7 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if revision == "" && !projectApp {
 		return inv, version, nil
 	}
-	resolver, ok := store.(invocationVersionStore)
+	resolver, ok := store.(InvocationVersionReader)
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}

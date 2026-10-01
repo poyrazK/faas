@@ -3475,6 +3475,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	dispatch := map[string]any{
 		"invocation_id": inv.ID,
 		"app_id":        appID,
+		"account_id":    inv.AccountID,
 		"source":        string(inv.Source),
 		"method":        inv.Method,
 		"path":          inv.Path,

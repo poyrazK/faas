@@ -353,7 +353,7 @@ func (b *EgressCircuitBreaker) openCircuit(ctx context.Context, up EgressUpstrea
 		// Preserve previous enforcement and retry resolution on the next tick.
 		// DNS errors can contain the plaintext hostname; do not log the cause.
 		b.log.Warn("sched: egress circuit address resolution failed", "app", up.AppID, "upstream", up.Hash)
-		return nil
+		return nil //nolint:nilerr // Legacy Observe logs DNS failure; RefreshApp reports it. TestEgressBreakerDoesNotEnforceWhenResolveFails pins this contract.
 	}
 
 	// Record first, then push the union. On a push failure the entry is

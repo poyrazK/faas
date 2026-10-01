@@ -1024,6 +1024,8 @@ type Querier interface {
 	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error)
 	// ADR-375: generation-fenced gateway wiring observations.
 	ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, nodeName string) (ReadGatewayTrafficRuntimeEpochRow, error)
+	// ADR-375: identity-only projection for a durable invocation version snapshot.
+	ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgtype.UUID) (ReadInvocationVersionAppRow, error)
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)

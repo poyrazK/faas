@@ -4865,6 +4865,11 @@ WHERE n.active AND n.role IN ('compute-only', 'compute-node')
   AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
 ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
 
+-- ADR-375: identity-only projection for a durable invocation version snapshot.
+-- name: ReadInvocationVersionApp :one
+SELECT id, account_id, project_id, preview_of_slug, status, deleted_at
+FROM apps WHERE id = sqlc.arg(id)::uuid;
+
 -- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,

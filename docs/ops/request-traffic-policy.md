@@ -1,5 +1,33 @@
 # Request traffic policy snapshots
 
+## Durable invocation version selection
+
+Async routes, the scheduler drain and synthetic delivery resolve app identity,
+scoped release membership and direct revision eligibility in one committed
+snapshot. PostgreSQL ends its read-only repeatable-read transaction before wake
+or enqueue; memory readers share the store mutex. The version projection loads
+only app/account/project identity, preview parent, status and deletion time.
+It does not load environment, credentials, service policy or guest artifacts.
+
+A nonempty saved invocation account must match the current app owner. Deleted
+apps refuse even for unpinned envelopes. The scheduler preserves the saved account
+through the trusted single-invocation HTTP dispatch body; guest headers cannot
+replace that field. Older trusted envelopes with no account
+retain compatibility. Project releases and explicit revisions require a snapshot
+reader; custom adapters with only independent pool resolvers refuse pins. Minimal
+standalone unpinned adapters remain supported. A failed snapshot cannot publish a
+partial header selection or retry through independent reads.
+
+Enqueue captures a canonical release/revision header; delivery revalidates it.
+The pre-woken gateway also verifies the selected deployment and its running
+instance before forwarding. Expired or disabled pins refuse instead of selecting
+newer code. Unpinned standalone invocations retain their scheduler selection
+semantics. These checks establish version selection and owner validation. Full
+synthetic equivalence with public edge policy, admission, revocation and request
+decision observations still needs separate acceptance evidence.
+
+## Public request policy
+
 ADR-375 resolves hostname ownership and pins the corresponding route-only
 graph in one fresh readonly transaction before public route substitution.
 Claimed hosts read only their owner's routes before applying projection bounds.

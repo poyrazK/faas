@@ -2375,3 +2375,78 @@ path agreement and observations, real daemon fleet/load/restart/outage/recovery,
 customer capability and staging qualification, and Linux x86_64 KVM
 VM/firewall/restore/process-death/leak acceptance. No KVM host is currently
 available; another host request is unnecessary until availability changes.
+
+### 2026-10-01 — durable invocation version view and delivery ownership
+
+Async enqueue, scheduler drain and single synthetic delivery now resolve app
+identity and scoped release/revision eligibility from one committed view.
+PostgreSQL reuses the short read-only repeatable-read transaction; memory holds
+its existing mutex across the reads. Selection finishes before enqueue, wake or
+forwarding. The app projection contains only identity, preview parent, status
+and deletion metadata; it excludes environment, credentials, service policy
+and guest artifacts.
+
+A nonempty saved invocation account must still own the app. Deleted status or
+deletion time refuses even an unpinned invocation. The scheduler now preserves
+that account in the trusted single-dispatch HTTP body, and the synthetic decoder
+retains it for the post-wake owner check. Older account-free envelopes keep their
+existing compatibility. Independent pool-only adapters refuse project and
+revision pins; a snapshot failure cannot publish a partial selection or fall
+back to those reads. Accepted UUID spellings resolve to the stored deployment
+identity and canonical release header. Memory retains its historical compact
+deployment IDs when comparing the scheduler target.
+
+The existing delivery recheck refuses a disabled/expired release or revision
+before forwarding to a pre-woken instance. Release target checks retain account,
+scope, live status and deletion predicates. Fresh requests observe a new graph;
+a queued header never silently selects it after its saved graph expires.
+
+Verification against the final 12,480-file source freeze:
+
+- Complete state, internal gateway, scheduler and gateway unit scope: 6,879 named
+  passes and 1,399 guarded/skipped results in 118.641 s. Package pass counts are
+  state 2,156, internal gateway 756, scheduler 1,741 and gateway 2,226.
+- Selected PostgreSQL profile: 29 named passes, no skips, 12.034 s. Six real
+  PostgreSQL fixture roots account for 16 named results; the other 13 are memory
+  cases in the same profile. Concurrent committed cutover/expiry and direct-pin
+  disable preserve the captured view, while fresh delivery refuses withdrawn
+  pins. Owner/deletion, compact/uppercase/URN/braced UUIDs, minimal private
+  projection, callback refusal and connection release are checked.
+- Direct adapter and actual synthetic HTTP endpoint cases cover saved ownership,
+  pre-woken deployment mismatch, disabled pins, deleted apps and legacy envelopes.
+  The scheduler HTTP client retains the account. Retirement between the async
+  app lookup and snapshot selection publishes no invocation.
+- Deduplicated acceptance: 6,895 named passes, with 1,393 guarded results without
+  acceptance. Guards do not count as passes or native VM/network evidence.
+- SQLC v1.31.1 reproduces all four generated files. Lint v2.4.0 checks all four
+  packages with tests and reports zero issues in 48.356 s. Its first run flagged
+  the legacy Observe DNS branch: the unchanged regression requires logging and
+  returning nil, while production RefreshApp reports resolution failure. One
+  documented nilerr directive preserves that contract; no assertion or runtime
+  egress behavior changed. The four repository policy gates pass in 21.095 s.
+- PostgreSQL's source database remains unmigrated in public, with fsync,
+  synchronous_commit and full_page_writes enabled. No schema, quota, customer
+  configuration field, test overlay, source exclusion or weakened assertion.
+
+The baseline reproduced three unsafe unpinned accepts (foreign account, deleted
+status and deletion time). Further diagnostics reproduced noncanonical pin
+identities and a wrong-account synthetic HTTP forward caused by the discarded
+account field. These failing runs are retained and excluded from accepted counts.
+The first baseline exited without test output under observed shared disk pressure;
+its stop attempt found it already terminal. A later focused compile recorded
+no space left on device. After that owned run closed, cleanup removed three older
+large files (2,702,373,228 bytes) from this task's exact Go cache, retaining its two
+newest large files. No sibling cache, process or PostgreSQL cluster was changed.
+Earlier passing source iterations and the first lint failure are retained as
+diagnostics; only the final runs enter acceptance counts.
+
+Only this tracker changed after the final gate freeze. Evidence and source/commit
+receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-invocation-view-20261001/`.
+
+All six release requirements remain unchecked. Operator and alias/revision
+writer/resolver coverage, full synthetic/trigger/public policy and admission
+agreement, preview and runtime observations, real daemon fleet/load/restart/
+outage/recovery, customer capability/staging qualification, and Linux x86_64 KVM
+VM/firewall/restore/process-death/leak acceptance remain pending. No KVM host is
+currently available; another host request is unnecessary until that changes.

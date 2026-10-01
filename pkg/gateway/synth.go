@@ -444,6 +444,7 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 type invocationDispatchRequest struct {
 	InvocationID string            `json:"invocation_id"`
 	AppID        string            `json:"app_id"`
+	AccountID    string            `json:"account_id,omitempty"`
 	Source       string            `json:"source"` // async_invoke|queue|delayed_task|cron
 	Method       string            `json:"method"`
 	Path         string            `json:"path"`
@@ -519,13 +520,14 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
-		ID:      req.InvocationID,
-		AppID:   req.AppID,
-		Source:  state.InvocationSource(req.Source),
-		Method:  method,
-		Path:    path,
-		Payload: payload,
-		Headers: jsonOrEmpty(req.Headers),
+		ID:        req.InvocationID,
+		AppID:     req.AppID,
+		AccountID: req.AccountID,
+		Source:    state.InvocationSource(req.Source),
+		Method:    method,
+		Path:      path,
+		Payload:   payload,
+		Headers:   jsonOrEmpty(req.Headers),
 	}
 	// Pre-flush logsanitised fields so a malicious /invocations:dispatch
 	// caller cannot forge lines.
