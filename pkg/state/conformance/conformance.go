@@ -124,6 +124,8 @@ func Run(t *testing.T, open Open) {
 		{"async_invocation_history_is_scoped_filtered_and_paginated", testAsyncInvocationHistory},
 		{"delayed_task_listing_is_scoped_filtered_and_paginated", testDelayedTaskListing},
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
+		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
+		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
 		{"invocation_environment_survives_membership_retry_and_replay", testInvocationDeploymentScope},

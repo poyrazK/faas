@@ -5532,3 +5532,42 @@ INSERT INTO invocations (
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, '')
 ) RETURNING *;
+
+-- Queue binding/consumer publication (ADR-382). Parent locks also serialize
+-- trigger admission, so quota checks and the projection share the same commit.
+-- name: QueueConsumerLockApp :one
+select id, account_id, type, workload_class from apps
+where id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and status<>'deleted' for update;
+
+-- name: QueueConsumerLockAccount :one
+select id, plan from accounts where id=$1 for update;
+
+-- name: QueueConsumerBindingForUpdate :one
+select * from queue_bindings where id=sqlc.arg(id)
+and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) for update;
+
+-- name: QueueConsumerInsertBinding :one
+insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
+values (sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(name),sqlc.arg(queue_name),
+sqlc.arg(mode),sqlc.arg(workload_class),sqlc.arg(enabled),sqlc.arg(max_concurrency),sqlc.arg(retry_policy)::jsonb) returning *;
+
+-- name: QueueConsumerUpdateBinding :one
+update queue_bindings set queue_name=sqlc.arg(queue_name),mode=sqlc.arg(mode),workload_class=sqlc.arg(workload_class),
+enabled=sqlc.arg(enabled),max_concurrency=sqlc.arg(max_concurrency),retry_policy=sqlc.arg(retry_policy)::jsonb,updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) returning *;
+
+-- name: QueueConsumerDeleteBinding :execrows
+delete from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
+
+-- name: QueueConsumerOwnedTriggers :many
+select id from triggers where app_id=sqlc.arg(app_id) and kind='queue' and source='queue'
+and config->>'queue_binding_id'=sqlc.arg(binding_id)::text for update;
+
+-- name: QueueConsumerUpdateTrigger :execrows
+update triggers set slug=sqlc.arg(slug), enabled=sqlc.arg(enabled),config=sqlc.arg(config)::jsonb,
+batch_size_max=sqlc.arg(batch_size_max),batch_window_ms=sqlc.arg(batch_window_ms),max_attempts=sqlc.arg(max_attempts),
+payload_max_bytes=sqlc.arg(payload_max_bytes),updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='queue';
+
+-- name: QueueConsumerNotify :exec
+select pg_notify('trigger_changed',sqlc.arg(payload)::text);

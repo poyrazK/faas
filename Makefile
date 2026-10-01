@@ -1357,7 +1357,9 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	@promtool test rules pkg/promqlrules/testdata/environment_git_sources.test.yml
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
-	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*|queue_binding_consumer_publication_is_atomic|queue_consumer_and_trigger_share_account_quota)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^TestPgQueueConsumerDeleteFailureRestoresConsumerAndReceipts$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*)$$' -count=1
 	@$(GO) test -p 1 ./migrations -run '^TestMigrationInvocationDeploymentScope.*$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1

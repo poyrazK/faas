@@ -381,7 +381,6 @@ ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListProjectsForAccount
-ListQueueBindingsForApp
 ListRecentEventsForAccount
 ListRequestTelemetryByApp
 ListRequestTelemetryByPlatformTenant
@@ -399,7 +398,6 @@ ListTenantSurfacesForApp
 ListTenantSurfacesNearingExpiry
 ListTriggerDeadLetter
 ListTriggerRecordsForTrigger
-ListTriggersForApp
 ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
@@ -474,7 +472,6 @@ PublishRuntimeSnapshot
 PutIdempotent
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
-QueueBindingByID
 QueueDeadLetter
 QueuePeek
 QueueState
@@ -570,10 +567,7 @@ TouchTenantSurfaceForRenewal
 TrafficAnomalyAggregate
 TrafficAnomalyAggregateByNode
 TransferOrgOwnership
-TriggerByID
-TriggerRecordIDByItemIdentifier
 UpdateAccountBillingInfo
-UpdateAccountPlan
 UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus

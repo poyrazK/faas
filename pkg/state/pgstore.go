@@ -29436,8 +29436,8 @@ func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff t
 // shape, same per-app + per-account split.
 
 // CreateTriggerIfUnderQuota creates a non-cron trigger (kafka / nats
-// / redis_streams / sqs_compat / queue) under the apps-row FOR
-// UPDATE lock. Returns *TriggerQuotaError when the per-app or
+// / redis_streams / sqs_compat / queue) under the app and account FOR
+// UPDATE locks. Returns *TriggerQuotaError when the per-app or
 // per-account cap is reached; ErrNotFound when the app row is gone
 // or already deleted. The cron kind routes through the existing
 // CreateCronIfUnderQuota path because cron needs the crons row + the
@@ -29483,6 +29483,12 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 		`select account_id from apps where id = $1`, appID,
 	).Scan(&accountID); err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
+	}
+	// Queue binding publication takes the same lock before counting. Without
+	// it, concurrent trigger admissions on different apps can exceed the
+	// shared account quota even though each app is serialized correctly.
+	if _, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, accountID); err != nil {
+		return sqlc.Trigger{}, fmt.Errorf("state: lock trigger account: %w", err)
 	}
 	var accountCount int
 	if err := tx.QueryRow(ctx,
@@ -29553,7 +29559,7 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, error) {
 	row, err := s.triggerQueries().TriggerByID(ctx, s.pool, mustPgUUID(id))
 	if err != nil {
-		return sqlc.Trigger{}, err
+		return sqlc.Trigger{}, mapErr(err)
 	}
 	return triggerRowToTrigger(row), nil
 }

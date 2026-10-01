@@ -262,14 +262,24 @@ admission does not cancel a guest request already in flight when a lease ends.
 Queue bindings and trigger/scaler projections remain app-scoped. These routing
 prerequisites do not enable their GitOps adapter.
 
-The existing queue consumer index allows one enabled trigger per app/source,
-and API binding mutations publish the private trigger projection in a separate
-transaction. Before enabling the queue adapter, binding and consumer identity
-must include the environment, publication must commit both intents atomically,
-and queue demand must select only the corresponding environment fleet while
-preserving app/account capacity limits. Renaming or pruning a binding also
-needs an explicit disposition for queued work and existing trigger receipts;
-deleting a projection must not silently remove that evidence.
+API binding mutations now publish the binding and its private consumer in one
+store transaction. Creation, updates, deletion, and the binding portion of the
+queue workload profile use this path. PostgreSQL scheduler notifications commit
+with the rows. Failed projection or deletion rolls both intents back; queue
+renames update the existing trigger and retain its receipt namespace. Consumer
+admission and ordinary trigger creation share the account quota lock. Shared
+MemStore/PostgreSQL cases cover conflicts, quota denial, receipt preservation,
+and concurrent account admission; a PostgreSQL fault test covers rollback after
+consumer deletion. The profile's scaling policy remains a separate mutation.
+
+The existing queue consumer index still allows one enabled trigger per
+app/source. Before enabling the queue adapter, binding and consumer identity
+must include the environment, and queue demand must select only the
+corresponding environment fleet while preserving app/account capacity limits.
+Renaming or pruning a binding also needs an explicit disposition for queued
+work and existing trigger receipts; the current public delete/pull transition
+removes the consumer and its PostgreSQL receipts. GitOps pruning must preserve
+that evidence under a reviewed retention policy before it can be enabled.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,

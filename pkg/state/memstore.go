@@ -11867,8 +11867,14 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	if limits.TriggerLimitPerApp > 0 && perApp >= limits.TriggerLimitPerApp {
 		return sqlc.Trigger{}, &TriggerQuotaError{Scope: TriggerQuotaScopeApp, Limit: limits.TriggerLimitPerApp, Observed: perApp}
 	}
-	for range m.triggers {
-		perAccount++ // memstore has no per-account join — single-app single-account default
+	for _, trigger := range m.triggers {
+		app, knownApp := m.apps[appID]
+		if !knownApp {
+			// Preserve legacy lightweight fixtures without an app row.
+			perAccount++
+		} else if owner, ok := m.triggerAppLocked(trigger); ok && owner.AccountID == app.AccountID && owner.Status != AppDeleted {
+			perAccount++
+		}
 	}
 	if limits.TriggerLimitPerAccount > 0 && perAccount >= limits.TriggerLimitPerAccount {
 		return sqlc.Trigger{}, &TriggerQuotaError{Scope: TriggerQuotaScopeAccount, Limit: limits.TriggerLimitPerAccount, Observed: perAccount}
@@ -11989,6 +11995,16 @@ func canonicalMemUUID(id string) string {
 		return parsed.String()
 	}
 	return id
+}
+
+// MemStore IDs may be compact hexadecimal strings, while sqlc UUID.String
+// returns their hyphenated form. Trigger ownership must resolve both forms.
+func (m *MemStore) triggerAppLocked(trigger sqlc.Trigger) (App, bool) {
+	if app, ok := m.apps[trigger.AppID.String()]; ok {
+		return app, true
+	}
+	app, ok := m.apps[hex.EncodeToString(trigger.AppID.Bytes[:])]
+	return app, ok
 }
 
 func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error) {

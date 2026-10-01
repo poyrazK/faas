@@ -15439,6 +15439,276 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at from queue_bindings where id=$1
+and app_id=$2 and account_id=$3 for update
+`
+
+type QueueConsumerBindingForUpdateParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerBindingForUpdate(ctx context.Context, db DBTX, arg QueueConsumerBindingForUpdateParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerBindingForUpdate, arg.ID, arg.AppID, arg.AccountID)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const queueConsumerDeleteBinding = `-- name: QueueConsumerDeleteBinding :execrows
+delete from queue_bindings where id=$1 and app_id=$2 and account_id=$3
+`
+
+type QueueConsumerDeleteBindingParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerDeleteBinding(ctx context.Context, db DBTX, arg QueueConsumerDeleteBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, queueConsumerDeleteBinding, arg.ID, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const queueConsumerInsertBinding = `-- name: QueueConsumerInsertBinding :one
+insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
+values ($1,$2,$3,$4,$5,
+$6,$7,$8,$9,$10::jsonb) returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at
+`
+
+type QueueConsumerInsertBindingParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	QueueName      string
+	Mode           string
+	WorkloadClass  string
+	Enabled        bool
+	MaxConcurrency int32
+	RetryPolicy    []byte
+}
+
+func (q *Queries) QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg QueueConsumerInsertBindingParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerInsertBinding,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.QueueName,
+		arg.Mode,
+		arg.WorkloadClass,
+		arg.Enabled,
+		arg.MaxConcurrency,
+		arg.RetryPolicy,
+	)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const queueConsumerLockAccount = `-- name: QueueConsumerLockAccount :one
+select id, plan from accounts where id=$1 for update
+`
+
+type QueueConsumerLockAccountRow struct {
+	ID   pgtype.UUID
+	Plan string
+}
+
+func (q *Queries) QueueConsumerLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (QueueConsumerLockAccountRow, error) {
+	row := db.QueryRow(ctx, queueConsumerLockAccount, id)
+	var i QueueConsumerLockAccountRow
+	err := row.Scan(&i.ID, &i.Plan)
+	return i, err
+}
+
+const queueConsumerLockApp = `-- name: QueueConsumerLockApp :one
+select id, account_id, type, workload_class from apps
+where id=$1 and account_id=$2 and status<>'deleted' for update
+`
+
+type QueueConsumerLockAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type QueueConsumerLockAppRow struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Type          string
+	WorkloadClass string
+}
+
+// Queue binding/consumer publication (ADR-382). Parent locks also serialize
+// trigger admission, so quota checks and the projection share the same commit.
+func (q *Queries) QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error) {
+	row := db.QueryRow(ctx, queueConsumerLockApp, arg.AppID, arg.AccountID)
+	var i QueueConsumerLockAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Type,
+		&i.WorkloadClass,
+	)
+	return i, err
+}
+
+const queueConsumerNotify = `-- name: QueueConsumerNotify :exec
+select pg_notify('trigger_changed',$1::text)
+`
+
+func (q *Queries) QueueConsumerNotify(ctx context.Context, db DBTX, payload string) error {
+	_, err := db.Exec(ctx, queueConsumerNotify, payload)
+	return err
+}
+
+const queueConsumerOwnedTriggers = `-- name: QueueConsumerOwnedTriggers :many
+select id from triggers where app_id=$1 and kind='queue' and source='queue'
+and config->>'queue_binding_id'=$2::text for update
+`
+
+type QueueConsumerOwnedTriggersParams struct {
+	AppID     pgtype.UUID
+	BindingID string
+}
+
+func (q *Queries) QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, queueConsumerOwnedTriggers, arg.AppID, arg.BindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const queueConsumerUpdateBinding = `-- name: QueueConsumerUpdateBinding :one
+update queue_bindings set queue_name=$1,mode=$2,workload_class=$3,
+enabled=$4,max_concurrency=$5,retry_policy=$6::jsonb,updated_at=now()
+where id=$7 and app_id=$8 and account_id=$9 returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at
+`
+
+type QueueConsumerUpdateBindingParams struct {
+	QueueName      string
+	Mode           string
+	WorkloadClass  string
+	Enabled        bool
+	MaxConcurrency int32
+	RetryPolicy    []byte
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerUpdateBinding,
+		arg.QueueName,
+		arg.Mode,
+		arg.WorkloadClass,
+		arg.Enabled,
+		arg.MaxConcurrency,
+		arg.RetryPolicy,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const queueConsumerUpdateTrigger = `-- name: QueueConsumerUpdateTrigger :execrows
+update triggers set slug=$1, enabled=$2,config=$3::jsonb,
+batch_size_max=$4,batch_window_ms=$5,max_attempts=$6,
+payload_max_bytes=$7,updated_at=now()
+where id=$8 and app_id=$9 and kind='queue' and source='queue'
+`
+
+type QueueConsumerUpdateTriggerParams struct {
+	Slug            string
+	Enabled         bool
+	Config          []byte
+	BatchSizeMax    int32
+	BatchWindowMs   int32
+	MaxAttempts     int32
+	PayloadMaxBytes int32
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error) {
+	result, err := db.Exec(ctx, queueConsumerUpdateTrigger,
+		arg.Slug,
+		arg.Enabled,
+		arg.Config,
+		arg.BatchSizeMax,
+		arg.BatchWindowMs,
+		arg.MaxAttempts,
+		arg.PayloadMaxBytes,
+		arg.ID,
+		arg.AppID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
        coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,
