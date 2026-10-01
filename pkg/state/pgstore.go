@@ -25425,11 +25425,13 @@ func mapErr(err error) error {
 	var admission *pgconn.PgError
 	if errors.As(err, &admission) {
 		switch admission.ConstraintName {
-		case "application_standard_runtime_stale":
+		case "application_standard_runtime_stale", "application_standard_boot_receipt":
 			return ErrApplicationStandardRuntimeStale
+		case "application_standard_boot_conflict":
+			return ErrConflict
 		case "application_standard_runtime_busy":
 			return ErrApplicationStandardRuntimeBusy
-		case "application_standard_runtime_identity":
+		case "application_standard_runtime_identity", "application_standard_boot_immutable":
 			return ErrInvalidArgument
 		}
 	}

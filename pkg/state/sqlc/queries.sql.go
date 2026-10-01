@@ -4811,19 +4811,49 @@ func (q *Queries) GetGithubWebhookSecret(ctx context.Context, db DBTX, installat
 }
 
 const getInstanceApplicationStandardAdmission = `-- name: GetInstanceApplicationStandardAdmission :one
-SELECT input_snapshot, captured_at FROM instance_application_standard_admissions
+SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
 WHERE instance_id = $1::uuid
 `
 
 type GetInstanceApplicationStandardAdmissionRow struct {
-	InputSnapshot []byte
-	CapturedAt    pgtype.Timestamptz
+	InputSnapshot   []byte
+	CapturedAt      pgtype.Timestamptz
+	NodeID          string
+	NativeInputHash pgtype.Text
 }
 
 func (q *Queries) GetInstanceApplicationStandardAdmission(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetInstanceApplicationStandardAdmissionRow, error) {
 	row := db.QueryRow(ctx, getInstanceApplicationStandardAdmission, instanceID)
 	var i GetInstanceApplicationStandardAdmissionRow
-	err := row.Scan(&i.InputSnapshot, &i.CapturedAt)
+	err := row.Scan(
+		&i.InputSnapshot,
+		&i.CapturedAt,
+		&i.NodeID,
+		&i.NativeInputHash,
+	)
+	return i, err
+}
+
+const getInstanceApplicationStandardBoot = `-- name: GetInstanceApplicationStandardBoot :one
+SELECT expected_state,binding,receipt,received_at FROM instance_application_standard_boots WHERE token=$1::uuid
+`
+
+type GetInstanceApplicationStandardBootRow struct {
+	ExpectedState string
+	Binding       []byte
+	Receipt       []byte
+	ReceivedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetInstanceApplicationStandardBoot(ctx context.Context, db DBTX, token pgtype.UUID) (GetInstanceApplicationStandardBootRow, error) {
+	row := db.QueryRow(ctx, getInstanceApplicationStandardBoot, token)
+	var i GetInstanceApplicationStandardBootRow
+	err := row.Scan(
+		&i.ExpectedState,
+		&i.Binding,
+		&i.Receipt,
+		&i.ReceivedAt,
+	)
 	return i, err
 }
 
@@ -4937,6 +4967,58 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AuditLogin,
+	)
+	return i, err
+}
+
+const getPublishedApplicationStandardInstance = `-- name: GetPublishedApplicationStandardInstance :one
+SELECT id,app_id,deployment_id,state,COALESCE(netns,'')::text AS netns,COALESCE(guest_uid,0)::integer AS guest_uid,
+ COALESCE(host(host_ip),'')::text AS host_ip,ram_mb,started_at,last_request_at,parked_at,node_id,wake_id,
+ framework_ready_at,tail_count,mode,request_count
+FROM instances WHERE id=$1::uuid
+`
+
+type GetPublishedApplicationStandardInstanceRow struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	State            string
+	Netns            string
+	GuestUid         int32
+	HostIp           string
+	RamMb            int32
+	StartedAt        pgtype.Timestamptz
+	LastRequestAt    pgtype.Timestamptz
+	ParkedAt         pgtype.Timestamptz
+	NodeID           pgtype.UUID
+	WakeID           pgtype.UUID
+	FrameworkReadyAt pgtype.Timestamptz
+	TailCount        int32
+	Mode             string
+	RequestCount     int64
+}
+
+func (q *Queries) GetPublishedApplicationStandardInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetPublishedApplicationStandardInstanceRow, error) {
+	row := db.QueryRow(ctx, getPublishedApplicationStandardInstance, instanceID)
+	var i GetPublishedApplicationStandardInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.Mode,
+		&i.RequestCount,
 	)
 	return i, err
 }
@@ -5820,6 +5902,28 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertInstanceApplicationStandardBoot = `-- name: InsertInstanceApplicationStandardBoot :exec
+INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding)
+VALUES($1::uuid,$2::uuid,$3::text,$4::jsonb)
+`
+
+type InsertInstanceApplicationStandardBootParams struct {
+	Token         pgtype.UUID
+	InstanceID    pgtype.UUID
+	ExpectedState string
+	Binding       []byte
+}
+
+func (q *Queries) InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error {
+	_, err := db.Exec(ctx, insertInstanceApplicationStandardBoot,
+		arg.Token,
+		arg.InstanceID,
+		arg.ExpectedState,
+		arg.Binding,
+	)
+	return err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -11576,6 +11680,22 @@ func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockInstanceApplicationStandardBoot = `-- name: LockInstanceApplicationStandardBoot :one
+SELECT application_standard_lock_native_boot($1::uuid,$2::text)::jsonb AS inputs
+`
+
+type LockInstanceApplicationStandardBootParams struct {
+	InstanceID    pgtype.UUID
+	ExpectedState string
+}
+
+func (q *Queries) LockInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardBootParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockInstanceApplicationStandardBoot, arg.InstanceID, arg.ExpectedState)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -15185,6 +15305,38 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const publishInstanceApplicationStandardRuntime = `-- name: PublishInstanceApplicationStandardRuntime :execrows
+UPDATE instances SET application_standard_boot_token=$1::uuid,netns=$2::text,
+ host_ip=$3::inet,guest_uid=$4::integer,state=$5::text,started_at=clock_timestamp()
+WHERE id=$6::uuid AND state=$7::text
+`
+
+type PublishInstanceApplicationStandardRuntimeParams struct {
+	Token         pgtype.UUID
+	Netns         string
+	HostIp        netip.Addr
+	GuestUid      int32
+	NextState     string
+	InstanceID    pgtype.UUID
+	ExpectedState string
+}
+
+func (q *Queries) PublishInstanceApplicationStandardRuntime(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, publishInstanceApplicationStandardRuntime,
+		arg.Token,
+		arg.Netns,
+		arg.HostIp,
+		arg.GuestUid,
+		arg.NextState,
+		arg.InstanceID,
+		arg.ExpectedState,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
        coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,
@@ -15529,6 +15681,24 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const recordInstanceApplicationStandardReceipt = `-- name: RecordInstanceApplicationStandardReceipt :execrows
+UPDATE instance_application_standard_boots SET receipt=$1::jsonb,received_at=clock_timestamp()
+WHERE token=$2::uuid AND receipt IS NULL
+`
+
+type RecordInstanceApplicationStandardReceiptParams struct {
+	Receipt []byte
+	Token   pgtype.UUID
+}
+
+func (q *Queries) RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordInstanceApplicationStandardReceipt, arg.Receipt, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordMailSuppression = `-- name: RecordMailSuppression :one
 
 INSERT INTO mail_suppressions (
@@ -15674,6 +15844,23 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 		&i.FinalizedAt,
 	)
 	return i, err
+}
+
+const registerComputeNodeRuntimeIdentity = `-- name: RegisterComputeNodeRuntimeIdentity :execrows
+UPDATE compute_nodes SET vmmd_incarnation=$1::uuid WHERE id=$2::uuid
+`
+
+type RegisterComputeNodeRuntimeIdentityParams struct {
+	Incarnation pgtype.UUID
+	NodeID      pgtype.UUID
+}
+
+func (q *Queries) RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error) {
+	result, err := db.Exec(ctx, registerComputeNodeRuntimeIdentity, arg.Incarnation, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one

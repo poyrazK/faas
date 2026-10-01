@@ -372,6 +372,25 @@ $$;
 
 
 --
+-- Name: application_standard_boot_receipt_reuse_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_boot_receipt_reuse_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state IN ('waking','cold_booting') AND EXISTS(
+  SELECT 1 FROM instance_application_standard_boots WHERE instance_id=NEW.id AND receipt IS NOT NULL
+ ) THEN
+  RAISE EXCEPTION 'published native receipt cannot authorize another boot'
+   USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_control_input_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -529,9 +548,9 @@ CREATE FUNCTION public.application_standard_instance_runtime_capture() RETURNS t
     AS $$
 BEGIN
  IF NEW.app_id IS NOT NULL AND NEW.kind='wake' AND NEW.state IN ('waking','cold_booting','running','warm','migrating') THEN
-  INSERT INTO instance_application_standard_admissions(instance_id,app_id,deployment_id,input_snapshot)
-   VALUES(NEW.id,NEW.app_id,NEW.deployment_id,application_standard_runtime_snapshot(NEW.app_id,NEW.deployment_id) ||
-     jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode));
+  INSERT INTO instance_application_standard_admissions(instance_id,app_id,deployment_id,node_id,input_snapshot)
+  VALUES(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,
+   application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode));
  END IF;
  RETURN NEW;
 END;
@@ -556,7 +575,7 @@ BEGIN
  -- Cleanup, bookkeeping and nonresident fixtures remain possible while the
  -- standard is pending. Entry into boot, serving, warm and migration is gated.
  IF NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
- current_input := application_standard_runtime_snapshot(NEW.app_id,NEW.deployment_id) ||
+ current_input := application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) ||
    jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
  IF TG_OP='INSERT' THEN
   IF NEW.state IN ('running','warm','migrating') AND
@@ -573,12 +592,53 @@ BEGIN
     RAISE EXCEPTION 'managed runtime has no admission capture'
      USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
    END IF;
-  ELSIF captured_input IS DISTINCT FROM current_input THEN
+  ELSE
+   -- Legacy unmanaged captures have no native revision; they gain no native
+   -- grant authority from this compatibility comparison.
+   IF NOT (captured_input ? 'egress_revision') AND current_input->'adoptions'='[]'::jsonb AND current_input->'materialized_fields'='[]'::jsonb THEN
+    current_input:=current_input-'egress_revision';
+   END IF;
+   IF captured_input IS DISTINCT FROM current_input THEN
    RAISE EXCEPTION 'runtime inputs changed after admission'
     USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+   END IF;
   END IF;
  END IF;
  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_native_boot(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_native_boot(instance_id uuid, expected_state text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE i instances%ROWTYPE; c instance_application_standard_admissions%ROWTYPE;
+        input jsonb; incarnation uuid;
+BEGIN
+ SELECT * INTO i FROM instances WHERE id=instance_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR i.state IS DISTINCT FROM expected_state OR i.kind<>'wake' OR i.app_id IS NULL THEN
+  RAISE EXCEPTION 'runtime boot state changed' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_application_standard_admissions.instance_id=i.id FOR SHARE NOWAIT;
+ input:=application_standard_native_runtime_snapshot(i.app_id,i.deployment_id) || jsonb_build_object('instance_ram_mb',i.ram_mb,'instance_mode',i.mode);
+ IF c.instance_id IS NULL OR c.node_id IS DISTINCT FROM i.node_id OR c.input_snapshot IS DISTINCT FROM input
+   OR (input->>'desired_revision')::bigint<=0 OR input->>'effective_hash'=''
+   OR input->'desired_revision' IS DISTINCT FROM input->'persisted_revision'
+   OR (input->'adoptions'='[]'::jsonb AND input->'materialized_fields'='[]'::jsonb) THEN
+  RAISE EXCEPTION 'runtime admission inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT vmmd_incarnation INTO incarnation FROM compute_nodes WHERE id=i.node_id FOR SHARE NOWAIT;
+ IF incarnation IS NULL THEN
+  RAISE EXCEPTION 'native process is not registered' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN jsonb_build_object('input_snapshot',input,'captured_input_hash',c.native_input_hash,
+  'node_id',i.node_id::text,'incarnation',incarnation::text,'clock_unix_nano',(extract(epoch FROM clock_timestamp())*1000000000)::bigint);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
 $$;
 
@@ -599,6 +659,133 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_boot_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_boot_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE locked jsonb; input jsonb; b jsonb; r jsonb; now_nano bigint;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'native boot history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  IF NEW.token IS DISTINCT FROM OLD.token OR NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.expected_state IS DISTINCT FROM OLD.expected_state
+    OR NEW.binding IS DISTINCT FROM OLD.binding OR NEW.created_at IS DISTINCT FROM OLD.created_at OR OLD.receipt IS NOT NULL OR NEW.receipt IS NULL THEN
+   RAISE EXCEPTION 'native boot history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+ ELSIF NEW.receipt IS NOT NULL THEN
+  RAISE EXCEPTION 'native receipt requires a saved grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ locked:=application_standard_lock_native_boot(NEW.instance_id,NEW.expected_state);
+ input:=locked->'input_snapshot'; b:=NEW.binding;
+ now_nano:=(locked->>'clock_unix_nano')::bigint;
+ IF (b->>'protocol_version')::integer IS DISTINCT FROM 1 OR b->>'token' IS DISTINCT FROM NEW.token::text
+  OR b->>'instance_id' IS DISTINCT FROM NEW.instance_id::text OR b->>'app_id' IS DISTINCT FROM input->>'app_id'
+  OR b->>'deployment_id' IS DISTINCT FROM input->'artifact'->>'id' OR b->>'account_id' IS DISTINCT FROM input->>'account_id'
+  OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash' OR b->>'effective_hash' IS DISTINCT FROM input->>'effective_hash'
+  OR (b->>'desired_revision')::bigint IS DISTINCT FROM (input->>'desired_revision')::bigint
+  OR (b->>'egress_revision')::bigint IS DISTINCT FROM (input->>'egress_revision')::bigint
+  OR coalesce(b->>'payload_hash','') !~ '^[0-9a-f]{64}$'
+  OR coalesce((b->>'issued_at_unix_nano')::bigint,0)<=0
+  OR coalesce((b->>'expires_at_unix_nano')::bigint,0)<=now_nano
+  OR (b->>'expires_at_unix_nano')::bigint <= (b->>'issued_at_unix_nano')::bigint
+  OR (b->>'expires_at_unix_nano')::numeric - (b->>'issued_at_unix_nano')::numeric > 600000000000
+  OR (b->>'issued_at_unix_nano')::bigint > now_nano+5000000000 THEN
+  RAISE EXCEPTION 'native boot grant is stale or invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF TG_OP='INSERT' AND (b->>'issued_at_unix_nano')::bigint < now_nano-5000000000 THEN
+  RAISE EXCEPTION 'native boot issue time is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  r:=NEW.receipt;
+  IF r->'binding' IS DISTINCT FROM b OR coalesce(r->>'native_input_hash','') !~ '^[0-9a-f]{64}$'
+   OR coalesce(r->>'netns','')='' OR coalesce(r->>'host_ip','')='' OR coalesce((r->>'lease_uid')::integer,0)<=0
+   OR coalesce((r->>'method')::integer,-1) NOT IN (0,1) OR (r->>'paused')::boolean IS NULL
+   OR coalesce((r->>'completed_at_unix_nano')::bigint,0)<(b->>'issued_at_unix_nano')::bigint-5000000000
+   OR (r->>'completed_at_unix_nano')::bigint>= (b->>'expires_at_unix_nano')::bigint
+   OR (r->>'completed_at_unix_nano')::bigint>now_nano+5000000000 OR NEW.received_at IS NULL THEN
+   RAISE EXCEPTION 'native boot receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_input_hash(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_input_hash(input jsonb, node uuid) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    SET search_path TO 'pg_catalog'
+    AS $$
+ SELECT encode(sha256(convert_to(input::text || E'\n' || coalesce(node::text,''),'UTF8')),'hex');
+$$;
+
+
+--
+-- Name: application_standard_native_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c instance_application_standard_admissions%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
+        incarnation uuid; b jsonb; r jsonb; managed boolean; publishing boolean;
+BEGIN
+ IF NEW.app_id IS NULL OR NEW.kind<>'wake' OR NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
+ SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_id=NEW.id;
+ managed:=coalesce(c.input_snapshot->'adoptions'<>'[]'::jsonb OR c.input_snapshot->'materialized_fields'<>'[]'::jsonb,false);
+ IF NOT managed THEN RETURN NEW; END IF;
+ publishing:=NEW.state IN ('running','warm','migrating') OR coalesce(NEW.netns,'')<>'' OR NEW.host_ip IS NOT NULL OR coalesce(NEW.guest_uid,0)>0;
+ IF NOT publishing THEN RETURN NEW; END IF;
+ SELECT * INTO g FROM instance_application_standard_boots WHERE token=NEW.application_standard_boot_token FOR SHARE NOWAIT;
+ b:=g.binding; r:=g.receipt;
+ SELECT vmmd_incarnation INTO incarnation FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ IF g.instance_id IS DISTINCT FROM NEW.id OR r IS NULL OR b->>'node_id' IS DISTINCT FROM NEW.node_id::text
+  OR b->>'incarnation' IS DISTINCT FROM incarnation::text OR b->>'captured_input_hash' IS DISTINCT FROM c.native_input_hash
+  OR r->'binding' IS DISTINCT FROM b OR r->>'netns' IS DISTINCT FROM NEW.netns OR r->>'host_ip' IS DISTINCT FROM host(NEW.host_ip)
+  OR (r->>'lease_uid')::integer IS DISTINCT FROM NEW.guest_uid
+  OR (r->>'paused')::boolean IS DISTINCT FROM (NEW.state='warm') THEN
+  RAISE EXCEPTION 'managed runtime requires its exact native receipt' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ IF TG_OP='INSERT' OR OLD.state IN ('waking','cold_booting') OR OLD.application_standard_boot_token IS DISTINCT FROM NEW.application_standard_boot_token THEN
+  IF (b->>'expires_at_unix_nano')::bigint <= (extract(epoch FROM clock_timestamp())*1000000000)::bigint THEN
+   RAISE EXCEPTION 'native boot authority expired before publication' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ RETURN NEW;
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'native publication inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_runtime_snapshot(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_runtime_snapshot(application_id uuid, artifact_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE input jsonb; revision bigint;
+BEGIN
+ input:=application_standard_runtime_snapshot(application_id,artifact_id);
+ SELECT egress_allowlist_revision INTO revision FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ RETURN input || jsonb_build_object('egress_revision',revision);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
 $$;
 
@@ -710,10 +897,13 @@ CREATE FUNCTION public.application_standard_runtime_capture_immutable() RETURNS 
     AS $$
 BEGIN
  IF TG_OP='INSERT' AND pg_trigger_depth()>1 THEN RETURN NEW; END IF;
- IF TG_OP='UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+ -- Stored generated hashes are computed after BEFORE triggers. Compare only
+ -- their immutable source columns here, including the captured node identity.
+ IF TG_OP='UPDATE' AND NEW.instance_id IS NOT DISTINCT FROM OLD.instance_id AND NEW.app_id IS NOT DISTINCT FROM OLD.app_id
+  AND NEW.deployment_id IS NOT DISTINCT FROM OLD.deployment_id AND NEW.node_id IS NOT DISTINCT FROM OLD.node_id
+  AND NEW.input_snapshot IS NOT DISTINCT FROM OLD.input_snapshot AND NEW.captured_at IS NOT DISTINCT FROM OLD.captured_at THEN RETURN NEW; END IF;
  IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
- RAISE EXCEPTION 'runtime admission capture is immutable'
-  USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_capture_immutable';
+ RAISE EXCEPTION 'runtime admission capture is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_capture_immutable';
 END;
 $$;
 
@@ -5782,6 +5972,7 @@ CREATE TABLE public.compute_nodes (
     recovery_initiated_at timestamp with time zone,
     last_recovery_outcome text,
     overlay_ip inet,
+    vmmd_incarnation uuid,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -7440,7 +7631,28 @@ CREATE TABLE public.instance_application_standard_admissions (
     deployment_id uuid,
     input_snapshot jsonb NOT NULL,
     captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    node_id uuid,
+    native_input_hash text GENERATED ALWAYS AS (public.application_standard_native_input_hash(input_snapshot, node_id)) STORED,
     CONSTRAINT instance_application_standard_admissions_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: instance_application_standard_boots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_application_standard_boots (
+    token uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    expected_state text NOT NULL,
+    binding jsonb NOT NULL,
+    receipt jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    received_at timestamp with time zone,
+    CONSTRAINT instance_application_standard_boots_binding_check CHECK ((jsonb_typeof(binding) = 'object'::text)),
+    CONSTRAINT instance_application_standard_boots_check CHECK (((receipt IS NULL) = (received_at IS NULL))),
+    CONSTRAINT instance_application_standard_boots_expected_state_check CHECK ((expected_state = ANY (ARRAY['waking'::text, 'cold_booting'::text]))),
+    CONSTRAINT instance_application_standard_boots_receipt_check CHECK (((receipt IS NULL) OR (jsonb_typeof(receipt) = 'object'::text)))
 );
 
 
@@ -7507,6 +7719,7 @@ CREATE TABLE public.instances (
     mode text DEFAULT 'normal'::text NOT NULL,
     migration_started_at timestamp with time zone,
     startup_cpu_boost_until timestamp with time zone,
+    application_standard_boot_token uuid,
     CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
     CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
@@ -13209,6 +13422,14 @@ ALTER TABLE ONLY public.instance_application_standard_admissions
 
 
 --
+-- Name: instance_application_standard_boots instance_application_standard_boots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_boots
+    ADD CONSTRAINT instance_application_standard_boots_pkey PRIMARY KEY (token);
+
+
+--
 -- Name: instance_billing_intervals instance_billing_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16948,6 +17169,20 @@ CREATE INDEX inbound_webhook_endpoints_app_created_idx ON public.inbound_webhook
 
 
 --
+-- Name: instance_application_standard_boots_instance; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_application_standard_boots_instance ON public.instance_application_standard_boots USING btree (instance_id);
+
+
+--
+-- Name: instance_application_standard_initial_boot_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX instance_application_standard_initial_boot_identity ON public.instance_application_standard_boots USING btree (instance_id);
+
+
+--
 -- Name: instance_billing_intervals_open_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19895,6 +20130,20 @@ CREATE TRIGGER application_standard_assignment_scope_guard BEFORE INSERT OR UPDA
 
 
 --
+-- Name: instances application_standard_b1_boot_receipt_reuse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_b1_boot_receipt_reuse BEFORE INSERT OR UPDATE OF state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_boot_receipt_reuse_guard();
+
+
+--
+-- Name: instances application_standard_b_native_publication; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_b_native_publication BEFORE INSERT OR UPDATE OF node_id, state, netns, host_ip, guest_uid, application_standard_boot_token ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_publication_guard();
+
+
+--
 -- Name: application_standard_control_backups application_standard_backup_input_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19955,6 +20204,13 @@ CREATE TRIGGER application_standard_instance_input_guard BEFORE INSERT OR DELETE
 --
 
 CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR UPDATE ON public.application_standard_log_destinations FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: instance_application_standard_boots application_standard_native_boot_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_boot_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_boots FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_boot_guard();
 
 
 --
@@ -22550,6 +22806,14 @@ ALTER TABLE ONLY public.instance_application_standard_admissions
 
 
 --
+-- Name: instance_application_standard_boots instance_application_standard_boots_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_boots
+    ADD CONSTRAINT instance_application_standard_boots_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
 -- Name: instance_billing_intervals instance_billing_intervals_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22563,6 +22827,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: instances instances_application_standard_boot_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instances
+    ADD CONSTRAINT instances_application_standard_boot_token_fkey FOREIGN KEY (application_standard_boot_token) REFERENCES public.instance_application_standard_boots(token);
 
 
 --

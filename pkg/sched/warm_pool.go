@@ -264,10 +264,10 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	vmstatePath, vmstateStorageKey := e.snapshotStateLocators(placement.NodeID, snap)
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
-	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
+	out, err := e.createRuntimeWithStandards(restoreCtx, placement.NodeID, ins.ID, string(state.StateWaking), spec, &SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
 		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey,
-	})
+	}, true)
 	cancel()
 	if err != nil {
 		cleanup("paused_restore_failed")
@@ -277,16 +277,11 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		cleanup("paused_restore_empty")
 		return errors.New("vmmd returned an empty paused restore outcome")
 	}
-	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	fresh, err := e.publishRuntimeWithStandards(ctx, ins.ID, string(state.StateWaking), state.StateWarm, out)
+	if err != nil {
 		cleanup("record_runtime_failed")
 		return err
 	}
-	if ok, err := e.transitionWithKindCAS(ctx, ins.ID, app.ID, state.StateWarm, "warm_pool_restore", ""); err != nil || !ok {
-		cleanup("publish_warm_state_failed")
-		if err != nil {
-			return err
-		}
-		return errors.New("warm restore state was changed before publish")
-	}
+	e.recordCommittedInstanceTransition(ctx, fresh, state.StateWaking, state.StateWarm, app.ID, "warm_pool_restore", "")
 	return nil
 }

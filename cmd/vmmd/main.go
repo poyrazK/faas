@@ -944,6 +944,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// ADR-385: publish the same startup incarnation exposed by the native
+	// capability before accepting grants. Only this node's own registration is
+	// read/written here; inherited customer intent remains owned by apid/schedd.
+	if store != nil {
+		identity, err := mgr.RuntimeAdmissionIdentity()
+		if err != nil {
+			return fmt.Errorf("vmmd: native process identity: %w", err)
+		}
+		if err := registerRuntimeAdmissionIdentity(ctx, store, identity); err != nil {
+			return err
+		}
+	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {

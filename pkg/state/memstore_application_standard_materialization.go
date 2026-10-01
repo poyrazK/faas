@@ -233,7 +233,9 @@ func (m *MemStore) installStandardProjectionLocked(app standardReviewAppSnapshot
 			continue
 		}
 		actual.RequireSigned, actual.SecurityPolicy = projection.RequireSigned, projection.SecurityPolicy
+		before := actual
 		actual.EgressAllowlist, actual.EgressPorts = projection.CIDRs, projection.Ports
+		m.advanceAppEgressRevisionLocked(before, actual)
 		m.apps[key] = actual
 	}
 	enrollmentKey := app.AppID

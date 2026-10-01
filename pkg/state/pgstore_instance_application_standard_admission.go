@@ -17,5 +17,7 @@ func (s *PgStore) GetInstanceApplicationStandardAdmission(ctx context.Context, i
 	if err != nil {
 		return InstanceApplicationStandardAdmission{}, fmt.Errorf("read instance standards capture: %w", mapErr(err))
 	}
-	return decodeInstanceStandardAdmission(id, row.InputSnapshot, row.CapturedAt.Time)
+	capture, err := decodeInstanceStandardAdmission(id, row.InputSnapshot, row.CapturedAt.Time)
+	capture.NodeID, capture.NativeInputHash = row.NodeID, row.NativeInputHash.String
+	return capture, err
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 type standardRuntimeCaptureTestStore interface {
@@ -20,6 +21,8 @@ type standardRuntimeCaptureTestStore interface {
 	ApplicationStandardAutomaticMaterializationStore
 	ApplicationStandardEnrollmentStore
 	InstanceApplicationStandardAdmissionStore
+	InstanceApplicationStandardBootStore
+	ComputeNodeRuntimeIdentityStore
 }
 
 type runtimeCaptureFixture struct {
@@ -121,9 +124,10 @@ func standardRuntimeCaptureLifecycle(t *testing.T, s standardRuntimeCaptureTestS
 	if err := CheckInstanceApplicationStandardAdmission(ctx, s, ins.ID, old, f.owner.Account, f.dep); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("old cached app accepted: %v", err)
 	}
-	if _, err := s.PublishInstanceRuntime(ctx, ins.ID, string(StateColdBooting), "fc-capture", "10.100.0.8", 20008); err != nil {
-		t.Fatal(err)
+	if _, err := s.PublishInstanceRuntime(ctx, ins.ID, string(StateColdBooting), "fc-capture", "10.100.0.8", 20008); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		t.Fatalf("legacy publication acquired native authority: %v", err)
 	}
+	publishRuntimeCaptureTestReceipt(t, s, ins, StateRunning, "fc-capture", "10.100.0.8", 20008)
 	e, err := s.GetApplicationStandardEnrollment(ctx, f.app.OrgID, f.app.ID)
 	if err != nil || e.ObservedRevision != 0 || e.State != "persisted" {
 		t.Fatalf("capture fabricated observation: %+v %v", e, err)
@@ -200,8 +204,35 @@ func standardRuntimeReenrollmentDuringBoot(t *testing.T, s standardRuntimeCaptur
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PublishInstanceRuntime(ctx, fresh.ID, string(StateColdBooting), "fresh", "10.100.0.9", 20009); err != nil {
-		t.Fatalf("replacement runtime denied: %v", err)
+	publishRuntimeCaptureTestReceipt(t, s, fresh, StateRunning, "fresh", "10.100.0.9", 20009)
+}
+
+// This is an explicit simulated native consumer for storage contract tests.
+// It does not claim that a VM booted, nor acknowledge any policy observation.
+func runtimeCaptureTestBinding(t *testing.T, s standardRuntimeCaptureTestStore, ins Instance) runtimeadmission.Binding {
+	t.Helper()
+	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := runtimeadmission.Identity{ProtocolVersion: runtimeadmission.ProtocolVersion, NodeID: ins.NodeID, Incarnation: uuid.NewString()}
+	if err := s.RegisterComputeNodeRuntimeIdentity(t.Context(), identity); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	return runtimeadmission.Binding{ProtocolVersion: runtimeadmission.ProtocolVersion, Token: uuid.NewString(), InstanceID: ins.ID, AppID: capture.AppID, DeploymentID: capture.DeploymentID, AccountID: capture.AccountID, NodeID: capture.NodeID, Incarnation: identity.Incarnation, DesiredRevision: capture.DesiredRevision, EffectiveHash: capture.EffectiveHash, CapturedInputHash: capture.NativeInputHash, EgressRevision: capture.EgressRevision, PayloadHash: strings.Repeat("a", 64), IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()}
+}
+
+func publishRuntimeCaptureTestReceipt(t *testing.T, s standardRuntimeCaptureTestStore, ins Instance, next State, netns, hostIP string, uid int32) {
+	t.Helper()
+	binding, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, runtimeCaptureTestBinding(t, s, ins))
+	if err != nil {
+		capture, _ := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
+		t.Fatalf("issue simulated native grant: capture=%+v: %v", capture, err)
+	}
+	receipt := runtimeadmission.Receipt{Binding: binding, NativeInputHash: strings.Repeat("b", 64), Netns: netns, HostIP: hostIP, LeaseUID: uid, Paused: next == StateWarm, CompletedAtUnixNano: time.Now().UnixNano()}
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, next, receipt); err != nil {
+		t.Fatalf("simulated native publication denied: %v", err)
 	}
 }
 

@@ -123,10 +123,28 @@ successful native return. Receipts come from the backend and bind the actual
 lease UID, host IP, namespace, boot method and paused state. Both wire boundaries
 validate them and clean up a successful boot with a malformed acknowledgment.
 
-This capability is preparatory. The ordinary scheduler boot paths still use
-their existing durable input-capture guards. They must switch only after the
-prepared grant and exact receipt are committed through fenced storage and
-atomic instance publication. The grant/receipt alone does not attest artifact
+Managed cold boots, initial snapshot prime and snapshot restores now save an
+immutable private grant before invoking the native capability. Initial warm
+restores use the same protocol with explicit paused intent. Storage owns the
+issue/expiry clock; grants bind the captured node, actual durable egress revision
+and native process incarnation registered by vmmd before serving. The complete
+egress projection is installed through its revisioned RPC before the boot.
+PostgreSQL retains nonwaiting instance/input/node fences until receipt and
+runtime tuple/state commit atomically; MemStore mirrors this boundary. A failed
+publication leaves neither a receipt nor a partial runtime tuple. Raw managed
+runtime publication requires the saved matching receipt. An initial receipt
+cannot authorize another boot on its instance row. Each instance has one saved
+initial grant; a storage retry recovers only its exact existing token. Owner
+erasure removes its private capture/grant/receipt history. No legacy history
+gains native authority.
+
+A managed node requires vmmd's existing compute-node registration with database
+configuration (including a named default-local node on a single box). A legacy
+local process without registered native identity or an older native backend
+refuses managed admission before allocation. Native process registration does
+not query inherited customer intent.
+
+This remains partial enforcement. The grant/receipt alone does not attest artifact
 content, log delivery, established-flow tightening or all live-instance egress
 convergence, and it never advances an observed standard revision. App tasks,
 migration attempt authority, warm promotion and existing gateway revocation

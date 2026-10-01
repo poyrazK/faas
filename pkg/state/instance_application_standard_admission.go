@@ -24,6 +24,11 @@ type InstanceApplicationStandardAdmission struct {
 	PersistedRevision int64
 	EffectiveHash     string
 	InputHash         string
+	NativeInputHash   string
+	NodeID            string
+	AccountID         string
+	EgressRevision    int64
+	Managed           bool
 	CapturedAt        time.Time
 	inputs            json.RawMessage
 }
@@ -118,8 +123,12 @@ func standardRuntimeArtifact(dep Deployment) map[string]any {
 
 func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time) (InstanceApplicationStandardAdmission, error) {
 	var input struct {
-		AppID    string `json:"app_id"`
-		Artifact struct {
+		AppID              string            `json:"app_id"`
+		AccountID          string            `json:"account_id"`
+		EgressRevision     int64             `json:"egress_revision"`
+		Adoptions          []json.RawMessage `json:"adoptions"`
+		MaterializedFields []string          `json:"materialized_fields"`
+		Artifact           struct {
 			ID string `json:"id"`
 		} `json:"artifact"`
 		DesiredRevision   int64  `json:"desired_revision"`
@@ -142,6 +151,7 @@ func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time
 		return InstanceApplicationStandardAdmission{}, err
 	}
 	return InstanceApplicationStandardAdmission{InstanceID: id, AppID: input.AppID, DeploymentID: input.Artifact.ID,
+		AccountID: input.AccountID, EgressRevision: input.EgressRevision, Managed: len(input.Adoptions) > 0 || len(input.MaterializedFields) > 0,
 		DesiredRevision: input.DesiredRevision, PersistedRevision: input.PersistedRevision, EffectiveHash: input.EffectiveHash,
 		InputHash: hash, CapturedAt: capturedAt, inputs: append(json.RawMessage(nil), raw...)}, nil
 }

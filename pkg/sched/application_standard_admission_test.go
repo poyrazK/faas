@@ -119,7 +119,7 @@ func TestApplicationStandardAutomaticPersistencePermitsWakeWithoutObservation(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newEngine(t, s, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, s, newStandardNativeTestVMM(t, s, &fakeVMM{}, standardNativeTestNodeID(t, s)), &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(t.Context(), app.ID, "", "", TriggerGateway); !errors.Is(err, state.ErrApplicationStandardsPending) {
 		t.Fatalf("pending fresh service wake=%v", err)
 	}

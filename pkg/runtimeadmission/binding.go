@@ -39,13 +39,21 @@ func (i Identity) Validate() error {
 
 // Binding is comparable so all grant fields must match an acknowledgment.
 type Binding struct {
-	ProtocolVersion                                   uint32
-	Token, InstanceID, AppID, DeploymentID, AccountID string
-	NodeID, Incarnation                               string
-	DesiredRevision                                   int64
-	EffectiveHash, CapturedInputHash, PayloadHash     string
-	EgressRevision                                    int64
-	IssuedAtUnixNano, ExpiresAtUnixNano               int64
+	ProtocolVersion   uint32 `json:"protocol_version"`
+	Token             string `json:"token"`
+	InstanceID        string `json:"instance_id"`
+	AppID             string `json:"app_id"`
+	DeploymentID      string `json:"deployment_id"`
+	AccountID         string `json:"account_id"`
+	NodeID            string `json:"node_id"`
+	Incarnation       string `json:"incarnation"`
+	DesiredRevision   int64  `json:"desired_revision"`
+	EffectiveHash     string `json:"effective_hash"`
+	CapturedInputHash string `json:"captured_input_hash"`
+	PayloadHash       string `json:"payload_hash"`
+	EgressRevision    int64  `json:"egress_revision"`
+	IssuedAtUnixNano  int64  `json:"issued_at_unix_nano"`
+	ExpiresAtUnixNano int64  `json:"expires_at_unix_nano"`
 }
 
 func (b Binding) Validate(now time.Time) error {
@@ -97,13 +105,14 @@ func BindingFromProto(p *vmmdpb.RuntimeBootBinding) (Binding, error) {
 }
 
 type Receipt struct {
-	Binding             Binding
-	NativeInputHash     string
-	Netns, HostIP       string
-	LeaseUID            int32
-	Method              vmmdpb.WakeMethod
-	Paused              bool
-	CompletedAtUnixNano int64
+	Binding             Binding           `json:"binding"`
+	NativeInputHash     string            `json:"native_input_hash"`
+	Netns               string            `json:"netns"`
+	HostIP              string            `json:"host_ip"`
+	LeaseUID            int32             `json:"lease_uid"`
+	Method              vmmdpb.WakeMethod `json:"method"`
+	Paused              bool              `json:"paused"`
+	CompletedAtUnixNano int64             `json:"completed_at_unix_nano"`
 }
 
 func (r Receipt) Check(binding Binding, now time.Time) error {

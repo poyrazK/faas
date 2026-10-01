@@ -1,5 +1,5 @@
 -- name: GetInstanceApplicationStandardAdmission :one
-SELECT input_snapshot, captured_at FROM instance_application_standard_admissions
+SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
 WHERE instance_id = sqlc.arg(instance_id)::uuid;
 
 -- Older writers acquire their parent locks in differing orders. Approval
@@ -5458,3 +5458,31 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: RegisterComputeNodeRuntimeIdentity :execrows
+UPDATE compute_nodes SET vmmd_incarnation=sqlc.arg(incarnation)::uuid WHERE id=sqlc.arg(node_id)::uuid;
+
+-- name: LockInstanceApplicationStandardBoot :one
+SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
+
+-- name: GetInstanceApplicationStandardBoot :one
+SELECT expected_state,binding,receipt,received_at FROM instance_application_standard_boots WHERE token=sqlc.arg(token)::uuid;
+
+-- name: InsertInstanceApplicationStandardBoot :exec
+INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding)
+VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text,sqlc.arg(binding)::jsonb);
+
+-- name: RecordInstanceApplicationStandardReceipt :execrows
+UPDATE instance_application_standard_boots SET receipt=sqlc.arg(receipt)::jsonb,received_at=clock_timestamp()
+WHERE token=sqlc.arg(token)::uuid AND receipt IS NULL;
+
+-- name: PublishInstanceApplicationStandardRuntime :execrows
+UPDATE instances SET application_standard_boot_token=sqlc.arg(token)::uuid,netns=sqlc.arg(netns)::text,
+ host_ip=sqlc.arg(host_ip)::inet,guest_uid=sqlc.arg(guest_uid)::integer,state=sqlc.arg(next_state)::text,started_at=clock_timestamp()
+WHERE id=sqlc.arg(instance_id)::uuid AND state=sqlc.arg(expected_state)::text;
+
+-- name: GetPublishedApplicationStandardInstance :one
+SELECT id,app_id,deployment_id,state,COALESCE(netns,'')::text AS netns,COALESCE(guest_uid,0)::integer AS guest_uid,
+ COALESCE(host(host_ip),'')::text AS host_ip,ram_mb,started_at,last_request_at,parked_at,node_id,wake_id,
+ framework_ready_at,tail_count,mode,request_count
+FROM instances WHERE id=sqlc.arg(instance_id)::uuid;

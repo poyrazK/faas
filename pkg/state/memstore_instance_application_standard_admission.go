@@ -21,7 +21,9 @@ func (m *MemStore) GetInstanceApplicationStandardAdmission(_ context.Context, id
 	if !ok {
 		return InstanceApplicationStandardAdmission{}, ErrNotFound
 	}
-	return decodeInstanceStandardAdmission(id, capture.inputs, capture.CapturedAt)
+	copy, err := decodeInstanceStandardAdmission(id, capture.inputs, capture.CapturedAt)
+	copy.NodeID, copy.NativeInputHash = capture.NodeID, capture.NativeInputHash
+	return copy, err
 }
 
 func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
@@ -49,6 +51,7 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 		}
 	}
 	input := standardRuntimeCallerInputs(app, account, dep)
+	input["egress_revision"] = m.appEgressRevisionLocked(app.ID)
 	input["desired_revision"], input["persisted_revision"], input["effective_hash"] = e.DesiredRevision, e.PersistedRevision, e.EffectiveHash
 	input["adoptions"], input["materialized_fields"], input["effective"] = e.Adoptions, e.MaterializedFields, e.Effective
 	input["base_settings"], input["local_settings"], input["additional_log_destinations"] = e.BaseSettings, e.LocalSettings, e.AdditionalLogDestinations
@@ -111,6 +114,8 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 		if m.instanceApplicationStandardAdmissions == nil {
 			m.instanceApplicationStandardAdmissions = map[string]InstanceApplicationStandardAdmission{}
 		}
+		capture.NodeID = ins.NodeID
+		capture.NativeInputHash = memNativeCaptureHash(input, ins.NodeID)
 		m.instanceApplicationStandardAdmissions[ins.ID] = capture
 		return nil
 	}
@@ -124,5 +129,5 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 	if !bytes.Equal(capture.inputs, input) {
 		return ErrApplicationStandardRuntimeStale
 	}
-	return nil
+	return m.guardNativeRuntimeReceiptLocked(ins, capture)
 }

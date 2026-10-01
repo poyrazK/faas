@@ -1134,7 +1134,8 @@ type ComputeNode struct {
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
-	OverlayIp *netip.Addr
+	OverlayIp       *netip.Addr
+	VmmdIncarnation pgtype.UUID
 }
 
 type ComputeNodeHeartbeat struct {
@@ -2007,40 +2008,53 @@ type InboundWebhookEndpoint struct {
 }
 
 type Instance struct {
-	ID                   pgtype.UUID
-	AppID                pgtype.UUID
-	DeploymentID         pgtype.UUID
-	State                string
-	Netns                pgtype.Text
-	GuestUid             pgtype.Int4
-	HostIp               *netip.Addr
-	RamMb                int32
-	StartedAt            pgtype.Timestamptz
-	LastRequestAt        pgtype.Timestamptz
-	ParkedAt             pgtype.Timestamptz
-	TerminalAt           pgtype.Timestamptz
-	NodeID               pgtype.UUID
-	WakeID               pgtype.UUID
-	OrgID                pgtype.UUID
-	MigratedFromNodeID   pgtype.UUID
-	MigratedAt           pgtype.Timestamptz
-	LeaseToken           pgtype.Text
-	FrameworkReadyAt     pgtype.Timestamptz
-	TailCount            int32
-	RequestCount         int64
-	Kind                 string
-	JobID                pgtype.UUID
-	Mode                 string
-	MigrationStartedAt   pgtype.Timestamptz
-	StartupCpuBoostUntil pgtype.Timestamptz
+	ID                           pgtype.UUID
+	AppID                        pgtype.UUID
+	DeploymentID                 pgtype.UUID
+	State                        string
+	Netns                        pgtype.Text
+	GuestUid                     pgtype.Int4
+	HostIp                       *netip.Addr
+	RamMb                        int32
+	StartedAt                    pgtype.Timestamptz
+	LastRequestAt                pgtype.Timestamptz
+	ParkedAt                     pgtype.Timestamptz
+	TerminalAt                   pgtype.Timestamptz
+	NodeID                       pgtype.UUID
+	WakeID                       pgtype.UUID
+	OrgID                        pgtype.UUID
+	MigratedFromNodeID           pgtype.UUID
+	MigratedAt                   pgtype.Timestamptz
+	LeaseToken                   pgtype.Text
+	FrameworkReadyAt             pgtype.Timestamptz
+	TailCount                    int32
+	RequestCount                 int64
+	Kind                         string
+	JobID                        pgtype.UUID
+	Mode                         string
+	MigrationStartedAt           pgtype.Timestamptz
+	StartupCpuBoostUntil         pgtype.Timestamptz
+	ApplicationStandardBootToken pgtype.UUID
 }
 
 type InstanceApplicationStandardAdmission struct {
+	InstanceID      pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	InputSnapshot   []byte
+	CapturedAt      pgtype.Timestamptz
+	NodeID          pgtype.UUID
+	NativeInputHash pgtype.Text
+}
+
+type InstanceApplicationStandardBoot struct {
+	Token         pgtype.UUID
 	InstanceID    pgtype.UUID
-	AppID         pgtype.UUID
-	DeploymentID  pgtype.UUID
-	InputSnapshot []byte
-	CapturedAt    pgtype.Timestamptz
+	ExpectedState string
+	Binding       []byte
+	Receipt       []byte
+	CreatedAt     pgtype.Timestamptz
+	ReceivedAt    pgtype.Timestamptz
 }
 
 type InstanceBillingInterval struct {

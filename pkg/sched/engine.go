@@ -3675,13 +3675,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// server span for the CreateFromSnapshot RPC; this client
 		// span is the parent linkage in the trace tree.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_from_snapshot", bootInput.snapID, bootInput)
-		out, err = e.vmm.CreateFromSnapshot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec, SnapshotRef{
+		out, err = e.createRuntimeWithStandards(bootCtx, bootInput.nodeID, bootInput.insID, string(bootInput.initState), bootInput.spec, &SnapshotRef{
 			DeploymentID:      bootInput.depID,
 			FCVersion:         bootInput.snapVer,
 			StorageKey:        bootInput.snapKey,
 			VMStatePath:       vmstatePath,
 			VMStateStorageKey: vmstateStorageKey,
-		})
+		}, false)
 		endSpan(createSpan)
 	} else {
 		// Either no snap row at all (cold path), or a snap row with
@@ -3690,7 +3690,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// truth; wake must never depend on a snapshot existing).
 		// Issue #555 PR-3: vmmd.create_cold_boot child span.
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_cold_boot", "", bootInput)
-		out, err = e.vmm.CreateColdBoot(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.spec)
+		out, err = e.createRuntimeWithStandards(bootCtx, bootInput.nodeID, bootInput.insID, string(bootInput.initState), bootInput.spec, nil, false)
 		endSpan(createSpan)
 	}
 	if releaseRestorePressure != nil {
@@ -3792,7 +3792,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// control-plane latency after a fast SSD restore, that load-then-write shape
 	// left a race between the watchdog check and the state update. The CAS makes
 	// a stolen state a failure without adding a read to the successful path.
-	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
+	fresh, publishErr := e.publishRuntimeWithStandards(ctx, bootInput.insID, string(bootInput.initState), state.StateRunning, out)
 	if errors.Is(publishErr, state.ErrConflict) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
@@ -6147,7 +6147,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// imaged's pipeline, not wait for a hung Firecracker.
 	bootCtx, pcancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
 	defer pcancel()
-	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
+	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
@@ -6163,7 +6163,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	if _, err := e.store.PublishInstanceRuntime(ctx, ins.ID, string(state.StateColdBooting), out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	if _, err := e.publishRuntimeWithStandards(ctx, ins.ID, string(state.StateColdBooting), state.StateRunning, out); err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own

@@ -138,6 +138,10 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	instanceApplicationStandardAdmissions map[string]InstanceApplicationStandardAdmission
+	instanceApplicationStandardBoots      map[string]instanceStandardBoot
+	instanceApplicationStandardBootTokens map[string]string
+	computeNodeRuntimeIncarnations        map[string]string
+	appEgressRevisions                    map[string]int64
 	applicationStandardVersions           map[string][]ApplicationStandardVersion
 	applicationStandardLogDestinations    map[string]ApplicationStandardLogDestination
 	applicationStandardPublishers         map[string]api.ApplicationStandardPublisher
@@ -6085,6 +6089,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			return App{}, err
 		}
 	}
+	m.advanceAppEgressRevisionLocked(before, a)
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
@@ -6394,7 +6399,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
-			delete(m.instanceApplicationStandardAdmissions, key)
+			m.deleteNativeInstanceInputsLocked(key)
 		}
 	}
 	depIDs := make(map[string]struct{})
@@ -13370,6 +13375,11 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
 	}
+	if app, ok := m.apps[appID]; ok && app.OrgID != "" {
+		// Owned runtime rows cross the native UUID protocol. Keep legacy
+		// unowned fixture IDs intact; newly owned rows mirror PostgreSQL.
+		ins.ID = canonicalStandardUUID(ins.ID)
+	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
 	} else {
@@ -13422,6 +13432,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		NodeID:       nodeID,
 		StartedAt:    time.Now(),
 		Mode:         mode,
+	}
+	if app, ok := m.apps[appID]; ok && app.OrgID != "" {
+		ins.ID = canonicalStandardUUID(ins.ID)
 	}
 	if wakeID != "" {
 		ins.WakeID = wakeID
@@ -14171,7 +14184,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
-		delete(m.instanceApplicationStandardAdmissions, row.id)
+		m.deleteNativeInstanceInputsLocked(row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -14187,7 +14200,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
-	delete(m.instanceApplicationStandardAdmissions, id)
+	m.deleteNativeInstanceInputsLocked(id)
 	return nil
 }
 
@@ -14230,13 +14243,13 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	if !ok {
 		return ErrNotFound
 	}
-	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
-		return err
-	}
 	ins.Netns = netns
 	ins.HostIP = hostIP
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now()
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14248,15 +14261,14 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	if !ok || ins.State != expectedState {
 		return Instance{}, ErrConflict
 	}
-	ins.State = string(StateRunning)
-	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
-		return Instance{}, err
-	}
 	ins.Netns = netns
 	ins.HostIP = hostIP
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now().UTC()
 	ins.State = string(StateRunning)
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return Instance{}, err
+	}
 	m.instances[id] = ins
 	return ins, nil
 }
@@ -14917,7 +14929,7 @@ func parseSubjectID(s string) *uuid.UUID {
 // the migration to have run on the memstore (which is test-only).
 func (m *MemStore) seedDefaultLocalNodeLocked() {
 	now := time.Now()
-	id := newID()
+	id := uuid.NewString()
 	local := DefaultLocalityLabel
 	m.computeNodes[id] = ComputeNode{
 		ID:             id,
@@ -15138,7 +15150,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 	}
 	n := node
 	if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -15204,7 +15216,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 			n.Lifecycle = NodeLifecycleRetired
 		}
 	} else if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -15307,7 +15319,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 			n.GatewayTargetURL = existing.GatewayTargetURL
 		}
 	} else if n.ID == "" {
-		n.ID = newID()
+		n.ID = uuid.NewString()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now()
@@ -15726,6 +15738,7 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 		}
 	}
 	delete(m.computeNodes, id)
+	delete(m.computeNodeRuntimeIncarnations, id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
@@ -20623,7 +20636,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
-			delete(m.instanceApplicationStandardAdmissions, iid)
+			m.deleteNativeInstanceInputsLocked(iid)
 		}
 	}
 	for taskID, task := range m.appTasks {

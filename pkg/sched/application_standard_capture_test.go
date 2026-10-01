@@ -64,7 +64,7 @@ func TestApplicationStandardChangeDuringBootDestroysStaleRuntime(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
+			e := newEngine(t, s, newStandardNativeTestVMM(t, s, vmm, standardNativeTestNodeID(t, s)), &fakeNotifier{}, "1.10.0")
 			var err error
 			if prime {
 				err = e.Prime(t.Context(), app.ID, dep.ID)
