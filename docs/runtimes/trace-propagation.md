@@ -282,6 +282,12 @@ the correlated events without client-side app fan-out. The command
 `gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
 app and supports the usual route/status filters.
 
+When a producer includes an SDK-generated `flag_context` with a queue or
+app-inbox message, the durable invocation also retains its customer-bound flag
+decisions. Synthetic delivery restores the customer header and bounded flag
+context for the worker; retries keep the original decision and configuration
+version.
+
 For queue and async invocations, the trace projection includes the most recent
 claim time (`started_at`). The CLI waterfall separates enqueue-to-latest-claim
 from latest-attempt-to-completion and names the queue. Retries overwrite the

@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -216,6 +217,9 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
+		engine.mu.Lock()
+		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.mu.Unlock()
 	}
 	return l
 }
@@ -1097,6 +1101,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	eventFanoutT := time.NewTicker(5 * time.Second)
 	defer eventFanoutT.Stop()
 	l.dispatchEventFanoutSweep(ctx)
+	serviceRecoveryT := time.NewTicker(time.Duration(api.ServiceRecoveryPollIntervalSeconds) * time.Second)
+	defer serviceRecoveryT.Stop()
+	l.dispatchServiceRecovery(ctx)
 	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
 	defer serviceRolloutRecoveryT.Stop()
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
@@ -1246,6 +1253,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.dispatchTriggerTick(ctx)
 		case <-eventFanoutT.C:
 			l.dispatchEventFanoutSweep(ctx)
+		case <-serviceRecoveryT.C:
+			l.dispatchServiceRecovery(ctx)
 		case <-serviceRolloutRecoveryT.C:
 			l.runServiceRolloutRecovery(ctx)
 		case <-primeRecoveryT.C:
@@ -3483,6 +3492,12 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		"headers":            headers,
 		"body_b64":           base64.StdEncoding.EncodeToString(inv.Payload),
 	}
+	if inv.Source == state.InvocationExclusiveOperation {
+		if inv.ExclusiveClaim == nil {
+			return inv, 0, errors.New("sched: exclusive operation dispatch has no ownership claim")
+		}
+		dispatch["exclusive_claim"] = inv.ExclusiveClaim
+	}
 	if wake != nil {
 		dispatch["instance_id"] = wake.InstanceID
 		dispatch["node_id"] = wake.NodeID
@@ -3508,7 +3523,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	// synth socket is DAC-protected, but the workflow contract also needs a
 	// short-lived signed token so gatewayd-internal can distinguish a fresh
 	// schedd delivery from a forged or replayed envelope.
-	if inv.Source == state.InvocationSource("workflow") {
+	if inv.Source == state.InvocationSource("workflow") || inv.Source == state.InvocationExclusiveOperation {
 		if h.mintInternalSvcToken == nil {
 			return inv, 0, errors.New("sched: workflow invocation requires internal service token minter")
 		}
@@ -3698,6 +3713,74 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 				continue
 			}
 		}
+		if bindingStore, ok := l.engine.Store().(state.ExclusiveTriggerBindingStore); ok {
+			binding, bindingErr := bindingStore.ExclusiveTriggerBinding(ctx, job.AccountID, "job_schedule", job.ID)
+			switch {
+			case bindingErr == nil:
+				if binding.JobID != job.ID || binding.AccountID != job.AccountID || binding.AppID != "" {
+					l.log.Warn("schedd: managed Job schedule binding does not match Job", "job_id", job.ID)
+					continue
+				}
+				if job.SchedulePolicy != nil && workpolicy.DeadlineMissed(job.SchedulePolicy.Deadline(scheduledFor), now) {
+					if occurrenceStore, ok := l.engine.Store().(state.JobScheduleOccurrenceStore); ok {
+						_, _, recordErr := occurrenceStore.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule,
+							job.CronTimezone, cursor, now, state.JobScheduledOccurrenceOptions{
+								ScheduledFor: scheduledFor, ScheduleRevision: job.ScheduleRevision,
+								Disposition: "missed_deadline", Reason: "start deadline expired before the scheduler could dispatch the occurrence",
+							})
+						if recordErr != nil {
+							l.log.Warn("schedd: record missed managed Job occurrence failed", "job_id", job.ID, "err", recordErr)
+						}
+					}
+					continue
+				}
+				owners, ok := l.engine.Store().(state.ExclusiveWorkStore)
+				if !ok {
+					l.log.Warn("schedd: exclusive operation store is unavailable for scheduled Job", "job_id", job.ID)
+					continue
+				}
+				occurrence := firstDue
+				if job.SchedulePolicy != nil {
+					occurrence = scheduledFor
+				}
+				request, marshalErr := json.Marshal(exclusiveJobRunWorkRequest{
+					Kind: "job_run", TriggerKind: "scheduled", Run: api.CreateJobRunRequest{Tasks: 1},
+				})
+				if marshalErr != nil {
+					l.log.Error("schedd: encode managed scheduled Job request failed", "job_id", job.ID, "err", marshalErr)
+					continue
+				}
+				operation, joined, admitErr := owners.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+					AccountID: job.AccountID, JobID: job.ID, PolicyName: binding.PolicyName, Key: binding.Key,
+					Request: request, EquivalenceKey: binding.EquivalenceKey,
+					IdempotencyKey: exclusiveJobScheduleIdempotencyKey(job.ID, job.CronSchedule, job.CronTimezone, occurrence),
+				})
+				if l.ops != nil {
+					l.ops.ObserveExclusiveOperationAdmission("job_schedule", exclusiveAdmissionOutcome(admitErr, joined, operation.Replayed))
+				}
+				if errors.Is(admitErr, exclusivework.ErrBusy) {
+					if _, advanceErr := store.JobScheduleAdvanceOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone, cursor, now); advanceErr != nil {
+						l.log.Warn("schedd: advance rejected managed Job schedule occurrence failed", "job_id", job.ID, "err", advanceErr)
+					}
+					continue
+				}
+				if admitErr != nil {
+					l.log.Warn("schedd: admit managed scheduled Job operation failed", "job_id", job.ID, "err", admitErr)
+					continue
+				}
+				if _, advanceErr := store.JobScheduleAdvanceOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone, cursor, now); advanceErr != nil {
+					l.log.Warn("schedd: advance managed Job schedule cursor failed", "job_id", job.ID, "operation_id", operation.ID, "err", advanceErr)
+					continue
+				}
+				l.log.Info("schedd: scheduled Job operation admitted", "job_id", job.ID, "operation_id", operation.ID, "joined", joined)
+				continue
+			case errors.Is(bindingErr, state.ErrNotFound):
+				// Unbound recurring Jobs preserve their existing direct-run path.
+			case bindingErr != nil:
+				l.log.Warn("schedd: read managed Job schedule binding failed", "job_id", job.ID, "err", bindingErr)
+				continue
+			}
+		}
 		var run state.JobRun
 		var created bool
 		if occurrenceStore, ok := l.engine.Store().(state.JobScheduleOccurrenceStore); ok {
@@ -3870,9 +3953,10 @@ const (
 // ignores it (the tick path's caller is runCronTick, which has no
 // audit-response surface).
 type CronRun struct {
-	InvocationID string
-	InstanceID   string
-	Success      bool
+	InvocationID         string
+	InstanceID           string
+	ExclusiveOperationID string
+	Success              bool
 }
 
 func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
@@ -3951,6 +4035,31 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			l.log.Warn("cron: mark missed occurrence", "cron_id", c.ID, "err", err)
 		}
 		return
+	}
+	if len(c.Command) == 0 {
+		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
+		if appErr != nil {
+			l.log.Warn("cron: resolve app for exclusive binding", "cron_id", c.ID, "err", appErr)
+			return
+		}
+		_, bound, bindingErr := l.exclusiveCronBinding(ctx, c, app.AccountID)
+		if bindingErr != nil {
+			l.log.Warn("cron: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
+			return
+		}
+		if bound {
+			scheduledAt := sched.NextFireAt(boundary)
+			run, dispatchErr := l.dispatchExclusiveCron(ctx, c, app.AccountID, TriggerSchedule, scheduledAt, exclusiveCronScheduleIdempotencyKey(c.ID, scheduledAt))
+			if dispatchErr != nil && !isExclusiveCronTerminalAdmissionError(dispatchErr) {
+				l.log.Warn("cron: admit exclusive operation", "cron_id", c.ID, "err", dispatchErr)
+				return
+			}
+			if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+				l.log.Warn("cron: mark exclusive operation fire", "cron_id", c.ID, "err", err)
+			}
+			l.emitExclusiveCronFired(ctx, c, app.AccountID, scheduledAt, TriggerSchedule, run.ExclusiveOperationID, dispatchErr)
+			return
+		}
 	}
 	firedBoundary := now
 	if c.SchedulePolicy != nil {
@@ -4531,6 +4640,10 @@ var ErrNoCapacity = errors.New("sched: no dispatch capacity")
 // (vs. cron.fired for the tick path) and the payload carries the same
 // fields plus trigger="manual".
 func (l *Loop) RunCronNow(ctx context.Context, cronID, accountID string) (CronRun, error) {
+	return l.runCronNowWithRequestID(ctx, cronID, accountID, middleware.NewRequestID())
+}
+
+func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, requestID string) (CronRun, error) {
 	c, err := l.engine.Store().CronByID(ctx, cronID)
 	if err != nil {
 		return CronRun{}, err
@@ -4539,6 +4652,21 @@ func (l *Loop) RunCronNow(ctx context.Context, cronID, accountID string) (CronRu
 		return CronRun{}, ErrCronDisabled
 	}
 	now := l.now()
+	if len(c.Command) == 0 {
+		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
+		if appErr != nil || app.AccountID != accountID {
+			return CronRun{}, state.ErrNotFound
+		}
+		_, bound, bindingErr := l.exclusiveCronBinding(ctx, c, accountID)
+		if bindingErr != nil {
+			return CronRun{}, bindingErr
+		}
+		if bound {
+			run, dispatchErr := l.dispatchExclusiveCron(ctx, c, accountID, TriggerManual, now, exclusiveCronManualIdempotencyKey(requestID))
+			l.emitExclusiveCronFired(ctx, c, accountID, now, TriggerManual, run.ExclusiveOperationID, dispatchErr)
+			return run, dispatchErr
+		}
+	}
 	run, ok := l.dispatchCronLocked(ctx, c, now, TriggerManual)
 	if !ok {
 		// Suspended-account guard rejects the fire. The deferred

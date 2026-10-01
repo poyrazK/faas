@@ -139,14 +139,15 @@ func (s *PgStore) RequeueFireNowRequest(ctx context.Context, requestID string) e
 // invocation_id is required so the customer-side `GET /v1/crons/{id}/runs`
 // (PR-A's surface) can join against the invocations row. finished_at
 // is server-stamped to wall-clock now; callers do not pass it.
-func (s *PgStore) MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID string) error {
+func (s *PgStore) MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID, operationID string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE cron_fire_now_requests
 		SET status = 'succeeded',
-		    invocation_id = $2,
-		    finished_at = $3
+		    invocation_id = NULLIF($2, '')::uuid,
+		    operation_id = NULLIF($3, '')::uuid,
+		    finished_at = $4
 		WHERE id = $1 AND status = 'running'
-	`, requestID, invocationID, time.Now().UTC())
+	`, requestID, invocationID, operationID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("state: mark fire_now_request succeeded: %w", err)
 	}
@@ -188,13 +189,13 @@ func (s *PgStore) GetFireNowRequest(ctx context.Context, requestID string) (Fire
 	var req FireNowRequest
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, cron_id, account_id, requested_at, status,
-		       invocation_id, task_id, error, finished_at
+		       invocation_id, operation_id, task_id, error, finished_at
 		FROM cron_fire_now_requests
 		WHERE id = $1
 	`, requestID)
 	if err := row.Scan(
 		&req.ID, &req.CronID, &req.AccountID, &req.RequestedAt, &req.Status,
-		&req.InvocationID, &req.TaskID, &req.Error, &req.FinishedAt,
+		&req.InvocationID, &req.OperationID, &req.TaskID, &req.Error, &req.FinishedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return FireNowRequest{}, ErrFireNowRequestNotFound

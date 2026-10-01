@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProgressiveRollout } from './ProgressiveRollout.js';
 /**
- * Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment.
+ * Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
  */
 export type FlagRule = {
   id: string;
@@ -16,6 +17,7 @@ export type FlagRule = {
    * Basis points of eligible customers; omitted means all eligible customers.
    */
   rollout?: number;
+  progression?: ProgressiveRollout;
   value?: (boolean | string);
 };
 

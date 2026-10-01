@@ -54,44 +54,46 @@ func (s AppTaskStatus) Terminal() bool {
 // to an immutable deployment artifact. Environment and secret values are
 // resolved only by the scheduler immediately before the fresh VM boots.
 type AppTask struct {
-	WorkDecision        *workpolicy.Decision
-	OutcomeCode         string
-	FailureRules        *workpolicy.FailureRules
-	OccurrenceID        string
-	StartDeadlineAt     *time.Time
-	ID                  string
-	AccountID           string
-	AppID               string
-	DeploymentID        string
-	CronID              string
-	ScheduledFor        *time.Time
-	Kind                AppTaskKind
-	Command             []string
-	CommandShell        bool
-	DeploymentScope     string
-	ArtifactKey         string
-	ImageDigest         string
-	Status              AppTaskStatus
-	TimeoutSeconds      int
-	MaxOutputBytes      int
-	RetryMax            int
-	RetryBackoffSeconds int
-	AttemptCount        int
-	RetryAt             *time.Time
-	LeaseToken          *string
-	LeaseOwner          *string
-	LeaseExpiresAt      *time.Time
-	CancelRequested     *time.Time
-	StdoutTail          string
-	StderrTail          string
-	OutputTruncated     bool
-	ExitCode            *int
-	FailureCode         *string
-	FailureMessage      *string
-	StartedAt           *time.Time
-	FinishedAt          *time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	WorkDecision         *workpolicy.Decision
+	OutcomeCode          string
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
+	ID                   string
+	AccountID            string
+	AppID                string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	DeploymentID         string
+	CronID               string
+	ScheduledFor         *time.Time
+	Kind                 AppTaskKind
+	Command              []string
+	CommandShell         bool
+	DeploymentScope      string
+	ArtifactKey          string
+	ImageDigest          string
+	Status               AppTaskStatus
+	TimeoutSeconds       int
+	MaxOutputBytes       int
+	RetryMax             int
+	RetryBackoffSeconds  int
+	AttemptCount         int
+	RetryAt              *time.Time
+	LeaseToken           *string
+	LeaseOwner           *string
+	LeaseExpiresAt       *time.Time
+	CancelRequested      *time.Time
+	StdoutTail           string
+	StderrTail           string
+	OutputTruncated      bool
+	ExitCode             *int
+	FailureCode          *string
+	FailureMessage       *string
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 const (
@@ -105,22 +107,24 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	FailureRules        *workpolicy.FailureRules
-	OccurrenceID        string
-	StartDeadlineAt     *time.Time
-	AccountID           string
-	AppID               string
-	DeploymentID        string
-	CronID              string
-	ScheduledFor        *time.Time
-	Kind                AppTaskKind
-	Command             []string
-	CommandShell        bool
-	TimeoutSeconds      int
-	MaxOutputBytes      int
-	RetryMax            int
-	RetryBackoffSeconds int
-	CreatedAt           time.Time
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
+	AccountID            string
+	AppID                string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	DeploymentID         string
+	CronID               string
+	ScheduledFor         *time.Time
+	Kind                 AppTaskKind
+	Command              []string
+	CommandShell         bool
+	TimeoutSeconds       int
+	MaxOutputBytes       int
+	RetryMax             int
+	RetryBackoffSeconds  int
+	CreatedAt            time.Time
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.
@@ -182,6 +186,7 @@ type AppTaskStore interface {
 	CreateManualCronAppTaskForFireNow(ctx context.Context, requestID string, firedAt time.Time) (AppTask, error)
 	CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error)
 	ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error)
+	ListAppTasksByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]AppTask, error)
 }
 
 // ScheduledCronOccurrenceStore creates one command-cron occurrence and its
@@ -193,6 +198,9 @@ type ScheduledCronOccurrenceStore interface {
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)
+	}
+	if (params.ExclusiveOperationID == "") != (params.ExclusiveGeneration == 0) || params.ExclusiveGeneration < 0 {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: exclusive task ownership is incomplete", ErrAppTaskInvalid)
 	}
 	if !params.Kind.Valid() {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: unsupported kind %q", ErrAppTaskInvalid, params.Kind)

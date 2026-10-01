@@ -169,9 +169,13 @@ type SendAppMessageRequest struct {
 	Time            *time.Time      `json:"time,omitempty"`
 	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	QueueName       string          `json:"queue_name,omitempty"`
-	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
-	Work            *InvokeWork     `json:"work,omitempty"`
+	// FlagContext carries a bounded Gregale Flags context from the producer
+	// request into the queued synthetic request. It is validated and bound to
+	// an active platform tenant before admission.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
@@ -5252,7 +5256,10 @@ func (p *RetryPolicyDTO) Validate() *Problem {
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// FlagContext carries decisions explicitly marked used by the producer.
+	// The queue handler validates it and retains the customer attribution.
+	FlagContext string          `json:"flag_context,omitempty"`
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
@@ -5424,8 +5431,8 @@ type FireCronResponse struct {
 //
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
-// consumer populates FinishedAt + Error and either InvocationID (HTTP
-// crons) or TaskID (command crons) at terminal stamp.
+// consumer populates FinishedAt + Error and either InvocationID (legacy HTTP
+// crons), OperationID (managed exclusive HTTP crons), or TaskID.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -5433,6 +5440,7 @@ type FireCronRequestResponse struct {
 	RequestedAt  string  `json:"requested_at"`          // RFC3339Nano UTC
 	FinishedAt   *string `json:"finished_at,omitempty"` // RFC3339Nano UTC or null
 	InvocationID *string `json:"invocation_id,omitempty"`
+	OperationID  *string `json:"operation_id,omitempty"`
 	TaskID       *string `json:"task_id,omitempty"`
 	Error        *string `json:"error,omitempty"`
 	AccountID    string  `json:"account_id"`

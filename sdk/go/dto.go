@@ -170,9 +170,25 @@ type (
 	CliAuthExchangeResponse = api.CliAuthExchangeResponse
 
 	// Async + queues + delayed tasks.
+	CreateAppTaskRequest               = api.CreateAppTaskRequest
+	AppTaskKind                        = api.AppTaskKind
+	AppTaskStatus                      = api.AppTaskStatus
+	AppTaskFailure                     = api.AppTaskFailure
+	AppTaskResponse                    = api.AppTaskResponse
+	AppTaskListResponse                = api.AppTaskListResponse
 	AsyncInvokeResponse                = api.AsyncInvokeResponse
 	InvokeResponse                     = api.InvokeResponse
 	InvokeRequest                      = api.InvokeRequest
+	ExclusiveOperationRequest          = api.ExclusiveOperationRequest
+	ExclusiveJobOperationRequest       = api.ExclusiveJobOperationRequest
+	ExclusiveAppTaskOperationRequest   = api.ExclusiveAppTaskOperationRequest
+	ExclusiveTriggerBindingRequest     = api.ExclusiveTriggerBindingRequest
+	ExclusiveTriggerBindingRecord      = api.ExclusiveTriggerBindingRecord
+	ExclusiveOperationAccepted         = api.ExclusiveOperationAccepted
+	ExclusiveOperationPolicy           = api.ExclusiveOperationPolicy
+	ExclusiveWorkPolicyRecord          = api.ExclusiveWorkPolicyRecord
+	ExclusiveWorkPolicyList            = api.ExclusiveWorkPolicyList
+	ExclusiveOperationRecord           = api.ExclusiveOperationRecord
 	InvocationDestinations             = api.InvocationDestinations
 	QueueSendRequest                   = api.QueueSendRequest
 	QueueSendResponse                  = api.QueueSendResponse
@@ -256,6 +272,18 @@ const (
 )
 
 const (
+	AppTaskKindManual  = api.AppTaskKindManual
+	AppTaskKindRelease = api.AppTaskKindRelease
+	AppTaskKindCron    = api.AppTaskKindCron
+
+	AppTaskStatusQueued    = api.AppTaskStatusQueued
+	AppTaskStatusRestoring = api.AppTaskStatusRestoring
+	AppTaskStatusRunning   = api.AppTaskStatusRunning
+	AppTaskStatusSucceeded = api.AppTaskStatusSucceeded
+	AppTaskStatusFailed    = api.AppTaskStatusFailed
+	AppTaskStatusTimedOut  = api.AppTaskStatusTimedOut
+	AppTaskStatusCancelled = api.AppTaskStatusCancelled
+
 	ResourceProfileMicro     = api.ResourceProfileMicro
 	ResourceProfileSmall     = api.ResourceProfileSmall
 	ResourceProfileMedium    = api.ResourceProfileMedium

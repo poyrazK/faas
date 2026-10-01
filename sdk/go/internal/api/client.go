@@ -787,6 +787,18 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+
+func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+
 // ListJobRuns returns a page of the job's run history.
 func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsResponse, error) {
 	var out ListJobRunsResponse
@@ -971,6 +983,55 @@ func (c *Client) ListInvocations(ctx context.Context, before string, limit int) 
 func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, error) {
 	var out Invocation
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
+}
+
+func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+	var out ExclusiveWorkPolicyList
+	return out, c.do(ctx, "GET", "/v1/account/operation-policies", nil, &out)
+}
+func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusiveOperationPolicy) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	return out, c.do(ctx, "PUT", "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, "PUT", path, binding, &out)
+}
+func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
+	if tenantID != "" {
+		path = "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/apps/" + url.PathEscape(slug) + "/operations"
+	}
+	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
+}
+func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/platform-tenant-self/apps/"+url.PathEscape(slug)+"/operations", request, &out, idempotencyKey)
+}
+func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, "GET", "/v1/operations/"+url.PathEscape(id), nil, &out)
+}
+func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, "POST", "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
+}
+func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, "POST", "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
 // API keys.

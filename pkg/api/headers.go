@@ -14,7 +14,8 @@ const (
 	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
 	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
 	// FlagContextHeader carries bounded, SDK-generated decisions across an
-	// authorized Gregale service call. Public ingress always clears it.
+	// authorized Gregale service call or a customer-bound durable invocation.
+	// Public ingress always clears it.
 	FlagContextHeader = "X-Faas-Flag-Context"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
@@ -51,7 +52,9 @@ const (
 	InvocationIDHeader = "X-Faas-Invocation-Id"
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
-	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	InvocationSourceHeader             = "X-Faas-Invocation-Source"
+	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
+	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -165,7 +168,8 @@ func IsGuestIdentityHeader(name string) bool {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context":
+		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
+		"x-gregale-operation-id", "x-gregale-operation-generation":
 		return true
 	default:
 		return false

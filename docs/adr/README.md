@@ -68,6 +68,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 381 | [Compact platform-tenant statement lines](381-compact-platform-tenant-statement-lines.md) | accepted | Separate compact invoice rows from exact private minute coverage; remove the public 20,000-line ceiling |
 | 380 | [Gregale Issues](380-gregale-issues.md) | accepted for preview implementation | Account/app-scoped issue reporting, grouping, triage, occurrence retention, customer impact, OTLP and webhook recovery |
 | 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
+| 393 | [Managed exclusive operations](393-managed-exclusive-operations.md) | implementation in progress | Account and trusted customer scope, explicit contention modes, durable ownership generations, lease recovery, and stale-owner fencing |
 | 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |
 | 374 | [Application-keyed background work policies](374-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
 | 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
@@ -311,6 +312,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Provider-neutral object-storage access grants](157-object-storage-access-control.md): separate storage manage/read/write scopes plus explicit per-bucket API-key grants; rotation inheritance; no provider-native credentials | accepted | object-storage application access; migration `20260905200000000_object_storage_access_control.sql`; extends ADR-151 and ADR-156 |
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
+| 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -376,6 +378,7 @@ note instead of the banner.
 ## Daemon durability decisions
 
 - [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
+- [ADR-419: authoritative VM inventory recovery](419-authoritative-vm-inventory-recovery.md) — signed process inventory, physical placement, and autonomous missing-service recovery
 - [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
 - [ADR-345: durable event fanout and workflow leases](345-durable-event-fanout-and-workflow-leases.md) — persistent event claims, per-step workflow recovery, and versioned event schemas
 - [ADR-346: event fanout recipient snapshots](346-event-fanout-recipient-snapshots.md) — capture eligible subscription candidates when an event is accepted
@@ -404,3 +407,9 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+
+## Managed service recovery decisions
+
+- [ADR-420: continuous service recovery](420-continuous-service-recovery.md) — periodic desired-capacity reconciliation with durable claims and retry deadlines
+- [ADR-421: continuous app ownership recovery](421-continuous-app-ownership-recovery.md) — paged periodic ownership transfer with node-health fencing
+- [ADR-422: bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) — durable admission protection for one-host recovery

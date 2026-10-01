@@ -3,6 +3,7 @@ from typing import Literal
 TriggerDeadLetterReason = Literal[
     "broker_error",
     "customer_disabled",
+    "exclusive_operation_rejected",
     "max_attempts",
     "payload_too_large",
     "plan_quota",
@@ -13,6 +14,7 @@ TriggerDeadLetterReason = Literal[
 TRIGGER_DEAD_LETTER_REASON_VALUES: set[TriggerDeadLetterReason] = {
     "broker_error",
     "customer_disabled",
+    "exclusive_operation_rejected",
     "max_attempts",
     "payload_too_large",
     "plan_quota",

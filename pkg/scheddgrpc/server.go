@@ -1391,14 +1391,23 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
-		// Complete vmmd presence reports also drive the stale-instance
-		// reconciler. This is an optional additive seam so older/fake
-		// engines keep the existing capacity-stream contract.
+		// Only separately signed process inventories can drive destructive
+		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {
-			ObserveNodeInstances(context.Context, string, int32, []sched.NodeTelemetry)
+			ObserveNodeInventory(context.Context, sched.NodeInstanceInventory)
 		}); ok {
-			observer.ObserveNodeInstances(
-				stream.Context(), report.NodeID, report.LiveCount, telemetryRows)
+			inventory := sched.NodeInstanceInventory{NodeID: report.NodeID,
+				NodeKeyID: report.NodeKeyID, SampledAt: report.SampledAt}
+			if in := msg.GetInstanceInventory(); in != nil {
+				inventory.Complete = in.GetComplete()
+				inventory.InstanceIDs = in.GetInstanceIds()
+				inventory.Signature = in.GetNodeSignature()
+				if err := sched.VerifyNodeInventory(inventory, keys); err != nil {
+					inventory.Complete = false
+					s.log.Warn("schedd: ignoring unauthenticated VM inventory", "node_id", report.NodeID, "err", err)
+				}
+			}
+			observer.ObserveNodeInventory(stream.Context(), inventory)
 		}
 	}
 }

@@ -50,6 +50,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
+| [`operations`](#operations) | Coordinate named work with leases, explicit contention policy, and fenced ownership |
 | [`debug`](#debug) | Inspect production requests and regressions |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -595,6 +596,10 @@ Run a one-off command against the live deployment
 | `--detach` | return after the task is queued |  |
 | `--timeout-seconds <N>` | server-side command timeout |  |
 | `--max-output-bytes <N>` | combined stdout/stderr tail cap |  |
+| `--operation-policy <NAME>` | route through a managed exclusive-operation policy |  |
+| `--operation-key <JSON>` | JSON scalar business coordination key |  |
+| `--equivalence-key <KEY>` | equivalent request identity for join_existing policies |  |
+| `--idempotency-key <KEY>` | stable retry identity for this submission |  |
 | `--poll-interval <D>` | status polling interval while attached |  |
 | `--wait-timeout <D>` | maximum attached wait |  |
 
@@ -2598,6 +2603,137 @@ Create a deployment-bound ingest credential
 ### issues revoke-token
 
 Revoke an ingest credential
+
+
+## operations
+
+Coordinate named work with leases, explicit contention policy, and fenced ownership
+
+`gregale operations [<subcommand>]`
+
+### operations policy
+
+List or configure account operation policies
+
+#### operations policy list
+
+List operation policies
+
+`gregale operations policy list`
+
+#### operations policy upsert
+
+Create or revise a policy from JSON
+
+`gregale operations policy upsert <name> --file <POLICY.json>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <POLICY.json>` | policy JSON file | required |
+
+### operations bind-trigger
+
+Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy
+
+`gregale operations bind-trigger <cron|inbound_webhook|broker|job_schedule> <trigger-id> --policy <NAME> --key <JSON> [--tenant <ID>] [--equivalence-key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--policy <NAME>` | managed operation policy | required |
+| `--key <JSON>` | JSON scalar business coordination key | required |
+| `--tenant <ID>` | account-authorized platform customer tenant |  |
+| `--equivalence-key <KEY>` | equivalent request identity for join_existing |  |
+
+### operations unbind-trigger
+
+Remove a trigger&#39;s managed operation policy binding
+
+`gregale operations unbind-trigger <cron|inbound_webhook|broker|job_schedule> <trigger-id>`
+
+### operations reconcile
+
+Apply policies and trigger bindings declared in the project manifest
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dir <PROJECT_DIR>` | project directory containing gregale.yaml or gregale.toml |  |
+
+### operations start
+
+Submit work through a named coordination key
+
+`gregale operations start <app-slug> --policy <NAME> --key <JSON> [--tenant <ID>] [--self] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--payload <JSON>] [--method <METHOD>] [--path <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--policy <NAME>` | managed operation policy | required |
+| `--key <JSON>` | JSON scalar concurrency key | required |
+| `--tenant <ID>` | authorized platform customer tenant |  |
+| `--self` | derive tenant identity from a platform-customer credential |  |
+| `--equivalence-key <KEY>` | equivalent request identity for join_existing |  |
+| `--idempotency-key <KEY>` | stable retry identity for this submission |  |
+| `--payload <JSON>` | request body delivered to the app |  |
+| `--method <METHOD>` | HTTP method delivered to the app |  |
+| `--path <PATH>` | app route delivered to the app |  |
+
+Examples:
+
+```sh
+gregale operations start --policy crm-sync --key '"customer:acme:crm-sync"' --tenant TENANT_ID my-api
+```
+
+### operations start-job
+
+Submit a Job run through a named coordination key
+
+`gregale operations start-job <job-name> --policy <NAME> --key <JSON> [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--tasks <N>] [--run-file <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--policy <NAME>` | managed operation policy | required |
+| `--key <JSON>` | JSON scalar business coordination key | required |
+| `--equivalence-key <KEY>` | equivalent request identity for join_existing |  |
+| `--idempotency-key <KEY>` | stable retry identity for this submission |  |
+| `--tasks <N>` | number of Job tasks (default 1; omit with --run-file) |  |
+| `--run-file <FILE>` | JSON CreateJobRunRequest |  |
+
+Examples:
+
+```sh
+gregale operations start-job --policy imports --key '"customer:acme:import"' nightly-import
+```
+
+### operations get
+
+Inspect operation state and committed result
+
+`gregale operations get <id> [--self]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--self` | use the authenticated platform-customer scope |  |
+
+### operations wait
+
+Wait for a terminal operation state
+
+`gregale operations wait <id> [--self] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--self` | use the authenticated platform-customer scope |  |
+| `--timeout <DURATION>` | stop waiting after this duration |  |
+| `--interval <DURATION>` | time between status checks |  |
+
+### operations cancel
+
+Request cancellation of pending or active work
+
+`gregale operations cancel <id> [--self]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--self` | use the authenticated platform-customer scope |  |
 
 
 ## debug

@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
@@ -709,6 +710,12 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	if inv.ExclusiveClaim != nil {
+		parts := strings.Split(inv.ExclusiveClaim.IncarnationID, "/")
+		if len(parts) != 3 || target.InstanceID != parts[0] || target.WakeID != parts[1] || target.NodeID != parts[2] {
+			return inv, 0, fmt.Errorf("gateway synth: target does not match exclusive owner incarnation")
+		}
+	}
 	var err error
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
@@ -806,9 +813,24 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity := target.PlatformIdentity("", inv.ID)
 	identity.AppID = inv.AppID
 	identity.PlatformTenantID = inv.PlatformTenantID
+	flagContextValues := req.Header.Values(api.FlagContextHeader)
 	identity.ApplyGuestHeaders(req.Header)
+	// PlatformIdentity clears reserved guest headers. Reattach only a canonical
+	// Flags context whose customer matches the tenant identity admitted from the
+	// durable invocation row; arbitrary persisted headers cannot assert tenants.
+	if len(flagContextValues) == 1 && inv.PlatformTenantID != "" {
+		if propagated, err := flags.DecodePropagationHeader(flagContextValues[0]); err == nil && propagated.CustomerID == inv.PlatformTenantID {
+			if canonical, err := flags.EncodePropagationHeader(propagated); err == nil {
+				req.Header.Set(api.FlagContextHeader, canonical)
+			}
+		}
+	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if inv.ExclusiveClaim != nil {
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
@@ -849,7 +871,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 
 func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {
 	switch source {
-	case state.InvocationAsyncInvoke, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
+	case state.InvocationAsyncInvoke, state.InvocationExclusiveOperation, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
 		return true
 	default:
 		return false

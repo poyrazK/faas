@@ -78,7 +78,10 @@ export class InboundWebhooksService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -154,7 +157,10 @@ export class InboundWebhooksService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -236,7 +242,10 @@ export class InboundWebhooksService {
         400: `code: inbound_webhook_invalid for malformed endpoint configuration/body or a missing Stripe event id; code: inbound_webhook_bad_signature when Stripe-Signature does not verify.`,
         404: `code: not_found`,
         413: `code: inbound_webhook_too_large — the provider request body exceeds 1 MiB.`,
-        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
