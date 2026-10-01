@@ -90,6 +90,7 @@ func (m *MemStore) artifactEvidenceComponentsLocked(accountID, appID string, dep
 			return DeploymentArtifactScanEvidence{}, err
 		}
 		value.Components = append(value.Components, scan)
+		value.Artifacts = append(value.Artifacts, runtimeArtifactFromRootfs(parents.Rootfs))
 		baseID := parents.Rootfs.Input.BaseProducerID
 		if baseID != "" && !bases[baseID] {
 			base, err := m.freshBaseImageScanLocked(baseID, parents.Rootfs.Input.BaseInputHash, now)
@@ -97,6 +98,7 @@ func (m *MemStore) artifactEvidenceComponentsLocked(accountID, appID string, dep
 				return DeploymentArtifactScanEvidence{}, err
 			}
 			value.Bases, bases[baseID] = append(value.Bases, base), true
+			value.Artifacts = append(value.Artifacts, runtimeArtifactFromBaseScan(base))
 		}
 	}
 	return value, nil

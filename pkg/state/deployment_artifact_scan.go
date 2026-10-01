@@ -66,8 +66,11 @@ type DeploymentArtifactScanEvidenceStore interface {
 var ErrDeploymentArtifactScanEvidenceAbsent = errors.New("state: deployment has no private artifact producer lineage")
 
 type DeploymentArtifactScanEvidence struct {
-	Components           []DeploymentArtifactScan
-	Bases                []BaseImageScan
+	Components []DeploymentArtifactScan
+	Bases      []BaseImageScan
+	// Producer identities are captured under the same fences as these leases.
+	// This is an input set, not native or whole-runtime approval.
+	Artifacts            []DeploymentRuntimeArtifact
 	CheckedAt, ExpiresAt time.Time
 }
 

@@ -146,12 +146,14 @@ func readArtifactEvidenceComponents(ctx context.Context, tx pgx.Tx, accountID, a
 			return DeploymentArtifactScanEvidence{}, nil, err
 		}
 		value.Components, parents = append(value.Components, scan), append(parents, p)
+		value.Artifacts = append(value.Artifacts, runtimeArtifactFromRootfs(p.Rootfs))
 		if id := p.Rootfs.Input.BaseProducerID; id != "" && !bases[id] {
 			base, err := freshArtifactBaseScanLocked(ctx, tx, p)
 			if err != nil {
 				return DeploymentArtifactScanEvidence{}, nil, err
 			}
 			value.Bases, bases[id] = append(value.Bases, base), true
+			value.Artifacts = append(value.Artifacts, runtimeArtifactFromBaseScan(base))
 		}
 	}
 	return value, parents, nil

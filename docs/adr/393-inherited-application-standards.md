@@ -301,6 +301,24 @@ retrieval remains separate; neither path rewrites evidence
 clocks. PostgreSQL lock contention returns a bounded retryable refusal. Unsafe
 complete findings remain visible for the enforcing consumer to reject.
 
+A private runtime-artifact input read now captures producer IDs, immutable input
+hashes, storage keys, complete blob digests and byte counts inside those same
+fences. It retains the main/sidecar membership and explicit shared-base
+associations as separate artifacts. Its scoped, canonical input hash excludes
+renewable publisher/scan IDs and clocks: renewing current evidence for the same
+producer keeps the byte identity, while replacing a producer changes it. The
+returned lease ends at the earliest evidence expiry or scanner-database age
+deadline, including the shared base. This input projection rejects missing,
+duplicate and inconsistent membership without changing historical evidence.
+
+The input read still supplies stored producer facts. It does not invent an
+unbound runtime-default base, scan the actual guest overlay, authorize a native
+boot or advance observed adoption. Durable native captures/grants must consume
+the stable identity and freshly recheck its approval leases. vmmd must verify
+the actual consumed base, app and sidecar bytes and return the bound consumer
+acknowledgment before those release gates can pass. That integration remains
+pending; existing native captures still include compatibility scan metadata.
+
 The periodic live lease checker uses this private complete set when retained
 producer lineage exists. A missing sidecar, failed or replaced base, expired
 lease, metadata drift or revoked publisher cannot fall back to the clean main
