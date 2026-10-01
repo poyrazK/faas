@@ -6548,3 +6548,43 @@ SELECT owner.scope,owner.environment_id,owner.override_env_secrets,owner.sidecar
     COALESCE((SELECT jsonb_object_agg(signal.sidecar_name,signal.signal) FROM deployment_sidecar_secret_reload_signals signal
         WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals
 FROM owner;
+
+-- name: ReadSnapshotGarbageCollection :many
+WITH metadata AS (
+    SELECT s.id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+        a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
+        d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
+        s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+        COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
+        COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
+        CASE WHEN pin.deployment_id IS NOT NULL THEN COALESCE(spec.settings->>'warm_snapshot_enabled'='true',false)
+            ELSE a.warm_snapshot_enabled END::boolean AS warm_snapshot_enabled,
+        COALESCE(NOT (a.status<>'deleted'
+            AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+            AND (a.project_id IS NULL OR project.id IS NOT NULL)
+            AND ((runtime_owner.deployment_id IS NOT NULL AND bound.id IS NOT NULL AND spec.environment_id=bound.id)
+                OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+                    AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))),true)::boolean AS runtime_owner_invalid
+    FROM snapshots s
+    JOIN deployments d ON d.id=s.deployment_id
+    JOIN apps a ON a.id=d.app_id
+    LEFT JOIN projects project ON project.id=a.project_id AND project.account_id=a.account_id
+    LEFT JOIN deployment_runtime_environment_owners runtime_owner ON runtime_owner.deployment_id=d.id
+    LEFT JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id AND spec.app_id=a.id
+    LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
+        AND bound.account_id=a.account_id AND bound.project_id=a.project_id
+        AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
+        AND legacy.created_at<=d.created_at
+)
+SELECT * FROM metadata
+WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
+    OR (sqlc.arg(mode)::text='stale' AND stale AND created_at<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
+    OR (sqlc.arg(mode)::text='pending' AND delete_pending)
+ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
+    CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
+LIMIT 10000;

@@ -2656,16 +2656,17 @@ type Session struct {
 }
 
 type Snapshot struct {
-	ID           pgtype.UUID
-	DeploymentID pgtype.UUID
-	FcVersion    string
-	MemBytes     int64
-	DiskBytes    int64
-	StoredBytes  int64
-	Stale        bool
-	CreatedAt    pgtype.Timestamptz
-	StorageKey   string
-	Tier         string
+	ID            pgtype.UUID
+	DeploymentID  pgtype.UUID
+	FcVersion     string
+	MemBytes      int64
+	DiskBytes     int64
+	StoredBytes   int64
+	Stale         bool
+	CreatedAt     pgtype.Timestamptz
+	StorageKey    string
+	Tier          string
+	DeletePending bool
 }
 
 type SnapshotFanoutEvent struct {

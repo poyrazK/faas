@@ -17625,6 +17625,116 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const readSnapshotGarbageCollection = `-- name: ReadSnapshotGarbageCollection :many
+WITH metadata AS (
+    SELECT s.id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+        a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
+        d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
+        s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+        COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
+        COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
+        CASE WHEN pin.deployment_id IS NOT NULL THEN COALESCE(spec.settings->>'warm_snapshot_enabled'='true',false)
+            ELSE a.warm_snapshot_enabled END::boolean AS warm_snapshot_enabled,
+        COALESCE(NOT (a.status<>'deleted'
+            AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+            AND (a.project_id IS NULL OR project.id IS NOT NULL)
+            AND ((runtime_owner.deployment_id IS NOT NULL AND bound.id IS NOT NULL AND spec.environment_id=bound.id)
+                OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+                    AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))),true)::boolean AS runtime_owner_invalid
+    FROM snapshots s
+    JOIN deployments d ON d.id=s.deployment_id
+    JOIN apps a ON a.id=d.app_id
+    LEFT JOIN projects project ON project.id=a.project_id AND project.account_id=a.account_id
+    LEFT JOIN deployment_runtime_environment_owners runtime_owner ON runtime_owner.deployment_id=d.id
+    LEFT JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id AND spec.app_id=a.id
+    LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
+        AND bound.account_id=a.account_id AND bound.project_id=a.project_id
+        AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
+        AND legacy.created_at<=d.created_at
+)
+SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
+WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
+    OR ($1::text='stale' AND stale AND created_at<now()-$2::bigint*interval '1 second')
+    OR ($1::text='pending' AND delete_pending)
+ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
+    CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
+LIMIT 10000
+`
+
+type ReadSnapshotGarbageCollectionParams struct {
+	Mode             string
+	RetentionSeconds int64
+}
+
+type ReadSnapshotGarbageCollectionRow struct {
+	ID                  pgtype.UUID
+	DeploymentID        string
+	AppID               string
+	AccountID           string
+	AppSlug             string
+	AppStatus           string
+	DeploymentStatus    string
+	FcVersion           string
+	MemBytes            int64
+	DiskBytes           int64
+	StorageKey          string
+	Stale               bool
+	DeletePending       bool
+	CreatedAt           pgtype.Timestamptz
+	Tier                string
+	Scope               string
+	EnvironmentID       string
+	DeploymentRootfsKey string
+	WarmSnapshotEnabled bool
+	RuntimeOwnerInvalid bool
+}
+
+func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error) {
+	rows, err := db.Query(ctx, readSnapshotGarbageCollection, arg.Mode, arg.RetentionSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadSnapshotGarbageCollectionRow{}
+	for rows.Next() {
+		var i ReadSnapshotGarbageCollectionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.AppSlug,
+			&i.AppStatus,
+			&i.DeploymentStatus,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.DiskBytes,
+			&i.StorageKey,
+			&i.Stale,
+			&i.DeletePending,
+			&i.CreatedAt,
+			&i.Tier,
+			&i.Scope,
+			&i.EnvironmentID,
+			&i.DeploymentRootfsKey,
+			&i.WarmSnapshotEnabled,
+			&i.RuntimeOwnerInvalid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readSnapshotPublicationConfigChange = `-- name: ReadSnapshotPublicationConfigChange :one
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
 `

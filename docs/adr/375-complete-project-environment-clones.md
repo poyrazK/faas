@@ -2028,3 +2028,48 @@ Captured configuration revisions, scope-specific change stamps and GC/floors,
 transactional paused runtime publication, native stage adapters, coordinated
 customer-data capture, complete strategies and activation/qualification, full
 suite/lint and test-metal/leakcheck/provider acceptance remain unfinished.
+
+
+### Snapshot retention follows environment lifetimes
+
+Snapshot GC now groups rollback generations by app and original environment
+UUID, using normalized production/default scope only for genuine legacy
+rows without an environment. Each deployment's immutable warm-snapshot policy
+controls its tiers, so desired-head or shared-App edits cannot alter retained
+stage snapshots. Normal and pressure cleanup use the same generation policy;
+account byte totals still span the account's stages. Lost original owners,
+missing pins and terminal deployments are cleanup debt and do not consume a
+healthy rollback slot. Deleted/recreated slugs cannot acquire old snapshots.
+
+The normal, stale-retention and pending-deletion selectors carry original
+ownership, pinned policy and exact physical rootfs keys through one SQLC join
+or MemStore critical section. The schema snapshot now includes the existing
+snapshot deletion tombstone column. Pending retries have no age cutoff,
+including when a snapshot timestamp is ahead of the process clock. The GC
+loop no longer reloads deployments per eviction and still uses durable layer
+deletion claims: a shared stage image survives until its last retained
+reference is gone. App cleanup checks authoritative deletion status before
+removing snapshot captures, protecting active apps from replayed delete hints.
+
+Verification: the focused MemStore and real PostgreSQL GC/retention gate
+passed in 15.456 seconds. It covers pinned policy after both desired-head and
+shared-App edits, all three selectors after stage recreation, lost owner/pin
+records, age-fenced legacy ownership, future tombstone retries, and existing
+slug/tier/storage-key/stale-retention contracts. The full imaged suite passed
+in 6.039 seconds, including shared physical-layer retention and final deletion,
+per-stage windows, pinned tiers, original lifetime separation and active-app
+artifact protection. The two previous full-imaged failures are resolved:
+the delete notification fixture now records the actual app deletion, and
+physical rootfs metadata avoids per-eviction deployment lookups. Independent
+SQLC 1.31.1 regeneration matches and the whitespace check passes. An earlier
+expanded state run hit host disk exhaustion during fixture migration; the
+focused rerun passed after superseded task archives were freed.
+
+This closes snapshot retention isolation, not the complete clone contract.
+Scope-specific capacity/admission/reaper floors and change stamps, captured
+configuration publication fences, transactional warm publication, remaining
+native adapters and resource strategies, coordinated customer-data capture,
+full-clone activation/qualification and production-shaped acceptance remain
+open. The public one-command complete clone is still unavailable. Full-suite
+and lint gates plus native x86_64 KVM test-metal, leakcheck and provider
+acceptance have not been completed.

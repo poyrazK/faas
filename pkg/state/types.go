@@ -5974,19 +5974,28 @@ const (
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
 // (spec §4.6: keep the bounded rollback window of deployment snapshots per
-// app; fleet budget pressure evicts from biggest-over-quota accounts first).
+// environment lifetime; budget pressure evicts from the largest accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app rollback window;
+// failed/cancelled deployments must not consume the environment rollback window;
 // superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
 	AppID        string
 	AccountID    string
+	// EnvironmentID retains the original lifetime, including after deletion.
+	// Legacy deployments without an environment use normalized Scope instead.
+	EnvironmentID string
+	Scope         string
+	// RuntimeOwnerInvalid marks snapshots whose original environment or pinned
+	// configuration no longer exists. These cannot occupy a rollback slot.
+	RuntimeOwnerInvalid bool
+	// DeploymentRootfsKey preserves the physical layer key across stage copies.
+	DeploymentRootfsKey string
 	// AppSlug is the apps.slug of the parent app. Populated from the
 	// snapshot → deployments → apps JOIN so the GC algorithm doesn't
 	// have to issue per-eviction DeploymentByID + AppByID lookups to
@@ -6012,11 +6021,8 @@ type SnapshotForGC struct {
 	// artifact GC sets it before attempting remote deletion.
 	DeletePending bool
 	CreatedAt     time.Time
-	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
-	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the two-tier rollback window only on apps that opted in to warm.
-	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
-	// to avoid an AppByID round-trip per eviction row.
+	// AppWarmSnapshotEnabled is the deployment's pinned warm policy. Genuine
+	// unpinned legacy deployments use apps.warm_snapshot_enabled instead.
 	AppWarmSnapshotEnabled bool
 }
 

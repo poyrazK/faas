@@ -11510,3 +11510,6 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER deployment_runtime_environment_bound
 AFTER INSERT OR UPDATE ON project_environment_workload_deployment_specs
 FOR EACH ROW EXECUTE FUNCTION bind_deployment_runtime_environment();
+
+-- Snapshot GC tombstone (20260914054154716_snapshot_delete_pending.sql).
+ALTER TABLE snapshots ADD COLUMN delete_pending boolean NOT NULL DEFAULT false;

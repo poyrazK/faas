@@ -4407,6 +4407,11 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		}
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
+	// Notifications are hints. A delayed or replayed delete must not remove
+	// snapshot captures for an app that is still active in the store.
+	if app.Status != state.AppDeleted {
+		return nil
+	}
 	deps, err := h.store.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup list deployments: %w", err)

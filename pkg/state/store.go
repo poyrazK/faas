@@ -4645,7 +4645,7 @@ type Store interface {
 	//
 	// ListSnapshotsForGC returns every non-stale snapshot joined with its
 	// deployment + app + account, plus stale snapshots belonging to a
-	// soft-deleted app or an unusable terminal deployment so imaged can remove
+	// soft-deleted app, unusable deployment or invalid original owner so imaged can remove
 	// their rows and storage artifacts immediately.
 	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
 	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention

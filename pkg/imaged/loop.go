@@ -900,13 +900,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
 			continue
 		}
-		deployment, err := l.store.DeploymentByID(ctx, deploymentID)
-		if errors.Is(err, state.ErrNotFound) {
-			deployment = state.Deployment{ID: deploymentID}
-		} else if err != nil {
-			deleteErrors = append(deleteErrors, err)
-			continue
-		}
+		deployment := state.Deployment{ID: deploymentID, RootfsKey: t.DeploymentRootfsKey}
 		if err := l.handler.deleteDeploymentLayers(ctx, be, deployment, t.AppSlug); err != nil {
 			l.log.Warn("imaged: gc remove layers", "deployment", deploymentID, "err", err)
 			deleteErrors = append(deleteErrors, err)
