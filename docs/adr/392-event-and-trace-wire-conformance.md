@@ -1,4 +1,4 @@
-# ADR-386 · Event and trace wire conformance
+# ADR-392 · Event and trace wire conformance
 
 - **Status:** accepted
 - **Date:** 2026-09-30
