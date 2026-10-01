@@ -1539,6 +1539,8 @@ type Querier interface {
 	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error)
 	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)
 }
 

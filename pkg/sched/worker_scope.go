@@ -140,12 +140,16 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 		if e.ops == nil || trigger != TriggerWorkerPool {
 			return
 		}
-		if admitted && plan.signal != "" {
+		if admitted {
 			e.ops.ObserveScaleUp(app.ID, "admit")
-			e.ops.ObserveScaleUpWinningSignal(app.ID, plan.signal)
+			if plan.signal != "" {
+				e.ops.ObserveScaleUpWinningSignal(app.ID, plan.signal)
+			}
 		} else if plan.cooldown && resultErr == nil {
 			e.ops.ObserveScaleUp(app.ID, "cooldown_held")
-		} else if !atCapacity && resultErr == nil {
+		} else if atCapacity && resultErr == nil {
+			e.ops.ObserveScaleUp(app.ID, "reject_at_cap")
+		} else if resultErr == nil {
 			e.ops.ObserveScaleUp(app.ID, "no_signal")
 		}
 	}()
@@ -176,6 +180,9 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	desired, err := e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired)
 	if err != nil {
 		return err
+	}
+	if desired < plan.desired {
+		atCapacity = true
 	}
 	for kept < desired {
 		dep, err := e.store.DeploymentByID(ctx, plan.target)
@@ -358,7 +365,7 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 	}
 	otherWorkers := 0
 	for _, ins := range all {
-		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForConcurrency() && !currentIDs[ins.ID] {
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() && !currentIDs[ins.ID] {
 			otherWorkers++
 		}
 	}

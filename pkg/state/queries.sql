@@ -5658,3 +5658,14 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: WorkerAdmissionLockAccount :one
+select acct.id, acct.plan from accounts acct
+join apps a on a.account_id=acct.id
+join deployments d on d.app_id=a.id and d.id=sqlc.arg(deployment_id)
+where a.id=sqlc.arg(app_id) for update of acct;
+
+-- name: WorkerAdmissionCount :one
+select count(*)::bigint from instances i join apps a on a.id=i.app_id
+where a.account_id=sqlc.arg(account_id) and i.mode='worker'
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm');

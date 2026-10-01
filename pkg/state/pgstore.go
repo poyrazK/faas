@@ -16407,8 +16407,13 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
-	// ADR-193: same per-node headroom reservation as CreateInstance.
-	return s.insertInstanceWithNodeReservation(ctx, nodeID, state, ramMB, func(q instanceInserter) (Instance, error) {
+	var reserve func(pgx.Tx) error
+	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
+		reserve = func(tx pgx.Tx) error {
+			return reserveAccountWorker(ctx, tx, appID, deploymentID)
+		}
+	}
+	return s.insertInstanceWithReservations(ctx, nodeID, state, ramMB, reserve, func(q instanceInserter) (Instance, error) {
 		row := q.QueryRow(ctx,
 			`insert into instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
 		 values ($1, nullif($2::text, '')::uuid, $3, $4, $5, case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), $7)

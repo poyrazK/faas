@@ -20237,6 +20237,43 @@ func (q *Queries) UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthPar
 	return items, nil
 }
 
+const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
+select count(*)::bigint from instances i join apps a on a.id=i.app_id
+where a.account_id=$1 and i.mode='worker'
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+`
+
+func (q *Queries) WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, workerAdmissionCount, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const workerAdmissionLockAccount = `-- name: WorkerAdmissionLockAccount :one
+select acct.id, acct.plan from accounts acct
+join apps a on a.account_id=acct.id
+join deployments d on d.app_id=a.id and d.id=$1
+where a.id=$2 for update of acct
+`
+
+type WorkerAdmissionLockAccountParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+type WorkerAdmissionLockAccountRow struct {
+	ID   pgtype.UUID
+	Plan string
+}
+
+func (q *Queries) WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error) {
+	row := db.QueryRow(ctx, workerAdmissionLockAccount, arg.DeploymentID, arg.AppID)
+	var i WorkerAdmissionLockAccountRow
+	err := row.Scan(&i.ID, &i.Plan)
+	return i, err
+}
+
 const workerPoolHistory = `-- name: WorkerPoolHistory :one
 select max(started_at)::timestamptz as last_admission_at,
        max(terminal_at)::timestamptz as last_termination_at

@@ -294,12 +294,19 @@ is restricted to the producer's default environment. All scope/demand reads
 finish before teardown, so missing observations preserve the fleet. A selected
 migration holds reconciliation instead of granting the scaler VM ownership.
 App concurrency and node admission still use their shared ledgers, and account
-worker sizing credits only the selected pool's current workers. Durable atomic
-worker-account admission across competing applications remains required; the
-existing account count/read is not a reservation.
+worker sizing credits only the selected pool's current workers. Creating a
+resident worker now locks its account, reads the current plan and resident
+worker count, and inserts inside the existing node admission transaction.
+Admissions across applications, environments, and nodes cannot spend the same
+slot. Migrating and draining workers retain account capacity until they are
+nonresident. Failed creation rolls back both reservations; termination releases
+the account slot through the instance state. The worker wake and prime paths
+refuse before contacting vmmd when account capacity is exhausted. Shared-store
+cases and a real PostgreSQL cross-node admission race cover this contract.
+Legacy nonresident-to-resident state changes and mode retrofits still require
+an audit before this can be treated as a universal worker ownership guard.
 Scale-out and scale-in cooldowns use retained admission and termination history
-in the selected generation, respectively,
-so a recently active neighbor cannot hold a cold environment. New generations
+in the selected generation, respectively, so a recently active neighbor cannot hold a cold environment. New generations
 can start without inheriting their predecessor's cooldown.
 
 The production targets adapter now exposes the worker reconciliation path;
@@ -311,7 +318,8 @@ other scopes need local queue depth or a future scoped broker signal. Missing
 lag is not an empty queue. Application-wide custom/in-flight signals do not
 authorize environment worker scaling through this path; their scoped signal
 contract remains open. Existing app/binding queue gauges remain aggregate
-telemetry, while winning-signal counters require an actual scoped admission.
+telemetry. Winning-signal counters require an actual scoped admission, and
+account-capped demand records a refusal rather than an idle observation.
 Shared memory/PostgreSQL cases cover exact name/scope matching, leases, retained
 backlog after project removal, completed-history exclusion, and retained worker
 cooldown history isolated by deployment generation. Scheduler tests

@@ -127,6 +127,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"queue_demand_uses_captured_environment", testQueueDemandScope},
 		{"worker_pool_history_is_generation_scoped", testWorkerPoolHistory},
+		{"worker_account_capacity_is_shared_and_released", testWorkerAccountCapacity},
 		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},

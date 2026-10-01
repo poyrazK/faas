@@ -3144,6 +3144,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID, mode)
 	if err != nil {
 		release()
+		if errors.Is(err, state.ErrAccountWorkerCapacity) {
+			e.IncAtCapacity(appID, "wake")
+			if liftCapacityToResult {
+				return WakeResult{AtCapacity: true}, nil
+			}
+			return WakeResult{}, api.ErrCapacity("The account worker replica limit is reached")
+		}
 		// ADR-193: a durable per-node refusal is a typed capacity Problem,
 		// not a wake failure — the chosen node is full, another may not be.
 		// The transaction rolled back, so there is no row to unwind.
@@ -6028,6 +6035,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primeWakeID := primeWakeUUID.String()
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, instanceModeForApp(app))
 	if err != nil {
+		if errors.Is(err, state.ErrAccountWorkerCapacity) {
+			return api.ErrCapacity("The account worker replica limit is reached")
+		}
 		// ADR-193: see the wake path. Prime is cold boot by design, so a
 		// node-full refusal here fails the deployment rather than the wake;
 		// the typed Problem is what carries CodeCapacity to the deploy row.

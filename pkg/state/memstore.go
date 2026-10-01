@@ -13359,6 +13359,11 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	if mode == "" {
 		mode = string(InstanceModeNormal)
 	}
+	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
+		if err := m.checkAccountWorkerReservationLocked(appID, deploymentID); err != nil {
+			return Instance{}, err
+		}
+	}
 	ins := Instance{
 		ID:           newID(),
 		AppID:        appID,
