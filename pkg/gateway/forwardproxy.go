@@ -343,6 +343,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if protocol == "" {
 		protocol = "http1"
 	}
+	grpcDuplex := protocol == "grpc"
+	if grpcDuplex {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+	}
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
@@ -563,6 +567,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
 			}
+			if grpcDuplex {
+				flushSafe(w)
+			}
 			touch()
 			// issue #517 / PR-C / ADR-064 — emit
 			// wake.proxy_first_byte on the first downstream
@@ -628,6 +635,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				cancel()
 				<-bodyErrCh
 				return
+			}
+			if grpcDuplex {
+				// Small messages must arrive before the client closes its send side.
+				flushSafe(w)
 			}
 		}
 	}
