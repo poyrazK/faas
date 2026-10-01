@@ -40,7 +40,7 @@ func cmdOperations(args []string) int {
 	case "cancel":
 		return cmdOperationCancel(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown operations command %q\n", args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "unknown operations command %q\n", args[0])
 		return 1
 	}
 }
@@ -154,11 +154,11 @@ func reconcileExclusiveOperations(ctx context.Context, client exclusiveOperation
 				}
 			}
 			if len(matches) != 1 {
-				return report, fmt.Errorf("Job schedule selector name=%q matched %d resources; expected one", binding.Job, len(matches))
+				return report, fmt.Errorf("job schedule selector name=%q matched %d resources; expected one", binding.Job, len(matches))
 			}
 			job := matches[0]
 			if job.Kind != "recurring" || job.Schedule == "" {
-				return report, fmt.Errorf("Job schedule selector name=%q does not identify a recurring Job", binding.Job)
+				return report, fmt.Errorf("job schedule selector name=%q does not identify a recurring job", binding.Job)
 			}
 			member := false
 			for _, declaration := range config.Policies {
@@ -168,7 +168,7 @@ func reconcileExclusiveOperations(ctx context.Context, client exclusiveOperation
 				}
 			}
 			if !member {
-				return report, fmt.Errorf("Job %q is not a member of policy %q", binding.Job, binding.Policy)
+				return report, fmt.Errorf("job %q is not a member of policy %q", binding.Job, binding.Policy)
 			}
 			id = job.ID
 		case "cron":
@@ -278,7 +278,7 @@ func cmdOperationReconcile(args []string) int {
 	if jsonOutput {
 		return writeJSONStdout(report)
 	}
-	fmt.Fprintf(os.Stdout, "Reconciled %d managed operation policy/policies and %d trigger binding(s).\n", report.Policies, report.Bindings)
+	_, _ = fmt.Fprintf(os.Stdout, "Reconciled %d managed operation policy/policies and %d trigger binding(s).\n", report.Policies, report.Bindings)
 	return 0
 }
 
@@ -302,7 +302,7 @@ func cmdOperationBindTrigger(args []string) int {
 	switch scalar.(type) {
 	case string, float64, bool:
 	default:
-		fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
 		return 1
 	}
 	client, err := authedClient()
@@ -318,7 +318,7 @@ func cmdOperationBindTrigger(args []string) int {
 	if jsonOutput {
 		return writeJSONStdout(row)
 	}
-	fmt.Fprintf(os.Stdout, "Bound %s %s to operation policy %s (app %s).\n", row.Source, row.TriggerID, row.Policy, row.AppID)
+	_, _ = fmt.Fprintf(os.Stdout, "Bound %s %s to operation policy %s (app %s).\n", row.Source, row.TriggerID, row.Policy, row.AppID)
 	return 0
 }
 
@@ -339,7 +339,7 @@ func cmdOperationUnbindTrigger(args []string) int {
 		return printErr("Could not remove trigger operation binding", err)
 	}
 	if !jsonOutput {
-		fmt.Fprintln(os.Stdout, "Removed managed-operation trigger binding.")
+		_, _ = fmt.Fprintln(os.Stdout, "Removed managed-operation trigger binding.")
 	}
 	return 0
 }
@@ -370,7 +370,7 @@ func cmdOperationPolicy(args []string) int {
 			return writeJSONStdout(rows)
 		}
 		for _, row := range rows.Policies {
-			fmt.Fprintf(os.Stdout, "%s (revision %d): scope=%s contention=%s lease=%ds members=%d retired=%t\n", row.Policy.Name, row.Revision, row.Policy.Scope, row.Policy.Contention, row.Policy.LeaseSeconds, len(row.Policy.MemberAppIDs)+len(row.Policy.MemberJobIDs), row.Retired)
+			_, _ = fmt.Fprintf(os.Stdout, "%s (revision %d): scope=%s contention=%s lease=%ds members=%d retired=%t\n", row.Policy.Name, row.Revision, row.Policy.Scope, row.Policy.Contention, row.Policy.LeaseSeconds, len(row.Policy.MemberAppIDs)+len(row.Policy.MemberJobIDs), row.Retired)
 		}
 		return 0
 	case "upsert":
@@ -392,7 +392,7 @@ func cmdOperationPolicy(args []string) int {
 			return printErr("Invalid operation policy JSON", err)
 		}
 		if policy.Name != "" && policy.Name != fs.Arg(0) {
-			fmt.Fprintln(osStderr, "policy name must match the positional name")
+			_, _ = fmt.Fprintln(osStderr, "policy name must match the positional name")
 			return 1
 		}
 		policy.Name = fs.Arg(0)
@@ -407,10 +407,10 @@ func cmdOperationPolicy(args []string) int {
 		if jsonOutput {
 			return writeJSONStdout(row)
 		}
-		fmt.Fprintf(os.Stdout, "Saved operation policy %s (revision %d).\n", row.Policy.Name, row.Revision)
+		_, _ = fmt.Fprintf(os.Stdout, "Saved operation policy %s (revision %d).\n", row.Policy.Name, row.Revision)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown operation policy command %q\n", args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "unknown operation policy command %q\n", args[0])
 		return 1
 	}
 }
@@ -435,19 +435,19 @@ func cmdOperationStart(args []string) int {
 	}
 	var scalar any
 	if err := json.Unmarshal([]byte(*key), &scalar); err != nil {
-		fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
 		return 1
 	}
 	if scalar == nil {
-		fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
 		return 1
 	}
 	if _, ok := scalar.(map[string]any); ok {
-		fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
 		return 1
 	}
 	if _, ok := scalar.([]any); ok {
-		fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
 		return 1
 	}
 	client, err := authedClient()
@@ -467,9 +467,9 @@ func cmdOperationStart(args []string) int {
 	if jsonOutput {
 		return writeJSONStdout(accepted)
 	}
-	fmt.Fprintf(os.Stdout, "Operation %s accepted (%s).\n", accepted.ID, accepted.StatusURL)
+	_, _ = fmt.Fprintf(os.Stdout, "Operation %s accepted (%s).\n", accepted.ID, accepted.StatusURL)
 	if accepted.Joined {
-		fmt.Fprintln(os.Stdout, "Joined an equivalent active operation.")
+		_, _ = fmt.Fprintln(os.Stdout, "Joined an equivalent active operation.")
 	}
 	return 0
 }
@@ -491,12 +491,12 @@ func cmdOperationStartJob(args []string) int {
 	}
 	var scalar any
 	if err := json.Unmarshal([]byte(*key), &scalar); err != nil || scalar == nil {
-		fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON string, number, or boolean")
 		return 1
 	}
 	switch scalar.(type) {
 	case map[string]any, []any:
-		fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
+		_, _ = fmt.Fprintln(osStderr, "operation key must be a JSON scalar")
 		return 1
 	}
 	run := api.CreateJobRunRequest{Tasks: *tasks}
@@ -508,7 +508,7 @@ func cmdOperationStartJob(args []string) int {
 			}
 		})
 		if tasksProvided {
-			fmt.Fprintln(osStderr, "--tasks cannot be combined with --run-file")
+			_, _ = fmt.Fprintln(osStderr, "--tasks cannot be combined with --run-file")
 			return 1
 		}
 		body, err := os.ReadFile(*runFile)
@@ -516,7 +516,7 @@ func cmdOperationStartJob(args []string) int {
 			return printErr("Could not read Job run request", err)
 		}
 		if !json.Valid(body) || json.Unmarshal(body, &run) != nil {
-			fmt.Fprintln(osStderr, "--run-file must contain a valid CreateJobRunRequest JSON object")
+			_, _ = fmt.Fprintln(osStderr, "--run-file must contain a valid CreateJobRunRequest JSON object")
 			return 1
 		}
 	}
@@ -533,9 +533,9 @@ func cmdOperationStartJob(args []string) int {
 	if jsonOutput {
 		return writeJSONStdout(accepted)
 	}
-	fmt.Fprintf(os.Stdout, "Operation %s accepted (%s).\n", accepted.ID, accepted.StatusURL)
+	_, _ = fmt.Fprintf(os.Stdout, "Operation %s accepted (%s).\n", accepted.ID, accepted.StatusURL)
 	if accepted.Joined {
-		fmt.Fprintln(os.Stdout, "Joined an equivalent active operation.")
+		_, _ = fmt.Fprintln(os.Stdout, "Joined an equivalent active operation.")
 	}
 	return 0
 }
@@ -575,12 +575,12 @@ func cmdOperationGet(args []string) int {
 	if row.JobID != "" {
 		target = "Job " + row.JobID
 	}
-	fmt.Fprintf(os.Stdout, "ID: %s\nState: %s\nGeneration: %d\nTarget: %s\n", row.ID, row.State, row.Generation, target)
+	_, _ = fmt.Fprintf(os.Stdout, "ID: %s\nState: %s\nGeneration: %d\nTarget: %s\n", row.ID, row.State, row.Generation, target)
 	if row.LastError != "" {
-		fmt.Fprintf(os.Stdout, "Last error: %s\n", row.LastError)
+		_, _ = fmt.Fprintf(os.Stdout, "Last error: %s\n", row.LastError)
 	}
 	if len(row.Result) > 0 {
-		fmt.Fprintf(os.Stdout, "Result: %s\n", row.Result)
+		_, _ = fmt.Fprintf(os.Stdout, "Result: %s\n", row.Result)
 	}
 	return 0
 }
@@ -622,7 +622,7 @@ func cmdOperationWait(args []string) int {
 			if jsonOutput {
 				return writeJSONStdout(row)
 			}
-			fmt.Fprintf(os.Stdout, "Operation %s: %s\n", row.ID, row.State)
+			_, _ = fmt.Fprintf(os.Stdout, "Operation %s: %s\n", row.ID, row.State)
 			if row.State == "completed" {
 				return 0
 			}
@@ -661,7 +661,7 @@ func cmdOperationCancel(args []string) int {
 		return printErr("Could not cancel managed operation", err)
 	}
 	if !jsonOutput {
-		fmt.Fprintln(os.Stdout, "Cancellation requested.")
+		_, _ = fmt.Fprintln(os.Stdout, "Cancellation requested.")
 	}
 	return 0
 }
@@ -670,7 +670,7 @@ func writeJSONStdout(value any) int {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(value); err != nil {
-		fmt.Fprintln(osStderr, err)
+		_, _ = fmt.Fprintln(osStderr, err)
 		return 1
 	}
 	return 0

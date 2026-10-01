@@ -355,10 +355,7 @@ func (s *server) createExclusiveAppTaskOperation(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.ErrInternal("could not select the app task deployment"))
 		return
 	}
-	prepared := exclusiveAppTaskWorkRequest{Kind: "app_task", DeploymentID: deployment.ID, Task: api.CreateAppTaskRequest{
-		Command: resolved.Command, CommandShell: resolved.CommandShell,
-		TimeoutSeconds: resolved.TimeoutSeconds, MaxOutputBytes: resolved.MaxOutputBytes,
-	}}
+	prepared := exclusiveAppTaskWorkRequest{Kind: "app_task", DeploymentID: deployment.ID, Task: api.CreateAppTaskRequest(resolved)}
 	request, err := json.Marshal(prepared)
 	if err != nil {
 		writeExclusiveError(w, state.ErrInvalidArgument)
