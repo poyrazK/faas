@@ -313,3 +313,44 @@ func TestUDPTargetResolverRechecksIntentAfterWake(t *testing.T) {
 		t.Fatalf("disabled-during-wake target=%+v err=%v", target, err)
 	}
 }
+
+// A source may return a buffered successful result after caller cancellation.
+type cancelingUDPInstances struct {
+	*state.MemStore
+	cancel context.CancelFunc
+}
+
+func (s cancelingUDPInstances) ListInstancesForApp(context.Context, string) ([]state.Instance, error) {
+	s.cancel()
+	return []state.Instance{{ID: "guest", AppID: "app", DeploymentID: "deployment", NodeID: "node", State: string(state.StateRunning)}}, nil
+}
+func TestUDPTargetResolverRejectsCancellationAfterInstanceRead(t *testing.T) {
+	store := state.NewMemStore()
+	base := context.Background()
+	acct, err := store.CreateAccount(base, "udp-canceled-target@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(base, state.App{ID: "app", AccountID: acct.ID, Slug: "udp-canceled-target", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "dns", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.CreateUDPListener(base, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(base, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(base)
+	defer cancel()
+	admit := &testUDPAdmitter{}
+	resolver := &StoreTargetResolver{Store: cancelingUDPInstances{store, cancel}, Admitter: admit}
+	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerID: intent.ID, ListenerName: "dns", PublicPort: intent.PublicPort, GuestPort: 5353}
+	if target, err := resolver.ResolveTarget(ctx, route); !errors.Is(err, context.Canceled) || target.InstanceID != "" || admit.calls != 0 {
+		t.Fatalf("target=%+v err=%v admissions=%d", target, err, admit.calls)
+	}
+	if _, err := resolver.ResolveTarget(nil, route); err == nil {
+		t.Fatal("nil context accepted")
+	}
+}

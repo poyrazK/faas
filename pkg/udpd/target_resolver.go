@@ -35,8 +35,8 @@ type StoreTargetResolver struct {
 }
 
 func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (gateway.Target, error) {
-	if r == nil || r.Store == nil {
-		return gateway.Target{}, errors.New("UDP resolver requires a state source")
+	if r == nil || r.Store == nil || ctx == nil {
+		return gateway.Target{}, errors.New("UDP resolver requires context and a state source")
 	}
 	if route.AppID == "" || route.AccountID == "" || route.ListenerName == "" || route.ListenerID == "" || route.PublicPort < api.UDPListenerPublicPortMin || route.PublicPort > api.UDPListenerPublicPortMax || route.GuestPort < 1 || route.GuestPort > 65535 {
 		return gateway.Target{}, errors.New("invalid UDP app route")
@@ -50,6 +50,9 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	instances, err := r.Store.ListInstancesForApp(ctx, route.AppID)
 	if err != nil {
+		return gateway.Target{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return gateway.Target{}, err
 	}
 	running := make([]state.Instance, 0, len(instances))

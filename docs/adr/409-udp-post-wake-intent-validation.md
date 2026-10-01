@@ -10,7 +10,7 @@ Scheduler admission may wait for a guest wake. A listener can be disabled, repla
 
 ## Decision
 
-Share app ownership, maintenance, listener identity and current manifest-port validation between pre-admission and post-wake checks. Before returning a cold-path target, re-read and validate current app/listener intent using the admission context. Reject canceled contexts and failed reads. Do not mutate scheduler-owned instance state or attempt to undo a wake from the edge.
+Share app ownership, maintenance, listener identity and current manifest-port validation between pre-admission and post-wake checks. Before returning a cold-path target, re-read and validate current app/listener intent using the admission context. Reject canceled contexts and failed reads. Also reject a canceled instance-list result before warm selection or scheduler admission, even when the source returns buffered rows successfully; reject nil contexts at the resolver boundary. Do not mutate scheduler-owned instance state or attempt to undo a wake from the edge.
 
 ## Consequences
 
