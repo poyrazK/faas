@@ -27,6 +27,11 @@ func TestPgStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("public collision = %v, want ErrConflict", err)
 	}
+	for _, port := range []int{-1, 0, 65536, int(int64(created.PublicPort) + (1 << 32))} {
+		if _, err := s.UDPListenerByPublicPort(ctx, port); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("out-of-range port %d resolved or aliased a listener: %v", port, err)
+		}
+	}
 	disabled, err := s.SetUDPListenerEnabled(ctx, created.ID, false)
 	if err != nil || disabled.Enabled {
 		t.Fatalf("disable = %+v, %v", disabled, err)
@@ -122,5 +127,33 @@ func TestPgStoreUDPListenerOwnershipNamespaceAndDeletedApp(t *testing.T) {
 	base.PublicPort++
 	if _, err := s.CreateUDPListener(ctx, base); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted-app create: %v", err)
+	}
+}
+
+func TestPgStoreUDPListenerSQLConstraintsPreserveEnabledIntent(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	account, app, _ := seedLiveDeploy(t, s, ctx, "-udp-constraints")
+	listener, err := s.CreateUDPListener(ctx, state.UDPListener{AccountID: account, AppID: app, ListenerName: "echo", GuestPort: 5353, PublicPort: 40129, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, query string
+		value       any
+	}{
+		{"guest-port", "UPDATE app_udp_listeners SET guest_port = $2 WHERE id = $1", 0},
+		{"public-port", "UPDATE app_udp_listeners SET public_port = $2 WHERE id = $1", 39999},
+		{"protocol", "UPDATE app_udp_listeners SET protocol = $2 WHERE id = $1", "tcp"},
+		{"name", "UPDATE app_udp_listeners SET listener_name = $2 WHERE id = $1", "Bad.Name"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, test.query, listener.ID, test.value); err == nil {
+				t.Fatal("database accepted invalid UDP intent")
+			}
+			got, err := s.UDPListenerByID(ctx, listener.ID)
+			if err != nil || got != listener {
+				t.Fatalf("rejected SQL changed enabled intent: got=%+v err=%v", got, err)
+			}
+		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ErrInvalidUDPListener identifies a listener that cannot be exposed by the
@@ -55,25 +56,17 @@ func validUDPListenerName(name string) bool {
 	return true
 }
 
-type udpListenerScanner interface {
-	Scan(dest ...any) error
+func udpListenerFromSQL(row sqlc.AppUdpListener) UDPListener {
+	return UDPListener{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), ListenerName: row.ListenerName, GuestPort: int(row.GuestPort), PublicPort: int(row.PublicPort), Protocol: row.Protocol, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
 }
 
-func scanUDPListener(row udpListenerScanner) (UDPListener, error) {
-	var listener UDPListener
-	if err := row.Scan(
-		&listener.ID, &listener.AppID, &listener.AccountID,
-		&listener.ListenerName, &listener.GuestPort, &listener.PublicPort,
-		&listener.Protocol, &listener.Enabled, &listener.CreatedAt, &listener.UpdatedAt,
-	); err != nil {
-		return UDPListener{}, err
+func udpListenersFromSQL(rows []sqlc.AppUdpListener) []UDPListener {
+	out := make([]UDPListener, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, udpListenerFromSQL(row))
 	}
-	return listener, nil
+	return out
 }
-
-const udpListenerColumns = `
-    id, app_id, account_id, listener_name, guest_port, public_port,
-    protocol, enabled, created_at, updated_at`
 
 func (s *PgStore) CreateUDPListener(ctx context.Context, in UDPListener) (UDPListener, error) {
 	in, err := normalizeUDPListener(in)
@@ -88,14 +81,12 @@ func (s *PgStore) CreateUDPListener(ctx context.Context, in UDPListener) (UDPLis
 		return UDPListener{}, fmt.Errorf("state: begin UDP listener tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	var accountID string
-	if err := tx.QueryRow(ctx, `
-		select account_id from apps where id = $1 and status <> 'deleted' for update
-	`, in.AppID).Scan(&accountID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return UDPListener{}, ErrNotFound
-		}
+	q := sqlc.New()
+	accountID, err := q.LockUDPListenerAppOwner(ctx, tx, in.AppID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UDPListener{}, ErrNotFound
+	}
+	if err != nil {
 		return UDPListener{}, fmt.Errorf("state: lock app for UDP listener: %w", err)
 	}
 	if accountID != in.AccountID {
@@ -104,143 +95,94 @@ func (s *PgStore) CreateUDPListener(ctx context.Context, in UDPListener) (UDPLis
 	if in.ID == "" {
 		in.ID = newID()
 	}
-	row := tx.QueryRow(ctx, `
-		insert into app_udp_listeners
-			(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
-		returning `+udpListenerColumns,
-		in.ID, in.AppID, in.AccountID, in.ListenerName, in.GuestPort,
-		in.PublicPort, in.Protocol, in.Enabled)
-	listener, err := scanUDPListener(row)
+	row, err := q.CreateUDPListener(ctx, tx, sqlc.CreateUDPListenerParams{ID: in.ID, AppID: in.AppID, AccountID: in.AccountID, ListenerName: in.ListenerName, GuestPort: int32(in.GuestPort), PublicPort: int32(in.PublicPort), Protocol: in.Protocol, Enabled: in.Enabled})
+	if isUniqueViolation(err) {
+		return UDPListener{}, ErrConflict
+	}
 	if err != nil {
-		if isUniqueViolation(err) {
-			return UDPListener{}, ErrConflict
-		}
 		return UDPListener{}, fmt.Errorf("state: insert UDP listener: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return UDPListener{}, fmt.Errorf("state: commit UDP listener: %w", err)
 	}
-	return listener, nil
+	return udpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) UDPListenerByID(ctx context.Context, id string) (UDPListener, error) {
-	row := s.pool.QueryRow(ctx, `
-		select `+udpListenerColumns+` from app_udp_listeners where id = $1
-	`, id)
-	listener, err := scanUDPListener(row)
+
+	row, err := sqlc.New().UDPListenerByID(ctx, s.pool, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UDPListener{}, ErrNotFound
 	}
 	if err != nil {
 		return UDPListener{}, fmt.Errorf("state: read UDP listener: %w", err)
 	}
-	return listener, nil
+	return udpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) UDPListenerByAppAndName(ctx context.Context, appID, listenerName string) (UDPListener, error) {
-	listenerName = strings.ToLower(strings.TrimSpace(listenerName))
-	row := s.pool.QueryRow(ctx, `
-		select `+udpListenerColumns+` from app_udp_listeners
-		 where app_id = $1 and listener_name = $2
-	`, appID, listenerName)
-	listener, err := scanUDPListener(row)
+
+	row, err := sqlc.New().UDPListenerByAppAndName(ctx, s.pool, sqlc.UDPListenerByAppAndNameParams{AppID: appID, ListenerName: strings.ToLower(strings.TrimSpace(listenerName))})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UDPListener{}, ErrNotFound
 	}
 	if err != nil {
 		return UDPListener{}, fmt.Errorf("state: read UDP listener by app/name: %w", err)
 	}
-	return listener, nil
+	return udpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) UDPListenerByPublicPort(ctx context.Context, publicPort int) (UDPListener, error) {
-	row := s.pool.QueryRow(ctx, `
-		select `+udpListenerColumns+` from app_udp_listeners
-		 where public_port = $1 and enabled and exists (select 1 from apps a where a.id = app_udp_listeners.app_id and a.account_id = app_udp_listeners.account_id and a.status <> 'deleted')
-	`, publicPort)
-	listener, err := scanUDPListener(row)
+	if publicPort < UDPListenerPublicPortMin || publicPort > UDPListenerPublicPortMax {
+		return UDPListener{}, ErrNotFound
+	}
+	row, err := sqlc.New().UDPListenerByPublicPort(ctx, s.pool, int32(publicPort))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UDPListener{}, ErrNotFound
 	}
 	if err != nil {
 		return UDPListener{}, fmt.Errorf("state: read UDP listener by public port: %w", err)
 	}
-	return listener, nil
-}
-
-func (s *PgStore) ListUDPListenersForApp(ctx context.Context, appID string) ([]UDPListener, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+udpListenerColumns+` from app_udp_listeners
-		 where app_id = $1 order by created_at desc, id desc
-	`, appID)
-	if err != nil {
-		return nil, fmt.Errorf("state: list UDP listeners: %w", err)
-	}
-	defer rows.Close()
-	listeners := make([]UDPListener, 0)
-	for rows.Next() {
-		listener, err := scanUDPListener(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan UDP listener: %w", err)
-		}
-		listeners = append(listeners, listener)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: iterate UDP listeners: %w", err)
-	}
-	return listeners, nil
-}
-
-// ListEnabledUDPListeners returns the listener identities that the raw UDP
-// edge should currently bind. It is intentionally separate from
-// UDPListenerStore so existing narrow store adapters do not need to grow a
-// fleet-wide listing method just to adopt udpd.
-func (s *PgStore) ListEnabledUDPListeners(ctx context.Context) ([]UDPListener, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+udpListenerColumns+` from app_udp_listeners
-		 where enabled and exists (select 1 from apps a where a.id = app_udp_listeners.app_id and a.account_id = app_udp_listeners.account_id and a.status <> 'deleted') order by public_port asc
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("state: list enabled UDP listeners: %w", err)
-	}
-	defer rows.Close()
-	listeners := make([]UDPListener, 0)
-	for rows.Next() {
-		listener, err := scanUDPListener(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan enabled UDP listener: %w", err)
-		}
-		listeners = append(listeners, listener)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: iterate enabled UDP listeners: %w", err)
-	}
-	return listeners, nil
+	return udpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) SetUDPListenerEnabled(ctx context.Context, id string, enabled bool) (UDPListener, error) {
-	row := s.pool.QueryRow(ctx, `
-		update app_udp_listeners set enabled = $2, updated_at = now()
-		 where id = $1
-		 returning `+udpListenerColumns,
-		id, enabled)
-	listener, err := scanUDPListener(row)
+
+	row, err := sqlc.New().SetUDPListenerEnabled(ctx, s.pool, sqlc.SetUDPListenerEnabledParams{ID: id, Enabled: enabled})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return UDPListener{}, ErrNotFound
 	}
 	if err != nil {
 		return UDPListener{}, fmt.Errorf("state: update UDP listener: %w", err)
 	}
-	return listener, nil
+	return udpListenerFromSQL(row), nil
+}
+
+func (s *PgStore) ListUDPListenersForApp(ctx context.Context, appID string) ([]UDPListener, error) {
+	rows, err := sqlc.New().ListUDPListenersForApp(ctx, s.pool, appID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list UDP listeners: %w", err)
+	}
+	return udpListenersFromSQL(rows), nil
+}
+
+// ListEnabledUDPListeners supplies current edge bindings without widening
+// the optional customer-intent store interface. Deleted or foreign-owned apps
+// cannot contribute a public binding.
+func (s *PgStore) ListEnabledUDPListeners(ctx context.Context) ([]UDPListener, error) {
+	rows, err := sqlc.New().ListEnabledUDPListeners(ctx, s.pool)
+	if err != nil {
+		return nil, fmt.Errorf("state: list enabled UDP listeners: %w", err)
+	}
+	return udpListenersFromSQL(rows), nil
 }
 
 func (s *PgStore) DeleteUDPListener(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from app_udp_listeners where id = $1`, id)
+	count, err := sqlc.New().DeleteUDPListener(ctx, s.pool, id)
 	if err != nil {
 		return fmt.Errorf("state: delete UDP listener: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if count == 0 {
 		return ErrNotFound
 	}
 	return nil
