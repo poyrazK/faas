@@ -37,9 +37,12 @@ class CreateJobRequest:
     max_parallelism: int | Unset = UNSET
     retry_max: int | Unset = UNSET
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
+    do not accept failure rules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

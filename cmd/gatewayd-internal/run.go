@@ -63,6 +63,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
@@ -812,7 +813,18 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	identity := target.PlatformIdentity("", inv.ID)
 	identity.AppID = inv.AppID
 	identity.PlatformTenantID = inv.PlatformTenantID
+	flagContextValues := req.Header.Values(api.FlagContextHeader)
 	identity.ApplyGuestHeaders(req.Header)
+	// PlatformIdentity clears reserved guest headers. Reattach only a canonical
+	// Flags context whose customer matches the tenant identity admitted from the
+	// durable invocation row; arbitrary persisted headers cannot assert tenants.
+	if len(flagContextValues) == 1 && inv.PlatformTenantID != "" {
+		if propagated, err := flags.DecodePropagationHeader(flagContextValues[0]); err == nil && propagated.CustomerID == inv.PlatformTenantID {
+			if canonical, err := flags.EncodePropagationHeader(propagated); err == nil {
+				req.Header.Set(api.FlagContextHeader, canonical)
+			}
+		}
+	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
 	// The synthetic marker is intentionally attached to this derived request

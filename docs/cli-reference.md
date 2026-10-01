@@ -635,6 +635,13 @@ Manage billing (portal, invoices, subscription, card on file)
 
 `gregale billing [<subcommand>]`
 
+Examples:
+
+```sh
+gregale billing export --month 2026-09 --out invoices.zip
+gregale billing export --month 2026-09 --format csv --out invoices.csv
+```
+
 ### billing portal
 
 Open the active billing provider&#39;s portal
@@ -654,6 +661,39 @@ Show the card on file
 ### billing status
 
 Show subscription status
+
+### billing refresh-invoice
+
+Refresh provider facts for an existing invoice
+
+`gregale billing refresh-invoice ID`
+
+Examples:
+
+```sh
+gregale billing refresh-invoice INVOICE_ID
+```
+
+### billing backfill-invoices
+
+Import one page of missing provider invoices
+
+Examples:
+
+```sh
+gregale billing backfill-invoices
+gregale billing backfill-invoices --cursor TOKEN
+```
+
+### billing export
+
+Export a partial FOCUS 1.4 invoice projection
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | invoice period-end month (required) |  |
+| `--format <FORMAT>` | export encoding (default zip with CSV and metadata) | one of `zip` · `csv` · `metadata` |
+| `--out <PATH>` | new output file (required for zip); - writes stdout |  |
 
 
 ## canary
@@ -886,7 +926,7 @@ Schedule an HTTP request or deployment command
 | `--skip-if-running` | skip fires while the previous run is active |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
-| `--schedule-policy <JSON>` | versioned schedule policy JSON (command crons only) |  |
+| `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned retry rules JSON (command crons only) |  |
 
 ### crons info
@@ -908,7 +948,7 @@ Update one cron rule
 | `--allow-overlap` | allow scheduled fires to overlap |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
-| `--schedule-policy <JSON>` | replace versioned schedule policy JSON (command crons only) |  |
+| `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned retry rules JSON (command crons only) |  |
 
 ### crons rm

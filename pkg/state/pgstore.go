@@ -15039,7 +15039,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15252,6 +15252,7 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
 		   and work_policy_name is null
+		   and (start_deadline_at is null or received_at is not null or start_deadline_at >= clock_timestamp())
 		 returning `+invocationSelectCols, id, instanceID, leaseText)
 	inv, err := scanInvocation(row)
 	if err != nil {
@@ -16239,9 +16240,9 @@ func scanInvocations(rows pgx.Rows) ([]Invocation, error) {
 func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
-	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
+	var scheduledAt, leaseExpires, receivedAt, completedAt, startDeadlineAt *time.Time
 	var queueName string
-	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination *string
+	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination, occurrenceID *string
 	var payload, headers, result []byte
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
@@ -16262,7 +16263,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration, &occurrenceID, &startDeadlineAt,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16314,6 +16315,12 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	if cronID != nil {
 		id := *cronID
 		inv.CronID = &id
+	}
+	if occurrenceID != nil {
+		inv.OccurrenceID = *occurrenceID
+	}
+	if startDeadlineAt != nil {
+		inv.StartDeadlineAt = startDeadlineAt
 	}
 	if ackURL != nil {
 		inv.AckURL = *ackURL
@@ -20597,153 +20604,6 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 	return out, rows.Err()
 }
 
-// ListInvoicesForAccount returns the account's invoices, newest first,
-// ordered by (period_end DESC, id DESC) for deterministic pagination.
-// The handler clamps limit (default 25, max 100); the SQL uses the same
-// $1..$N split as ListDeploymentsForAccount.
-//
-// Month filtering (when month != nil) applies a half-open UTC range
-// [month, month+1mo) to period_end. Both bounds are pre-computed in
-// Go in UTC (monthStart / monthEnd), so the SQL compares timestamptz
-// to timestamptz on UTC instants — no `date_trunc('month', ...)` on
-// either side. The earlier form `date_trunc('month', $2::timestamptz)`
-// bucketed in the SESSION timezone, so on non-UTC Postgres sessions
-// the half-open boundary leaked (memory:
-// pkg-state-usage-monthly-tz-compare). The fix uses bare
-// `period_end >= $2` — same shape as the existing UsageByAccount
-// minute-range filter — and a session-static TZ test pins it.
-//
-// Cursor (before) is strict-less on period_end only. The id tie-break
-// is implicit in the unique index ordering; rows sharing the same
-// period_end may appear at the page boundary if a customer has multiple
-// invoices for the same provider-period. Acceptable for the v1
-// surface — added this comment so the next reader does not silently
-// "fix" the cursor without introducing a compound id cursor.
-func (s *PgStore) ListInvoicesForAccount(ctx context.Context, accountID string, month *time.Time, before time.Time, limit int) ([]Invoice, error) {
-	if limit <= 0 {
-		limit = 25
-	}
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	switch {
-	case month != nil && before.IsZero():
-		monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
-		monthEnd := monthStart.AddDate(0, 1, 0)
-		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-			        period_start, period_end,
-			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-			        currency, pdf_available, created_at, updated_at
-			   from invoices
-			  where account_id = $1
-			    and period_end >= $2
-			    and period_end <  $3
-			  order by period_end desc, id desc
-			  limit $4`,
-			accountID, monthStart, monthEnd, limit)
-	case month != nil && !before.IsZero():
-		monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
-		monthEnd := monthStart.AddDate(0, 1, 0)
-		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-			        period_start, period_end,
-			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-			        currency, pdf_available, created_at, updated_at
-			   from invoices
-			  where account_id = $1
-			    and period_end >= $2
-			    and period_end <  $3
-			    and period_end < $4
-			  order by period_end desc, id desc
-			  limit $5`,
-			accountID, monthStart, monthEnd, before, limit)
-	case month == nil && !before.IsZero():
-		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-			        period_start, period_end,
-			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-			        currency, pdf_available, created_at, updated_at
-			   from invoices
-			  where account_id = $1
-			    and period_end < $2
-			  order by period_end desc, id desc
-			  limit $3`,
-			accountID, before, limit)
-	default: // month == nil && before.IsZero()
-		rows, err = s.pool.Query(ctx,
-			`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-			        period_start, period_end,
-			        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-			        currency, pdf_available, created_at, updated_at
-			   from invoices
-			  where account_id = $1
-			  order by period_end desc, id desc
-			  limit $2`,
-			accountID, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Invoice
-	for rows.Next() {
-		var inv Invoice
-		if err := rows.Scan(
-			&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
-			&inv.Number, &inv.Status,
-			&inv.PeriodStart, &inv.PeriodEnd,
-			&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-			&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
-			&inv.Currency, &inv.PDFAvailable,
-			&inv.CreatedAt, &inv.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, inv)
-	}
-	return out, rows.Err()
-}
-
-// GetInvoiceByID resolves a single invoice by primary key. Returns
-// ErrNotFound when no row matches (the consumption reducer surfaces
-// this to the apid handler as 404 CodeNotFound). Hand-written —
-// single-row read against the PK index, no sqlc win. The future
-// GET /v1/invoices/{id} single-invoice endpoint will reuse this
-// primitive.
-func (s *PgStore) GetInvoiceByID(ctx context.Context, id string) (Invoice, error) {
-	var inv Invoice
-	err := s.pool.QueryRow(ctx,
-		`select id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-		        period_start, period_end,
-		        subtotal_cents, tax_cents, total_cents, amount_paid_cents,
-		        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-		        currency, pdf_available, created_at, updated_at
-		   from invoices
-		  where id = $1`,
-		id).Scan(
-		&inv.ID, &inv.AccountID, &inv.Provider, &inv.ProviderInvoiceID, &inv.ProviderChargeID,
-		&inv.Number, &inv.Status,
-		&inv.PeriodStart, &inv.PeriodEnd,
-		&inv.SubtotalCents, &inv.TaxCents, &inv.TotalCents, &inv.AmountPaidCents,
-		&inv.Plan, &inv.AmountRefundedCents, &inv.AmountRefundPendingCents, &inv.CreditsAppliedCents,
-		&inv.Currency, &inv.PDFAvailable,
-		&inv.CreatedAt, &inv.UpdatedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Invoice{}, ErrNotFound
-		}
-		return Invoice{}, err
-	}
-	return inv, nil
-}
-
 // GetInvoiceByProviderID resolves invoice or charge keys for billing hooks.
 // A collision between the two namespaces is ambiguous: fail closed instead
 // of returning a map-order or query-plan-dependent invoice.
@@ -20777,53 +20637,6 @@ func (s *PgStore) GetInvoiceByProviderID(ctx context.Context, accountID, provide
 		return Invoice{}, ErrConflict
 	}
 	return inv, nil
-}
-
-// UpsertInvoice stores the provider projection used by invoice history. A
-// Polar order can arrive as pending and later as paid, so updates replace the
-// mutable invoice fields while preserving the original created_at timestamp.
-func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
-	if inv.Provider == "" || inv.ProviderInvoiceID == "" || inv.AccountID == "" {
-		return errors.New("state: invoice account, provider, and provider_invoice_id are required")
-	}
-	if inv.PeriodStart.IsZero() {
-		inv.PeriodStart = time.Now().UTC()
-	}
-	if inv.PeriodEnd.IsZero() {
-		inv.PeriodEnd = inv.PeriodStart
-	}
-	if inv.Currency == "" {
-		inv.Currency = "eur"
-	}
-	if inv.Status == "" {
-		inv.Status = "open"
-	}
-	if !inv.Plan.Valid() {
-		inv.Plan = api.PlanFree
-	}
-	_, err := s.pool.Exec(ctx,
-		`insert into invoices (
-			account_id, provider, provider_invoice_id, provider_charge_id, number, status,
-			period_start, period_end, subtotal_cents, tax_cents, total_cents,
-			amount_paid_cents, plan, currency, pdf_available, updated_at
-		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
-		on conflict (account_id, provider, provider_invoice_id) do update set
-			provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-			number = excluded.number,
-			status = excluded.status,
-			period_start = excluded.period_start,
-			period_end = excluded.period_end,
-			subtotal_cents = excluded.subtotal_cents,
-			tax_cents = excluded.tax_cents,
-			total_cents = excluded.total_cents,
-			amount_paid_cents = excluded.amount_paid_cents,
-			currency = excluded.currency,
-			pdf_available = excluded.pdf_available,
-			updated_at = now()`,
-		inv.AccountID, inv.Provider, inv.ProviderInvoiceID, inv.ProviderChargeID, inv.Number, inv.Status,
-		inv.PeriodStart.UTC(), inv.PeriodEnd.UTC(), inv.SubtotalCents, inv.TaxCents,
-		inv.TotalCents, inv.AmountPaidCents, string(inv.Plan), strings.ToLower(inv.Currency), inv.PDFAvailable)
-	return err
 }
 
 type invoiceRefundLifecycle uint8
@@ -25416,6 +25229,11 @@ func mapErr(err error) error {
 		switch pgErr.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
+		case pgerrcode.ForeignKeyViolation:
+			if pgErr.ConstraintName == "invocation_platform_tenant_fk" {
+				return ErrInvalidArgument
+			}
+			return err
 		case pgerrcode.CheckViolation:
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable
@@ -31939,14 +31757,15 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 
 	// Atomic state transition + lease stamp + attempts bump.
 	row := tx.QueryRow(ctx, `
-		update invocations
-		   set state = 'dispatching',
+		 update invocations
+		    set state = 'dispatching',
 		       quota_reserved = true,
 		       lease_expires_at = now() + $3::interval,
 		       instance_id = coalesce(nullif($2, ''), instance_id),
 		       received_at = now(),
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
+		   and (start_deadline_at is null or received_at is not null or start_deadline_at >= clock_timestamp())
 		 returning `+invocationSelectCols, id, instanceID, leaseText)
 	inv, err := scanInvocation(row)
 	if err != nil {

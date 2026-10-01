@@ -10,6 +10,10 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 export type QueueSendRequest = {
   payload?: Record<string, any>;
   /**
+   * Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request.
+   */
+  flag_context?: string;
+  /**
    * Optional logical queue name. Required when an app has multiple enabled queue consumers.
    */
   queue_name?: string;

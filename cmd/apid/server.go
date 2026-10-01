@@ -295,7 +295,10 @@ type server struct {
 	// billingProviderName retains the configured provider even for the legacy
 	// Stripe apid path, where billingProvider is intentionally nil.
 	billingProviderName string
-	billingMode         billing.Mode
+	// legacyStripeInvoiceReader enriches invoice facts without switching the
+	// legacy Stripe webhook/payment dispatch to a billing.Provider.
+	legacyStripeInvoiceReader billing.InvoiceDetailsReader
+	billingMode               billing.Mode
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -2904,6 +2907,9 @@ func (s *server) handler() http.Handler {
 	// Wrapped in requireMFA for consistency with the other
 	// session-cookie routes (IAM-2 / issue #186).
 	mux.HandleFunc("GET /v1/invoices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.listInvoices))))
+	mux.HandleFunc("GET /v1/billing/focus", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.exportFOCUSInvoices))))
+	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
+	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 
 	// Billing portal link (issue #253). Read-only — the URL itself
 	// does not mutate anything; the customer-facing mutations live

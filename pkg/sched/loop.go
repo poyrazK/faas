@@ -3924,6 +3924,14 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		l.dispatchScheduledCommandCron(ctx, c, due, now)
 		return
 	}
+	if c.SchedulePolicy != nil {
+		due := make([]time.Time, 0, 4)
+		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
+			due = append(due, next)
+		}
+		l.dispatchScheduledHTTPCron(ctx, c, due, now)
+		return
+	}
 	if c.SkipIfRunning || (c.SchedulePolicy != nil && c.SchedulePolicy.Overlap != "allow") {
 		active, err := l.engine.Store().CountActiveCronInvocations(ctx, c.ID)
 		if err != nil {
@@ -3962,6 +3970,96 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	}
 	if err := l.engine.Store().MarkCronFired(ctx, c.ID, firedBoundary); err != nil {
 		l.log.Warn("cron: mark fired", "cron_id", c.ID, "err", err)
+	}
+}
+
+func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due []time.Time, now time.Time) {
+	if len(due) == 0 {
+		return
+	}
+	store := l.engine.Store()
+	occurrences, ok := store.(state.ScheduledCronInvocationStore)
+	if !ok {
+		l.log.Warn("cron: scheduled invocation store is unavailable", "cron_id", c.ID)
+		return
+	}
+	app, err := store.AppByID(ctx, c.AppID)
+	if err != nil {
+		l.log.Warn("cron: resolve scheduled app", "cron_id", c.ID, "err", err)
+		return
+	}
+	account, err := store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		l.log.Warn("cron: resolve scheduled account", "cron_id", c.ID, "err", err)
+		return
+	}
+	if !account.Active() {
+		return
+	}
+	expectedLastFiredAt := nonZeroSchedTimePtr(c.LastFiredAt)
+	missedRuns := c.SchedulePolicy.MissedRuns
+	for _, missed := range due[:len(due)-1] {
+		disposition, reason := "missed_deadline", "older due occurrence skipped under missed_runs=skip"
+		if missedRuns == "coalesce_latest" {
+			disposition, reason = "coalesced", "older due occurrence coalesced into the latest due occurrence"
+		}
+		_, occurrence, _, recordErr := occurrences.CreateScheduledCronInvocationOccurrence(ctx, c.ID, expectedLastFiredAt, now,
+			state.CronScheduledOccurrenceOptions{ScheduledFor: missed, ScheduleRevision: c.ScheduleRevision, Disposition: disposition, Reason: reason}, state.Invocation{})
+		if recordErr != nil {
+			l.log.Warn("cron: record missed HTTP occurrence", "cron_id", c.ID, "scheduled_for", missed, "err", recordErr)
+			return
+		}
+		if occurrence.ID == "" {
+			return
+		}
+		expectedLastFiredAt = &missed
+	}
+	scheduledFor := due[len(due)-1]
+	requestID := middleware.NewRequestID()
+	invokeCtx := wire.WithContext(ctx, wire.CorrelationFields{RequestID: requestID, AppID: c.AppID})
+	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(invokeCtx, map[string]string{"x-faas-cron": "true"}))
+	if err != nil {
+		l.log.Warn("cron: encode scheduled HTTP headers", "cron_id", c.ID, "err", err)
+		return
+	}
+	cronID := c.ID
+	invocation, occurrence, created, err := occurrences.CreateScheduledCronInvocationOccurrence(ctx, c.ID, expectedLastFiredAt, now,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}, state.Invocation{
+			AppID: c.AppID, AccountID: account.ID, Source: state.InvocationCron,
+			Method: "POST", Path: c.Path, CronID: &cronID, Headers: headers,
+			DueAt: scheduledFor, ScheduledAt: &scheduledFor, CreatedAt: now,
+		})
+	if err != nil {
+		l.log.Warn("cron: create scheduled HTTP occurrence", "cron_id", c.ID, "err", err)
+		return
+	}
+	if occurrence.ID == "" {
+		return
+	}
+	invocationID := ""
+	status := occurrence.Status
+	if created {
+		invocationID = invocation.ID
+		status = "queued"
+		l.log.Info("cron: scheduled HTTP invocation queued", "cron_id", c.ID, "occurrence_id", occurrence.ID, "invocation_id", invocation.ID)
+	} else {
+		l.log.Info("cron: scheduled HTTP occurrence recorded", "cron_id", c.ID, "occurrence_id", occurrence.ID, "status", occurrence.Status)
+	}
+	if l.audit != nil {
+		l.audit.Emit(ctx, AuditEventCronFired, &account.ID, map[string]any{
+			"cron_id": c.ID, "app_id": c.AppID, "schedule": c.Schedule,
+			"path": c.Path, "invocation_id": invocationID, "instance_id": "",
+			"occurrence_id": occurrence.ID, "scheduled_for": scheduledFor.UTC().Format(time.RFC3339Nano),
+			"fired_at": now.UTC().Format(time.RFC3339Nano), "status": status,
+			"trigger": string(TriggerSchedule),
+		})
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"cron_id": c.ID, "app_id": c.AppID, "at": now.UTC().Format(time.RFC3339Nano),
+		"request_id": requestID, "occurrence_id": occurrence.ID, "invocation_id": invocationID,
+	})
+	if err := l.engine.Notifier().Notify(ctx, db.NotifyCronFired, string(payload)); err != nil {
+		l.log.Warn("cron: notify scheduled HTTP fire", "cron_id", c.ID, "err", err)
 	}
 }
 

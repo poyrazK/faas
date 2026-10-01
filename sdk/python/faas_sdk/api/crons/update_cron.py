@@ -87,7 +87,8 @@ def sync_detailed(
 
     Args:
         id (str):
-        body (UpdateCronRequest): Partial cron update.
+        body (UpdateCronRequest): Partial cron update. Schedule policies apply to HTTP and command
+            Crons; failure rules are command-Cron only.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,7 +120,8 @@ def sync(
 
     Args:
         id (str):
-        body (UpdateCronRequest): Partial cron update.
+        body (UpdateCronRequest): Partial cron update. Schedule policies apply to HTTP and command
+            Crons; failure rules are command-Cron only.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,7 +148,8 @@ async def asyncio_detailed(
 
     Args:
         id (str):
-        body (UpdateCronRequest): Partial cron update.
+        body (UpdateCronRequest): Partial cron update. Schedule policies apply to HTTP and command
+            Crons; failure rules are command-Cron only.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,7 +179,8 @@ async def asyncio(
 
     Args:
         id (str):
-        body (UpdateCronRequest): Partial cron update.
+        body (UpdateCronRequest): Partial cron update. Schedule policies apply to HTTP and command
+            Crons; failure rules are command-Cron only.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

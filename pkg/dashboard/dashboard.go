@@ -1072,6 +1072,7 @@ type ScheduleOccurrencePageItem struct {
 	Reason       string
 	RunID        string
 	TaskID       string
+	InvocationID string
 	BlockingID   string
 }
 
@@ -1229,6 +1230,7 @@ type CronItem struct {
 	// the form.
 	FireNowConfirmToken   string
 	SchedulePolicyEnabled bool
+	IsCommandCron         bool
 	OverlapPolicy         string
 	DeadlineSeconds       int
 	MissedRunsPolicy      string

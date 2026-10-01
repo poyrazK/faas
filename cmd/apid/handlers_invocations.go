@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -334,7 +335,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.QueueName, req.RetryPolicy, req.Work)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -390,7 +391,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("encode application message"))
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.QueueName, req.RetryPolicy, req.Work)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -406,7 +407,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 	})
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
@@ -425,6 +426,10 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		}
 	}
 	if problem := validateInvocationRetryPolicy(retryPolicy); problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	flagContextHeader, platformTenantID, problem := canonicalQueueFlagContext(rawFlagContext)
+	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
 	resolvedQueueName, problem := s.resolveQueueSendName(ctx, acct, app, queueName)
@@ -462,15 +467,30 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if err != nil {
 		return state.Invocation{}, "", api.ErrCapacity("encode queue trace context")
 	}
+	if flagContextHeader != "" {
+		var headers map[string]string
+		if err := json.Unmarshal(traceHeaders, &headers); err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[api.FlagContextHeader] = flagContextHeader
+		traceHeaders, err = json.Marshal(headers)
+		if err != nil {
+			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
+		}
+	}
 	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
-		AppID:           app.ID,
-		AccountID:       acct.ID,
-		Source:          state.InvocationQueue,
-		QueueName:       resolvedQueueName,
-		Payload:         payload,
-		Headers:         traceHeaders,
-		DueAt:           time.Now().UTC(),
-		RetryPolicyJSON: effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		AppID:            app.ID,
+		AccountID:        acct.ID,
+		PlatformTenantID: platformTenantID,
+		Source:           state.InvocationQueue,
+		QueueName:        resolvedQueueName,
+		Payload:          payload,
+		Headers:          traceHeaders,
+		DueAt:            time.Now().UTC(),
+		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
 	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem
@@ -478,6 +498,24 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	var traceHeaderValues map[string]string
 	_ = json.Unmarshal(traceHeaders, &traceHeaderValues)
 	return inv, traceHeaderValues[api.TraceIDHeader], nil
+}
+
+// canonicalQueueFlagContext accepts only the bounded Flags wire contract.
+// The tenant id is persisted separately so invocation admission can enforce
+// account ownership and tenant suspension before every attempt.
+func canonicalQueueFlagContext(raw string) (header, tenantID string, problem *api.Problem) {
+	if raw == "" {
+		return "", "", nil
+	}
+	propagated, err := flags.DecodePropagationHeader(raw)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	canonical, err := flags.EncodePropagationHeader(propagated)
+	if err != nil {
+		return "", "", api.ErrValidation("flag_context must be a valid Gregale Flags propagation envelope")
+	}
+	return canonical, propagated.CustomerID, nil
 }
 
 func (s *server) replaceableQueueWorkCount(ctx context.Context, app state.App, work *api.InvokeWork) (int, *api.Problem) {

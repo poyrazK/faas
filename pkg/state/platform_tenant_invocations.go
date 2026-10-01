@@ -16,7 +16,7 @@ func (m *MemStore) platformTenantInvocationAllowedLocked(inv Invocation) error {
 	tenant, ok := m.platformTenants[inv.PlatformTenantID]
 	app := m.apps[inv.AppID]
 	if !ok || tenant.AccountID != inv.AccountID || app.AccountID != inv.AccountID ||
-		(inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay) {
+		(inv.Source != InvocationAsyncInvoke && inv.Source != InvocationReplay && inv.Source != InvocationQueue) {
 		return ErrInvalidArgument
 	}
 	if tenant.Status != PlatformTenantActive {

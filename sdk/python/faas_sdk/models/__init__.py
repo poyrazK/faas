@@ -805,6 +805,7 @@ from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
+from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
 from .failure_rules import FailureRules
@@ -932,8 +933,13 @@ from .invocation_source import InvocationSource
 from .invocation_state import InvocationState
 from .invoice import Invoice
 from .invoice_currency import InvoiceCurrency
+from .invoice_history_backfill_response import InvoiceHistoryBackfillResponse
+from .invoice_history_backfill_response_provider import InvoiceHistoryBackfillResponseProvider
 from .invoice_list_response import InvoiceListResponse
 from .invoice_provider import InvoiceProvider
+from .invoice_refresh_response import InvoiceRefreshResponse
+from .invoice_refresh_response_provider import InvoiceRefreshResponseProvider
+from .invoice_refresh_response_source_gap import InvoiceRefreshResponseSourceGap
 from .invoice_status import InvoiceStatus
 from .invoke_request import InvokeRequest
 from .invoke_request_headers import InvokeRequestHeaders
@@ -2799,6 +2805,7 @@ __all__ = (
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
+    "ExportFOCUSInvoicesFormat",
     "FailureRule",
     "FailureRuleAction",
     "FailureRules",
@@ -2926,8 +2933,13 @@ __all__ = (
     "InvocationState",
     "Invoice",
     "InvoiceCurrency",
+    "InvoiceHistoryBackfillResponse",
+    "InvoiceHistoryBackfillResponseProvider",
     "InvoiceListResponse",
     "InvoiceProvider",
+    "InvoiceRefreshResponse",
+    "InvoiceRefreshResponseProvider",
+    "InvoiceRefreshResponseSourceGap",
     "InvoiceStatus",
     "InvokeRequest",
     "InvokeRequestHeaders",

@@ -560,7 +560,7 @@ type cloudEventEnvelope struct {
 	Time            *time.Time      `json:"time,omitempty"`
 	DataContentType string          `json:"datacontenttype"`
 	Data            json.RawMessage `json:"data"`
-	AccountID       string          `json:"account_id,omitempty"`
+	AccountID       string          `json:"accountid,omitempty"`
 }
 
 func marshalCloudEvent(evt Event) ([]byte, error) {

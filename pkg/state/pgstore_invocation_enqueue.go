@@ -37,6 +37,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		WorkFairnessDigest: inv.WorkFairnessDigest,
 		WorkFairnessLimit:  pgtype.Int4{Int32: int32(inv.WorkFairnessLimit), Valid: inv.WorkFairnessLimit != 0},
 		DeploymentScope:    inv.DeploymentScope,
+		StartDeadlineAt:    nullableTimestamptzPtr(inv.StartDeadlineAt),
 	}
 	if len(params.RetryPolicy) == 0 {
 		params.RetryPolicy = nil
@@ -59,6 +60,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"on_failure_destination_id", inv.OnFailureDestinationID, false, &params.OnFailureDestinationID},
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
 		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
+		{"occurrence_id", inv.OccurrenceID, false, &params.OccurrenceID},
 	} {
 		if input.value == "" && !input.required {
 			continue
@@ -94,6 +96,7 @@ func invocationFromSQL(row sqlc.Invocation) Invocation {
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
 		InstanceID: row.InstanceID.String, Source: InvocationSource(row.Source),
 		QueueBindingID: uuidString(row.QueueBindingID), QueueName: row.QueueName, State: InvocationState(row.State),
+		OccurrenceID: uuidString(row.OccurrenceID), StartDeadlineAt: timestamptzToTimePtr(row.StartDeadlineAt),
 		Method: row.Method, Path: row.Path, Payload: row.Payload, Headers: row.Headers,
 		DueAt: timestamptzToTime(row.DueAt), ScheduledAt: timestamptzToTimePtr(row.ScheduledAt),
 		AckURL: row.AckUrl.String, Result: row.Result,

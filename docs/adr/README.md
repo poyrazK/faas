@@ -54,7 +54,13 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 387 | [Git-owned environment intent and continuous reconciliation](387-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 393 | [Git-owned environment intent and continuous reconciliation](393-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
+| 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
+| 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
+| 389 | [Invoice detail lifecycle tracking](389-invoice-detail-lifecycle.md) | accepted | Independent record timestamps, exact row fingerprints, and historical coverage |
+| 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
+| 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
 | 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
 | 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |

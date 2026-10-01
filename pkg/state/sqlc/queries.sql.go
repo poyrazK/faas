@@ -2826,7 +2826,8 @@ INSERT INTO invocations (
   on_success_destination_id, on_failure_destination_id,
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
-  work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id
+  work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
+  occurrence_id, start_deadline_at
 ) VALUES (
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
@@ -2837,7 +2838,8 @@ INSERT INTO invocations (
   $20, nullif($21::text, ''),
   $22, $23, $24,
   $25, $26, $27,
-  $28, nullif($29::text, ''), $30
+  $28, nullif($29::text, ''), $30,
+  $31::uuid, $32::timestamptz
 ) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation
 `
 
@@ -2872,6 +2874,8 @@ type EnqueueInvocationRowParams struct {
 	PlatformTenantID       pgtype.UUID
 	DeploymentScope        string
 	QueueBindingID         pgtype.UUID
+	OccurrenceID           pgtype.UUID
+	StartDeadlineAt        pgtype.Timestamptz
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -2906,6 +2910,8 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.PlatformTenantID,
 		arg.DeploymentScope,
 		arg.QueueBindingID,
+		arg.OccurrenceID,
+		arg.StartDeadlineAt,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -5230,6 +5236,70 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	return tail_count, err
 }
 
+const getInvoiceSnapshot = `-- name: GetInvoiceSnapshot :one
+SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+       period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+       plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1
+`
+
+type GetInvoiceSnapshotRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error) {
+	row := db.QueryRow(ctx, getInvoiceSnapshot, id)
+	var i GetInvoiceSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.ProviderChargeID,
+		&i.Number,
+		&i.Status,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.TaxCents,
+		&i.TotalCents,
+		&i.AmountPaidCents,
+		&i.Plan,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+		&i.Currency,
+		&i.PdfAvailable,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Details,
+		&i.DetailLifecycle,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -6197,6 +6267,66 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertInvoiceHistorySnapshot = `-- name: InsertInvoiceHistorySnapshot :one
+INSERT INTO invoices (
+  account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+  period_start, period_end, subtotal_cents, tax_cents, total_cents,
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (account_id, provider, provider_invoice_id) DO NOTHING
+RETURNING id, updated_at
+`
+
+type InsertInvoiceHistorySnapshotParams struct {
+	AccountID         pgtype.UUID
+	Provider          string
+	ProviderInvoiceID string
+	ProviderChargeID  string
+	Number            string
+	Status            string
+	PeriodStart       pgtype.Timestamptz
+	PeriodEnd         pgtype.Timestamptz
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	AmountPaidCents   int64
+	Plan              string
+	Currency          string
+	PdfAvailable      bool
+	Details           []byte
+	DetailLifecycle   []byte
+}
+
+type InsertInvoiceHistorySnapshotRow struct {
+	ID        pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error) {
+	row := db.QueryRow(ctx, insertInvoiceHistorySnapshot,
+		arg.AccountID,
+		arg.Provider,
+		arg.ProviderInvoiceID,
+		arg.ProviderChargeID,
+		arg.Number,
+		arg.Status,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.SubtotalCents,
+		arg.TaxCents,
+		arg.TotalCents,
+		arg.AmountPaidCents,
+		arg.Plan,
+		arg.Currency,
+		arg.PdfAvailable,
+		arg.Details,
+		arg.DetailLifecycle,
+	)
+	var i InsertInvoiceHistorySnapshotRow
+	err := row.Scan(&i.ID, &i.UpdatedAt)
+	return i, err
+}
+
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (account_id, token_hash, expires_at, issuer_url, subject,
@@ -6664,6 +6794,17 @@ func (q *Queries) InvalidateEnvironmentGitOpsRuntimeConfig(ctx context.Context, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const invoiceRefreshTime = `-- name: InvoiceRefreshTime :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) InvoiceRefreshTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, invoiceRefreshTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const isMailSuppressed = `-- name: IsMailSuppressed :one
@@ -10124,6 +10265,103 @@ func (q *Queries) ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype
 	return items, nil
 }
 
+const listInvoiceSnapshots = `-- name: ListInvoiceSnapshots :many
+SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+       period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+       plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices
+WHERE account_id = $1::uuid
+  AND ($2::timestamptz IS NULL OR period_end >= $2)
+  AND ($3::timestamptz IS NULL OR period_end < $3)
+  AND ($4::timestamptz IS NULL OR period_end < $4)
+ORDER BY period_end DESC, id DESC
+LIMIT $5
+`
+
+type ListInvoiceSnapshotsParams struct {
+	AccountID  pgtype.UUID
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+	BeforeTime pgtype.Timestamptz
+	RowLimit   int32
+}
+
+type ListInvoiceSnapshotsRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error) {
+	rows, err := db.Query(ctx, listInvoiceSnapshots,
+		arg.AccountID,
+		arg.MonthStart,
+		arg.MonthEnd,
+		arg.BeforeTime,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvoiceSnapshotsRow{}
+	for rows.Next() {
+		var i ListInvoiceSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Provider,
+			&i.ProviderInvoiceID,
+			&i.ProviderChargeID,
+			&i.Number,
+			&i.Status,
+			&i.PeriodStart,
+			&i.PeriodEnd,
+			&i.SubtotalCents,
+			&i.TaxCents,
+			&i.TotalCents,
+			&i.AmountPaidCents,
+			&i.Plan,
+			&i.AmountRefundedCents,
+			&i.AmountRefundPendingCents,
+			&i.CreditsAppliedCents,
+			&i.Currency,
+			&i.PdfAvailable,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Details,
+			&i.DetailLifecycle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
 select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id
 from deployments d
@@ -11606,6 +11844,75 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 		&i.AmountRefundedCents,
 		&i.AmountRefundPendingCents,
 		&i.CreditsAppliedCents,
+	)
+	return i, err
+}
+
+const lockOwnedInvoiceSnapshot = `-- name: LockOwnedInvoiceSnapshot :one
+SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+       period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+       plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1 AND account_id = $2 FOR UPDATE
+`
+
+type LockOwnedInvoiceSnapshotParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type LockOwnedInvoiceSnapshotRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) LockOwnedInvoiceSnapshot(ctx context.Context, db DBTX, arg LockOwnedInvoiceSnapshotParams) (LockOwnedInvoiceSnapshotRow, error) {
+	row := db.QueryRow(ctx, lockOwnedInvoiceSnapshot, arg.ID, arg.AccountID)
+	var i LockOwnedInvoiceSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.ProviderChargeID,
+		&i.Number,
+		&i.Status,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.TaxCents,
+		&i.TotalCents,
+		&i.AmountPaidCents,
+		&i.Plan,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+		&i.Currency,
+		&i.PdfAvailable,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Details,
+		&i.DetailLifecycle,
 	)
 	return i, err
 }
@@ -16162,7 +16469,7 @@ type QueueConsumerLockAppRow struct {
 	WorkloadClass string
 }
 
-// Queue binding/consumer publication (ADR-387). Parent locks also serialize
+// Queue binding/consumer publication (ADR-393). Parent locks also serialize
 // trigger admission, so quota checks and the projection share the same commit.
 func (q *Queries) QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error) {
 	row := db.QueryRow(ctx, queueConsumerLockApp, arg.AppID, arg.AccountID)
@@ -19612,6 +19919,42 @@ func (q *Queries) SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX,
 	return column_1, err
 }
 
+const setInvoiceDetailLifecycle = `-- name: SetInvoiceDetailLifecycle :exec
+UPDATE invoices SET detail_lifecycle = $2 WHERE id = $1
+`
+
+type SetInvoiceDetailLifecycleParams struct {
+	ID              pgtype.UUID
+	DetailLifecycle []byte
+}
+
+// The caller retains the natural-key upsert's row lock in the same transaction.
+func (q *Queries) SetInvoiceDetailLifecycle(ctx context.Context, db DBTX, arg SetInvoiceDetailLifecycleParams) error {
+	_, err := db.Exec(ctx, setInvoiceDetailLifecycle, arg.ID, arg.DetailLifecycle)
+	return err
+}
+
+const setInvoiceEnrichment = `-- name: SetInvoiceEnrichment :exec
+UPDATE invoices SET details = $2, detail_lifecycle = $3, updated_at = $4 WHERE id = $1
+`
+
+type SetInvoiceEnrichmentParams struct {
+	ID              pgtype.UUID
+	Details         []byte
+	DetailLifecycle []byte
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvoiceEnrichmentParams) error {
+	_, err := db.Exec(ctx, setInvoiceEnrichment,
+		arg.ID,
+		arg.Details,
+		arg.DetailLifecycle,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin
 FROM snapshot_origins
@@ -20852,6 +21195,135 @@ func (q *Queries) UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg Up
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertInvoiceSnapshot = `-- name: UpsertInvoiceSnapshot :one
+INSERT INTO invoices (
+  account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+  period_start, period_end, subtotal_cents, tax_cents, total_cents,
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
+ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
+  provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
+  number = excluded.number, status = excluded.status,
+  period_start = excluded.period_start, period_end = excluded.period_end,
+  subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
+  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  currency = excluded.currency, pdf_available = excluded.pdf_available,
+  details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
+    jsonb_set(excluded.details, '{lines,items}', coalesce((
+      SELECT jsonb_agg(incoming.item || jsonb_build_object(
+        'created_at', coalesce(invoices.details->'line_first_seen'->(incoming.item->>'id'), previous.item->'created_at', incoming.item->'created_at'),
+        'updated_at', CASE WHEN incoming.item - 'created_at' - 'updated_at' = previous.item - 'created_at' - 'updated_at'
+          THEN previous.item->'updated_at' ELSE incoming.item->'updated_at' END) ORDER BY incoming.ordinality)
+      FROM jsonb_array_elements(excluded.details->'lines'->'items') WITH ORDINALITY AS incoming(item, ordinality)
+      LEFT JOIN LATERAL (
+        SELECT stored.item FROM jsonb_array_elements(coalesce(invoices.details->'lines'->'items', '[]'::jsonb)) AS stored(item)
+        WHERE stored.item->>'id' = incoming.item->>'id' LIMIT 1
+      ) AS previous ON true
+    ), '[]'::jsonb))
+  ELSE excluded.details END || CASE WHEN excluded.details ? 'lines' THEN
+    jsonb_build_object('line_first_seen', coalesce(excluded.details->'line_first_seen', '{}'::jsonb) || coalesce(invoices.details->'line_first_seen', '{}'::jsonb))
+  ELSE '{}'::jsonb END, updated_at = clock_timestamp()
+RETURNING id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+          period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+          plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+          currency, pdf_available, created_at, updated_at, details, detail_lifecycle
+`
+
+type UpsertInvoiceSnapshotParams struct {
+	AccountID         pgtype.UUID
+	Provider          string
+	ProviderInvoiceID string
+	ProviderChargeID  string
+	Number            string
+	Status            string
+	PeriodStart       pgtype.Timestamptz
+	PeriodEnd         pgtype.Timestamptz
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	AmountPaidCents   int64
+	Plan              string
+	Currency          string
+	PdfAvailable      bool
+	Details           []byte
+	DetailLifecycle   []byte
+}
+
+type UpsertInvoiceSnapshotRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg UpsertInvoiceSnapshotParams) (UpsertInvoiceSnapshotRow, error) {
+	row := db.QueryRow(ctx, upsertInvoiceSnapshot,
+		arg.AccountID,
+		arg.Provider,
+		arg.ProviderInvoiceID,
+		arg.ProviderChargeID,
+		arg.Number,
+		arg.Status,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.SubtotalCents,
+		arg.TaxCents,
+		arg.TotalCents,
+		arg.AmountPaidCents,
+		arg.Plan,
+		arg.Currency,
+		arg.PdfAvailable,
+		arg.Details,
+		arg.DetailLifecycle,
+	)
+	var i UpsertInvoiceSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.ProviderChargeID,
+		&i.Number,
+		&i.Status,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.TaxCents,
+		&i.TotalCents,
+		&i.AmountPaidCents,
+		&i.Plan,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+		&i.Currency,
+		&i.PdfAvailable,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Details,
+		&i.DetailLifecycle,
+	)
+	return i, err
 }
 
 const upsertOIDCTrustPolicy = `-- name: UpsertOIDCTrustPolicy :one

@@ -52,6 +52,40 @@ except Exception as error:
 issues.close()
 ```
 
+Go:
+
+```go
+// Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	BaseURL: os.Getenv("GREGALE_API_URL"),
+	App:     "exports",
+	Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
+})
+if err != nil {
+	return err
+}
+defer func() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = issues.Close(ctx)
+}()
+
+if err := generateExport(); err != nil {
+	issues.CaptureException(err, faas.IssueContext{
+		RequestID: requestID,
+		TraceID:   traceID,
+		Route:     "/exports",
+	})
+	return err
+}
+```
+
+For worker panics, `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+captures the panic best-effort and re-panics with the original value. Standard Go errors do not
+carry creation-time stacks, so the helper records the current goroutine's stack
+at the capture call. No locals, request bodies, or arbitrary context fields are
+included.
+
 `install()` registers exception hooks while preserving the prior application
 hooks and fatal-exception behavior. Explicit wrappers capture then rethrow the
 original exception. Delivery uses a bounded in-memory queue, timeouts, and stable

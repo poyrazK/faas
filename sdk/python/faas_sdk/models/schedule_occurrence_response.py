@@ -29,7 +29,9 @@ class ScheduleOccurrenceResponse:
     schedule_revision: int
     scheduled_for: datetime.datetime
     schedule_policy: SchedulePolicy
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     status: ScheduleOccurrenceResponseStatus
     created_at: datetime.datetime
     start_deadline_at: datetime.datetime | Unset = UNSET

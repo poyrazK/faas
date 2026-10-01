@@ -8293,15 +8293,23 @@ paths:
         the OpenTelemetry proto — the spec documents the
         endpoint metadata only. The SDK does not model this
         route (routeExclude on sdk-coverage + spec_compliance);
-        OTel SDKs speak OTLP/HTTP directly.
+        OTel SDKs speak OTLP/HTTP directly. Supports application/json
+        (OTLP hexadecimal trace/span IDs) and application/x-protobuf,
+        optional gzip compression, empty exports, and multi-trace batches.
+        Responses use ExportTraceServiceResponse; per-trace ownership
+        rejection returns partialSuccess with rejectedSpans. Error bodies
+        use google.rpc.Status in the request encoding. Missing Content-Type
+        retains the legacy ordinary-protobuf JSON input decoder. Acceptance
+        stages an in-memory diagnostic summary; it is not durable raw-span storage.
       x-since: 2026-08
       responses:
         '200':
           description: Spans accepted (truncated summary staged in flush accumulator).
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '400': { description: Invalid OTLP payload; google.rpc.Status in the request encoding. }
+        '401': { description: Missing or invalid bearer; google.rpc.Status in the request encoding. }
+        '402': { description: Telemetry is unavailable on the account plan; google.rpc.Status in the request encoding. }
+        '415': { description: Unsupported media type or content encoding. }
+        '429': { description: Request rate limit exceeded; google.rpc.Status with Retry-After. }
 
   /v1/apps/{slug}/deployment-aliases:
     parameters:
@@ -21011,6 +21019,167 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/invoices/{id}/refresh:
+    post:
+      tags: [billing]
+      operationId: refreshInvoiceFacts
+      summary: Refresh provider facts for an existing account invoice.
+      description: |
+        Requires usage:read and the invoice-history session MFA gate. Fetches
+        the configured provider's invoice, transaction, or order using the
+        account's provider-qualified customer identity. Accepts no body or query
+        parameters. Only invoice details and their lifecycle history change;
+        monetary values, payment state, refunds, credits, and plan are preserved.
+        Provider identity, currency, total, and tax must match the captured local
+        invoice. A concurrent invoice update returns 409, allowing a fresh retry.
+        Stripe paginates all lines and resolves opaque price/plan IDs. Unknown
+        facts and classifications remain source gaps. The operation is bounded
+        to 32 provider reads, 1,000 items, 4 MiB per response, and two minutes.
+        It enriches known invoices; it does not discover missing provider history.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Local invoice UUID from GET /v1/invoices.
+      responses:
+        '200':
+          description: Refreshed source coverage; invoice financial fields are unchanged.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceRefreshResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Configured provider does not implement invoice refresh.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/invoices/backfill:
+    post:
+      tags: [billing]
+      operationId: backfillInvoiceHistory
+      summary: Import one bounded page of missing provider invoices.
+      description: |
+        Requires usage:read and invoice-history session MFA. Scans at most 25
+        invoices for the authenticated account's provider-qualified customer.
+        The opaque next_cursor resumes the next page for the same provider
+        customer. Existing natural-key matches are skipped without modifying
+        webhook data. Imported documents preserve provider financial facts and
+        carry an unknown historical Gregale plan, so credit proration fails
+        closed until that plan is independently established. Unsupported
+        currencies, statuses, incomplete totals, and absent billing periods are
+        counted as skipped. has_more reports provider pagination at request time;
+        it is not a stable snapshot guarantee. Each page commits atomically.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 2048 }
+          description: Provider and customer bound token emitted by the preceding response.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 25, default: 25 }
+          description: Maximum provider records to scan in this page.
+      responses:
+        '200':
+          description: One imported provider-history page.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceHistoryBackfillResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Configured provider does not implement invoice history discovery.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/billing/focus:
+    get:
+      tags: [billing]
+      operationId: exportFOCUSInvoices
+      summary: Download a partial FOCUS 1.4 Invoice Detail projection.
+      description: |
+        Requires usage:read and the same session MFA gate as invoice history.
+        Includes only the authenticated account's locally persisted invoices
+        whose period_end falls in the requested UTC month. Draft and void
+        invoices are excluded and counted in metadata. The default ZIP binds
+        CSV and metadata to one store snapshot; separate downloads may see
+        newer webhooks. Amounts use exact two-decimal ISO currencies and split
+        non-tax charges from tax. No current plan prices are substituted.
+
+        This projection remains partial. Stored provider line items are used
+        only when complete, classified, and exactly reconciled to invoice totals;
+        other invoices retain aggregate rows with metadata fallback reasons.
+        Supplied payment terms, issue/due dates, and issuer names are exported.
+        MissingRequiredFields and SourceCoverage describe missing facts. Complete
+        provider history, correction/credit/refund documents, conditional FX/PO
+        fields, and the Cost and Usage dataset remain unavailable. See
+        /docs/billing#focus-invoice-export and the metadata limitations.
+
+        At most 1000 stored invoices are read per month (including excluded
+        invoices), with at most 10000 output rows and 3 MiB per artifact.
+        Exceeding any bound returns 422 without a truncated artifact. Invalid
+        stored amounts, currencies, identifiers, or dates return 409 before
+        any artifact bytes are sent.
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+          description: Required YYYY-MM; selects by invoice period_end, not issue date or usage month.
+        - name: format
+          in: query
+          schema: { type: string, enum: [zip, csv, metadata], default: zip }
+          description: ZIP contains CSV plus metadata.json; metadata returns the metadata JSON file independently.
+      responses:
+        '200':
+          description: Complete local invoice projection for the requested account and month; partial FOCUS support.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: Attachment filename derived only from the validated month and format.
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+            X-Gregale-FOCUS-Conformance:
+              schema: { type: string, enum: [partial] }
+            X-Gregale-FOCUS-Version:
+              schema: { type: string, enum: ['1.4'] }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+            application/json:
+              schema:
+                type: string
+                format: binary
+                description: Metadata file downloaded as bytes, with DataGenerator, DatasetInstance, Schema, and x_GregaleProjection sections.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/billing/status:
     get:
       tags: [billing]
@@ -21450,6 +21619,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Operator billing surface (PR-P3) ────────────────────────────────────
@@ -30972,6 +31146,35 @@ components:
           items: { $ref: '#/components/schemas/Invoice' }
         next_before: { type: [string, "null"], format: date-time }
 
+    InvoiceRefreshResponse:
+      description: Persisted line coverage after refreshing an existing invoice from its billing provider.
+      type: object
+      required: [invoice_id, provider, detailed, line_items, updated_at]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        provider: { type: string, enum: [stripe, paddle, polar] }
+        detailed:
+          type: boolean
+          description: Whether the refreshed line snapshot is complete, classified, and exactly reconciled.
+        line_items: { type: integer, minimum: 0, maximum: 1000 }
+        source_gap:
+          type: string
+          enum: [unavailable, incomplete, empty, unclassified, tax_in_non_tax_lines, totals_mismatch]
+          description: Reason for aggregate fallback; omitted when detailed is true.
+        updated_at: { type: string, format: date-time }
+
+    InvoiceHistoryBackfillResponse:
+      description: Counts and cursor for one provider invoice-history page.
+      type: object
+      required: [provider, scanned, imported, skipped, has_more]
+      properties:
+        provider: { type: string, enum: [stripe, paddle, polar] }
+        scanned: { type: integer, minimum: 0, maximum: 25 }
+        imported: { type: integer, minimum: 0, maximum: 25 }
+        skipped: { type: integer, minimum: 0, maximum: 25 }
+        has_more: { type: boolean }
+        next_cursor: { type: string, maxLength: 2048 }
+
     BillingStatusResponse:
       description: Provider-independent customer billing status (issue #2302).
       type: object
@@ -31663,6 +31866,7 @@ components:
         datacontenttype: { type: string, enum: [application/json], default: application/json }
         data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value delivered inside the CloudEvents envelope. }
+        flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         work:
@@ -33130,7 +33334,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Create an HTTP-path cron or deployment-attached app command schedule."
+      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure rules apply to command Crons only."
       type: object
       required: [app_id, schedule]
       properties:
@@ -33150,7 +33354,7 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateCronRequest:
-      description: "Partial cron update."
+      description: "Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only."
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
@@ -33164,17 +33368,21 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     SchedulePolicy:
-      description: Versioned recurring-work scheduling policy.
+      description: >-
+        Versioned recurring-work scheduling policy for Jobs and both HTTP and
+        command Crons. HTTP replace waits for a prior dispatched request to
+        complete because the scheduler has no stop acknowledgement for a
+        request already delivered to the app.
       type: object
       required: [version, overlap, missed_runs]
       properties:
         version: { type: integer, enum: [1] }
-        overlap: { type: string, enum: [allow, skip, replace], description: "Allow concurrent occurrences, record-and-skip while one is active, or stop prior scheduled work before replacement." }
+        overlap: { type: string, enum: [allow, skip, replace], description: "Allow concurrent occurrences, record-and-skip while one is active, or replace when previous work can be stopped safely. HTTP Crons wait for a dispatched request to finish." }
         start_deadline_seconds: { type: integer, minimum: 0, maximum: 2592000, description: "Maximum delay from the nominal schedule time to the first task start; zero or omitted disables the deadline." }
         missed_runs: { type: string, enum: [coalesce_latest, skip], description: "On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as skipped." }
 
     FailureRules:
-      description: Versioned explicit classification policy for failed partition attempts.
+      description: Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons do not accept failure rules.
       type: object
       required: [version, rules, unmatched_failure, uncertain_outcome]
       properties:
@@ -41425,6 +41633,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
         retry_policy:
           allOf:

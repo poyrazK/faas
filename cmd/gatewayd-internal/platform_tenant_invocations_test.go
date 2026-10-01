@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,8 +29,25 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	flagContext, err := flags.EncodePropagationHeader(flags.PropagationContext{
+		Version: flags.PropagationContextVersion, CustomerID: tenant.ID,
+		Decisions: []flags.PropagationDecision{{
+			Decision: flags.Decision{Flag: "new-export", Value: true, ConfigVersion: 7, Reason: "default", Source: "configuration"},
+			Origin:   flags.EvidenceOrigin{AppID: uuid.NewString(), EnvironmentID: uuid.NewString()},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocationHeaders, err := json.Marshal(map[string]string{
+		"X-Faas-Platform-Tenant-Id": "forged",
+		api.FlagContextHeader:       flagContext,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, PlatformTenantID: tenant.ID,
-		Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/documents", Payload: []byte(`{}`), Headers: json.RawMessage(`{"X-Faas-Platform-Tenant-Id":"forged"}`), DueAt: time.Now()})
+		Source: state.InvocationQueue, Method: "POST", Path: "/documents", Payload: []byte(`{}`), Headers: invocationHeaders, DueAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +61,9 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			calls++
 			if r.Header.Get(api.PlatformTenantIDHeader) != tenant.ID {
 				t.Fatalf("worker tenant=%q", r.Header.Get(api.PlatformTenantIDHeader))
+			}
+			if r.Header.Get(api.FlagContextHeader) != flagContext {
+				t.Fatalf("worker flag context=%q, want persisted context", r.Header.Get(api.FlagContextHeader))
 			}
 			if r.URL.Path != "/documents" {
 				t.Fatalf("wire path replaced persisted path: %s", r.URL.Path)

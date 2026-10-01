@@ -59,3 +59,17 @@ type ScheduleOccurrenceHistoryStore interface {
 	ScheduleOccurrenceListByJob(ctx context.Context, jobID string, limit int, before string) ([]ScheduleOccurrence, error)
 	ScheduleOccurrenceListByCron(ctx context.Context, cronID string, limit int, before string) ([]ScheduleOccurrence, error)
 }
+
+// ScheduledCronInvocationStore creates an HTTP-Cron occurrence and its
+// pending synthetic invocation in one transaction, or records a policy
+// decision without creating an invocation.
+type ScheduledCronInvocationStore interface {
+	CreateScheduledCronInvocationOccurrence(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions, invocation Invocation) (Invocation, ScheduleOccurrence, bool, error)
+}
+
+// ScheduledInvocationDeadlineStore settles scheduled invocations that never
+// started before their first-start deadline. Claim paths still enforce the
+// deadline atomically, so this sweep only writes the durable terminal outcome.
+type ScheduledInvocationDeadlineStore interface {
+	ExpireUnstartedScheduledCronInvocations(ctx context.Context, now time.Time, limit int) (int, error)
+}

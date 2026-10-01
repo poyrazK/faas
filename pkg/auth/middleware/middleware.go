@@ -984,9 +984,12 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 }
 
 func isBillingRecoveryRoute(method, path string) bool {
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/invoices/") && strings.HasSuffix(path, "/refresh") && strings.Count(path, "/") == 4 {
+		return true
+	}
 	switch method + " " + path {
 	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
-		"GET /v1/billing/portal", "GET /v1/billing/status", "POST /v1/billing/retry",
+		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.

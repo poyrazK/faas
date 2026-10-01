@@ -1156,8 +1156,17 @@ standards-check: ## Verify the standards registry and generated matrix are in sy
 	@echo "standards-check: OK"
 
 .PHONY: standards-conformance
-standards-conformance: ## Verify standards claims resolve to executable test fixtures
+standards-conformance: ## Validate AsyncAPI and verify standards evidence references
 	@$(GO) run ./cmd/standards-conformance
+
+.PHONY: standards-contract-check
+standards-contract-check: ## Run official-schema and SDK interoperability checks for event/trace contracts
+	@$(GO) test -count=1 -run 'Test(AsyncAPI|OTLPHTTPConformance|CloudEvents|Webhook_Dispatch_CloudEventsStructured)' ./pkg/productstandards ./pkg/gateway ./pkg/events ./pkg/webhookout
+
+.PHONY: focus-contract-check
+focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and CLI operations
+	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./cmd/apid ./cmd/gregale
+	@$(GO) test -count=1 -run '^TestInvoiceSnapshot|^TestInvoiceRefresh|^TestMemInvoiceRefresh|^TestMemInvoiceDetails|^TestMemInvoiceLifecycle|^TestInvoiceDetailsValidation' ./pkg/billing ./pkg/billing/stripe ./pkg/billing/paddle ./pkg/billing/polar ./pkg/state
 
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits

@@ -67,6 +67,12 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrInvalidArgument) && inv.PlatformTenantID != "" {
+			return state.Invocation{}, api.ErrValidation("flag_context customer must be active in the app account")
+		}
+		if errors.Is(err, state.ErrPlatformTenantSuspended) {
+			return state.Invocation{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before enqueueing work")
+		}
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}
 	return created, nil

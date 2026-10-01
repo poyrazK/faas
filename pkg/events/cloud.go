@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -119,6 +120,14 @@ func (e Envelope) Validate() error {
 	}
 	if e.Source == "" || len(e.Source) > maxEnvelopeString {
 		return errors.New("source is required and must be at most 256 characters")
+	}
+	if _, err := url.Parse(e.Source); err != nil || strings.ContainsAny(e.Source, " \t\r\n\"<>\\^`{|}") {
+		return errors.New("source must be a valid URI-reference")
+	}
+	for _, char := range e.Source {
+		if char < 0x21 || char > 0x7e {
+			return errors.New("source must be a valid URI-reference")
+		}
 	}
 	if e.Type == "" || len(e.Type) > maxEnvelopeString {
 		return errors.New("type is required and must be at most 256 characters")

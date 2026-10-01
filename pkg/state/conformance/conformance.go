@@ -86,6 +86,8 @@ func Run(t *testing.T, open Open) {
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
 		{"invoice_refunds_are_cumulative_and_idempotent", testInvoiceRefunds},
+		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
+		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
@@ -1895,6 +1897,87 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 	})
 	if err != nil || !replay.AlreadyConsumedForInvoice || replay.ConsumedCents != 0 {
 		t.Fatalf("replayed reversed consumption = (%+v, %v), want idempotent zero", replay, err)
+	}
+}
+
+func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "stripe",
+		ProviderInvoiceID: "history-" + uuid.NewString(),
+		ProviderChargeID:  "charge-history-" + uuid.NewString(),
+		Number:            "HISTORY-001", Status: "paid",
+		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
+	}
+
+	inserted, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{inv, inv})
+	if err != nil || inserted != 1 {
+		t.Fatalf("ImportInvoiceHistory(page) = (%d, %v), want one insert", inserted, err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Plan != state.InvoicePlanUnknown || stored.TotalCents != 1000 ||
+		stored.Details == nil || stored.Details.PaymentTerms != "Net 30" || stored.Lifecycle == nil {
+		t.Fatalf("imported invoice = (%+v, %v), want unknown-plan invoice with details and lifecycle", stored, err)
+	}
+
+	// Replaying history must never replace newer webhook/provider state.
+	replay := inv
+	replay.Number, replay.TotalCents, replay.AmountPaidCents = "HISTORY-CHANGED", 1200, 1200
+	inserted, err = fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{replay})
+	if err != nil || inserted != 0 {
+		t.Fatalf("ImportInvoiceHistory(replay) = (%d, %v), want no insert", inserted, err)
+	}
+	stored, err = fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", inv.ProviderInvoiceID)
+	if err != nil || stored.Number != "HISTORY-001" || stored.TotalCents != 1000 {
+		t.Fatalf("history replay changed existing invoice: (%+v, %v)", stored, err)
+	}
+
+	// Validate the whole page before inserting any of it.
+	newInvoice := inv
+	newInvoice.ProviderInvoiceID = "history-atomic-" + uuid.NewString()
+	invalidInvoice := newInvoice
+	invalidInvoice.Provider = "paddle"
+	if _, err := fx.Store.ImportInvoiceHistory(fx.Ctx, fx.Account.ID, "stripe", []state.Invoice{newInvoice, invalidInvoice}); err == nil {
+		t.Fatal("ImportInvoiceHistory accepted a mixed-provider page")
+	}
+	if _, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, "stripe", newInvoice.ProviderInvoiceID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("invalid page partially inserted an invoice: %v", err)
+	}
+}
+
+func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inv := state.Invoice{
+		AccountID: fx.Account.ID, Provider: "polar",
+		ProviderInvoiceID: "refresh-" + uuid.NewString(),
+		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
+		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
+		Plan: api.PlanPro, Currency: "eur",
+	}
+	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
+		t.Fatalf("UpsertInvoice: %v", err)
+	}
+	stored, err := fx.Store.GetInvoiceByProviderID(fx.Ctx, fx.Account.ID, inv.Provider, inv.ProviderInvoiceID)
+	if err != nil {
+		t.Fatalf("GetInvoiceByProviderID: %v", err)
+	}
+	details := &state.InvoiceDetails{
+		IssuerName: "Gregale", PaymentTerms: "Net 30",
+		Lines: &state.InvoiceLines{Complete: true, Items: []state.InvoiceLineItem{{
+			ID: "plan-line", Description: "Managed service", ChargeCategory: "Purchase", NetCents: 1000,
+		}}},
+	}
+	refreshed, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details)
+	if err != nil || refreshed.Details == nil || refreshed.Details.PaymentTerms != "Net 30" ||
+		refreshed.Details.Lines == nil || refreshed.TotalCents != stored.TotalCents ||
+		refreshed.AmountPaidCents != stored.AmountPaidCents || refreshed.ProviderInvoiceID != stored.ProviderInvoiceID {
+		t.Fatalf("RefreshInvoiceDetails = (%+v, %v), want richer details without financial changes", refreshed, err)
+	}
+	if _, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale RefreshInvoiceDetails error = %v, want ErrConflict", err)
 	}
 }
 

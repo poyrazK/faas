@@ -64,6 +64,12 @@ func cmdBilling(args []string) int {
 		return cmdBillingPaymentMethod(args[1:])
 	case billingSubStatus:
 		return cmdBillingStatus(args[1:])
+	case "export":
+		return cmdBillingExport(args[1:])
+	case "refresh-invoice":
+		return cmdBillingRefreshInvoice(args[1:])
+	case "backfill-invoices":
+		return cmdBillingBackfillInvoices(args[1:])
 	case billingSubPriceCatalog:
 		return cmdBillingPriceCatalog(args[1:])
 	case billingSubReconcile:
@@ -86,6 +92,8 @@ func cmdBilling(args []string) int {
 
 func printBillingUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "usage: gregale billing <subcommand>\n\n"+
+		"  refresh-invoice ID  refresh a stored invoice's provider facts\n"+
+		"  backfill-invoices   import one page of missing provider invoices\n"+
 		"  portal              open the active billing provider's portal in your browser\n"+
 		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
 		"  payment-method      show the card-on-file summary; open the portal to update\n"+
@@ -95,6 +103,8 @@ func printBillingUsage(w io.Writer) {
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
 		"  status              show your provider-independent billing status\n"+
 		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
+		"  export              download a partial FOCUS 1.4 Invoice Detail projection\n"+
+		"                      (--month YYYY-MM --out PATH; --format zip|csv|metadata)\n"+
 		"\n"+
 		"Run 'gregale billing help' for this message.\n")
 }

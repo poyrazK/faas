@@ -2075,6 +2075,7 @@ export class AppsService {
     limit?: number | null,
   }): CancelablePromise<Blob> {
     return __request(OpenAPI, {
+      responseType: 'blob',
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/export',
       path: {
