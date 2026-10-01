@@ -15577,6 +15577,85 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 	return err
 }
 
+const publishOwnedInstanceRuntime = `-- name: PublishOwnedInstanceRuntime :one
+UPDATE instances SET netns=$1::text, host_ip=$2::inet,
+    guest_uid=$3::integer, started_at=clock_timestamp(), state='running'
+WHERE id=$4::uuid AND app_id=$5::uuid
+    AND deployment_id=$6::uuid AND node_id=$7::uuid
+    AND wake_id=$8::uuid AND state=$9::text
+RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+    state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+    coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+    node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+`
+
+type PublishOwnedInstanceRuntimeParams struct {
+	Netns         string
+	HostIp        netip.Addr
+	GuestUid      int32
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	WakeID        pgtype.UUID
+	ExpectedState string
+}
+
+type PublishOwnedInstanceRuntimeRow struct {
+	ID               string
+	AppID            string
+	DeploymentID     string
+	State            string
+	Netns            string
+	GuestUid         int32
+	HostIp           string
+	RamMb            int32
+	StartedAt        pgtype.Timestamptz
+	LastRequestAt    pgtype.Timestamptz
+	ParkedAt         pgtype.Timestamptz
+	NodeID           string
+	WakeID           string
+	FrameworkReadyAt pgtype.Timestamptz
+	TailCount        int32
+	Mode             string
+	RequestCount     int64
+}
+
+func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg PublishOwnedInstanceRuntimeParams) (PublishOwnedInstanceRuntimeRow, error) {
+	row := db.QueryRow(ctx, publishOwnedInstanceRuntime,
+		arg.Netns,
+		arg.HostIp,
+		arg.GuestUid,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.WakeID,
+		arg.ExpectedState,
+	)
+	var i PublishOwnedInstanceRuntimeRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.Mode,
+		&i.RequestCount,
+	)
+	return i, err
+}
+
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
        coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,

@@ -2243,3 +2243,59 @@ customer-data capture and full-clone activation/qualification remain open.
 The public complete-clone command remains unavailable. Repository-wide
 tests/lint and native x86_64 KVM test-metal, leakcheck and provider acceptance
 remain unverified.
+
+### Coordinated wakes retain deployed environment and boot ownership
+
+The engine selects an actual deployment and its original environment before
+entering the wake coordinator. Production and stage requests cannot share a
+leader outcome, and a replacement deployment or recreated stage cannot join
+an old boot. Detached leaders preserve that selection. Native burst siblings
+recheck it through ordinary admission, without taking the explicit-deployment
+gate bypass. A changed selection refuses a continuation instead of admitting
+on another generation. Initial burst and prewarm targets use only the selected
+environment's serving count; the shared plan and physical node budgets remain
+authoritative in every admission. Fan-out resolves deployed settings, replacing
+the mutable App policy cache. This adds policy/ownership reads to coordinated
+entry; its production latency has not been benchmarked.
+
+App deletion forgets all of the app's deployment coordinator entries without
+touching another app. Original stage lifetime checks also run on the existing
+instance fast path. The current EnsureWake RPC remains production-only;
+preview and exact-deployment gateway routes still use their scoped admission
+path. Internal engine callers can use an explicitly scoped context.
+
+Replacement testing exposed that a boot with no secret deliveries could
+publish RUNNING after its original environment disappeared. Native wake and
+prime now use a mandatory host-authored publication fence even for an empty
+secret set. MemStore validates ownership and updates runtime/state under its
+mutex. PostgreSQL locks the original environment, app, deployment, instance,
+retained configuration pins and sealed inputs through a SQLC runtime/state
+CAS. It verifies the exact app, deployment, node, wake ID and provisional
+state. Lost owners/pins, recreated lifetimes and changed sealed inputs reject
+publication. A failed native boot destroys its VM, releases the ledger and
+retires its still-owned provisional row, preserving another reconciler's
+state. Priming uses the same publication boundary and transition observations.
+
+Verification: the focused wake/coordinator gate passed in 1.444 seconds before
+the prime extension. The final full scheduler tree, including prime and
+secret-rotation contracts, passed: scheduler 37.911 seconds and all eight
+child packages. Real PostgreSQL and MemStore publication contracts passed in
+8.358 seconds; a writer was observed blocked on deletion of its original
+environment, then rejected after replacement committed. Contracts also cover
+empty sealed inputs, wrong identity/epoch/node, lost pins, desired edits that
+preserve deployed settings, retained readiness/request observations and
+replacement/production independence. Schedd daemon tests passed in 1.206
+seconds. The related gRPC and gateway suites passed in 1.034 and 50.724 seconds
+before the prime extension; that broader run failed while linking scheduler
+packages because the host disk filled. The final scheduler gate supersedes
+those failed links. Independent SQLC 1.31.1 generation matches and whitespace
+checks pass. VM operations remain macOS fakes; native KVM/provider acceptance
+is not claimed.
+
+Stage-native warm fills, producer load/prewarm feeds, floor aggregation,
+captured plaintext/configuration publication fences, transactional WARM
+publication, billing/audit/resource cleanup adapters, remaining configuration
+and resource strategies, coordinated PostgreSQL/object-data capture and
+full-clone activation/qualification remain open. The public complete-clone
+command remains unavailable; repository-wide tests/lint, native test-metal,
+leakcheck and provider acceptance remain unverified.

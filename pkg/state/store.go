@@ -4590,12 +4590,14 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
-	// PublishInstanceRuntime atomically records vmmd's runtime identity and
-	// moves an instance from expectedState to RUNNING. The successful wake
-	// path uses this single compare-and-swap instead of a read, runtime write,
-	// second read, and state write. It returns ErrConflict when the watchdog or
-	// another reconciler changed/deleted the row during the vmmd call.
+	// PublishInstanceRuntime is the compatibility runtime/state CAS. Modern
+	// scheduler boots use PublishOwnedInstanceRuntime below to retain their
+	// original deployment/environment and exact wake attempt as well.
+	// It returns ErrConflict when another reconciler changed/deleted the row.
 	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
+	// Modern scheduler boots retain their original owner and sealed input
+	// fence through the same atomic runtime/state publication.
+	RuntimeInstancePublicationStore
 	// SetInstanceStartupCPUBoostUntil persists the temporary peak-quota
 	// reservation deadline. A nil deadline clears the reservation. The batch
 	// reader is used during scheduler startup to rebuild in-flight boost CPU

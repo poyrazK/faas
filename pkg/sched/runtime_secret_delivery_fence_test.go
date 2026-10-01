@@ -103,19 +103,22 @@ func TestEngineBootSecretDeliveryUsesSelectedFence(t *testing.T) {
 				} else {
 					_, err = engine.Wake(ctx, app.ID, "", "", "")
 				}
-				if (change == "failed-start") != (err != nil) {
+				stale := change == "rotation" || change == "same-envelope-recreation"
+				if (change == "failed-start" || stale) != (err != nil) {
 					t.Fatalf("boot result = %v for %s", err, change)
 				}
 				if store.calls != 1 || store.result.Fence != selectedFence || len(store.result.Candidates) != 2 {
 					t.Fatalf("boot completion lost selected main/sidecar ownership: calls=%d result=%+v", store.calls, store.result)
 				}
-				stale := change == "rotation" || change == "same-envelope-recreation"
 				if stale != errors.Is(store.err, state.ErrConflict) || (!stale && store.err != nil) {
 					t.Fatalf("completion fence error = %v for %s", store.err, change)
 				}
 				instance, err := mem.InstanceByID(ctx, store.result.InstanceID)
 				if err != nil || instance.WakeID != store.result.WakeID || instance.DeploymentID != dep.ID {
 					t.Fatalf("boot completion detached from wake attempt: %+v %v", instance, err)
+				}
+				if stale && (instance.State != string(state.StateFailed) || vmm.destroys != 1 || engine.ledger.ResidentRAM() != 0) {
+					t.Fatalf("changed sealed inputs retained a published runtime: %+v destroys=%d ram=%d", instance, vmm.destroys, engine.ledger.ResidentRAM())
 				}
 				for _, key := range []string{"MAIN_TOKEN", "SIDECAR_TOKEN", "UNGRANTED_TOKEN"} {
 					row, err := mem.GetAppSecret(ctx, account.ID, app.ID, key)

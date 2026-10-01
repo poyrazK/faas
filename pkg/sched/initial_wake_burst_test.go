@@ -212,8 +212,10 @@ func TestInitialWakeBurstSharesLifecycleWithCanceledLeader(t *testing.T) {
 	for {
 		e.wakeCoord.mu.Lock()
 		waiting := 0
-		for _, call := range e.wakeCoord.inflight[app.ID] {
-			waiting += call.waiters
+		for _, calls := range e.wakeCoord.inflight {
+			for _, call := range calls {
+				waiting += call.waiters
+			}
 		}
 		e.wakeCoord.mu.Unlock()
 		if waiting == 2 {

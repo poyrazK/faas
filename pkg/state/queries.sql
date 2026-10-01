@@ -952,6 +952,17 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
 from instances where id = $1;
 
+-- name: PublishOwnedInstanceRuntime :one
+UPDATE instances SET netns=sqlc.arg(netns)::text, host_ip=sqlc.arg(host_ip)::inet,
+    guest_uid=sqlc.arg(guest_uid)::integer, started_at=clock_timestamp(), state='running'
+WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+    AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+    AND wake_id=sqlc.arg(wake_id)::uuid AND state=sqlc.arg(expected_state)::text
+RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+    state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+    coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+    node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
+
 -- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at

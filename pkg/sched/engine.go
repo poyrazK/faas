@@ -644,15 +644,10 @@ type Engine struct {
 	// separate from appMu because reconciliation invokes admission, which
 	// must acquire appMu itself.
 	serviceMu map[string]*sync.Mutex
-	// wakeCoord is the per-app demand-aware wake coordinator (ADR-098).
+	// wakeCoord coordinates demand within one selected deployment (ADR-098/375).
 	// Lazily initialised in NewEngine. Lock discipline is a LEAF:
 	// wakeCoord.mu is taken and released BEFORE e.lockApp(appID).
 	wakeCoord *wakeCoord
-	// wakeFanoutCache memoises the per-app fan-out policy for
-	// wakeFanoutCacheTTL so a burst does not put an app+account read on
-	// the wake hot path for every queued caller.
-	wakeFanoutMu    sync.Mutex
-	wakeFanoutCache map[string]wakeFanoutEntry
 
 	// warmAffinity is the sticky-warm cache (placement scheduler PR,
 	// ADR-025). Defaults to a zero-TTL cache that always returns "no
@@ -1751,8 +1746,20 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 	if err != nil {
 		return state.Instance{}, err
 	}
+	if err := checkWakeEnvironmentDeployment(ctx, appID, deploymentID); err != nil {
+		return state.Instance{}, err
+	}
 	if dep.AppID != appID || dep.Status != state.DeployLive || scope != "" && normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) {
 		return state.Instance{}, state.ErrNotFound
+	}
+	if selected, ok := wakeEnvironmentFrom(ctx); ok {
+		owner, err := e.runtimeScalingStateForDeployment(ctx, selected.app, dep)
+		if err != nil {
+			return state.Instance{}, err
+		}
+		if err := checkWakeEnvironmentOwner(ctx, owner); err != nil {
+			return state.Instance{}, err
+		}
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
 	if err != nil {
@@ -1992,10 +1999,10 @@ func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, i
 	return false
 }
 
-// EnsureWake (ADR-098) is the coordinated wake entry point.
-// Every wake producer (gateway, cron, floor, scaleup, targets) routes
-// through this method. Calls coalesce while existing and in-flight instances
-// have capacity; cold bursts fan out only when queued demand exceeds it.
+// EnsureWake (ADR-098/375) is the coordinated wake entry point. The scope on
+// ctx selects an environment; unscoped callers select production. Calls share
+// an outcome only within the selected deployed generation. Cold bursts fan
+// out when that environment's existing and in-flight capacity is insufficient.
 //
 // Three phases for the leader:
 //
@@ -2027,7 +2034,8 @@ func (e *Engine) EnsureWake(ctx context.Context, appID, trigger string) (CoordOu
 
 // Prewarm restores a bounded amount of capacity for a scheduled demand
 // window. It uses the normal bounded burst admission in batches, calculating
-// the delta from the ledger first so count means a target capacity rather than
+// the delta from the selected environment's ledger count so count means a
+// target capacity rather than
 // "count more instances". Every admission still passes the normal ledger,
 // placement, plan, RAM and wake-rate gates. The returned count is the number
 // of instances actually admitted.
@@ -2038,7 +2046,12 @@ func (e *Engine) Prewarm(ctx context.Context, appID string, count int) (int, err
 	if e == nil || e.ledger == nil {
 		return 0, fmt.Errorf("sched: prewarm: admission ledger unavailable")
 	}
-	current := e.ledger.Concurrency(appID)
+	selected, err := e.resolveWakeEnvironment(ctx, appID, nil)
+	if err != nil {
+		return 0, err
+	}
+	ctx = withWakeEnvironment(ctx, selected)
+	current := selected.concurrency(e.ledger)
 	remaining := count - current
 	if remaining <= 0 {
 		return 0, nil
@@ -2049,7 +2062,7 @@ func (e *Engine) Prewarm(ctx context.Context, appID string, count int) (int, err
 		if batch > api.ScaleUpMaxBurstPerTick {
 			batch = api.ScaleUpMaxBurstPerTick
 		}
-		results, err := e.AdmitInstances(ctx, appID, "", TriggerPrewarm, batch)
+		results, err := e.AdmitInstances(ctx, appID, ScopeFrom(ctx), TriggerPrewarm, batch)
 		batchAdmitted := 0
 		for _, result := range results {
 			if !result.AtCapacity && result.InstanceID != "" {
@@ -2107,7 +2120,13 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	if err == nil {
 		loadedApp = &app
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutForApp(ctx, appID, loadedApp))
+	selected, err := e.resolveWakeEnvironment(ctx, appID, loadedApp)
+	if err != nil {
+		return CoordOutcome{}, err
+	}
+	ctx = withWakeEnvironment(ctx, selected)
+	coordinatorKey := selected.coordinatorKey()
+	call, isLeader, err := e.wakeCoord.Enter(coordinatorKey, e.wakeFanoutForEnvironment(selected))
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -2115,7 +2134,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// Complete() is the single source of truth.
 	if !isLeader {
 		out := call.Await(ctx)
-		e.wakeCoord.Release(appID, call)
+		e.wakeCoord.Release(coordinatorKey, call)
 		return out, nil
 	}
 	// Leader path: run e.Wake on a detached ctx bounded by the
@@ -2153,7 +2172,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	}
 	defer func() {
 		call.Complete(out)
-		e.wakeCoord.Release(appID, call)
+		e.wakeCoord.Release(coordinatorKey, call)
 	}()
 	// Claim the parked -> active lifecycle before booting. This makes a later
 	// explicit park win the race: park changes active back to evicted_cold and
@@ -2421,6 +2440,14 @@ func (e *Engine) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 	if count > api.ScaleUpMaxBurstPerTick {
 		count = api.ScaleUpMaxBurstPerTick
 	}
+	ctx = WithScope(ctx, scope)
+	if _, selected := wakeEnvironmentFrom(ctx); !selected {
+		environment, err := e.resolveWakeEnvironment(ctx, appID, nil)
+		if err != nil {
+			return nil, err
+		}
+		ctx = withWakeEnvironment(ctx, environment)
+	}
 	first, err := e.AdmitInstance(ctx, appID, "", scope, trigger)
 	if err != nil {
 		return nil, err
@@ -2675,10 +2702,17 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 		dep = explicitDep
 	}
+	if err := checkWakeEnvironmentDeployment(ctx, appID, dep.ID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	var scaling state.RuntimeScalingState
 	if err == nil {
 		scaling, err = e.runtimeScalingStateForDeployment(ctx, app, dep)
+		if err == nil {
+			err = checkWakeEnvironmentOwner(ctx, scaling)
+		}
 		app.LastScaleInAt, app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
 	}
 	if err != nil {
@@ -3730,13 +3764,23 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// control-plane latency after a fast SSD restore, that load-then-write shape
 	// left a race between the watchdog check and the state update. The CAS makes
 	// a stolen state a failure without adding a read to the successful path.
-	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
+	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+		AccountID: bootInput.accountID, AppID: bootInput.appID, InstanceID: bootInput.insID,
+		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence,
+		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
+	})
 	if errors.Is(publishErr, state.ErrConflict) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		actual := "changed or deleted"
 		if current, err := e.store.InstanceByID(ctx, bootInput.insID); err == nil {
 			actual = current.State
+			// A lost environment or changed input fence can reject publication
+			// while this exact boot still owns its provisional row. Retire that
+			// row without overwriting a watchdog or another wake attempt.
+			if current.State == string(bootInput.initState) && current.WakeID == bootInput.wakeID && current.NodeID == bootInput.nodeID {
+				e.transitionWithKindCAS(ctx, current.ID, current.AppID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
+			}
 		}
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID,
@@ -6103,7 +6147,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+		AccountID: acct.ID, AppID: appID, InstanceID: ins.ID, NodeID: placement.NodeID, WakeID: primeWakeID,
+		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: sealedEnv.Fence,
+	})
+	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
@@ -6113,7 +6161,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
 	}
-	e.transition(ctx, ins.ID, appID, state.StateRunning)
+	e.recordCommittedInstanceTransition(ctx, primed, state.StateColdBooting, state.StateRunning, appID, "state_transition", "")
 	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 
