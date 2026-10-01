@@ -14090,6 +14090,14 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 	if !ok {
 		return Snapshot{}, ErrNotFound
 	}
+	app, found := m.apps[dep.AppID]
+	if !found {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
+	owner, err := m.runtimeAppValueOwnerLocked(app.AccountID, app.ID, dep.ID)
+	if err != nil || (sourceInstanceID == "" && invocationStageScope(owner.Scope)) {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
 	changedAt, changed := m.runtimeConfigChangedAt[dep.AppID]
 	if sourceInstanceID == "" {
 		if changed {
@@ -14098,7 +14106,7 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 	} else {
 		ins, ok := m.instances[sourceInstanceID]
 		if !ok || ins.AppID != dep.AppID || ins.DeploymentID != dep.ID || sourceStartedAt.IsZero() ||
-			ins.StartedAt.IsZero() || sourceStartedAt.After(ins.StartedAt) {
+			ins.StartedAt.IsZero() || !sourceStartedAt.Equal(ins.StartedAt) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 		if changed && !sourceStartedAt.After(changedAt) {

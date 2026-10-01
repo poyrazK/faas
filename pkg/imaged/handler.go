@@ -3078,15 +3078,14 @@ func (h *Handler) handleDeploymentReady(ctx context.Context, p deploymentReadyPa
 }
 
 func hasEphemeralSecretForDeployment(ctx context.Context, store state.Store, app state.App, dep state.Deployment) (bool, error) {
-	scope := dep.Scope
-	if scope == "" {
-		scope = api.DefaultEnvScope
-	}
-	secrets, err := store.ListAppSecretsInScope(ctx, app.AccountID, app.ID, scope)
+	values, err := store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		return false, err
 	}
-	for _, secret := range secrets {
+	if values.AccountID != app.AccountID || values.AppID != app.ID || values.DeploymentID != dep.ID {
+		return false, state.ErrConflict
+	}
+	for _, secret := range values.Secrets {
 		if secret.SecretClass == state.SecretClassEphemeral {
 			return true, nil
 		}
@@ -3154,6 +3153,13 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	dep, err := h.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
+	}
+	if ready == nil && (dep.Status == state.DeployFailed || dep.Status == state.DeployCancelled) {
+		// Failed/cancelled attempts cannot publish or read runtime values. Ack
+		// their outbox redelivery before policy lookup, preserving referenced
+		// artifacts while discarding an unused modern capture.
+		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
+		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
 	}
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {

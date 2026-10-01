@@ -1986,3 +1986,45 @@ superseded production pins and scheduler node ownership. Independent SQLC
 passes. The scheduler test binary cross-compiles as a Linux x86_64 ELF; it was
 not executed on KVM. Full suite, lint, test-metal, leakcheck and provider
 acceptance remain open.
+
+### Snapshot publication retains original environment ownership
+
+The sole snapshot-row writer now validates the original deployment environment
+inside the insertion transaction/critical section. PostgreSQL discovers the
+owner without taking locks, then locks that exact environment before the app,
+deployment and immutable pins. It rechecks the owned runtime environment after
+locking, matching environment deletion's ordering and retaining serialization
+with the existing configuration-change stamp trigger. Deleted or recreated
+stage ownership cannot publish a delayed warm or init capture.
+
+Stage notifications require a matching source instance. Its current start
+time must equal the captured start time, so an earlier runtime cannot publish
+after the same row has started again, even without a config-change stamp.
+Historical production/default notifications remain accepted without a source
+only when no app configuration-change stamp exists. New owner, source and
+stamp reads/locks use SQLC. Imaged's retention-policy reads use the same owned
+runtime values instead of a slug lookup. Failed/cancelled snapshot attempts
+acknowledge redelivery before reading runtime values, preserving referenced
+artifacts and avoiding repeated smoke attempts.
+
+Verification: the expanded MemStore/real PostgreSQL gate passed in 23.448
+seconds, including original and replacement lifetime publication, sibling
+source rejection, exact source start times, existing config-stamp fences,
+owned runtime reads/pins and warm-pool candidates. One PostgreSQL test observes
+the snapshot writer blocked by the specific environment-deletion transaction
+before committing it and asserting rejection. Focused imaged publication,
+activation, redelivery, ephemeral policy and artifact-cleanup regressions
+passed in 1.360 seconds; scheduler regressions passed in 1.597 seconds.
+Independent SQLC 1.31.1 output matches, the whitespace check passes, and the
+scheduler cross-compiles as a Linux x86_64 ELF without KVM execution.
+
+The full imaged suite still fails
+`TestHandleNotification_AppChanged_Deleted_CarriesAppID` and
+`TestRunGCTick_PerEvictionSQLCount`. Both reproduce with an unmodified
+`a9dca5680` source overlay; artifact lifecycle/GC integration remains open.
+An earlier expanded state run exhausted host disk during migration setup;
+the 23.448-second rerun passed after superseded task cache archives were freed.
+Captured configuration revisions, scope-specific change stamps and GC/floors,
+transactional paused runtime publication, native stage adapters, coordinated
+customer-data capture, complete strategies and activation/qualification, full
+suite/lint and test-metal/leakcheck/provider acceptance remain unfinished.

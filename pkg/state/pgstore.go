@@ -17398,58 +17398,6 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 	return createSnapshotWithQuerier(ctx, s.pool, snap)
 }
 
-// PublishSnapshotIfRuntimeFresh serializes publication with every config stamp
-// through the app row. The stamp trigger takes the same lock, so a stamp that
-// commits first is visible here; a stamp that follows will invalidate this row.
-func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var appID string
-	err = tx.QueryRow(ctx, `select a.id::text from apps a join deployments d on d.app_id = a.id
-		where d.id = $1 for update of a`, snap.DeploymentID).Scan(&appID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Snapshot{}, ErrNotFound
-	}
-	if err != nil {
-		return Snapshot{}, err
-	}
-	var currentStartedAt *time.Time
-	if sourceInstanceID != "" {
-		var sourceAppID, sourceDeploymentID string
-		err = tx.QueryRow(ctx, `select app_id::text, deployment_id::text, started_at
-			from instances where id = $1`, sourceInstanceID).Scan(&sourceAppID, &sourceDeploymentID, &currentStartedAt)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Snapshot{}, ErrSnapshotRuntimeStale
-		}
-		if err != nil {
-			return Snapshot{}, err
-		}
-		if sourceAppID != appID || sourceDeploymentID != snap.DeploymentID || sourceStartedAt.IsZero() ||
-			currentStartedAt == nil || currentStartedAt.IsZero() || sourceStartedAt.After(*currentStartedAt) {
-			return Snapshot{}, ErrSnapshotRuntimeStale
-		}
-	}
-	var changedAt time.Time
-	err = tx.QueryRow(ctx, `select changed_at from app_runtime_config_changes where app_id = $1`, appID).Scan(&changedAt)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return Snapshot{}, err
-	}
-	if err == nil && !sourceStartedAt.After(changedAt) {
-		return Snapshot{}, ErrSnapshotRuntimeStale
-	}
-	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Snapshot{}, err
-	}
-	return stored, nil
-}
-
 type snapshotQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }

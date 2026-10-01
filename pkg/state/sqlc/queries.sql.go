@@ -11634,6 +11634,40 @@ func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
+SELECT id FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
+FOR UPDATE
+`
+
+type LockSnapshotPublicationAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockSnapshotPublicationApp(ctx context.Context, db DBTX, arg LockSnapshotPublicationAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockSnapshotPublicationApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockSnapshotPublicationDeployment = `-- name: LockSnapshotPublicationDeployment :one
+SELECT id FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+FOR SHARE
+`
+
+type LockSnapshotPublicationDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) LockSnapshotPublicationDeployment(ctx context.Context, db DBTX, arg LockSnapshotPublicationDeploymentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockSnapshotPublicationDeployment, arg.DeploymentID, arg.AppID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const managedPostgresBindingDatabaseID = `-- name: ManagedPostgresBindingDatabaseID :one
 SELECT database_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2
 `
@@ -17589,6 +17623,53 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 		return nil, err
 	}
 	return items, nil
+}
+
+const readSnapshotPublicationConfigChange = `-- name: ReadSnapshotPublicationConfigChange :one
+SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
+`
+
+func (q *Queries) ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readSnapshotPublicationConfigChange, appID)
+	var changed_at pgtype.Timestamptz
+	err := row.Scan(&changed_at)
+	return changed_at, err
+}
+
+const readSnapshotPublicationDeployment = `-- name: ReadSnapshotPublicationDeployment :one
+SELECT a.id::text AS app_id, a.account_id::text AS account_id
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE d.id = $1::uuid
+`
+
+type ReadSnapshotPublicationDeploymentRow struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadSnapshotPublicationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadSnapshotPublicationDeploymentRow, error) {
+	row := db.QueryRow(ctx, readSnapshotPublicationDeployment, deploymentID)
+	var i ReadSnapshotPublicationDeploymentRow
+	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
+}
+
+const readSnapshotPublicationSource = `-- name: ReadSnapshotPublicationSource :one
+SELECT coalesce(app_id::text, '')::text AS app_id, deployment_id::text AS deployment_id, started_at
+FROM instances WHERE id = $1::uuid FOR SHARE
+`
+
+type ReadSnapshotPublicationSourceRow struct {
+	AppID        string
+	DeploymentID string
+	StartedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReadSnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ReadSnapshotPublicationSourceRow, error) {
+	row := db.QueryRow(ctx, readSnapshotPublicationSource, instanceID)
+	var i ReadSnapshotPublicationSourceRow
+	err := row.Scan(&i.AppID, &i.DeploymentID, &i.StartedAt)
+	return i, err
 }
 
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many

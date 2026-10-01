@@ -1,3 +1,23 @@
+-- name: ReadSnapshotPublicationDeployment :one
+SELECT a.id::text AS app_id, a.account_id::text AS account_id
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE d.id = sqlc.arg(deployment_id)::uuid;
+
+-- name: LockSnapshotPublicationApp :one
+SELECT id FROM apps WHERE id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE;
+
+-- name: LockSnapshotPublicationDeployment :one
+SELECT id FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+FOR SHARE;
+
+-- name: ReadSnapshotPublicationSource :one
+SELECT coalesce(app_id::text, '')::text AS app_id, deployment_id::text AS deployment_id, started_at
+FROM instances WHERE id = sqlc.arg(instance_id)::uuid FOR SHARE;
+
+-- name: ReadSnapshotPublicationConfigChange :one
+SELECT changed_at FROM app_runtime_config_changes WHERE app_id = sqlc.arg(app_id)::uuid;
+
 -- name: ListWarmPoolReconciliationAppIDs :many
 SELECT a.id::text AS app_id FROM apps a
 WHERE a.status <> 'deleted'

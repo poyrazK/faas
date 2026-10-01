@@ -4617,10 +4617,10 @@ type Store interface {
 	// stale on a failed restore, ADR-005).
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
 	// PublishSnapshotIfRuntimeFresh checks the captured instance start time
-	// and app config stamp atomically with insertion. The captured time matters
-	// because the instance row's started_at can advance on a later wake. Empty
-	// sourceInstanceID is accepted only for legacy notifications when the app
-	// has no config-change stamp.
+	// and app config stamp atomically with insertion, retaining the original
+	// environment lifetime. The source start must still match the same runtime
+	// attempt. Empty sourceInstanceID is accepted only for production/default
+	// notifications when the app has no config-change stamp.
 	PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	// LatestSnapshotForTier (issue #470 / ADR-055) returns the freshest

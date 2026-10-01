@@ -908,6 +908,8 @@ type Querier interface {
 	LockRuntimeSecretOwner(ctx context.Context, db DBTX, arg LockRuntimeSecretOwnerParams) (LockRuntimeSecretOwnerRow, error)
 	LockRuntimeSecretRows(ctx context.Context, db DBTX, arg LockRuntimeSecretRowsParams) ([]string, error)
 	LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
+	LockSnapshotPublicationApp(ctx context.Context, db DBTX, arg LockSnapshotPublicationAppParams) (pgtype.UUID, error)
+	LockSnapshotPublicationDeployment(ctx context.Context, db DBTX, arg LockSnapshotPublicationDeploymentParams) (pgtype.UUID, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (pgtype.UUID, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -1184,6 +1186,9 @@ type Querier interface {
 	ReadRuntimeAppEnvForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppEnvForDeploymentParams) (ReadRuntimeAppEnvForDeploymentRow, error)
 	ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error)
 	ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX, arg ReadRuntimeSecretDeliveryVersionsParams) ([]ReadRuntimeSecretDeliveryVersionsRow, error)
+	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
+	ReadSnapshotPublicationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadSnapshotPublicationDeploymentRow, error)
+	ReadSnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ReadSnapshotPublicationSourceRow, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
 	// Returns at most 100 rows per invocation to bound memory; the
 	// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
