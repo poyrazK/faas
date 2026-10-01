@@ -594,6 +594,22 @@ type ScaleToZeroProber interface {
 	ProbeScaleToZero(context.Context, string, CredentialMaterial) (ScaleToZeroProbeResult, error)
 }
 
+// RestoreProbe is held only during an isolated qualification run. The marker
+// proves data predates the requested restore point and is never persisted in
+// approval evidence.
+type RestoreProbe struct {
+	PointInTime time.Time
+	Marker      string
+}
+
+// RestoreDataProber exercises data recovery on disposable qualification
+// resources only. It is never called during customer lifecycle reconciliation.
+type RestoreDataProber interface {
+	PrepareRestore(context.Context, string, CredentialMaterial) (RestoreProbe, error)
+	VerifyRestore(context.Context, string, CredentialMaterial, RestoreProbe) error
+	CleanupRestore(context.Context, string, CredentialMaterial) error
+}
+
 type Database struct {
 	ID                      string
 	AccountID               string

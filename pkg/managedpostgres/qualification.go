@@ -40,8 +40,9 @@ type ScaleToZeroEvidence struct {
 // a mutating qualification run. It contains no provider resource ID; the
 // target is deleted before the source resource is cleaned up.
 type RestoreEvidence struct {
-	Restored bool `json:"restored"`
-	Deleted  bool `json:"deleted"`
+	Restored     bool `json:"restored"`
+	DataVerified bool `json:"data_verified"`
+	Deleted      bool `json:"deleted"`
 }
 
 // QualificationReport is safe to persist in an operator audit log. It does
@@ -67,7 +68,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 1
+const QualificationArtifactVersion = 2
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -79,7 +80,9 @@ var requiredProviderQualificationChecks = [...]string{
 }
 
 var restoreQualificationChecks = [...]string{
-	"restore", "restore_observed", "restore_delete", "restore_delete_complete",
+	"restore_prepare", "restore", "restore_observed", "restore_ready",
+	"restore_credentials_issue", "restore_credentials_valid", "restore_data_verified", "restore_credentials_revoke",
+	"restore_delete", "restore_delete_complete", "restore_cleanup",
 }
 
 var requiredLifecycleQualificationChecks = [...]string{
@@ -231,7 +234,7 @@ func ValidateQualificationReport(report QualificationReport) error {
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS < 0 {
 		return ErrUnavailable
 	}
-	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.Deleted) {
+	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.Deleted) {
 		return ErrUnavailable
 	}
 	return nil
@@ -445,6 +448,7 @@ type QualificationOptions struct {
 	Spec         Spec
 	Timeout      time.Duration
 	Mutating     bool
+	PollInterval time.Duration
 }
 
 const defaultQualificationTimeout = 10 * time.Minute
@@ -481,8 +485,6 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	// Cleanup must retain a separate budget when a provider call hits the
 	// qualification deadline; otherwise an ambiguous create could be left
 	// behind precisely when the harness is under pressure.
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
-	defer cleanupCancel()
 
 	record := func(name string, err error) bool {
 		check := QualificationCheck{Name: name, Passed: err == nil}
@@ -536,6 +538,11 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	restoreDeleted := false
 	deleted := false
 	credentialIssued := false
+	restoreCredentialIssued := false
+	var restoreCredentialRequest CredentialRequest
+	var restoreProber RestoreDataProber
+	var material CredentialMaterial
+	restoreProbePrepared := false
 	credentialRequest := CredentialRequest{
 		ProviderResourceID: providerResourceID,
 		IdentityKey:        qualificationKey("identity", options.ResourceID),
@@ -543,16 +550,28 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		IdempotencyKey:     credentialKey,
 	}
 	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
+		defer cleanupCancel()
 		// A failed revoke or delete is retried during cleanup. Do not expose the
 		// provider error; the operator can rerun the qualification safely.
+		if restoreProbePrepared {
+			if cleanupErr := restoreProber.CleanupRestore(cleanupCtx, providerResourceID, material); cleanupErr != nil && resultErr == nil {
+				record("cleanup_restore_probe", cleanupErr)
+			}
+		}
 		if credentialIssued && providerResourceID != "" {
 			if cleanupErr := provider.RevokeCredentials(cleanupCtx, credentialRequest); cleanupErr != nil && resultErr == nil {
 				report.Checks = append(report.Checks, QualificationCheck{Name: "cleanup_credentials", Error: qualificationErrorCode(cleanupErr)})
 				resultErr = fmt.Errorf("%w: cleanup_credentials", ErrQualificationFailed)
 			}
 		}
+		if restoreCredentialIssued {
+			if cleanupErr := provider.RevokeCredentials(cleanupCtx, restoreCredentialRequest); cleanupErr != nil && resultErr == nil {
+				record("cleanup_restore_credentials", cleanupErr)
+			}
+		}
 		if restoreAttempted && !restoreDeleted {
-			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{
+			cleanupResult, cleanupErr := qualifyProviderDelete(cleanupCtx, provider, options.PollInterval, DeleteRequest{
 				ResourceID:              restoreResourceID,
 				ProviderResourceID:      restoreTargetProviderResourceID,
 				RestoreSourceResourceID: providerResourceID,
@@ -568,8 +587,13 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 				restoreDeleted = true
 			}
 		}
-		if !deleted && providerResourceID != "" {
-			cleanupResult, cleanupErr := provider.Delete(cleanupCtx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
+		if !deleted {
+			// Retain a source-delete budget even if target cleanup exhausted
+			// its deadline. The logical identity also recovers a lost create
+			// response that never supplied an opaque provider resource ID.
+			sourceCleanupCtx, sourceCleanupCancel := context.WithTimeout(context.WithoutCancel(parent), qualificationCleanupTimeout)
+			defer sourceCleanupCancel()
+			cleanupResult, cleanupErr := qualifyProviderDelete(sourceCleanupCtx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
 			if cleanupErr == nil && !cleanupResult.Done {
 				cleanupErr = ErrUnavailable
 			}
@@ -600,11 +624,11 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	}
 	record("provision_idempotent_identity", nil)
 
-	inspected, inspectErr := provider.Inspect(ctx, providerResourceID)
+	inspected, inspectErr := qualifyProviderReady(ctx, provider, providerResourceID, options.PollInterval)
 	if !record("inspect", inspectErr) {
 		return report, resultErr
 	}
-	if inspected.ProviderResourceID != providerResourceID || (inspected.Status != ProviderStatusPending && inspected.Status != ProviderStatusReady) {
+	if inspected.ProviderResourceID != providerResourceID || inspected.Status != ProviderStatusReady || inspected.Spec != options.Spec {
 		record("inspect_observed", ErrUnavailable)
 		return report, resultErr
 	}
@@ -619,7 +643,8 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		return report, resultErr
 	}
 
-	material, credentialErr := provider.IssueCredentials(ctx, credentialRequest)
+	var credentialErr error
+	material, credentialErr = provider.IssueCredentials(ctx, credentialRequest)
 	if !record("credentials_issue", credentialErr) {
 		return report, resultErr
 	}
@@ -649,18 +674,28 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	if options.Spec.RestoreWindowSeconds > 0 {
 		restoreAttempted = true
 		report.Restore = &RestoreEvidence{}
-		window := time.Duration(options.Spec.RestoreWindowSeconds) * time.Second
-		offset := window / 2
-		if offset <= 0 {
-			offset = time.Nanosecond
+		prober, ok := provider.(RestoreDataProber)
+		if !ok {
+			record("restore_prepare", ErrUnsupported)
+			return report, resultErr
+		}
+		restoreProber = prober
+		restoreProbePrepared = true
+		probe, prepareErr := prober.PrepareRestore(ctx, providerResourceID, material)
+		if prepareErr == nil && (probe.PointInTime.Before(started) || probe.PointInTime.After(time.Now().UTC()) || probe.Marker == "") {
+			prepareErr = ErrInvalid
+		}
+		if !record("restore_prepare", prepareErr) {
+			return report, resultErr
 		}
 		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
 			ResourceID:       restoreResourceID,
 			SourceResourceID: providerResourceID,
 			Spec:             options.Spec,
-			PointInTime:      time.Now().UTC().Add(-offset),
+			PointInTime:      probe.PointInTime,
 			IdempotencyKey:   qualificationKey("restore", options.ResourceID),
 		})
+		restoreTargetProviderResourceID = restored.ProviderResourceID
 		if !record("restore", restoreErr) {
 			return report, resultErr
 		}
@@ -671,7 +706,33 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreTargetProviderResourceID = restored.ProviderResourceID
 		report.Restore.Restored = true
 		record("restore_observed", nil)
-		deletedRestore, deleteRestoreErr := provider.Delete(ctx, DeleteRequest{
+		ready, readyErr := qualifyProviderReady(ctx, provider, restoreTargetProviderResourceID, options.PollInterval)
+		if readyErr == nil && (ready.ProviderResourceID != restoreTargetProviderResourceID || ready.Spec != options.Spec) {
+			readyErr = ErrUnavailable
+		}
+		if !record("restore_ready", readyErr) {
+			return report, resultErr
+		}
+		restoreCredentialRequest = CredentialRequest{ProviderResourceID: restoreTargetProviderResourceID,
+			IdentityKey: qualificationKey("restore-identity", options.ResourceID), Access: CredentialReadWrite,
+			IdempotencyKey: qualificationKey("restore-credential", options.ResourceID)}
+		restoreMaterial, issueErr := provider.IssueCredentials(ctx, restoreCredentialRequest)
+		if !record("restore_credentials_issue", issueErr) {
+			return report, resultErr
+		}
+		restoreCredentialIssued = true
+		if !record("restore_credentials_valid", restoreMaterial.Validate()) {
+			return report, resultErr
+		}
+		if !record("restore_data_verified", prober.VerifyRestore(ctx, restoreTargetProviderResourceID, restoreMaterial, probe)) {
+			return report, resultErr
+		}
+		report.Restore.DataVerified = true
+		if !record("restore_credentials_revoke", provider.RevokeCredentials(ctx, restoreCredentialRequest)) {
+			return report, resultErr
+		}
+		restoreCredentialIssued = false
+		deletedRestore, deleteRestoreErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{
 			ResourceID:              restoreResourceID,
 			ProviderResourceID:      restoreTargetProviderResourceID,
 			RestoreSourceResourceID: providerResourceID,
@@ -687,13 +748,17 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		restoreDeleted = true
 		report.Restore.Deleted = true
 		record("restore_delete_complete", nil)
+		if !record("restore_cleanup", prober.CleanupRestore(ctx, providerResourceID, material)) {
+			return report, resultErr
+		}
+		restoreProbePrepared = false
 	}
 	if err := provider.RevokeCredentials(ctx, credentialRequest); !record("credentials_revoke", err) {
 		return report, resultErr
 	}
 	credentialIssued = false
 
-	deletedResult, deleteErr := provider.Delete(ctx, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
+	deletedResult, deleteErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, ProviderResourceID: providerResourceID, IdempotencyKey: deleteKey})
 	if !record("delete", deleteErr) {
 		return report, resultErr
 	}
@@ -701,7 +766,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		record("delete_complete", ErrUnavailable)
 		return report, resultErr
 	}
-	recoveryResult, recoveryErr := provider.Delete(ctx, DeleteRequest{ResourceID: options.ResourceID, IdempotencyKey: deleteRecoveryKey})
+	recoveryResult, recoveryErr := qualifyProviderDelete(ctx, provider, options.PollInterval, DeleteRequest{ResourceID: options.ResourceID, IdempotencyKey: deleteRecoveryKey})
 	if !record("delete_recovery", recoveryErr) {
 		return report, resultErr
 	}

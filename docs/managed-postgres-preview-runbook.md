@@ -49,7 +49,10 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand.
+passes; rerun qualification instead of extending it by hand. Version 2
+artifacts require a restore timestamp inside the disposable source's lifetime,
+target readiness, SQL verification of data committed before that point, and
+completed target deletion. Version 1 artifacts cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against

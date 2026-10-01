@@ -432,7 +432,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	if ref.branchID != "" {
 		path += "/branches/" + url.PathEscape(ref.branchID)
 	}
-	var response projectResponse
+	var response createdBranchResponse
 	accepted := []int{http.StatusOK, http.StatusNoContent}
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, accepted...)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -440,6 +440,28 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	}
 	if err != nil {
 		return managedpostgres.DeleteResult{}, err
+	}
+	if ref.branchID != "" {
+		for _, op := range response.Operations {
+			if op.Status == "error" || op.Status == "cancelled" {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrUnavailable
+			}
+		}
+		for _, op := range response.Operations {
+			if op.ID == "" || !operationFinished(op.Status) {
+				return managedpostgres.DeleteResult{Done: false}, nil
+			}
+		}
+		if len(response.Operations) == 0 {
+			// An accepted request alone is not evidence that the branch has
+			// disappeared. Confirm synchronous/empty-operation responses.
+			var remaining createdBranchResponse
+			err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &remaining, http.StatusOK)
+			if errors.Is(err, managedpostgres.ErrNotFound) {
+				return managedpostgres.DeleteResult{Done: true}, nil
+			}
+			return managedpostgres.DeleteResult{Done: false}, err
+		}
 	}
 	return managedpostgres.DeleteResult{Done: true}, nil
 }

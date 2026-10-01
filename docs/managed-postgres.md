@@ -63,13 +63,19 @@ and point `FAAS_MANAGED_POSTGRES_CONFIG` at the provider configuration. The
 command provisions one resource, retries the same idempotency key to exercise
 ambiguous-create recovery, inspects it, reads a complete usage window, issues
 and revokes a read/write credential, and deletes the resource. When the
-qualification spec advertises a point-in-time restore window, it also creates
-and deletes a disposable restore target before deleting the source. It always
+qualification spec advertises a point-in-time restore window, it also writes
+a marker in the disposable source, captures a database-clock timestamp after
+that commit, changes the marker, and restores to the captured point. It waits
+for target readiness, issues a target credential, and verifies the earlier
+marker through PostgreSQL before revoking that credential and deleting the
+target. The source fixture is removed before its owner credential is revoked.
+It waits for asynchronous deletion to complete and always
 attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result.
+machine-readable `readiness` result. Version 2 requires the data-recovery
+checks; version 1 artifacts must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.

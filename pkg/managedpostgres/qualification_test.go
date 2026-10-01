@@ -23,12 +23,15 @@ type qualificationProvider struct {
 	revoke       int
 	delete       int
 	issueErr     error
+	spec         Spec
+	pointInTime  time.Time
 }
 
 func (p *qualificationProvider) Capabilities() Capabilities { return p.capabilities }
 
 func (p *qualificationProvider) Provision(_ context.Context, request ProvisionRequest) (ObservedDatabase, error) {
 	p.provision++
+	p.spec = request.Spec
 	if p.resourceID == "" {
 		p.resourceID = "provider-resource"
 	}
@@ -37,12 +40,13 @@ func (p *qualificationProvider) Provision(_ context.Context, request ProvisionRe
 
 func (p *qualificationProvider) Restore(_ context.Context, request RestoreRequest) (ObservedDatabase, error) {
 	p.restore++
+	p.pointInTime = request.PointInTime
 	return ObservedDatabase{ProviderResourceID: "restored-" + request.ResourceID, Status: ProviderStatusReady, Spec: request.Spec}, nil
 }
 
 func (p *qualificationProvider) Inspect(_ context.Context, providerResourceID string) (ObservedDatabase, error) {
 	p.inspect++
-	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: ProviderStatusReady}, nil
+	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: ProviderStatusReady, Spec: p.spec}, nil
 }
 
 func (*qualificationProvider) Update(context.Context, UpdateRequest) (ObservedDatabase, error) {
@@ -87,6 +91,18 @@ func (p *qualificationProvider) Usage(_ context.Context, _ string, window UsageW
 	return Usage{Window: window, Readings: []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 1}}}, nil
 }
 
+func (*qualificationProvider) PrepareRestore(context.Context, string, CredentialMaterial) (RestoreProbe, error) {
+	return RestoreProbe{PointInTime: time.Now().UTC(), Marker: "before"}, nil
+}
+
+func (*qualificationProvider) VerifyRestore(context.Context, string, CredentialMaterial, RestoreProbe) error {
+	return nil
+}
+
+func (*qualificationProvider) CleanupRestore(context.Context, string, CredentialMaterial) error {
+	return nil
+}
+
 func TestQualifyProviderCapabilityOnlyIsNonMutating(t *testing.T) {
 	provider := &qualificationProvider{capabilities: testCapabilities()}
 	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
@@ -119,16 +135,16 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
-	if !provider.deleted || provider.provision != 2 || provider.inspect != 1 || provider.usage != 1 || provider.restore != 1 || provider.issue != 1 || provider.revoke != 1 || provider.delete != 3 {
+	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 1 || provider.issue != 2 || provider.revoke != 2 || provider.delete != 3 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 25 {
+	if len(report.Checks) != 32 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
 		t.Fatalf("scale-to-zero evidence = %+v", report.ScaleToZero)
 	}
-	if report.Restore == nil || !report.Restore.Restored || !report.Restore.Deleted {
+	if report.Restore == nil || !report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.Deleted {
 		t.Fatalf("restore evidence = %+v", report.Restore)
 	}
 }
@@ -483,4 +499,112 @@ func passingLifecycleQualificationReport() LifecycleQualificationReport {
 		checks = append(checks, QualificationCheck{Name: name, Passed: true})
 	}
 	return LifecycleQualificationReport{Checks: checks}
+}
+
+type restoreQualificationProvider struct {
+	*qualificationProvider
+	prepareErr      error
+	verifyErr       error
+	oldPoint        bool
+	pendingInspects int
+	pendingDeletes  int
+	cleanup         int
+}
+
+func (p *restoreQualificationProvider) PrepareRestore(ctx context.Context, id string, material CredentialMaterial) (RestoreProbe, error) {
+	probe, _ := p.qualificationProvider.PrepareRestore(ctx, id, material)
+	if p.oldPoint {
+		probe.PointInTime = probe.PointInTime.Add(-time.Hour)
+	}
+	return probe, p.prepareErr
+}
+
+func (p *restoreQualificationProvider) VerifyRestore(context.Context, string, CredentialMaterial, RestoreProbe) error {
+	return p.verifyErr
+}
+
+func (p *restoreQualificationProvider) CleanupRestore(context.Context, string, CredentialMaterial) error {
+	p.cleanup++
+	return nil
+}
+
+func (p *restoreQualificationProvider) Inspect(ctx context.Context, id string) (ObservedDatabase, error) {
+	observed, err := p.qualificationProvider.Inspect(ctx, id)
+	if strings.HasPrefix(id, "restored-") && p.pendingInspects > 0 {
+		p.pendingInspects--
+		observed.Status = ProviderStatusPending
+	}
+	return observed, err
+}
+
+func (p *restoreQualificationProvider) Delete(ctx context.Context, request DeleteRequest) (DeleteResult, error) {
+	if strings.HasPrefix(request.ProviderResourceID, "restored-") && p.pendingDeletes > 0 {
+		p.pendingDeletes--
+		return DeleteResult{Done: false}, nil
+	}
+	return p.qualificationProvider.Delete(ctx, request)
+}
+
+func TestRestoreQualificationVerifiesDataAndWaitsForOperations(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		prepareErr error
+		verifyErr  error
+		oldPoint   bool
+		wantCheck  string
+	}{
+		{name: "success"},
+		{name: "before resource lifetime", oldPoint: true, wantCheck: "restore_prepare"},
+		{name: "prepare failure", prepareErr: errors.New("private connection password"), wantCheck: "restore_prepare"},
+		{name: "wrong restored data", verifyErr: ErrUnavailable, wantCheck: "restore_data_verified"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &restoreQualificationProvider{qualificationProvider: &qualificationProvider{capabilities: testCapabilities()},
+				prepareErr: test.prepareErr, verifyErr: test.verifyErr, oldPoint: test.oldPoint, pendingInspects: 2, pendingDeletes: 2}
+			report, err := QualifyProvider(context.Background(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "restore-data-probe",
+				Spec: testSpec(), Mutating: true, Timeout: time.Second, PollInterval: time.Microsecond})
+			if provider.cleanup != 1 || !provider.deleted {
+				t.Fatalf("cleanup = %+v", provider)
+			}
+			if test.wantCheck == "" {
+				if err != nil || ValidateQualificationReport(report) != nil || provider.pendingInspects != 0 || provider.pendingDeletes != 0 {
+					t.Fatalf("report = %+v, %v", report, err)
+				}
+				if provider.pointInTime.Before(report.StartedAt) {
+					t.Fatal("restore predates resource")
+				}
+				return
+			}
+			if !errors.Is(err, ErrQualificationFailed) || ValidateQualificationReport(report) == nil {
+				t.Fatalf("failed probe approved: %+v, %v", report, err)
+			}
+			found := false
+			for _, check := range report.Checks {
+				if check.Name == test.wantCheck && !check.Passed {
+					found = true
+				}
+				if strings.Contains(check.Error, "password") {
+					t.Fatal("private error leaked")
+				}
+			}
+			if !found {
+				t.Fatalf("missing failed check %s: %+v", test.wantCheck, report)
+			}
+		})
+	}
+}
+
+type lostQualificationCreateProvider struct{ *qualificationProvider }
+
+func (p *lostQualificationCreateProvider) Provision(ctx context.Context, request ProvisionRequest) (ObservedDatabase, error) {
+	_, _ = p.qualificationProvider.Provision(ctx, request)
+	return ObservedDatabase{}, ErrUnavailable
+}
+
+func TestQualificationCleansUpLostProvisionResponseByLogicalIdentity(t *testing.T) {
+	provider := &lostQualificationCreateProvider{qualificationProvider: &qualificationProvider{capabilities: testCapabilities()}}
+	_, err := QualifyProvider(context.Background(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "lost-create-response", Spec: testSpec(), Mutating: true})
+	if !errors.Is(err, ErrQualificationFailed) || !provider.deleted || provider.delete != 1 {
+		t.Fatalf("lost create cleanup = %+v, %v", provider, err)
+	}
 }

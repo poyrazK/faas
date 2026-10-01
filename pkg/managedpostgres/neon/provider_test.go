@@ -548,3 +548,50 @@ func TestByteHoursToSecondsRejectsOverflow(t *testing.T) {
 		t.Fatalf("overflow conversion = %v, want ErrUnavailable", err)
 	}
 }
+
+func TestDeleteBranchRequiresCompletedOperationsOrConfirmedAbsence(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		body         string
+		branchStatus int
+		wantDone     bool
+		wantErr      error
+	}{
+		{name: "running", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"running"}]}`},
+		{name: "queued", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"scheduling"}]}`},
+		{name: "finished", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"finished"}]}`, wantDone: true},
+		{name: "mixed", status: http.StatusOK, body: `{"operations":[{"id":"op-one","status":"finished"},{"id":"op-two","status":"running"}]}`},
+		{name: "failed", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"error"}]}`, wantErr: managedpostgres.ErrUnavailable},
+		{name: "cancelled", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"cancelled"}]}`, wantErr: managedpostgres.ErrUnavailable},
+		{name: "unidentified", status: http.StatusOK, body: `{"operations":[{"status":"finished"}]}`},
+		{name: "already missing", status: http.StatusNotFound, wantDone: true},
+		{name: "empty operations still exists", status: http.StatusOK, body: `{}`, branchStatus: http.StatusOK},
+		{name: "empty operations absent", status: http.StatusOK, body: `{}`, branchStatus: http.StatusNotFound, wantDone: true},
+		{name: "no content still exists", status: http.StatusNoContent, branchStatus: http.StatusOK},
+		{name: "no content absent", status: http.StatusNoContent, branchStatus: http.StatusNotFound, wantDone: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v2/projects/project-123/branches/br-restore" {
+					t.Errorf("path = %s", r.URL.Path)
+				}
+				if r.Method == http.MethodGet {
+					w.WriteHeader(test.branchStatus)
+					_, _ = w.Write([]byte(`{"branch":{"id":"br-restore"}}`))
+					return
+				}
+				if r.Method != http.MethodDelete {
+					t.Errorf("method = %s", r.Method)
+				}
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			result, err := provider.Delete(context.Background(), managedpostgres.DeleteRequest{ProviderResourceID: "project-123/br-restore", IdempotencyKey: "delete"})
+			if result.Done != test.wantDone || !errors.Is(err, test.wantErr) {
+				t.Fatalf("delete = %+v, %v", result, err)
+			}
+		})
+	}
+}
