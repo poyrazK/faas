@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) CreateUDPListener(_ context.Context, in UDPListener) (UDPListener, error) {
@@ -21,7 +23,11 @@ func (m *MemStore) CreateUDPListener(_ context.Context, in UDPListener) (UDPList
 	if m.udpListeners == nil {
 		m.udpListeners = make(map[string]UDPListener)
 	}
+	count := 0
 	for _, existing := range m.udpListeners {
+		if existing.AppID == in.AppID {
+			count++
+		}
 		if existing.ID == in.ID && in.ID != "" {
 			return UDPListener{}, ErrConflict
 		}
@@ -31,6 +37,9 @@ func (m *MemStore) CreateUDPListener(_ context.Context, in UDPListener) (UDPList
 		if existing.PublicPort == in.PublicPort {
 			return UDPListener{}, ErrConflict
 		}
+	}
+	if count >= api.UDPListenerReservationsPerAppMax {
+		return UDPListener{}, &UDPListenerLimitError{Limit: api.UDPListenerReservationsPerAppMax, Observed: count + 1}
 	}
 	if in.ID == "" {
 		in.ID = newID()

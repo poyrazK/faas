@@ -5089,3 +5089,6 @@ WHERE id = sqlc.arg(id)::text::uuid RETURNING *;
 
 -- name: DeleteUDPListener :execrows
 DELETE FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: CountUDPListenersForApp :one
+SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uuid;
