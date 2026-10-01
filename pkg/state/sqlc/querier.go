@@ -216,6 +216,8 @@ type Querier interface {
 	// natural expiry path; Delete is the "kill this CI job's
 	// credential now" lever.
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
+	DeleteTrafficAccountInvocations(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	DeleteTrafficAccountRedirectDomains(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteTrafficCustomDomain(ctx context.Context, db DBTX, arg DeleteTrafficCustomDomainParams) (int64, error)
 	DeleteTrafficTenantHostname(ctx context.Context, db DBTX, arg DeleteTrafficTenantHostnameParams) (int64, error)
 	DeleteTrafficTenantSurface(ctx context.Context, db DBTX, arg DeleteTrafficTenantSurfaceParams) (int64, error)
@@ -794,6 +796,7 @@ type Querier interface {
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
+	LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
 	// Acquire before app/FK locks so different apps and shared presets serialize.
 	LockTrafficPolicyAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -1011,7 +1014,7 @@ type Querier interface {
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
-	// Ownership is immutable; discover it before acquiring the account/app locks.
+	// Discover ownership before coordinating; repeat it under the app row lock.
 	ReadAppTrafficAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
 	ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg ReadBoundedTrafficEdgeRuleParams) (ReadBoundedTrafficEdgeRuleRow, error)
 	ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
@@ -1063,6 +1066,7 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
 	// ineligible claims are retained because they block less-specific fallbacks.

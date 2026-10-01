@@ -41,6 +41,22 @@ func (s *PgStore) beginAccountAppTrafficMutation(ctx context.Context, account, a
 	if err != nil {
 		return nil, appTrafficBindingError(err)
 	}
+	if appID != "" {
+		err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			owner, err := sqlc.New().LockTrafficAppAccount(bounded, tx, uuidToPgtype(appID))
+			if err != nil {
+				return mapErr(err)
+			}
+			if owner != uuidToPgtype(account) {
+				return ErrConflict
+			}
+			return nil
+		})
+		if err != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+			return nil, appTrafficBindingError(err)
+		}
+	}
 	return &appTrafficBindingTx{Tx: tx}, nil
 }
 

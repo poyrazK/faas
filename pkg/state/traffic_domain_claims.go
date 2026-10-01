@@ -85,7 +85,11 @@ func (m *MemStore) memTrafficDomainClaimsLocked(ctx context.Context, change memT
 			}
 			eligible = eligible && valid
 		}
-		claims = append(claims, trafficDomainClaim{Domain: domain.Domain, App: domain.AppID, Environment: domain.EnvironmentID, Account: app.AccountID, RedirectApp: domain.RedirectAppID, Eligible: eligible})
+		redirect, found := change.Apps[domain.RedirectAppID]
+		if !found {
+			redirect = m.apps[domain.RedirectAppID]
+		}
+		claims = append(claims, trafficDomainClaim{Domain: domain.Domain, App: domain.AppID, Environment: domain.EnvironmentID, Account: app.AccountID, RedirectApp: domain.RedirectAppID, RedirectAccount: redirect.AccountID, Eligible: eligible})
 		return checkMemTrafficAnalysisInputs(len(claims))
 	})
 	if err != nil {

@@ -20422,7 +20422,7 @@ func AppDeleteGraceDuration() time.Duration {
 // DeleteAccount walks the FK graph in dependency order under a single
 // m.mu lock. The dependency order matches the PgStore tx so a redelivered
 // grace tick finds the same idempotent answer.
-func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
+func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.accounts[id]
@@ -20443,6 +20443,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	change, err := m.checkMemTrafficAccountPurgeLocked(ctx, id)
+	if err != nil {
+		return err
+	}
+	m.publishMemTrafficAccountPurgeLocked(id, change)
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
 			delete(m.objectBuckets, bucketID)
@@ -20606,6 +20611,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for bid, b := range m.builds {
 		if _, ok := deletedDeployments[b.DeploymentID]; ok {
 			delete(m.builds, bid)
+			delete(m.builderVMCleanup, bid)
 		}
 	}
 	for aid, a := range m.apps {

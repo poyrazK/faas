@@ -31,9 +31,14 @@ type trafficTenantBindingTx struct {
 }
 
 func trafficBindingAffectedHosts(claims trafficBindingClaims, account string, requested []string, appID string) []string {
-	hosts := append(trafficTenantHostsForAccount(claims.Tenants, account), requested...)
+	hosts := append([]string(nil), requested...)
+	for _, claim := range claims.Tenants {
+		if claim.Account == account || claim.AppAccount == account {
+			hosts = append(hosts, claim.Host)
+		}
+	}
 	for _, claim := range claims.Domains {
-		if claim.Account == account || appID != "" && claim.RedirectApp == appID {
+		if claim.Account == account || claim.RedirectAccount == account || appID != "" && claim.RedirectApp == appID {
 			hosts = append(hosts, claim.Domain)
 		}
 	}

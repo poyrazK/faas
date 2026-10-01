@@ -13,8 +13,8 @@ import (
 type trafficHostReservation struct{ Kind, Host string }
 
 type trafficDomainClaim struct {
-	Domain, App, Environment, Account, RedirectApp string
-	Eligible                                       bool
+	Domain, App, Environment, Account, RedirectApp, RedirectAccount string
+	Eligible                                                        bool
 }
 
 func trafficDomainClaimPrecedes(a, b trafficDomainClaim) bool {

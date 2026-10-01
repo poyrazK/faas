@@ -6,23 +6,35 @@ import "context"
 // App purge cascades reservations and app-scoped routing intent. Project the
 // complete cascade before deleting any jobs, artifacts, or deletion claims.
 func (m *MemStore) checkMemTrafficAppPurgeLocked(ctx context.Context, app App) error {
-	change := memTrafficPolicyChange{Apps: map[string]App{app.ID: {}}, Domains: make(map[string]CustomDomain),
+	change, err := m.memTrafficAppPurgeChangeLocked(ctx, map[string]App{app.ID: app})
+	if err != nil {
+		return err
+	}
+	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, change))
+}
+
+func (m *MemStore) memTrafficAppPurgeChangeLocked(ctx context.Context, apps map[string]App) (memTrafficPolicyChange, error) {
+	ownsApp := func(id string) bool { _, found := apps[id]; return found }
+	change := memTrafficPolicyChange{Apps: make(map[string]App), Domains: make(map[string]CustomDomain),
 		TenantSurfaces: make(map[string]TenantSurface), TenantHostnames: make(map[string]TenantHostname),
 		Rules: make(map[string]EdgeRule), Presets: make(map[string]CorsPreset), Policies: make(map[string]ProjectEnvironmentEdgePolicy),
 		Aliases: make(map[string]DeploymentAlias), Deployments: make(map[string]Deployment)}
+	for id := range apps {
+		change.Apps[id] = App{}
+	}
 	for id, domain := range m.domains {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if domain.AppID == app.ID || domain.RedirectAppID == app.ID {
+		if ownsApp(domain.AppID) || ownsApp(domain.RedirectAppID) {
 			change.Domains[id] = CustomDomain{}
 		}
 	}
 	for id, surface := range m.tenantSurfaces {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if surface.AppID == app.ID {
+		if ownsApp(surface.AppID) {
 			change.TenantSurfaces[id] = TenantSurface{}
 		}
 	}
@@ -32,49 +44,49 @@ func (m *MemStore) checkMemTrafficAppPurgeLocked(ctx context.Context, app App) e
 		}
 		return nil
 	}); err != nil {
-		return err
+		return change, err
 	}
 	for id, rule := range m.edgeRules {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if rule.AppID == app.ID {
+		if ownsApp(rule.AppID) {
 			change.Rules[id] = EdgeRule{}
 		}
 	}
 	for id, preset := range m.corsPresets {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if preset.AppID == app.ID {
+		if ownsApp(preset.AppID) {
 			change.Presets[id] = CorsPreset{}
 		}
 	}
 	for id, policy := range m.projectEnvironmentEdgePolicies {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if policy.AppID == app.ID {
+		if ownsApp(policy.AppID) {
 			change.Policies[id] = ProjectEnvironmentEdgePolicy{}
 		}
 	}
 	for id, alias := range m.deploymentAliases {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if alias.AppID == app.ID {
+		if ownsApp(alias.AppID) {
 			change.Aliases[id] = DeploymentAlias{}
 		}
 	}
 	for id, deployment := range m.deployments {
 		if err := ctx.Err(); err != nil {
-			return err
+			return change, err
 		}
-		if deployment.AppID == app.ID {
+		if ownsApp(deployment.AppID) {
 			change.Deployments[id] = Deployment{}
 		}
 	}
-	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, change))
+	return change, nil
 }
 
 func (m *MemStore) publishMemTrafficAppPurgeLocked(appID string) {

@@ -102,7 +102,7 @@ func (m *MemStore) memTrafficBindingClaimsLocked(ctx context.Context, change mem
 			tenant = m.platformTenants[tenantID]
 		}
 		claim := trafficTenantClaim{trafficHostTenant: trafficHostTenant{Host: strings.ToLower(host.Hostname), ID: host.ID, Surface: host.SurfaceID, App: surface.AppID, PlatformTenant: tenantID},
-			Account: surface.AccountID, Status: surface.Status, Verified: host.Verified(),
+			Account: surface.AccountID, AppAccount: app.AccountID, Status: surface.Status, Verified: host.Verified(),
 			Public:    app.ID != "" && app.AccountID == surface.AccountID && app.Status != AppDeleted && api.NormalizeAppVisibility(app.Visibility) != api.AppVisibilityInternal,
 			Suspended: tenant.Status == PlatformTenantSuspended}
 		if claim.eligible() && (claim.ID == "" || claim.Surface == "" || claim.App == "") {

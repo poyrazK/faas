@@ -2221,6 +2221,34 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 	return err
 }
 
+const deleteTrafficAccountInvocations = `-- name: DeleteTrafficAccountInvocations :exec
+WITH removed AS (
+    DELETE FROM invocations i
+    WHERE i.account_id=$1::uuid
+      OR i.app_id IN (SELECT id FROM apps WHERE account_id=$1::uuid)
+    RETURNING account_id,quota_reserved
+), reservations AS (
+    SELECT account_id,count(*) AS slots FROM removed WHERE quota_reserved GROUP BY account_id
+)
+UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
+FROM reservations r WHERE q.account_id=r.account_id
+`
+
+func (q *Queries) DeleteTrafficAccountInvocations(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteTrafficAccountInvocations, accountID)
+	return err
+}
+
+const deleteTrafficAccountRedirectDomains = `-- name: DeleteTrafficAccountRedirectDomains :exec
+DELETE FROM custom_domains d USING apps a
+WHERE d.app_id_redirect=a.id AND a.account_id=$1::uuid
+`
+
+func (q *Queries) DeleteTrafficAccountRedirectDomains(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteTrafficAccountRedirectDomains, accountID)
+	return err
+}
+
 const deleteTrafficCustomDomain = `-- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=$1::text::citext AND app_id=$2::uuid
 `
@@ -8675,6 +8703,17 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const lockTrafficAppAccount = `-- name: LockTrafficAppAccount :one
+SELECT account_id FROM apps WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTrafficAppAccount, appID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const lockTrafficPolicyAccount = `-- name: LockTrafficPolicyAccount :one
 SELECT id FROM accounts WHERE id = $1::uuid FOR UPDATE NOWAIT
 `
@@ -12537,7 +12576,7 @@ const readAppTrafficAccount = `-- name: ReadAppTrafficAccount :one
 SELECT account_id FROM apps WHERE id=$1::uuid
 `
 
-// Ownership is immutable; discover it before acquiring the account/app locks.
+// Discover ownership before coordinating; repeat it under the app row lock.
 func (q *Queries) ReadAppTrafficAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, readAppTrafficAccount, appID)
 	var account_id pgtype.UUID
@@ -13759,15 +13798,17 @@ WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
         'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
         'RedirectApp',coalesce(d.app_id_redirect::text,''),
+        'RedirectAccount',coalesce(redirect.account_id::text,''),
         'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
             AND (d.environment_id IS NULL OR EXISTS (
                 SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
                   AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN apps redirect ON redirect.id=d.app_id_redirect
     ORDER BY d.domain::text COLLATE "C" LIMIT ($1::integer+1)
 ), tenants AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
-        'Surface',s.id,'App',s.app_id,'Account',s.account_id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,'AppAccount',coalesce(a.account_id::text,''),
         'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
         'Verified',h.verified_at IS NOT NULL,
         'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
@@ -13806,6 +13847,17 @@ func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg Rea
 	var i ReadTrafficBindingClaimsRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
+}
+
+const readTrafficDeletionAccountStatus = `-- name: ReadTrafficDeletionAccountStatus :one
+SELECT status FROM accounts WHERE id=$1::uuid
+`
+
+func (q *Queries) ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readTrafficDeletionAccountStatus, accountID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const readTrafficDeploymentStatus = `-- name: ReadTrafficDeploymentStatus :one

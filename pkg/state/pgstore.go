@@ -26211,11 +26211,11 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 // `delete from accounts` is the sentinel — 0 rows affected means the
 // account was already gone (idempotent retry by pkg/grace).
 func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAccountAppTrafficMutation(ctx, id, "")
 	if err != nil {
 		return fmt.Errorf("state: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	activeBuckets, err := sqlc.New().ObjectBucketCountForAccount(ctx, tx, mustPgUUID(id))
 	if err != nil {
 		return fmt.Errorf("state: count account object buckets: %w", err)
@@ -26227,6 +26227,21 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// Active-bucket FKs also guard against a concurrent reservation.
 	if err := sqlc.New().ObjectBucketPruneTombstones(ctx, tx, mustPgUUID(id)); err != nil {
 		return fmt.Errorf("state: prune deleted object bucket metadata: %w", err)
+	}
+
+	status, err := sqlc.New().ReadTrafficDeletionAccountStatus(ctx, tx, uuidToPgtype(id))
+	if err != nil {
+		return mapErr(err)
+	}
+	if status != string(AccountDeletedPending) {
+		return ErrNotFound
+	}
+	if err := sqlc.New().DeleteTrafficAccountRedirectDomains(ctx, tx, uuidToPgtype(id)); err != nil {
+		return fmt.Errorf("state: delete account redirect domains: %w", err)
+	}
+
+	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
+		return fmt.Errorf("state: delete account invocations: %w", err)
 	}
 
 	// Capture email at copy-time for the audit_log row (issue #755 /

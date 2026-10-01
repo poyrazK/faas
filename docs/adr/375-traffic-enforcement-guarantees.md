@@ -842,6 +842,25 @@ leases, tombstone slugs, cleanup and receipts. Creation-only preview batches
 follow the same staging rule. Real fleet and native acceptance remain separate
 release gates.
 
+### Follow-up: account retirement and captured app ownership
+
+Physical account retirement validates its complete routing cascade through the
+shared binding guard before erasing intent or recording deletion. Discovery also
+includes hostnames linked through an account's apps, platform tenants and legacy
+redirect targets. These private ownership identities stay within the existing
+metadata and input bounds; they carry no credentials or action bodies.
+
+Native cleanup, legacy redirect-domain removal, the pending-account sentinel and
+the deletion audit commit in one guarded transaction. Memory cleanup projects all
+owned apps, account policies, tenant links and reservations together before the
+first deletion. Refusal and cancellation retain the account and related intent.
+Restoring a pending account remains independent of refused cleanup.
+
+App guards that captured an owner repeat that predicate while locking the app
+row before mutation. A changed owner refuses and rolls back; node reassignment
+does not change customer ownership. Unsupported direct SQL remains outside the
+coordinated publication API. Fleet, staging and native acceptance remain open.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

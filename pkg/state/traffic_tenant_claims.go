@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -13,7 +12,7 @@ import (
 
 type trafficTenantClaim struct {
 	trafficHostTenant
-	Account                     string
+	Account, AppAccount         string
 	Status                      SurfaceStatus
 	Verified, Public, Suspended bool
 }
@@ -102,14 +101,4 @@ func checkTrafficTenantBindingOwner(ctx context.Context, beforeView, afterView t
 		}
 	}
 	return nil
-}
-
-func trafficTenantHostsForAccount(claims []trafficTenantClaim, account string) []string {
-	var hosts []string
-	for _, claim := range claims {
-		if claim.Account == account {
-			hosts = append(hosts, strings.ToLower(claim.Host))
-		}
-	}
-	return hosts
 }

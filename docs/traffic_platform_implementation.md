@@ -2107,3 +2107,95 @@ observations. Real daemon fleet/load/restart/outage/recovery, customer capabilit
 and staging qualification, and Linux x86_64 KVM VM/firewall/restore/process-death/
 leak acceptance remain pending. The user reports no KVM acceptance host available;
 that availability remains recorded as pending acceptance.
+
+### 2026-10-01 — account retirement and captured app ownership
+
+Physical account retirement now uses coordinated before/after binding analysis
+for its complete routing cascade. Private claim discovery includes app ownership
+of foreign surfaces and account ownership of legacy redirect targets. These
+identities remain within the existing metadata/input bounds and carry no action
+bodies or credentials. The guard discovers overlapping custom-domain/tenant
+owners and enabled global route owners and checks both tenant-routing modes.
+No migration, schema, API/SDK shape or limit value changed. Four SQLC queries
+were added; the bounded private binding-claim projection gained two owner fields.
+
+Native deletion takes the shared binding transaction and validates pending
+account status under the account lock. Legacy redirect-domain removal,
+invocation deletion, reserved-slot release, child cleanup, the account sentinel
+and deletion audit commit together. Invocation rows previously prevented an
+otherwise accepted retirement through their app/cron/account foreign keys;
+the new cleanup removes owned invocations and invocations referencing retiring
+apps and refunds reserved slots in surviving account quota rows. Physical
+retirement does not establish cancellation or rollback of external side effects.
+
+Memory deletion projects owned apps, domain/tenant reservations, account rules
+and presets, environments, platform-tenant links and policy cascades before its
+first deletion. It publishes the accepted routing changes, clears invocation
+reservations, then retains its existing lifecycle cleanup and audit sequence.
+Builder cleanup handoffs are removed with their deleted builds. This batch
+verifies routing retirement and relevant queued cleanup; it does not claim full
+memory/native parity for every resource table or native VM cleanup acceptance.
+
+Captured app guards repeat the expected owner predicate under an app row lock
+before mutation. A stale owner refuses without intent changes; the row lock
+blocks a concurrent ownership rewrite until the guard ends. Node reassignment
+changes placement and does not transfer customer account ownership. Unsupported
+direct SQL remains outside coordinated publication.
+
+Shared regressions cover tenant, verified-domain, reserved-global and foreign
+redirect withdrawal plus a foreign surface whose app FK points into the retiring
+account. Refusal preserves account/app/hostname intent, secrets, API keys,
+invocations, quota, cleanup and audit. Cancellation preserves the same intent.
+Recovery after refusal remains available; a restored active account cannot be
+retired by a stale grace sweep. After policy repair, deletion removes the account
+and its routing reservations while preserving surviving foreign accounts/apps.
+Native regressions also verify the captured owner and app row lock.
+
+The final 12,466-file freeze passed:
+
+- Full state, internal gateway, API, reconciliation, GitHub service and grace
+  unit runs: 6,928 named passes and 1,376 guarded/skipped
+  results in 214.123 s; all six packages passed.
+- Selected real Postgres traffic/domain/tenant/project/preview/account and
+  reconciliation runs: 640 named passes, zero skips, in
+  392.094 s; apid 52, gatewayd-internal 106, reconcile 6, state 476.
+- Removing duplicate results gives 7,442 distinct named
+  passes (apid 3,686, gatewayd-internal 823, githubd 302, grace 22, reconcile 77, state 2,532), with
+  938 guarded results without acceptance evidence
+  (apid 16, gatewayd-internal 7, reconcile 0, state 915).
+- The focused final state run passed 43 named cases without skips. SQLC 1.31.1
+  reproduced all four generated files. GolangCI-Lint 2.4.0 checked all six
+  packages with tests and reported zero issues in 115.953 s.
+  Runbook SQL, text encoding, shell quoting and ADR numbering checks passed.
+  Accepted gates used the complete package source with no overlays, exclusions
+  or weakened assertions.
+- Source Postgres public schema remained empty; fsync, synchronous commit and
+  full-page writes stayed enabled. These macOS Postgres runs do not provide
+  native VM/network, real daemon fleet/load or staging acceptance.
+
+Initial digest fixtures could not encode compound-key maps; the private digest
+encoding was corrected. The valid tenant/domain/redirect memory baseline
+reproduced unsafe acceptance. The initial global baseline used an empty app ID;
+final native/memory global cases retain a valid app-scoped route row, matching
+Native NOT NULL and UUID constraints, with the original refusal assertions.
+Native cleanup failures exposed the invocation FK gap described above. Empty
+UUID/NULL global fixtures and an unused-import compilation failure were also
+corrected; failed runs contribute no accepted passes.
+
+The first broad Postgres run exhausted shared disk space, then fixture setup
+failed with SQLSTATE 53100, recovery mode and an EOF. That entire run is excluded.
+After its terminal result, only three older large files in this task's Go cache
+and 77 idle generated templates in its verified private Postgres instance were
+removed, with receipts. The identical source, scope and flags passed on retry.
+No sibling cache or process was changed. Only the operations document and this
+tracker changed after the gate freeze. Evidence and diagnostics are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-account-bindings-20261001/`.
+
+All six release requirements above remain unchecked. Next software coverage
+includes legacy alias shadowing and fallback, the remaining alias/revision and
+operator writers/resolvers, then complete runtime/preview/synthetic/path
+agreement and observations. Real daemon fleet/load/restart/outage/recovery,
+customer capability and staging qualification, and Linux x86_64 KVM VM/firewall/
+restore/process-death/leak acceptance remain pending. The user reports no KVM
+acceptance host available; that answer remains recorded and no host request is
+repeated.

@@ -708,7 +708,21 @@ as the final restored binding. Memory batches stage changes before publication;
 native batches keep their existing cleanup inside the transaction. Preview
 retirement still hands resource cleanup to the preview janitor.
 
-Account/operator cleanup and the remaining alias/revision writers require
-separate coverage. VM, firewall,
-restore, process-death, leak, real fleet/load/recovery and staging acceptance
-remain pending.
+Physical account retirement commits its complete routing cascade through the
+same binding guard. Discovery includes foreign surfaces linked to retiring apps
+and legacy domains that redirect to those apps. Refusal preserves the pending
+account, routing reservations, secrets, API keys, queued work, quota and deletion
+audit; restoring the pending account remains available after a refused sweep.
+Repair the affected policy before retrying retirement.
+
+Accepted retirement removes owned invocations and invocations referencing the
+retiring apps, refunds their reserved async slots, and commits child cleanup and
+the deletion audit together. This physical cleanup does not prove cancellation
+or rollback of application side effects. Captured app guards recheck customer
+ownership under an app row lock and refuse a changed owner before mutation.
+Node reassignment changes placement and does not transfer customer ownership.
+
+Legacy alias shadowing/fallback and the remaining operator and alias/revision
+writers and resolvers require separate coverage. VM, firewall, restore,
+process-death, leak, real fleet/load/recovery and staging acceptance remain
+pending. No native KVM acceptance host is currently available.

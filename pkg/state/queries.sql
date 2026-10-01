@@ -5491,7 +5491,7 @@ WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS
 SELECT prior.value::text AS prior, set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS configured FROM prior;
 
 -- name: ReadAppTrafficAccount :one
--- Ownership is immutable; discover it before acquiring the account/app locks.
+-- Discover ownership before coordinating; repeat it under the app row lock.
 SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid;
 
 -- name: ReadDomainTrafficVerificationOwner :one
@@ -5531,15 +5531,17 @@ WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
         'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
         'RedirectApp',coalesce(d.app_id_redirect::text,''),
+        'RedirectAccount',coalesce(redirect.account_id::text,''),
         'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
             AND (d.environment_id IS NULL OR EXISTS (
                 SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
                   AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN apps redirect ON redirect.id=d.app_id_redirect
     ORDER BY d.domain::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), tenants AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
-        'Surface',s.id,'App',s.app_id,'Account',s.account_id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,'AppAccount',coalesce(a.account_id::text,''),
         'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
         'Verified',h.verified_at IS NOT NULL,
         'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
@@ -5809,6 +5811,28 @@ WITH target AS MATERIALIZED (
     RETURNING t.account_id,t.quota_reserved
 ), reservations AS (
     SELECT account_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY account_id
+)
+UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
+FROM reservations r WHERE q.account_id=r.account_id;
+
+-- name: LockTrafficAppAccount :one
+SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR UPDATE;
+
+-- name: ReadTrafficDeletionAccountStatus :one
+SELECT status FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: DeleteTrafficAccountRedirectDomains :exec
+DELETE FROM custom_domains d USING apps a
+WHERE d.app_id_redirect=a.id AND a.account_id=sqlc.arg(account_id)::uuid;
+
+-- name: DeleteTrafficAccountInvocations :exec
+WITH removed AS (
+    DELETE FROM invocations i
+    WHERE i.account_id=sqlc.arg(account_id)::uuid
+      OR i.app_id IN (SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid)
+    RETURNING account_id,quota_reserved
+), reservations AS (
+    SELECT account_id,count(*) AS slots FROM removed WHERE quota_reserved GROUP BY account_id
 )
 UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
 FROM reservations r WHERE q.account_id=r.account_id;
