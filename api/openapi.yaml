@@ -23533,6 +23533,7 @@ paths:
         - name: name
           in: path
           required: true
+          description: Account-owned policy name to retire permanently.
           schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
       responses:
         '200':

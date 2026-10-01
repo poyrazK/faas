@@ -48,6 +48,9 @@ export class ExclusiveOperationsService {
   public static retireExclusiveOperationPolicy({
     name,
   }: {
+    /**
+     * Account-owned policy name to retire permanently.
+     */
     name: string,
   }): CancelablePromise<ExclusiveWorkPolicyRecord> {
     return __request(OpenAPI, {
