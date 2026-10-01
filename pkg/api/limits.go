@@ -7758,6 +7758,10 @@ const UDPListenerPublicPortMax = 49999
 // UDPListenerRefreshInterval bounds intent reconciliation latency at the edge.
 const UDPListenerRefreshInterval = 2 * time.Second
 
+// UDPListenerReadTimeout bounds a durable intent refresh without replacing the
+// last successfully validated socket set on a transient read failure.
+const UDPListenerReadTimeout = 5 * time.Second
+
 // UDPAdmissionTimeout bounds queued peers waiting for scheduler admission.
 const UDPAdmissionTimeout = 30 * time.Second
 

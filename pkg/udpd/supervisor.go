@@ -92,9 +92,17 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		}
 	}
 	refresh := func() error {
-		rows, err := s.Source.ListEnabledUDPListeners(ctx)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		readCtx, cancelRead := context.WithTimeout(ctx, api.UDPListenerReadTimeout)
+		defer cancelRead()
+		rows, err := s.Source.ListEnabledUDPListeners(readCtx)
 		if err != nil {
 			return fmt.Errorf("list enabled UDP listeners: %w", err)
+		}
+		if err := readCtx.Err(); err != nil {
+			return err
 		}
 		desired := make(map[int]state.UDPListener, len(rows))
 		for _, row := range rows {
@@ -147,6 +155,9 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		return nil
 	}
 	if err := refresh(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		s.Metrics.reconcileError()
 		return err
 	}

@@ -234,3 +234,63 @@ func TestSupervisorShutdownDoesNotReportReconciliationFailure(t *testing.T) {
 	}
 	assertMetric(t, metrics, "test_udp_reconciliation_errors_total", nil, 0)
 }
+
+// Initial shutdown must not bind sockets or count a canceled read as failure.
+type initialCancelUDPSource struct{ entered chan struct{} }
+
+func (s initialCancelUDPSource) ListEnabledUDPListeners(ctx context.Context) ([]state.UDPListener, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func TestSupervisorInitialReadCancellationIsClean(t *testing.T) {
+	entered := make(chan struct{})
+	metrics := NewMetrics(nil, "test")
+	supervisor := &Supervisor{Source: initialCancelUDPSource{entered}, Metrics: metrics,
+		Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) { return gateway.Target{}, nil },
+		Listen: func(string, *net.UDPAddr) (*net.UDPConn, error) {
+			t.Error("shutdown bound socket")
+			return nil, context.Canceled
+		},
+		OnReady: func() { t.Error("canceled startup reported readiness") }}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Serve(ctx) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("initial read not entered")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown hung")
+	}
+	assertMetric(t, metrics, "test_udp_reconciliation_errors_total", nil, 0)
+}
+
+type deadlineUDPSource struct{ bounded bool }
+
+func (s *deadlineUDPSource) ListEnabledUDPListeners(ctx context.Context) ([]state.UDPListener, error) {
+	deadline, ok := ctx.Deadline()
+	s.bounded = ok && time.Until(deadline) <= api.UDPListenerReadTimeout
+	return nil, context.DeadlineExceeded
+}
+func TestSupervisorInitialReadHasDeadline(t *testing.T) {
+	source := &deadlineUDPSource{}
+	metrics := NewMetrics(nil, "test")
+	supervisor := &Supervisor{Source: source, Metrics: metrics, Forwarder: echoForwarder{},
+		ResolveTarget: func(context.Context, Route) (gateway.Target, error) { return gateway.Target{}, nil }}
+	if err := supervisor.Serve(context.Background()); err == nil {
+		t.Fatal("read failure accepted")
+	}
+	if !source.bounded {
+		t.Fatal("intent read had no bounded deadline")
+	}
+	assertMetric(t, metrics, "test_udp_reconciliation_errors_total", nil, 1)
+}
