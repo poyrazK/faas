@@ -513,3 +513,27 @@ shows an explicit status message rather than implying that an empty catalog is
 healthy. Database creation, restore, deletion, and binding changes stay on the
 CLI/API surface, where the existing authentication, plan, idempotency, and
 provider-neutral validation rules apply.
+
+## Cutover preparation foundation
+
+The internal `CutoverService` can reserve preparation for every source binding
+in an app and scope, stage encrypted target credentials, and cancel preparation
+with retry-safe provider revocation. The binding reconciler resumes persisted
+work after crashes and performs cancellation with provisioning disabled.
+
+A `prepared` intent has sealed credentials for runtime and migration access;
+it has not verified SQL reachability or switched application configuration.
+Staged envelopes remain outside `app_secrets`. This slice exposes no public
+cutover endpoint or CLI command. The next implementation must drain affected
+writers, validate the target, publish all bindings together, invalidate snapshots,
+and restart/verify workloads before allowing traffic again.
+
+Source and restored target databases stay pinned while preparation is active.
+Conflicting rotation, deletion, and new binding reservations return a conflict.
+Cancellation revokes every possibly issued identity before erasing staging and
+releasing pins. Recovery cancels intents belonging to already-deleted owners;
+the existing app/account deletion guards still require live resources to be
+cleaned up first. Cancel
+all active intents before migration rollback or retiring a host age identity;
+the existing secret re-sealer does not cover these staged envelopes.
+See [ADR-390](adr/390-managed-postgres-cutover-preparation.md).

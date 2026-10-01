@@ -190,3 +190,39 @@ func TestManagedPostgresCredentialSinkFailsClosedWithoutSealKeys(t *testing.T) {
 		t.Fatalf("missing seal keys = %v", err)
 	}
 }
+
+// adr: 390 — sealing for cutover does not publish or replace app secrets.
+func TestManagedPostgresCredentialSealerDoesNotPublish(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewMemStore()
+	sink, err := newAppSecretCredentialSink(store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("0123456789abcdef0123456789abcdef") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := managedpostgres.Binding{ID: "future-binding", AccountID: "account-a", AppID: "app-a", Scope: "default", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite, CredentialGeneration: 1}
+	material := managedpostgres.CredentialMaterial{ProviderIdentityID: "target-role", Username: "runtime", Password: "private-stage-password", Database: "gregale", TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 5432}}}
+	sealed, err := sink.SealCredential(context.Background(), binding, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.Ciphertext) == 0 || sealed.Kid != identity.Recipient().String() || sealed.ValueHash == "" || sealed.Ref == "" || strings.Contains(string(sealed.Ciphertext), material.Password) {
+		t.Fatal("stage envelope is invalid or plaintext")
+	}
+	envelope, err := secretbox.Open(identity, sealed.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(envelope[binding.EnvironmentKey])
+	if err != nil || parsed.Hostname() != "pool.example.test" {
+		t.Fatal("staged envelope did not retain the pooled target endpoint")
+	}
+	if password, ok := parsed.User.Password(); !ok || password != material.Password {
+		t.Fatal("staged envelope did not retain the target credential")
+	}
+	if _, err = store.GetAppSecretInScope(context.Background(), binding.AccountID, binding.AppID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("sealing published a serving secret")
+	}
+}

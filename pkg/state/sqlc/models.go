@@ -2324,6 +2324,47 @@ type ManagedPostgresBinding struct {
 	RotationPreviousGeneration pgtype.Int8
 	RotationWakeID             pgtype.UUID
 	RotationCleanupReady       bool
+	CutoverID                  pgtype.UUID
+}
+
+type ManagedPostgresCutover struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	SourceDatabaseID         pgtype.UUID
+	TargetDatabaseID         pgtype.UUID
+	SourceBackendID          string
+	SourceBackendFingerprint string
+	SourceResourceID         string
+	SourceGeneration         int64
+	TargetBackendID          string
+	TargetBackendFingerprint string
+	TargetResourceID         string
+	TargetGeneration         int64
+	State                    string
+	LastErrorCode            pgtype.Text
+	LeaseToken               pgtype.Text
+	LeaseUntil               pgtype.Timestamptz
+	AttemptCount             int32
+	RetryAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverCredential struct {
+	ID                         pgtype.UUID
+	CutoverID                  pgtype.UUID
+	SourceBindingID            pgtype.UUID
+	SourceCredentialGeneration int64
+	EnvironmentKey             string
+	Access                     string
+	State                      string
+	ProviderIdentityID         pgtype.Text
+	CredentialRef              pgtype.Text
+	Ciphertext                 []byte
+	Kid                        pgtype.Text
+	ValueHash                  pgtype.Text
 }
 
 type ManagedPostgresDatabase struct {
@@ -2354,6 +2395,7 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceDatabaseID pgtype.UUID
 	RestoreSourceResourceID pgtype.Text
 	RestorePointInTime      pgtype.Timestamptz
+	CutoverID               pgtype.UUID
 }
 
 type ManagedPostgresHealth struct {

@@ -35,6 +35,9 @@ func (s *MemoryStore) ReserveBinding(_ context.Context, binding Binding) (Bindin
 		}
 		return cloneBinding(existing), false, nil
 	}
+	if s.databaseCutoverPinned(binding.DatabaseID) {
+		return Binding{}, false, ErrConflict
+	}
 	if binding.RetryAt.IsZero() {
 		binding.RetryAt = binding.CreatedAt
 	}
@@ -112,6 +115,9 @@ func (s *MemoryStore) BeginBindingRotation(_ context.Context, accountID, binding
 	if !ok || binding.AccountID != accountID {
 		return Binding{}, false, ErrNotFound
 	}
+	if s.bindingCutoverPinned(bindingID) {
+		return Binding{}, false, ErrConflict
+	}
 	if binding.RotationPreviousGeneration > 0 && binding.RotationWakeID != "" {
 		return cloneBinding(binding), false, nil
 	}
@@ -139,6 +145,9 @@ func (s *MemoryStore) ClaimBinding(_ context.Context, accountID, bindingID, leas
 	binding, ok := s.bindings[bindingID]
 	if !ok || binding.AccountID != accountID {
 		return Binding{}, ErrNotFound
+	}
+	if s.bindingCutoverPinned(bindingID) {
+		return Binding{}, ErrConflict
 	}
 	if leaseToken == "" || now.IsZero() || !leaseUntil.After(now) {
 		return Binding{}, ErrInvalid

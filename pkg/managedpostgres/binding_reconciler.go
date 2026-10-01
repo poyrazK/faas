@@ -35,6 +35,7 @@ type BindingReconcilerOptions struct {
 // the dark-launch gate, while deletion always runs so disabling rollout can
 // never strand an upstream role or an owned app secret.
 type BindingReconciler struct {
+	cutovers            *CutoverService
 	service             *BindingService
 	interval            time.Duration
 	batchSize           int
@@ -66,7 +67,18 @@ func NewBindingReconciler(service *BindingService, options BindingReconcilerOpti
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
+	var cutovers *CutoverService
+	if store, ok := service.bindings.(CutoverStore); ok {
+		if sealer, ok := service.sink.(CredentialSealer); ok {
+			var err error
+			cutovers, err = NewCutoverService(service, store, sealer)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return &BindingReconciler{
+		cutovers:            cutovers,
 		service:             service,
 		interval:            options.Interval,
 		batchSize:           options.BatchSize,
@@ -115,6 +127,11 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 		}
 		if r.observe != nil {
 			r.observe(BindingReconcileObservation{BindingID: binding.ID, Operation: operation, Outcome: outcome, Duration: r.now().Sub(started)})
+		}
+	}
+	if r.cutovers != nil {
+		if err := r.cutovers.Sweep(ctx, r.batchSize); err != nil {
+			sweepErrors = append(sweepErrors, err)
 		}
 	}
 	return summary, errors.Join(sweepErrors...)
