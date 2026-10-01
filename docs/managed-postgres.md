@@ -212,7 +212,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | Binding access | Connection | Permissions |
 | --- | --- | --- |
 | `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
-| `migration` | Direct required | Schema changes through a stable non-login schema owner; no role/database administration or replication |
+| `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Read-only endpoint required | Not advertised by the current Neon adapter |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
@@ -229,10 +229,33 @@ Use a separate environment key for migration tooling:
 gregale postgres attach DATABASE APP_SLUG --access migration --env MIGRATION_DATABASE_URL
 ```
 
+Managed migration bindings are injected only into the persisted release task.
+Serving instances, companions, ordinary manual tasks, and cron tasks cannot
+receive them through default delivery, an explicit secret reference, or runtime
+secret reload. Access is read from the binding catalog, so changing an environment
+key cannot change the delivery boundary. Release tasks receive migration bindings
+even when a serving `env_secrets` allowlist selects only runtime credentials.
+A plain customer secret with the same name has ordinary secret semantics.
+
+Use a Procfile `release: npm run migrate` or `release.command` in the manifest.
+Release execution requires `FAAS_RELEASE_PHASE_ENABLED=1` on imaged and
+`FAAS_APP_TASK_DISPATCH=1` on schedd. A disabled release gate fails the candidate
+with `release_phase_unavailable` instead of skipping its migration.
+The existing release gate waits for successful completion before booting the
+candidate. Failure leaves the preceding deployment live; it does not roll back
+committed database changes. The PostgreSQL starters use direct
+`MIGRATION_DATABASE_URL`, advisory transaction locks, a 30-second lock timeout,
+and a 120-second statement timeout. Serving startup performs no DDL. For other
+frameworks, declare your migration tool as the release command and configure it
+to use the migration connection.
+
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
 not assign ownership to a disposable login. Both runtime and migration
-credentials rotate through the existing binding workflow. Retirement disables
+credentials rotate through the existing binding workflow. Migration rotation
+publishes the new generation without restarting serving workloads; old-login
+retirement waits for all restoring/running app tasks in that app and scope to
+finish. Queued tasks load the new generation when dispatched. Retirement disables
 login and terminates sessions before deleting grants and the role. It refuses
 to delete a role that owns objects, preserving application data for operator
 repair. Stable schema objects survive migration credential retirement.

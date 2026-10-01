@@ -6258,7 +6258,10 @@ type AppSecret struct {
 	// ManagedPostgresBindingID and its opaque credential fields are populated
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.
-	ManagedPostgresBindingID    string
+	ManagedPostgresBindingID string
+	// ManagedPostgresAccess is delivery metadata projected from the binding
+	// catalog by scoped reads. It is never inferred from an environment key.
+	ManagedPostgresAccess       string
 	ManagedCredentialRef        string
 	ManagedCredentialGeneration int64
 	// ManagedObjectStorageCredentialID is populated only by a compute

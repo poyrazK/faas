@@ -390,7 +390,7 @@ func seedManagedPostgresBinding(t *testing.T, pool *pgxpool.Pool, accountID, dat
 	if err := state.NewPgStore(pool).PutManagedPostgresSecret(context.Background(), state.AppSecret{
 		AccountID: accountID, AppID: appID, Scope: "production", Key: "DATABASE_URL",
 		Ciphertext: []byte("sealed-e2e-credential"), Kid: "age1e2e",
-		ManagedPostgresBindingID: binding.ID, ManagedCredentialRef: credentialRef, ManagedCredentialGeneration: 1,
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access), ManagedCredentialRef: credentialRef, ManagedCredentialGeneration: 1,
 	}); err != nil {
 		t.Fatalf("seed managed postgres secret: %v", err)
 	}

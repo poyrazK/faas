@@ -1,3 +1,5 @@
+// adr: 388 — release delivery and migration rotation retirement fences.
+
 package managedpostgres
 
 import (
@@ -12,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -544,6 +547,7 @@ func TestPostgresBindingStoreOwnsSecretTargetAndFencesLifecycle(t *testing.T) {
 		Ciphertext:                  []byte("managed-ciphertext"),
 		Kid:                         "age1test",
 		ManagedPostgresBindingID:    binding.ID,
+		ManagedPostgresAccess:       string(binding.Access),
 		ManagedCredentialRef:        credentialRef,
 		ManagedCredentialGeneration: binding.CredentialGeneration,
 	}
@@ -647,6 +651,7 @@ func (s *postgresBindingCredentialSink) Put(ctx context.Context, binding Binding
 		Ciphertext:                  []byte("sealed-integration-credential"),
 		Kid:                         "age1integration",
 		ManagedPostgresBindingID:    binding.ID,
+		ManagedPostgresAccess:       string(binding.Access),
 		ManagedCredentialRef:        credentialRef,
 		ManagedCredentialGeneration: binding.CredentialGeneration,
 	})
@@ -723,6 +728,38 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	if err != nil || secret.ManagedPostgresBindingID != binding.ID || secret.ManagedCredentialRef != binding.CredentialRef {
 		t.Fatalf("ready binding secret: secret=%+v err=%v", secret, err)
 	}
+	rows, err := stateStore.ListAppSecretsInScope(ctx, accountID, app.ID, binding.Scope)
+	if err != nil || len(rows) != 1 || rows[0].ManagedPostgresAccess != "migration" {
+		t.Fatalf("binding access projection = %+v, %v", rows, err)
+	}
+	// Access is canonical even if a caller supplies misleading sink metadata.
+	if selected, err := state.SelectAppSecretsForDelivery(rows, nil, false); err != nil || len(selected) != 0 {
+		t.Fatalf("serving migration selection = %+v, %v", selected, err)
+	}
+	dep, err := stateStore.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:migration-drain", Status: state.DeploySnapshotting, Scope: binding.Scope, ReleaseCommand: []string{"bin/migrate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []state.DeploymentStatus{state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting} {
+		if err := stateStore.UpdateDeploymentStatus(ctx, dep.ID, status, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stateStore.SetDeploymentRootfs(ctx, dep.ID, "/tmp/migration.ext4", "apps/migration-drain/layer.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "fc-test", MemBytes: 1024, DiskBytes: 512, StorageKey: "managed-postgres/release-delivery", Tier: state.SnapshotTierInit}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := stateStore.CreateAppTask(ctx, state.CreateAppTaskParams{AccountID: accountID, AppID: app.ID, DeploymentID: dep.ID, Kind: state.AppTaskKindRelease, Command: []string{"bin/migrate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = time.Now().UTC().Add(time.Second)
+	claimed, err := stateStore.ClaimNextAppTask(ctx, "migration-test", now, time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("claim release: %+v, %v", claimed, err)
+	}
 	rotated, err := service.Rotate(ctx, accountID, binding.ID)
 	if err != nil || rotated.CredentialGeneration != 2 || rotated.RotationPreviousGeneration != 1 || rotated.RotationWakeID == "" || provider.revokeCalls != 0 {
 		t.Fatalf("rotate binding: binding=%+v revoke_calls=%d err=%v", rotated, provider.revokeCalls, err)
@@ -731,13 +768,59 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	if err != nil || secret.ManagedCredentialGeneration != 2 {
 		t.Fatalf("rotated binding secret: secret=%+v err=%v", secret, err)
 	}
-	if err := stateStore.FinalizeManagedPostgresBindingRotationsForApp(ctx, app.ID, rotated.RotationWakeID); err != nil {
-		t.Fatalf("mark rotation delivered: %v", err)
+	// Replay the real rollout migration with affected rows and an old-binary
+	// rotation. It must invalidate captured credentials and resume cleanup.
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET rotation_cleanup_ready=false WHERE id=$1`, binding.ID); err != nil {
+		t.Fatal(err)
 	}
-	// The finalization update uses the database clock. Advance the service's
-	// injected clock after that write so its retry_at comparison cannot race
-	// the database timestamp by a few milliseconds.
-	now = time.Now().UTC().Add(time.Second)
+	migration, err := migrations.FS.ReadFile("20261001123539479_managed_postgres_release_delivery.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := strings.Split(strings.Split(string(migration), "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	for i := 0; i < 2; i++ {
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("rollout replay %d: %v", i, err)
+		}
+	}
+	rotated, err = store.GetBinding(ctx, accountID, binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stateStore.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rollout kept captured migration credentials: %v", err)
+	}
+	now = time.Now().UTC().Add(5 * time.Second)
+	if !rotated.RotationCleanupReady {
+		t.Fatal("migration rotation still waits for a serving wake")
+	}
+	assertHeld := func() {
+		t.Helper()
+		if _, err := service.ReconcileRotationCleanup(ctx, accountID, binding.ID); !errors.Is(err, ErrConflict) || provider.revokeCalls != 0 {
+			t.Fatalf("active release lost its old login: %v, revokes=%d", err, provider.revokeCalls)
+		}
+		due, err := store.DueBindings(ctx, true, 100, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range due {
+			if item.ID == binding.ID {
+				t.Fatal("active release entered retirement sweep")
+			}
+		}
+	}
+	assertHeld()
+	now = now.Add(time.Second)
+	if _, err := stateStore.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, now); err != nil {
+		t.Fatal(err)
+	}
+	assertHeld()
+	exit := 0
+	now = now.Add(time.Second)
+	if _, err := stateStore.CompleteAppTask(ctx, state.CompleteAppTaskParams{ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskSucceeded, ExitCode: &exit, FinishedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Second)
 	retired, err := service.ReconcileRotationCleanup(ctx, accountID, binding.ID)
 	if err != nil || retired.RotationPreviousGeneration != 0 || provider.revokeCalls != 1 {
 		t.Fatalf("retire previous credential: binding=%+v revoke_calls=%d err=%v", retired, provider.revokeCalls, err)

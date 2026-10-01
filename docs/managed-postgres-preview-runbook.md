@@ -168,3 +168,40 @@ A revocation conflict on owned objects disables the login and terminates its
 sessions while preserving those objects. Repair ownership and retry cleanup;
 never drop application data to unblock credential deletion. New migration
 objects normally belong to the stable owner and survive rotation.
+
+## Release-only migration credential rollout
+
+Apply `20261001123539479_managed_postgres_release_delivery.sql` and deploy the
+matching apid, schedd, and vmmd binaries across the complete fleet while new
+managed provisioning remains gated. The migration invalidates snapshots for
+apps with active migration bindings, stamps runtime configuration changes, and
+resumes migration rotations staged by older binaries. The schema itself has no
+new column. Rollback does not restore old snapshots or completed rotations.
+
+Restart affected serving workloads after every participating binary is updated.
+Enable `FAAS_RELEASE_PHASE_ENABLED=1` on imaged together with
+`FAAS_APP_TASK_DISPATCH=1` on schedd for release-task acceptance. Disabled release
+execution must fail the candidate with `release_phase_unavailable`.
+Old resident instances may still have a credential staged by an older binary;
+snapshot invalidation alone cannot erase their memory. Verify a fresh cold boot,
+a subsequent snapshot restore, sidecar delivery, and secret reload before
+opening the canary gate. Explicit serving references to migration bindings must
+fail with a release-only message. Ordinary manual and cron tasks must omit the
+migration connection; the candidate release task must receive it.
+
+Rotate a migration binding while a release is restoring/running. The new secret
+must be published without a serving restart notification. Retirement must stay
+pending until active tasks in that app and scope are terminal, then reconcile
+without requiring a serving wake. Check that the schema still exists after old
+login removal. A queued release must load the latest generation on dispatch.
+The retirement fence conservatively includes manual/cron tasks during adoption
+because older versions delivered migration credentials to those tasks too.
+
+For starter acceptance, copy both PostgreSQL templates into a private directory,
+install their Node dependencies there, and set `GREGALE_POSTGRES_STARTERS_DIR`
+to that parent. With a disposable local `DATABASE_URL`, run
+`go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
+This exercises the actual migration scripts against restricted SQL roles,
+concurrent release locking, runtime data access, and retained schema after
+migration-login retirement. Keep the existing live version-3 Neon qualification
+and rollout gates; local PostgreSQL evidence does not replace them.

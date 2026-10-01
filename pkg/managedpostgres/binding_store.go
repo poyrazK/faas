@@ -196,6 +196,9 @@ func (s *MemoryStore) FinishBindingProvision(_ context.Context, bindingID, lease
 	}
 	binding.ProviderIdentityID = providerIdentityID
 	binding.CredentialRef = credentialRef
+	if binding.Access == CredentialMigration && binding.RotationPreviousGeneration > 0 {
+		binding.RotationCleanupReady = true
+	}
 	binding.State = BindingStateReady
 	binding.LastErrorCode = ""
 	binding.LeaseToken = ""

@@ -23364,44 +23364,15 @@ func lockAppSecretTarget(ctx context.Context, tx pgx.Tx, appID, scope, key strin
 // caller-supplied value, scoped to accountID. Order: by scope
 // ASC, key ASC for deterministic wake staging.
 func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]AppSecret, error) {
-	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
-		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
-		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
-		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
-		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
-		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
-		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
-		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at, coalesce(secret_class, 'persistent')
-		 from app_secrets
-		 where account_id = $1 and app_id = $2 and scope = $3
-		 order by scope asc, key asc`,
-		accountID, appID, scope)
+	rows, err := sqlc.New().ListAppSecretsWithBindingAccessInScope(ctx, s.pool, sqlc.ListAppSecretsWithBindingAccessInScopeParams{AccountID: accountID, AppID: appID, Scope: scope})
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	defer rows.Close()
-	var out []AppSecret
-	for rows.Next() {
-		var r AppSecret
-		if err := rows.Scan(
-			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
-			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
-			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
-			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
-			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
-			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
-			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
-			&r.CreatedAt, &r.UpdatedAt, &r.SecretClass,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]AppSecret, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, appSecretFromDeliveryRow(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListAppSecrets returns every secret on the app where scope =

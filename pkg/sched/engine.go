@@ -7860,10 +7860,10 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 }
 
 func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
-	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
-	// empty (NULL column). The store surface uses scope='default'
-	// everywhere else, so this keeps wake-time behaviour identical
-	// to the pre-PR-A path for that deployment.
+	return e.loadSealedEnvDeliveryForTask(ctx, accountID, appID, scope, overrideEnvSecrets, false)
+}
+
+func (e *Engine) loadSealedEnvDeliveryForTask(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
 	if scope == "" {
 		scope = api.DefaultEnvScope
 	}
@@ -7871,59 +7871,31 @@ func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID,
 	if err != nil {
 		return sealedEnvDelivery{}, fmt.Errorf("load sealed env (account=%s app=%s scope=%s): %w", accountID, appID, scope, err)
 	}
-	if len(overrideEnvSecrets) == 0 {
-		// Legacy path: stage everything for the app at the deployment's
-		// scope. Preserved for pre-PR-A deployments without override
-		// columns populated AND for tarball/dockerfile deploys that
-		// don't use the override surface.
-		out := make([]fcvm.SealedEnvEntry, 0, len(rows))
-		candidates := make([]state.AppSecretDeliveryCandidate, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, fcvm.SealedEnvEntry{Key: r.Key, Ciphertext: r.Ciphertext})
-			candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: r.Scope, Key: r.Key, Version: r.DeliveryVersion})
-		}
-		return sealedEnvDelivery{Entries: out, Candidates: candidates}, nil
-	}
-	// Filtered path: STRICT PER-SCOPE (ADR-092 PR-A). Each
-	// override entry resolves to the (account_id, app_id, scope,
-	// env_key) sealed row. Missing rows fail loud with intent —
-	// silent 'default' overlay would defeat the entire feature
-	// (a customer who wants a different sealed DATABASE_URL in
-	// 'prod' would NOT see their override). The override map's
-	// values are still 'secret:<KEY>' refs; the KEY is the env
-	// var name in app_secrets (the env_key in app_envs is the
-	// same string but routes to the env table).
-	// requested env_keys in declaration order (so the staged
-	// /etc/faas/secrets.env is stable and easy to diff in support tickets).
-	// Each requested env_key MUST resolve; missing keys are accumulated and
-	// reported as one error rather than one-at-a-time so support tickets see
-	// the full set.
-	index := make(map[string]state.AppSecret, len(rows))
-	for _, r := range rows {
-		index[r.Key] = r
+	// Preserve the complete, sorted diagnostics for missing explicit references.
+	present := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		present[row.Key] = true
 	}
 	var missing []string
-	out := make([]fcvm.SealedEnvEntry, 0, len(overrideEnvSecrets))
-	candidates := make([]state.AppSecretDeliveryCandidate, 0, len(overrideEnvSecrets))
-	for envKey, ref := range overrideEnvSecrets {
-		row, ok := index[envKey]
-		if !ok {
-			missing = append(missing, fmt.Sprintf("%q (-> %q)", envKey, ref))
-			continue
+	for key, ref := range overrideEnvSecrets {
+		if !present[key] {
+			missing = append(missing, fmt.Sprintf("%q (-> %q)", key, ref))
 		}
-		out = append(out, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
-		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	if len(missing) > 0 {
-		// Sort for determinism — Go map iteration is randomised, so without
-		// this a customer with three missing keys would see them in
-		// different orders on different wakes. Scope is part of the
-		// error so the operator knows which deployment tripped.
 		sort.Strings(missing)
-		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via gregale secrets set --scope %s",
-			scope, strings.Join(missing, ", "), accountID, appID, scope)
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via gregale secrets set --scope %s", scope, strings.Join(missing, ", "), accountID, appID, scope)
 	}
-	return sealedEnvDelivery{Entries: out, Candidates: candidates}, nil
+	selected, err := state.SelectAppSecretsForDelivery(rows, overrideEnvSecrets, release)
+	if err != nil {
+		return sealedEnvDelivery{}, err
+	}
+	out := sealedEnvDelivery{Entries: make([]fcvm.SealedEnvEntry, 0, len(selected)), Candidates: make([]state.AppSecretDeliveryCandidate, 0, len(selected))}
+	for _, row := range selected {
+		out.Entries = append(out.Entries, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
+		out.Candidates = append(out.Candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
+	}
+	return out, nil
 }
 
 func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, status state.SecretDeliveryStatus, errorCode string) {

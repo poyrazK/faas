@@ -81,6 +81,7 @@ func (s *appSecretCredentialSink) Put(ctx context.Context, binding managedpostgr
 		Kid:                         recipient.String(),
 		ValueHash:                   valueHash,
 		ManagedPostgresBindingID:    binding.ID,
+		ManagedPostgresAccess:       string(binding.Access),
 		ManagedCredentialRef:        credentialRef,
 		ManagedCredentialGeneration: binding.CredentialGeneration,
 	}); err != nil {

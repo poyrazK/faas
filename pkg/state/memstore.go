@@ -19132,11 +19132,14 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
 		return ErrInvalidArgument
 	}
+	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" {
+		return ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
 	existing, ok := m.secrets[k]
-	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID ||
+	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID || existing.ManagedPostgresAccess != secret.ManagedPostgresAccess ||
 		existing.ManagedCredentialGeneration > secret.ManagedCredentialGeneration ||
 		(existing.ManagedCredentialGeneration == secret.ManagedCredentialGeneration && existing.ManagedCredentialRef != secret.ManagedCredentialRef)) {
 		return ErrConflict
@@ -19892,6 +19895,9 @@ func (m *MemStore) ListAppSecretRuntimeReloadTargets(_ context.Context, accountI
 		}
 		for secretKey, secret := range m.secrets {
 			if secretKey.AppID != appID || secret.AccountID != accountID || secret.Scope != deploymentScope || (scope != "" && secret.Scope != scope) {
+				continue
+			}
+			if secret.ManagedPostgresBindingID != "" && secret.ManagedPostgresAccess == "migration" {
 				continue
 			}
 			mainAuthorized := mainAllowlist == nil && len(sidecars) == 0
