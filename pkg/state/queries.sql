@@ -6320,18 +6320,28 @@ AND project_id=sqlc.arg(project_id)::text::uuid FOR SHARE;
 
 -- name: ReadExclusiveWorkPolicy :one
 SELECT * FROM exclusive_work_policies
-WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text;
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text FOR UPDATE;
 
 -- name: ListExclusiveWorkPolicies :many
 SELECT * FROM exclusive_work_policies
 WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY name;
 
 -- name: SaveExclusiveWorkPolicy :one
-INSERT INTO exclusive_work_policies(id,account_id,name,configuration)
-VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name)::text,sqlc.arg(configuration)::jsonb)
-ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,
+INSERT INTO exclusive_work_policies(id,account_id,name,configuration,retired)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name)::text,sqlc.arg(configuration)::jsonb,sqlc.arg(retired)::boolean)
+ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,retired=excluded.retired,
 revision=exclusive_work_policies.revision+1,updated_at=clock_timestamp()
 RETURNING *;
+
+-- name: ExclusiveWorkPolicyInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM exclusive_work_operations o
+    JOIN exclusive_work_keys k ON k.id=o.key_id
+    WHERE k.policy_id=sqlc.arg(policy_id)::text::uuid AND o.state IN ('pending','running')
+) OR EXISTS (
+    SELECT 1 FROM exclusive_work_trigger_bindings
+    WHERE policy_id=sqlc.arg(policy_id)::text::uuid
+) AS in_use;
 
 -- name: EnsureExclusiveWorkKey :one
 INSERT INTO exclusive_work_keys(id,account_id,policy_id,scope_id,environment_id,key_digest)

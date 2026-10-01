@@ -86,6 +86,20 @@ func (tx *exclusiveMemoryTx) lockAccount(id string) error {
 	}
 	return nil
 }
+
+func (tx *exclusiveMemoryTx) policyInUse(policy ExclusiveWorkPolicy) (bool, error) {
+	for _, operation := range tx.operations {
+		if tx.keys[operation.KeyID].PolicyID == policy.ID && (operation.State == "pending" || operation.State == "running") {
+			return true, nil
+		}
+	}
+	for _, binding := range tx.store.exclusiveTriggerBindings {
+		if canonicalMemUUID(binding.AccountID) == canonicalMemUUID(policy.AccountID) && binding.PolicyName == policy.Policy.Name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (tx *exclusiveMemoryTx) appScope(account, id string) (string, error) {
 	a, ok := tx.store.apps[id]
 	if !ok || a.AccountID != account || a.Status == AppDeleted {

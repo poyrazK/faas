@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
-// adr: 423
+// adr: 425
 func TestCacheReaderLinkRetainsOpenedArtifact(t *testing.T) {
 	for _, mode := range []string{"miss", "hit", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
@@ -70,7 +70,7 @@ func TestCacheReaderLinkRetainsOpenedArtifact(t *testing.T) {
 	}
 }
 
-// adr: 423
+// adr: 425
 func TestCacheReaderLinkRejectsReplacementAndPreservesStream(t *testing.T) {
 	ctx := context.Background()
 	parent := newFakeBackend()
@@ -109,7 +109,7 @@ func TestCacheReaderLinkRejectsReplacementAndPreservesStream(t *testing.T) {
 	}
 }
 
-// adr: 423
+// adr: 425
 func TestCacheReaderLinkDoesNotReplaceDestination(t *testing.T) {
 	parent := newFakeBackend()
 	parent.blobs["snap/dep/mem"] = []byte("snapshot")
@@ -132,7 +132,7 @@ func TestCacheReaderLinkDoesNotReplaceDestination(t *testing.T) {
 	assertLinkContents(t, dst, "keep me")
 }
 
-// adr: 423
+// adr: 425
 func TestCacheReaderLinkSurvivesBudgetEviction(t *testing.T) {
 	ctx := context.Background()
 	parent := newFakeBackend()

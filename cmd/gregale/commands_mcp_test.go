@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretscan"
 )
 
-// adr: 423 — customer CLI journey from scaffold through discovery, call and config.
+// adr: 426 — customer CLI journey from scaffold through discovery, call and config.
 func TestMCPCLIJourney(t *testing.T) {
 	oldOut, oldJSON := osStdout, jsonOutput
 	var output bytes.Buffer
@@ -125,7 +125,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 }
 
-// adr: 423 — failed protocol/auth verification closes public ingress.
+// adr: 426 — failed protocol/auth verification closes public ingress.
 func TestMCPDeploymentVerificationFailureEnablesMaintenance(t *testing.T) {
 	oldOut, oldJSON := osStdout, jsonOutput
 	var output bytes.Buffer

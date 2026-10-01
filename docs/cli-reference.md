@@ -2838,6 +2838,12 @@ Create or revise a policy from JSON
 |---|---|---|
 | `--file <POLICY.json>` | policy JSON file | required |
 
+#### operations policy retire
+
+Retire an idle policy and preserve ownership history
+
+`gregale operations policy retire <name>`
+
 ### operations bind-trigger
 
 Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy

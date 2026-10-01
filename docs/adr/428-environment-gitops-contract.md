@@ -1,10 +1,12 @@
-# ADR-425 · Git-owned environment intent and continuous reconciliation
+# ADR-428 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and this branch's earlier ADR-393 and ADR-423 documents refer to this contract.
-  Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations.
+  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423 and ADR-425
+  documents, refer to this contract.
+  Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations;
+  ADR-425 covers retained cache materialization.
 - **Decision:** A registered project environment may bind one approved,
   immutable Git definition to a durable management source. The contract owns
   explicit intent fields, not runtime instances or provider-generated state.
@@ -782,6 +784,13 @@ timestamp. Isolated SQLC regeneration and the embedded OpenAPI copy match. The
 public Go checks used the internal linker after the normal external linker ran
 out of workspace disk; native guest/lifecycle and staged graph acceptance remain
 outstanding, and this checkpoint does not enable the approved-intent executor.
+
+This checkpoint is integrated with main through `a3e1800e3`. Focused routed
+GitOps/queue and policy-retirement API/CLI checks, the PostgreSQL GitOps suite,
+populated migration replay and Node/Python transport checks pass on the combined
+tree. Isolated SQLC regeneration, matching OpenAPI copies and ADR number
+uniqueness pass. The contract is now ADR-428; historical unreleased migration
+references to ADR-425 remain unchanged.
 
 For an existing scoped secret, the public reference commands are:
 

@@ -35,6 +35,44 @@ export class ExclusiveOperationsService {
     });
   }
   /**
+   * Retire an idle exclusive operation policy while preserving ownership history.
+   * Requires deploy-write scope and MFA when configured. Pending or running
+   * operations and existing trigger bindings block retirement with 409.
+   * Retirement is idempotent, releases the active-policy quota slot, and
+   * preserves policy identity, operation receipts and ownership generations.
+   * A retired name cannot be recreated or used to submit new work.
+   *
+   * @returns ExclusiveWorkPolicyRecord Retired policy revision; repeated retirement returns the same revision.
+   * @throws ApiError
+   */
+  public static retireExclusiveOperationPolicy({
+    name,
+  }: {
+    /**
+     * Account-owned policy name to retire permanently.
+     */
+    name: string,
+  }): CancelablePromise<ExclusiveWorkPolicyRecord> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/operation-policies/{name}',
+      path: {
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
    * Create or revise a named exclusive operation policy.
    * The policy explicitly chooses account or platform-tenant scope and
    * queue, reject, or join_existing contention. Member app IDs and the

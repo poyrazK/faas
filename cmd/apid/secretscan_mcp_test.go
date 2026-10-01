@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 423 — source ingress preserves npm integrity while detecting credentials.
+// adr: 426 — source ingress preserves npm integrity while detecting credentials.
 func TestScanExtractedMCPStarterPreservesSecretDefense(t *testing.T) {
 	dir := t.TempDir()
 	starter := filepath.Join("..", "gregale", "templates", "mcp-node")

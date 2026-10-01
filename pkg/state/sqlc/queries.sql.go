@@ -3662,6 +3662,24 @@ func (q *Queries) ExclusiveWorkEnvironmentScope(ctx context.Context, db DBTX, ar
 	return id, err
 }
 
+const exclusiveWorkPolicyInUse = `-- name: ExclusiveWorkPolicyInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM exclusive_work_operations o
+    JOIN exclusive_work_keys k ON k.id=o.key_id
+    WHERE k.policy_id=$1::text::uuid AND o.state IN ('pending','running')
+) OR EXISTS (
+    SELECT 1 FROM exclusive_work_trigger_bindings
+    WHERE policy_id=$1::text::uuid
+) AS in_use
+`
+
+func (q *Queries) ExclusiveWorkPolicyInUse(ctx context.Context, db DBTX, policyID string) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, exclusiveWorkPolicyInUse, policyID)
+	var in_use pgtype.Bool
+	err := row.Scan(&in_use)
+	return in_use, err
+}
+
 const exclusiveWorkTenantScope = `-- name: ExclusiveWorkTenantScope :one
 SELECT id::text, status FROM platform_tenants
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid
@@ -19708,7 +19726,7 @@ func (q *Queries) ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg R
 
 const readExclusiveWorkPolicy = `-- name: ReadExclusiveWorkPolicy :one
 SELECT id, account_id, name, revision, configuration, retired, created_at, updated_at FROM exclusive_work_policies
-WHERE account_id=$1::text::uuid AND name=$2::text
+WHERE account_id=$1::text::uuid AND name=$2::text FOR UPDATE
 `
 
 type ReadExclusiveWorkPolicyParams struct {
@@ -22518,9 +22536,9 @@ func (q *Queries) SaveExclusiveWorkOperation(ctx context.Context, db DBTX, arg S
 }
 
 const saveExclusiveWorkPolicy = `-- name: SaveExclusiveWorkPolicy :one
-INSERT INTO exclusive_work_policies(id,account_id,name,configuration)
-VALUES($1::text::uuid,$2::text::uuid,$3::text,$4::jsonb)
-ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,
+INSERT INTO exclusive_work_policies(id,account_id,name,configuration,retired)
+VALUES($1::text::uuid,$2::text::uuid,$3::text,$4::jsonb,$5::boolean)
+ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,retired=excluded.retired,
 revision=exclusive_work_policies.revision+1,updated_at=clock_timestamp()
 RETURNING id, account_id, name, revision, configuration, retired, created_at, updated_at
 `
@@ -22530,6 +22548,7 @@ type SaveExclusiveWorkPolicyParams struct {
 	AccountID     string
 	Name          string
 	Configuration []byte
+	Retired       bool
 }
 
 func (q *Queries) SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error) {
@@ -22538,6 +22557,7 @@ func (q *Queries) SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg Save
 		arg.AccountID,
 		arg.Name,
 		arg.Configuration,
+		arg.Retired,
 	)
 	var i ExclusiveWorkPolicy
 	err := row.Scan(

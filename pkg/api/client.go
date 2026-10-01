@@ -3599,6 +3599,12 @@ func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, pol
 	return out, c.do(ctx, http.MethodPut, "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
 }
 
+func (c *Client) RetireExclusiveWorkPolicy(ctx context.Context, name string) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	err := c.do(ctx, http.MethodDelete, "/v1/account/operation-policies/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
 func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
 	var out ExclusiveTriggerBindingRecord
 	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)

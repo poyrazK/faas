@@ -1699,6 +1699,7 @@ var cliCommands = []cliCommand{
 			{Name: "policy", Short: "List or configure account operation policies", Subcommands: []cliSub{
 				{Name: "list", Short: "List operation policies"},
 				{Name: "upsert", Short: "Create or revise a policy from JSON", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "file", Value: "POLICY.json", Short: "policy JSON file", Req: true}}},
+				{Name: "retire", Short: "Retire an idle policy and preserve ownership history", Positionals: []string{"<name>"}},
 			}},
 			{Name: "bind-trigger", Short: "Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy", Positionals: []string{"<cron|inbound_webhook|broker|job_schedule>", "<trigger-id>"}, Flags: []cliFlag{
 				{Name: "policy", Value: "NAME", Short: "managed operation policy", Req: true},

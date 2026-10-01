@@ -17,12 +17,23 @@ def test_retained_queue_recovery_history() -> None:
         assert request.headers["Authorization"] == "Bearer token"
         rows = []
         if request.url.params.get("include_retired") == "true":
-            rows = [{
-                "id": binding_id, "app_id": "app", "account_id": "00000000-0000-4000-8000-000000000003",
-                "name": "orders", "queue_name": "orders", "mode": "push", "workload_class": "worker",
-                "environment": "production", "enabled": True, "max_concurrency": 1,
-                "created_at": "2026-10-01T00:00:00Z", "updated_at": retired_at, "retired_at": retired_at,
-            }]
+            rows = [
+                {
+                    "id": binding_id,
+                    "app_id": "app",
+                    "account_id": "00000000-0000-4000-8000-000000000003",
+                    "name": "orders",
+                    "queue_name": "orders",
+                    "mode": "push",
+                    "workload_class": "worker",
+                    "environment": "production",
+                    "enabled": True,
+                    "max_concurrency": 1,
+                    "created_at": "2026-10-01T00:00:00Z",
+                    "updated_at": retired_at,
+                    "retired_at": retired_at,
+                }
+            ]
         return httpx.Response(200, json=rows)
 
     client = FaaSClient(

@@ -234,6 +234,7 @@ const (
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
 	// Managed operations bound durable configuration, queue growth, and leases.
+	// MaxExclusivePoliciesPerAccount counts non-retired policies (ADR-427).
 	MaxExclusivePoliciesPerAccount = 64
 	MaxExclusivePendingPerAccount  = 10000
 	MinExclusiveLeaseSeconds       = 5

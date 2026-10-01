@@ -164,11 +164,22 @@ func (tx *exclusivePostgresTx) savePolicy(p ExclusiveWorkPolicy) (ExclusiveWorkP
 	if err != nil {
 		return ExclusiveWorkPolicy{}, err
 	}
-	row, err := tx.q.SaveExclusiveWorkPolicy(tx.ctx, tx.db, sqlc.SaveExclusiveWorkPolicyParams{ID: p.ID, AccountID: p.AccountID, Name: p.Policy.Name, Configuration: config})
+	row, err := tx.q.SaveExclusiveWorkPolicy(tx.ctx, tx.db, sqlc.SaveExclusiveWorkPolicyParams{ID: p.ID, AccountID: p.AccountID, Name: p.Policy.Name, Configuration: config, Retired: p.Retired})
 	if err != nil {
 		return ExclusiveWorkPolicy{}, err
 	}
 	return exclusivePGPolicy(row)
+}
+
+func (tx *exclusivePostgresTx) policyInUse(policy ExclusiveWorkPolicy) (bool, error) {
+	result, err := tx.q.ExclusiveWorkPolicyInUse(tx.ctx, tx.db, policy.ID)
+	if err != nil {
+		return false, err
+	}
+	if !result.Valid {
+		return false, errors.New("exclusive policy usage query returned null")
+	}
+	return result.Bool, nil
 }
 func (tx *exclusivePostgresTx) ensureKey(k exclusiveKey) (exclusiveKey, error) {
 	row, err := tx.q.EnsureExclusiveWorkKey(tx.ctx, tx.db, sqlc.EnsureExclusiveWorkKeyParams{ID: k.ID, AccountID: k.AccountID, PolicyID: k.PolicyID, ScopeID: k.ScopeID, EnvironmentID: k.EnvironmentID, KeyDigest: k.Digest})
