@@ -1,4 +1,4 @@
-# ADR-423 · Managed outbound integrations for stateless Runs
+# ADR-424 · Managed outbound integrations for stateless Runs
 
 - **Status:** proposed
 - **Date:** 2026-10-01
