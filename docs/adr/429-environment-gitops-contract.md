@@ -1,9 +1,9 @@
-# ADR-428 · Git-owned environment intent and continuous reconciliation
+# ADR-429 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423 and ADR-425
+  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425 and ADR-428
   documents, refer to this contract.
   Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations;
   ADR-425 covers retained cache materialization.
@@ -63,6 +63,41 @@
   rollout with failure and supersession fencing; Git outage recovery; expiring
   overrides; controlled pruning; API, CLI, dashboard, and generated contracts.
   No launched capability is claimed until these gates cover the complete flow.
+
+## Remaining implementation sequence
+
+1. Persist source/runtime specifications against the original environment UUID,
+   logical workload and mapped app ID. Deployment preparation must read that
+   scoped specification, rather than update the shared `apps.manifest`. Adopted
+   apps keep their IDs; creation must be idempotent under the current approved
+   generation. Existing build owners and scheduler admission remain authoritative.
+2. Prepare the dependency graph using immutable source artifacts and durable
+   deployment/effect identities. Qualify API and worker candidates before release
+   activation. Retry and crash recovery resume the journaled operation; an older
+   generation cannot activate a replacement approved graph. Release coordination
+   must expose partial execution across database, edge and runtime boundaries.
+3. Add scoped service-binding adapters that publish the qualified target identity
+   and authorization policy. A missing dependency blocks the graph; it must not
+   fall back to another environment or mutate an application-wide binding.
+   Restore queue consumer projections using the original private consumer and
+   receipt namespace, with reviewed repair for ambiguous/missing identities.
+4. Qualify every valid catalog environment name across storage constraints,
+   secret references, deployment/runtime receipt paths, queue admission and
+   public clients. Short and numeric catalog names currently expose differing
+   legacy scope grammars. The default and all-scopes sentinel semantics must
+   remain explicit; changing only the Git parser cannot close this gate.
+5. Publish graph preparation, qualification, activation and serving convergence
+   separately from source freshness and applied intent. Exercise supersession,
+   outage, overrides, failed preparation, recovery and retained work on the
+   supported native Linux KVM hosts. Only then start the approved-intent worker
+   in apid, initially qualifying report mode before continuous enforcement.
+
+For the API/worker/queue example, the final acceptance flow is: approve an exact
+reviewed definition, preview and adopt existing identities, prepare and qualify
+the scoped graph, activate it, detect a permitted console edit in report mode,
+and restore the owned setting in enforce mode after any active override expires.
+The test must also prove that neighboring environments and unmanaged settings
+retain their values, and that Git rollback does not discard accepted queue work.
 
 ## Implementation checkpoint
 
@@ -789,8 +824,13 @@ This checkpoint is integrated with main through `a3e1800e3`. Focused routed
 GitOps/queue and policy-retirement API/CLI checks, the PostgreSQL GitOps suite,
 populated migration replay and Node/Python transport checks pass on the combined
 tree. Isolated SQLC regeneration, matching OpenAPI copies and ADR number
-uniqueness pass. The contract is now ADR-428; historical unreleased migration
+uniqueness pass. The contract is now ADR-429; historical unreleased migration
 references to ADR-425 remain unchanged.
+
+Main's subsequent request-streaming gateway fix through `650574079` is also
+integrated. Its duplex/body-admission tests and focused routed GitOps/queue API
+checks pass on this tree. It changes no GitOps SQL or client contracts; the
+preceding PostgreSQL and transport qualification remains applicable.
 
 For an existing scoped secret, the public reference commands are:
 

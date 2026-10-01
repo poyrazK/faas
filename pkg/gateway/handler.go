@@ -5244,6 +5244,9 @@ type capWriter struct {
 	onWarn   func(bucket string)
 }
 
+// Unwrap preserves server duplex and deadline controls through the body cap.
+func (c *capWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 // ProblemHTMLRequest preserves browser error negotiation through the body
 // cap wrapper. Most cap failures write through the original writer, but this
 // forwarding keeps the wrapper safe for any future platform error path.
@@ -8318,6 +8321,11 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // path (no flusher installed).
 func (s *statusRecorder) Flush() {
 	if s.flusher == nil {
+		// gRPC messages must reach the client while its request stream remains
+		// open, including when the ordinary response streaming flag is off.
+		if strings.HasPrefix(strings.ToLower(s.contentTypeOrHeader()), "application/grpc") {
+			_ = http.NewResponseController(s.ResponseWriter).Flush()
+		}
 		return
 	}
 	s.doFlush()
