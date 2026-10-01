@@ -69,6 +69,12 @@ func (m *MemStore) stampRuntimeScalingState(_ context.Context, deploymentID, dir
 	if workloadEnvironmentSlug(owner.Scope) == "production" {
 		app.LastScaleInAt, app.LastScaleOutAt = row.LastScaleInAt, row.LastScaleOutAt
 		m.apps[app.ID] = app
+		for productionKey, productionRow := range m.runtimeEnvironmentScalingStates {
+			if productionRow.AppID == app.ID && workloadEnvironmentSlug(productionRow.Scope) == "production" {
+				productionRow.LastScaleInAt, productionRow.LastScaleOutAt = app.LastScaleInAt, app.LastScaleOutAt
+				m.runtimeEnvironmentScalingStates[productionKey] = copyRuntimeScalingState(productionRow)
+			}
+		}
 	}
 	return nil
 }

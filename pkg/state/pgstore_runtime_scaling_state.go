@@ -95,6 +95,9 @@ func (s *PgStore) stampRuntimeScalingState(ctx context.Context, deploymentID, di
 		if err := q.ProjectProductionScalingState(ctx, tx, sqlc.ProjectProductionScalingStateParams{AppID: params.AppID, EnvironmentKey: key}); err != nil {
 			return mapErr(err)
 		}
+		if err := q.SyncProductionScalingStates(ctx, tx, params.AppID); err != nil {
+			return mapErr(err)
+		}
 	}
 	return tx.Commit(ctx)
 }

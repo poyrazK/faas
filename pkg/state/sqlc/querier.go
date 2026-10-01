@@ -1414,6 +1414,7 @@ type Querier interface {
 	// (account_id) predicate; the SUM is over the partial index.
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.

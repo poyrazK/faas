@@ -20867,6 +20867,18 @@ func (q *Queries) SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff
 	return result.RowsAffected(), nil
 }
 
+const syncProductionScalingStates = `-- name: SyncProductionScalingStates :exec
+UPDATE runtime_environment_scaling_states scaling
+SET last_scale_in_at=a.last_scale_in_at,last_scale_out_at=a.last_scale_out_at
+FROM apps a
+WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
+`
+
+func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
+	return err
+}
+
 const touchKeyLastUsed = `-- name: TouchKeyLastUsed :exec
 update api_keys set last_used_at = now() where id = $1
 `

@@ -226,3 +226,78 @@ func testRuntimeScalingStateLegacyProduction(t *testing.T, store runtimeAppEnvTe
 		}
 	}
 }
+
+func TestMemRuntimeScalingStateMixedProductionGenerations(t *testing.T) {
+	testRuntimeScalingStateMixedProductionGenerations(t, state.NewMemStore())
+}
+
+func testRuntimeScalingStateMixedProductionGenerations(t *testing.T, store runtimeAppEnvTestStore) {
+	f := seedRuntimeAppEnv(t, store)
+	ctx := t.Context()
+	app, err := store.CreateApp(ctx, state.App{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: "mixed-clock", WorkloadName: "mixed-clock", RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "default", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StampDeploymentScaleOut(ctx, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, f.account.ID, f.project.ID, "production", app.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, f.account.ID, f.project.ID, "stage", app.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "stage", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StampDeploymentScaleIn(ctx, stage.ID); err != nil {
+		t.Fatal(err)
+	}
+	stageHistory, err := store.RuntimeScalingStateForDeployment(ctx, f.account.ID, app.ID, stage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var priorIn, priorOut *time.Time
+	for _, step := range []struct {
+		deployment string
+		in         bool
+	}{{pinned.ID, true}, {legacy.ID, false}, {legacy.ID, true}, {pinned.ID, false}} {
+		if step.in {
+			err = store.StampDeploymentScaleIn(ctx, step.deployment)
+		} else {
+			err = store.StampDeploymentScaleOut(ctx, step.deployment)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := store.RuntimeScalingStateForDeployment(ctx, f.account.ID, app.ID, legacy.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := store.RuntimeScalingStateForDeployment(ctx, f.account.ID, app.ID, pinned.ID)
+		if err != nil || first.EnvironmentID != "" || second.EnvironmentID == "" || first.LastScaleInAt == nil || first.LastScaleOutAt == nil || !sameScalingTime(first.LastScaleInAt, second.LastScaleInAt) || !sameScalingTime(first.LastScaleOutAt, second.LastScaleOutAt) {
+			t.Fatalf("mixed production clocks diverged: legacy=%+v pinned=%+v %v", first, second, err)
+		}
+		if step.in && priorOut != nil && !sameScalingTime(first.LastScaleOutAt, priorOut) || !step.in && priorIn != nil && !sameScalingTime(first.LastScaleInAt, priorIn) {
+			t.Fatal("mixed production stamp replaced the other direction")
+		}
+		priorIn, priorOut = first.LastScaleInAt, first.LastScaleOutAt
+		staged, err := store.RuntimeScalingStateForDeployment(ctx, f.account.ID, app.ID, stage.ID)
+		if err != nil || !sameScalingTime(staged.LastScaleInAt, stageHistory.LastScaleInAt) || staged.LastScaleOutAt != nil {
+			t.Fatalf("production synchronization reached stage: %+v %v", staged, err)
+		}
+	}
+}

@@ -34,14 +34,32 @@ func (l *NodeLedger) ConcurrencyForEnvironment(appID, environmentKey string) int
 // Legacy callers may construct a ledger literal. Initialize the new index
 // from existing reservations before the first count read or mutation.
 func (l *NodeLedger) ensureEnvironmentConcurrencyLocked() {
-	if l.perAppEnvironment != nil {
+	environmentsMissing, productionMissing := l.perAppEnvironment == nil, l.perAppProduction == nil
+	if !environmentsMissing && !productionMissing {
 		return
 	}
-	l.perAppEnvironment = make(map[string]int)
+	if environmentsMissing {
+		l.perAppEnvironment = make(map[string]int)
+	}
+	if productionMissing {
+		l.perAppProduction = make(map[string]int)
+	}
 	for _, entry := range l.entries {
 		if entry.countsConc {
-			l.perAppEnvironment[entry.appID+"\x00"+entry.environmentKey]++
+			if environmentsMissing {
+				l.perAppEnvironment[entry.appID+"\x00"+entry.environmentKey]++
+			}
+			if productionMissing && (entry.production || entry.environmentKey == "") {
+				l.perAppProduction[entry.appID]++
+			}
 		}
+	}
+}
+
+func (l *NodeLedger) addEnvironmentConcurrencyLocked(entry *reservation) {
+	l.perAppEnvironment[entry.appID+"\x00"+entry.environmentKey]++
+	if entry.production || entry.environmentKey == "" {
+		l.perAppProduction[entry.appID]++
 	}
 }
 
@@ -51,11 +69,18 @@ func (l *NodeLedger) releaseEnvironmentConcurrencyLocked(entry *reservation) {
 	if l.perAppEnvironment[key] <= 0 {
 		delete(l.perAppEnvironment, key)
 	}
+	if entry.production || entry.environmentKey == "" {
+		l.perAppProduction[entry.appID]--
+		if l.perAppProduction[entry.appID] <= 0 {
+			delete(l.perAppProduction, entry.appID)
+		}
+	}
 }
 
 type ledgerDeploymentPolicy struct {
 	app            state.App
 	environmentKey string
+	production     bool
 }
 
 // Recovery accounts for already-resident orphan VMs, without adopting a new
@@ -85,5 +110,6 @@ func (e *Engine) seedLedgerDeploymentPolicy(ctx context.Context, app state.App, 
 		return policy, err
 	}
 	policy.environmentKey = runtimeEnvironmentAdmissionKey(owner.Scope, owner.EnvironmentID)
+	policy.production = reaperProductionScope(owner.Scope)
 	return policy, nil
 }

@@ -2203,3 +2203,43 @@ adapters and clone strategies, coordinated data capture and full-clone
 activation/qualification remain open. The public complete-clone command
 remains unavailable. Repository-wide tests/lint and native test-metal,
 leakcheck and provider acceptance remain unverified.
+
+### Environment serving ceilings within the shared plan budget
+
+Native admission now checks the selected deployment's environment serving
+count against its deployed configured ceiling. Every environment still shares
+the app's plan concurrency budget and the node's physical RAM, vCPU and CPU
+limits. Desired configuration changes do not replace a deployed stage's limit.
+The existing rollout allowance requires a serving generation in that same
+environment; a new sibling stage cannot borrow production's allowance. Even
+simultaneous environment rollouts remain bounded by the shared plan ceiling
+plus one slot. Warm promotion and missing-reservation repair use these same
+boundaries and retain the original owner. Public limit errors retain the
+existing steady-plan ceiling and stable error code.
+
+Valid pinned production and genuinely unpinned legacy production share the
+production compatibility count, while retaining distinct original ownership
+indexes. Stages and orphaned reservations do not contribute to it. Production
+scale-in/out writes now synchronize existing production clock rows with the
+App projection in the same PostgreSQL transaction, preventing legacy and
+pinned generations from maintaining conflicting cooldown histories. Stage
+history remains independent.
+
+Verification: the focused capacity gate passed in 1.166 seconds. MemStore and
+real PostgreSQL runtime-scaling contracts passed in 17.074 seconds, including
+alternating legacy/pinned production clock writers and independent stage
+history. The final full scheduler tree passed: scheduler 18.132 seconds and
+all eight child packages. Tests cover independent deployed limits, shared
+plan exhaustion, same-environment rollout prerequisites, concurrent rollout
+bounds, warm promotion, recovered over-cap stage reservations, and mixed
+legacy/pinned production. Independent SQLC 1.31.1 generation matches and the
+whitespace check passes. VM operations use macOS test fakes.
+
+Explicit deployment reconciliation retains its existing ordinary gate bypass.
+Coordinated wakes, minimum/warm fills, load/prewarm feeds, billing, debugger
+and audit aggregation, resource cleanup, captured configuration and warm
+publication fences, remaining adapters and clone strategies, coordinated
+customer-data capture and full-clone activation/qualification remain open.
+The public complete-clone command remains unavailable. Repository-wide
+tests/lint and native x86_64 KVM test-metal, leakcheck and provider acceptance
+remain unverified.

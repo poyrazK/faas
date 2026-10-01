@@ -26,6 +26,11 @@ func TestPgRuntimeScalingStateLegacyProduction(t *testing.T) {
 	testRuntimeScalingStateLegacyProduction(t, store)
 }
 
+func TestPgRuntimeScalingStateMixedProductionGenerations(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testRuntimeScalingStateMixedProductionGenerations(t, store)
+}
+
 func TestPgRuntimeScalingStateRejectsMissingOwnerOrPin(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
 	f := seedRuntimeAppEnv(t, store)

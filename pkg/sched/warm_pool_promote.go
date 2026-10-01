@@ -20,14 +20,15 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
-	if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
-		// The existing admission gate owns the at-capacity result; do not
-		// consume a warm row or emit a misleading "missing" outcome.
-		return WakeResult{}, false, nil
-	}
 	values, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
+	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
+	production := reaperProductionScope(values.Snapshot.Scope)
+	if _, _, refused := e.wakeServingCapacity(app, limits, dep.ID, environmentKey, production).refusal(); refused {
+		// The ordinary admission gate owns the capacity result.
+		return WakeResult{}, false, nil
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -100,8 +101,9 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
-				EnvironmentKey: runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
-				RAMMB:          app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
+				ProductionEnvironment: production,
+				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {

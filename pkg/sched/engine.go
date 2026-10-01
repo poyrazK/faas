@@ -2686,6 +2686,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		return WakeResult{}, fmt.Errorf("sched: resolve deployment settings: %w", err)
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(scaling.Scope, scaling.EnvironmentID)
+	productionEnvironment := reaperProductionScope(scaling.Scope)
 	if err := securityQuarantineErr(dep); err != nil {
 		release()
 		return WakeResult{}, err
@@ -2773,11 +2774,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// was attempted, the customer's request is asking for a wake
 	// that the floor already satisfies.
 	var (
-		outcome     wakeOutcome
-		obsCents    int64
-		capCents    int64
-		concurrency int
-		atCapacity  bool
+		outcome          wakeOutcome
+		obsCents         int64
+		capCents         int64
+		concurrency      int
+		atCapacity       bool
+		concurrencyLimit int
 	)
 	if bypassGates {
 		concurrency = e.ledger.Concurrency(app.ID)
@@ -2788,14 +2790,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// healthy cold wakes keep the existing zero-query fast path.
 		// ADR-199: compare against the rollout-aware ceiling so a canary
 		// overlap does not trigger a reconcile sweep on every wake.
-		if e.ledger.Concurrency(app.ID) >= e.maxConcurrencyForWake(app, limits, dep.ID) {
+		if _, _, refused := e.wakeServingCapacity(app, limits, dep.ID, environmentKey, productionEnvironment).refusal(); refused {
 			if repaired, reconcileErr := e.reconcileAppAdmission(ctx, app.ID); reconcileErr != nil {
 				e.log.Warn("sched: reconcile stale admission before cap decision", "app", app.ID, "err", reconcileErr)
 			} else if repaired > 0 {
 				e.log.Info("sched: released stale admission before cap decision", "app", app.ID, "instances", repaired)
 			}
 		}
-		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGateForEnvironment(ctx, &app, limits, dep.ID, environmentKey)
+		outcome, obsCents, capCents, concurrency, atCapacity, concurrencyLimit = e.admitGateForEnvironment(ctx, &app, limits, dep.ID, environmentKey, productionEnvironment)
 	}
 	if outcome != wakeAdmit {
 		release()
@@ -2805,7 +2807,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.IncAtCapacity(appID, "wake")
 				return WakeResult{AtCapacity: true}, nil
 			}
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, concurrencyLimit, concurrency)
 		case wakeCooldownHeld:
 			// PR-D: 503 + Retry-After with the cooldown remaining
 			// seconds. The customer's plan is fine; their
@@ -2815,14 +2817,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			return WakeResult{}, api.ErrWaitForWarm(
 				cooldownSRemaining(&app, time.Now()),
 				limits,
-				e.ledger.Concurrency(app.ID),
+				concurrency,
 			)
 		case wakeMinFloorAlready:
 			// No scale-out was attempted (concurrency already
 			// at the floor). 429 is the right wire shape — the
 			// customer is asking for a wake that the floor already
 			// satisfies. PR-D keeps CodePlanLimitConcur here.
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, concurrencyLimit, concurrency)
 		case wakeOverageCapReached:
 			// Issue #561: customer's spend cap is at/over the
 			// configured monthly ceiling. Lift to
@@ -3113,15 +3115,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
-		EnvironmentKey: environmentKey,
-		RAMMB:          app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
+		EnvironmentKey:        environmentKey,
+		ProductionEnvironment: productionEnvironment,
+		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
 		// revision alongside the one already serving needs the same
 		// max+1 allowance the smoke verifier has always had. The ledger
 		// enforces the +1 bound (admission.go), and per-node RAM/vCPU
 		// ceilings are unaffected either way.
-		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || trigger == TriggerRuntimeConfigRestart || e.rolloutGrantApplies(appID, dep.ID),
+		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || trigger == TriggerRuntimeConfigRestart || e.rolloutGrantAppliesForEnvironment(appID, dep.ID, environmentKey, productionEnvironment),
 		NodeID:                  placement.NodeID,
 		NodeCeilingMB:           placement.CeilingMB,
 		VCPUBudget:              placement.VCPUBudget,
@@ -7111,7 +7114,8 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
-				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
+				ProductionEnvironment: policy.production,
+				RAMMB:                 ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(policy.app), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
@@ -9454,91 +9458,61 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 	return app.MaxConcurrency
 }
 
-// rolloutGrantApplies reports whether this wake is the overlap window of a
-// traffic split or canary stage — a second deployment coming up alongside
-// the one already serving (ADR-199).
-//
-// The test is two O(1) ledger reads, deliberately: this runs on the wake hot
-// path and must not add a query. The shape it detects is exactly:
-//
-//	the target deployment currently has NO instances   (it is the new revision)
-//	AND the app has at least one instance              (an older revision is serving)
-//
-// which is true only while two revisions overlap. Once the rollout completes
-// and the old deployment's instances are reaped, the target deployment holds
-// the instances itself and the first condition goes false, so the grant
-// retires on its own without anything having to expire it.
-//
-// Returns false for an empty deploymentID: without a target we cannot tell a
-// rollout from ordinary scale-out, and the safe answer is the plan cap.
-func (e *Engine) rolloutGrantApplies(appID, deploymentID string) bool {
+// rolloutGrantAppliesForEnvironment permits a new revision alongside serving
+// replicas of the same original environment. Sibling stages cannot grant it.
+// Legacy unpinned production participates in its pinned production rollout.
+func (e *Engine) rolloutGrantAppliesForEnvironment(appID, deploymentID, environmentKey string, production bool) bool {
 	if deploymentID == "" || e.ledger == nil {
 		return false
 	}
 	if e.ledger.ConcurrencyForDeployment(appID, deploymentID) != 0 {
 		return false
 	}
-	return e.ledger.Concurrency(appID) >= 1
+	return e.ledger.servingEnvironmentConcurrency(appID, environmentKey, production) >= 1
 }
 
-// maxConcurrencyForWake is effectiveMaxConcurrency plus the ADR-199 rollout
-// grant when this wake is a rollout overlap. Every caller that decides
-// "is this app at its concurrency cap" during a wake must use this rather
-// than effectiveMaxConcurrency, or the engine-side gate would reject a
-// canary before NodeLedger.Admit ever gets the chance to allow the overlap
-// it already permits via Request.AllowConcurrencyOverlap.
-//
-// The two must agree. admitGate is the engine's early cap check and the
-// ledger is the authority; this function exists so both read the same
-// ceiling for the same wake.
-//
-// This widens the PLAN gate only. NodeLedger.Admit still enforces the RAM
-// ledger, the per-node ceiling (ADR-193) and vCPU, so the grant can never
-// push a node past its physical budget — under pressure the extra instance
-// is refused and the ladder simply holds at its current stage.
-func (e *Engine) maxConcurrencyForWake(app state.App, limits api.Limits, deploymentID string) int {
-	max := effectiveMaxConcurrency(app, limits)
-	if e.rolloutGrantApplies(app.ID, deploymentID) {
-		max += api.RolloutConcurrencyGrant
-	}
-	return max
+// wakeServingCapacity applies the environment ceiling and shared plan budget
+// with the same scoped rollout prerequisite used by the final ledger admission.
+func (e *Engine) wakeServingCapacity(app state.App, limits api.Limits, deploymentID, environmentKey string, production bool) servingCapacity {
+	return e.ledger.servingCapacity(app.ID, environmentKey, production, effectiveMaxConcurrency(app, limits), limits,
+		e.rolloutGrantAppliesForEnvironment(app.ID, deploymentID, environmentKey, production))
 }
 
 func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string) (wakeOutcome, int64, int64, int, bool) {
-	return e.admitGateForEnvironment(ctx, app, limits, deploymentID, "")
+	outcome, observedCents, capCents, concurrency, full, _ := e.admitGateForEnvironment(ctx, app, limits, deploymentID, "", true)
+	return outcome, observedCents, capCents, concurrency, full
 }
 
-func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, limits api.Limits, deploymentID, environmentKey string) (wakeOutcome, int64, int64, int, bool) {
-	concurrency := e.ledger.Concurrency(app.ID)
-	environmentConcurrency := e.ledger.ConcurrencyForEnvironment(app.ID, environmentKey)
+func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, limits api.Limits, deploymentID, environmentKey string, production bool) (wakeOutcome, int64, int64, int, bool, int) {
+	capacity := e.wakeServingCapacity(*app, limits, deploymentID, environmentKey, production)
+	concurrency := capacity.concurrency
 	// Mirror admission.go:149-152: apps created via store.CreateApp
 	// without a subsequent UpdateApp leave MaxConcurrency at 0.
 	// Clamp against the plan ceiling so legacy / pre-PR-A apps still
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
 	//
-	// ADR-199: maxConcurrencyForWake adds RolloutConcurrencyGrant while a
+	// ADR-199 / ADR-375: a rollout adds one slot while a
 	// second deployment is coming up alongside the one already serving, so
 	// a canary can overlap two revisions on a plan whose cap equals its
 	// steady-state instance count (Free = 1).
-	maxConc := e.maxConcurrencyForWake(*app, limits, deploymentID)
-	if concurrency >= maxConc {
+	if limit, have, refused := capacity.refusal(); refused {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "reject_at_cap")
 		}
-		return wakeRejectAtCap, 0, 0, concurrency, false
+		return wakeRejectAtCap, 0, 0, have, false, limit
 	}
-	if !isScaleOutBurstContinuation(ctx) && e.isOnScaleOutCooldown(app, environmentConcurrency) {
+	if !isScaleOutBurstContinuation(ctx) && e.isOnScaleOutCooldown(app, concurrency) {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "cooldown_held")
 		}
-		return wakeCooldownHeld, 0, 0, concurrency, false
+		return wakeCooldownHeld, 0, 0, concurrency, false, capacity.limit
 	}
-	if e.atMinFloorWithNoSignal(app, environmentConcurrency) {
+	if e.atMinFloorWithNoSignal(app, concurrency) {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "min_floor_already")
 		}
-		return wakeMinFloorAlready, 0, 0, concurrency, false
+		return wakeMinFloorAlready, 0, 0, concurrency, false, capacity.limit
 	}
 	// Issue #561: spend cap pause-workload. Nil check tolerates
 	// legacy fixtures (the branch becomes a no-op).
@@ -9553,10 +9527,10 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 			// refusal, and pkg/sched/loop.go:1249 `reaper_scale_down`
 			// is the precedent for engine-initiated audit writes.
 			e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
-			return wakeOverageCapReached, observedCents, capCents, concurrency, false
+			return wakeOverageCapReached, observedCents, capCents, concurrency, false, capacity.limit
 		}
 	}
-	return wakeAdmit, 0, 0, concurrency, concurrency+1 >= maxConc
+	return wakeAdmit, 0, 0, concurrency, capacity.fullAfterAdmission(), capacity.limit
 }
 
 // isOnScaleOutCooldown (PR-C, issue #462) returns true when

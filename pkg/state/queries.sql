@@ -6648,6 +6648,12 @@ WITH app_stamp AS (UPDATE apps SET last_scale_out_at=now() WHERE id=$1 RETURNING
         FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
 SELECT id FROM app_stamp;
 
+-- name: SyncProductionScalingStates :exec
+UPDATE runtime_environment_scaling_states scaling
+SET last_scale_in_at=a.last_scale_in_at,last_scale_out_at=a.last_scale_out_at
+FROM apps a
+WHERE scaling.app_id=a.id AND a.id=sqlc.arg(app_id)::uuid AND scaling.scope='production';
+
 -- name: StampLegacyProductionScaleIn :one
 WITH app_stamp AS (UPDATE apps SET last_scale_in_at=now() WHERE id=$1 RETURNING id,last_scale_in_at),
     scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_in_at=app_stamp.last_scale_in_at
