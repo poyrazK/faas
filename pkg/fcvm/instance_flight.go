@@ -31,6 +31,10 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 	bootCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil {
+		flight.cancel()
+		return nil, nil, fmt.Errorf("manager: boot %s: teardown pending", instance)
+	}
 	if _, ok := m.live[instance]; ok {
 		flight.cancel()
 		return nil, nil, fmt.Errorf("manager: boot %s: instance already live", instance)
@@ -53,6 +57,10 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 	operationCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil {
+		flight.cancel()
+		return nil, nil, nil, fmt.Errorf("instance teardown pending")
+	}
 	inst, ok := m.live[instance]
 	if !ok {
 		flight.cancel()

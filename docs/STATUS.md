@@ -31,6 +31,13 @@ historical.
   a gated operator preview. These landed after the older milestone prose below
   and should not be inferred from its historical PR list.
 
+Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
+failed-boot ownership through confirmed teardown and serializes concurrent stops
+([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)). Admission fencing and
+local teardown do not yet provide durable all-node drain proof. Customer cutover
+activation remains disabled, and supported native lifecycle acceptance remains
+pending.
+
 ## M0 — repo scaffold. ✅
 
 Repo tree, build/test/lint tooling, CI, `pkg/api` limits table,

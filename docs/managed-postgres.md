@@ -477,8 +477,12 @@ resources. Delayed boot RPCs must read the fence again, including after a daemon
 restart. Warm and migration resume/capture operations use the same admission check
 and destruction join. Default-local nodes honor a configured `db_url` or
 `FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
-See [ADR-394](adr/394-managed-postgres-vmmd-admission.md). Confirmed destruction,
-all-node capability/ownership checks and durable drain receipts remain pending.
+See [ADR-394](adr/394-managed-postgres-vmmd-admission.md). Teardown now retains
+live and failed-boot ownership until process exit and cleanup are confirmed;
+concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the
+original resources ([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)).
+This proof is local to the running daemon. Crash recovery, all-node
+capability/ownership checks and durable drain receipts remain pending.
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

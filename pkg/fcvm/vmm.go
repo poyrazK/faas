@@ -290,6 +290,7 @@ type coldBootArtifactTiming struct {
 // started in startJailer; reads in DestroyWithExport block until the watchdog
 // signals done via the cond.
 type instanceRecord struct {
+	waitErr     error // guarded by JailerVMM.mu; done alone cannot prove a failed Wait
 	cmd         *exec.Cmd
 	consolePath string        // serial console file used to detect a guest halt
 	isBuilder   bool          // builderd owns the expected process exit/export path
@@ -3179,70 +3180,82 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	v.cancelStartupCPUBoostTail(l.Instance)
-	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()
-	cmd, hasCmd := v.proc[l.Instance]
-	rec, hasRec := v.recs[l.Instance]
-	if hasCmd {
-		delete(v.proc, l.Instance)
-	}
+	cmd := v.proc[l.Instance]
+	rec := v.recs[l.Instance]
 	v.mu.Unlock()
-	// Move 4 (issue #254): close the per-instance ring so subscribers
-	// see a clean EOF and the byte budget is released (invariant §6.2-4:
-	// parked app = zero RAM). Done BEFORE the chroot wipe because the
-	// ring holds host-side bytes; nothing else depends on it.
-	v.unregisterRing(l.Instance)
-
-	if hasCmd && cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	if hasRec && rec.done != nil {
-		// Wait for the watchdog to finish (it always does, since cmd.Process.Wait
-		// is observed by Go's runtime even on signal-induced exit). Bound by the
-		// same destroyWait so a wedged firecracker can't pin us.
-		select {
-		case <-rec.done:
-		case <-time.After(v.destroyWait):
+	if rec != nil {
+		if cmd == nil {
+			cmd = rec.cmd
 		}
-		v.mu.Lock()
-		delete(v.recs, l.Instance)
-		v.mu.Unlock()
+		l.IsBuilder = l.IsBuilder || rec.isBuilder
 	}
+	if err := killAndConfirmExit(cmd, recordDone(rec), v.destroyWait); err != nil {
+		// Keep the record and every resource until the watchdog proves exit.
+		return fmt.Errorf("vmm: kill %s: %w", l.Instance, err)
+	}
+	if rec != nil {
+		v.mu.Lock()
+		waitErr := rec.waitErr
+		v.mu.Unlock()
+		if waitErr != nil {
+			return fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
+		}
+	}
+	v.unregisterRing(l.Instance)
+	v.closeGuestVsockListeners(l.Instance)
 	v.preBoot.forget(l.Instance)
 	v.closeClient(l.Instance)
-	v.unmountBindMounts(l.Instance)
-	// Chroot lives in tmpfs (spec §Gotchas); removing it frees the RAM it holds.
+	if err := v.unmountBindMounts(l.Instance); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
-	// Tmp files materialized from a StorageKey live in /tmp (not the chroot
-	// root) — sweep them explicitly so they don't leak across thousands of
-	// wakes.
-	v.sweepMaterialised(l.Instance)
-	// Remove the per-VM cgroup scope jailer created (--cgroup cpu.weight=…).
-	// Required by spec §6.2-4 ("parked = zero RAM") — a populated cgroup dir
-	// holds page-cache references. The scope name equals jailer --id
-	// (= Lease.Instance); see pkg/fcvm/cgroup.go for the matching write path.
-	// Idempotent; missing dir is fine.
-	//
-	// The parent path is plan-aware (issue #301 / ADR-044): the 3-level
-	// hierarchy is faas-tenant.slice/<plan-slice>/<instance>. ParentCgroupFor
-	// reads the lease's Plan; an empty plan falls back to the legacy 2-level
-	// path so pre-issue-301 callers keep working.
-	//
-	// EBUSY (or any other non-IsNotExist error) is logged and swallowed: the
-	// jailer process is already gone at this point, so we cannot rewind the
-	// teardown. A leftover cgroup dir leaks RAM only until the next cgroup
-	// pressure event reaps it; failing the whole call would mask the real
-	// teardown success.
-	parentCgroup := ParentCgroupFor(l.Plan)
-	if l.IsBuilder {
-		parentCgroup = BuilderCgroupParent
+	if err := v.sweepMaterialised(l.Instance); err != nil {
+		return err
 	}
-	scopePath := filepath.Join(cgroupRoot, parentCgroup, PerInstanceScope(l.Instance))
-	if err := os.RemoveAll(scopePath); err != nil && !os.IsNotExist(err) {
-		slog.Default().Warn("cgroup scope remove failed; continuing teardown",
-			"path", scopePath, "instance", l.Instance, "err", err)
+	parent := ParentCgroupFor(l.Plan)
+	if l.IsBuilder {
+		parent = BuilderCgroupParent
+	}
+	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(l.Instance))
+	if err := os.RemoveAll(scope); err != nil {
+		return fmt.Errorf("vmm: remove cgroup scope %s: %w", l.Instance, err)
+	}
+	v.mu.Lock()
+	delete(v.proc, l.Instance)
+	delete(v.recs, l.Instance)
+	v.mu.Unlock()
+	return nil
+}
+
+func recordDone(rec *instanceRecord) <-chan struct{} {
+	if rec == nil {
+		return nil
+	}
+	return rec.done
+}
+
+// A successful signal syscall is not an exit receipt. Only the single process
+// watchdog can confirm exit; a missing watchdog or timeout must retain ownership.
+func killAndConfirmExit(cmd *exec.Cmd, done <-chan struct{}, wait time.Duration) error {
+	if cmd != nil && cmd.Process != nil {
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal kill: %w", err)
+		}
+		if done == nil {
+			return fmt.Errorf("process exit cannot be confirmed: missing watchdog")
+		}
+	}
+	if done != nil {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			return fmt.Errorf("process exit not confirmed within %s", wait)
+		}
 	}
 	return nil
 }
@@ -3280,7 +3293,7 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	}
 
 	v.mu.Lock()
-	cmd, hasCmd := v.proc[l.Instance]
+	cmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
 	v.mu.Unlock()
 
@@ -3302,24 +3315,10 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	}
 	killSignalSent, exitCode, err = signalAndKillRace(cmd, doneCh, signal, grace, v.destroyWait)
 	if err != nil {
-		return false, 0, err
+		return killSignalSent, exitCode, err
 	}
-
-	// Always run the destruction tail (chroot wipe, cgroup scope
-	// removal, ring unregister, etc.) — same invariant as Kill.
-	if killSignalSent {
-		if hasCmd && cmd != nil && cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		if hasRec && rec != nil && rec.done != nil {
-			select {
-			case <-rec.done:
-			case <-time.After(v.destroyWait):
-			}
-		}
-		if kerr := v.Kill(ctx, l); kerr != nil {
-			return killSignalSent, exitCode, kerr
-		}
+	if kerr := v.Kill(ctx, l); kerr != nil {
+		return killSignalSent, exitCode, kerr
 	}
 	return killSignalSent, exitCode, nil
 }
@@ -3370,30 +3369,10 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 			}
 			return false, exitCode, nil
 		case <-timer.C:
-			// Grace expired — escalate to SIGKILL.
-			if cmd != nil && cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			if doneCh != nil {
-				select {
-				case <-doneCh:
-				case <-time.After(destroyWait):
-				}
-			}
-			return true, 0, nil
+			return true, 0, killAndConfirmExit(cmd, doneCh, destroyWait)
 		}
 	}
-	// No grace configured or no watchdog — escalate immediately.
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	if doneCh != nil {
-		select {
-		case <-doneCh:
-		case <-time.After(destroyWait):
-		}
-	}
-	return true, 0, nil
+	return true, 0, killAndConfirmExit(cmd, doneCh, destroyWait)
 }
 
 // DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
@@ -3410,11 +3389,7 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	rec, ok := v.recs[l.Instance]
 	v.mu.Unlock()
 	if !ok {
-		// Unknown / already-torn-down instance: idempotent, no exit code to report.
-		v.closeGuestVsockListeners(l.Instance)
-		v.closeClient(l.Instance)
-		_ = os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance))
-		return 0, nil
+		return 0, v.Kill(ctx, l)
 	}
 
 	// App VMs run until explicitly stopped; waiting for natural exit here
@@ -3483,7 +3458,11 @@ exited:
 
 	v.mu.Lock()
 	exitCode := rec.exitCode
+	waitErr := rec.waitErr
 	v.mu.Unlock()
+	if waitErr != nil {
+		return exitCode, fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
+	}
 
 	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
 	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
@@ -3497,24 +3476,8 @@ exited:
 		}
 	}
 
-	// 3. Tear down the chroot + per-instance state.
-	v.mu.Lock()
-	delete(v.recs, l.Instance)
-	delete(v.proc, l.Instance)
-	v.mu.Unlock()
-	v.preBoot.forget(l.Instance)
-	// Move 4 (issue #254): close the per-instance ring so subscribers
-	// see EOF and the byte budget is released. Done before the chroot
-	// wipe for the same reason as in Kill.
-	v.unregisterRing(l.Instance)
-	v.closeGuestVsockListeners(l.Instance)
-	v.closeClient(l.Instance)
-	v.unmountBindMounts(l.Instance)
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
-		return exitCode, fmt.Errorf("vmm: remove chroot: %w", err)
-	}
-	v.sweepMaterialised(l.Instance)
-	return exitCode, exportErr
+	// Retain the record through cleanup so a failed unmount/removal is retryable.
+	return exitCode, errors.Join(exportErr, v.Kill(ctx, l))
 }
 
 // InterruptBuild stops the child without releasing its drives, chroot or
@@ -4640,7 +4603,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.
 	go func() {
-		state, _ := cmd.Process.Wait()
+		state, waitErr := cmd.Process.Wait()
 		if consoleFile != nil {
 			_ = consoleFile.Close()
 		}
@@ -4651,16 +4614,17 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		var sink func(string, int)
 		v.mu.Lock()
 		rec.exitCode = exitCode
+		rec.waitErr = waitErr
 		// Remove the process from the liveness source of truth as
 		// soon as Wait completes. Destroy/Kill remain responsible
 		// for record/chroot cleanup.
-		if current, ok := v.proc[l.Instance]; ok && current == cmd {
+		if current, ok := v.proc[l.Instance]; ok && current == cmd && waitErr == nil {
 			delete(v.proc, l.Instance)
 			if !rec.isBuilder {
 				sink = v.processExitSink
 			}
 		}
-		rec.exited = true
+		rec.exited = waitErr == nil
 		close(rec.done)
 		v.mu.Unlock()
 		if sink != nil {
@@ -5129,17 +5093,47 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 
 // unmountBindMounts releases image bind mounts before the jail chroot is
 // removed and restores source modes for the owning storage/build daemon.
-func (v *JailerVMM) unmountBindMounts(instance string) {
+func (v *JailerVMM) unmountBindMounts(instance string) error {
 	v.mu.Lock()
 	binds := v.bindMounts[instance]
-	delete(v.bindMounts, instance)
 	v.mu.Unlock()
 	for i := len(binds) - 1; i >= 0; i-- {
 		b := binds[i]
-		_ = exec.Command("umount", b.mountpoint).Run()
+		if err := exec.Command("umount", b.mountpoint).Run(); err != nil {
+			// The jail's private namespace can have disappeared with the child.
+			// Confirm absence before dropping the source reference or mountpoint.
+			mounted, checkErr := hostMountPresent(b.mountpoint)
+			if checkErr != nil || mounted {
+				return fmt.Errorf("vmm: unmount %s: %w", b.mountpoint, errors.Join(err, checkErr))
+			}
+		}
 		v.releaseBindSource(b.source)
-		_ = os.Remove(b.mountpoint)
+		v.mu.Lock()
+		v.bindMounts[instance] = binds[:i]
+		v.mu.Unlock()
+		if err := os.Remove(b.mountpoint); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("vmm: remove bind target: %w", err)
+		}
 	}
+	v.mu.Lock()
+	delete(v.bindMounts, instance)
+	v.mu.Unlock()
+	return nil
+}
+
+func hostMountPresent(path string) (bool, error) {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false, fmt.Errorf("read host mountinfo: %w", err)
+	}
+	unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	for line := range strings.SplitSeq(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && unescape.Replace(fields[4]) == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ownChrootRoot hands the chroot root directory to the jailer uid so the jailed
@@ -6622,21 +6616,23 @@ func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
 	v.mu.Unlock()
 }
 
-// sweepMaterialised Removes every tmp path tracked against instanceID
-// and clears the slot. Best-effort: a missing tmp file is not an error;
-// anything else is logged so a leak is observable but never blocks the
-// chroot teardown.
-func (v *JailerVMM) sweepMaterialised(instanceID string) {
+// sweepMaterialised retains paths that could not be removed for teardown retry.
+func (v *JailerVMM) sweepMaterialised(instanceID string) error {
 	v.mu.Lock()
 	paths := v.materialisedTmp[instanceID]
-	delete(v.materialisedTmp, instanceID)
 	v.mu.Unlock()
-	for _, p := range paths {
+	for i, p := range paths {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Default().Warn("vmm: remove materialised tmp",
-				"path", p, "instance", instanceID, "err", err)
+			v.mu.Lock()
+			v.materialisedTmp[instanceID] = paths[i:]
+			v.mu.Unlock()
+			return fmt.Errorf("vmm: remove materialised tmp %s: %w", p, err)
 		}
 	}
+	v.mu.Lock()
+	delete(v.materialisedTmp, instanceID)
+	v.mu.Unlock()
+	return nil
 }
 
 const ficloneIoctl = 0x40049409
