@@ -921,3 +921,7 @@ Draft PR #3992, commit `9dd6a8910`, now includes the portable real-socket/protob
 ### Combined UDP embedded schema drift correction
 
 Combined draft PR #3997 CI job `110258148479` failed `spec-check` because the embedded OpenAPI copy omitted the UDP contract. Schema PR #3996 commit `b9728ceba` and combined PR #3997 commit `eaf1e2898` synchronize that copy. Full local `make spec-check` passed on the corrected combined branch, including lint, AST parity, generated-document checks and drift detection; log `/tmp/gregale-udp-stack-spec-check.log`. Updated remote CI remains unverified. The integration source and embedded schemas already match.
+
+### UDP live socket failure recovery
+
+Supervisor draft PR #3988 commit `eb8a761c0` adds a real-loopback-socket recovery fixture. Five isolated race-detector runs passed: closing a live listener cancels its existing peer, reconciliation rebinds the same public address, and the same client receives replies from a fresh peer without daemon restart. Log `/tmp/gregale-udp-socket-recovery-tests.log`. This covers portable supervisor recovery, not native VM or PostgreSQL/scheduler dependency recovery.
