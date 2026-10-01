@@ -6791,11 +6791,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, err
 	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, d.AppID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	if d.RolloutState == "" {
 		d.RolloutState = "pending"
 	}

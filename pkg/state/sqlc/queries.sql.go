@@ -8714,6 +8714,17 @@ func (q *Queries) LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgty
 	return account_id, err
 }
 
+const lockTrafficDeploymentApp = `-- name: LockTrafficDeploymentApp :one
+SELECT app_id FROM deployments WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockTrafficDeploymentApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTrafficDeploymentApp, deploymentID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const lockTrafficPolicyAccount = `-- name: LockTrafficPolicyAccount :one
 SELECT id FROM accounts WHERE id = $1::uuid FOR UPDATE NOWAIT
 `
@@ -12630,6 +12641,23 @@ func (q *Queries) ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, dep
 	return account_id, err
 }
 
+const readDeploymentTrafficOwner = `-- name: ReadDeploymentTrafficOwner :one
+SELECT a.account_id,a.id AS app_id FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::uuid
+`
+
+type ReadDeploymentTrafficOwnerRow struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReadDeploymentTrafficOwner(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadDeploymentTrafficOwnerRow, error) {
+	row := db.QueryRow(ctx, readDeploymentTrafficOwner, deploymentID)
+	var i ReadDeploymentTrafficOwnerRow
+	err := row.Scan(&i.AccountID, &i.AppID)
+	return i, err
+}
+
 const readDomainTrafficVerificationOwner = `-- name: ReadDomainTrafficVerificationOwner :one
 SELECT a.account_id, d.app_id FROM custom_domains d JOIN apps a ON a.id=d.app_id
 WHERE d.domain=$1::text::citext AND (NOT $2::boolean OR
@@ -14092,6 +14120,14 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND $6::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
+), revision_hosts AS (
+    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || $7::text) AS data
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+      AND a.visibility<>'internal' AND d.deleted_at IS NULL AND d.revision>0
+      AND d.status IN ('pending','building','imaging','snapshotting','live')
+      AND $7::text<>''
+    ORDER BY a.id,d.revision LIMIT ($1::integer+1)
 ), tenant_hosts AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
         'PlatformTenant',coalesce(s.platform_tenant_id::text,'')) AS data
@@ -14121,17 +14157,18 @@ WITH environment_policies AS MATERIALIZED (
         WHERE $3::uuid IS NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM revision_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM revision_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenant_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'RevisionHosts','[]'::jsonb,'Domains','[]'::jsonb,
             'Tenants','[]'::jsonb,'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
@@ -14140,6 +14177,7 @@ SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
+        'RevisionHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM revision_hosts),
         'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
         'Tenants',(SELECT coalesce(jsonb_agg(data),'[]') FROM tenant_hosts),
         'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
@@ -14154,6 +14192,7 @@ type ReadTrafficHostAnalysisParams struct {
 	EnvironmentHostBytes int32
 	Defaults             []byte
 	AppsSuffix           string
+	DeploySuffix         string
 }
 
 type ReadTrafficHostAnalysisRow struct {
@@ -14171,6 +14210,7 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 		arg.EnvironmentHostBytes,
 		arg.Defaults,
 		arg.AppsSuffix,
+		arg.DeploySuffix,
 	)
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)

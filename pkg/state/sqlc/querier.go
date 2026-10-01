@@ -797,6 +797,7 @@ type Querier interface {
 	LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	LockTrafficAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
+	LockTrafficDeploymentApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	// Acquire before app/FK locks so different apps and shared presets serialize.
 	LockTrafficPolicyAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -1018,6 +1019,7 @@ type Querier interface {
 	ReadAppTrafficAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
 	ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg ReadBoundedTrafficEdgeRuleParams) (ReadBoundedTrafficEdgeRuleRow, error)
 	ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
+	ReadDeploymentTrafficOwner(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadDeploymentTrafficOwnerRow, error)
 	ReadDomainTrafficVerificationOwner(ctx context.Context, db DBTX, arg ReadDomainTrafficVerificationOwnerParams) (ReadDomainTrafficVerificationOwnerRow, error)
 	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error)
 	// ADR-375: generation-fenced gateway wiring observations.

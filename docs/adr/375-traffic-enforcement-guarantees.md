@@ -886,7 +886,42 @@ changes add no plan limits or customer API fields. Immutable revision URL and
 remaining writer/resolver coverage, fleet/staging and native acceptance remain
 separate requirements.
 
+### Follow-up: immutable revision URL publication
+
+The aggregate projection includes every currently routable
+`deploy-{revision}-{slug}.gregale.dev` URL. These URLs retain ordinary
+account-wide rules and referenced presets, independently from the configured
+primary/alias apps domain. The shared hostname writer/parser preserves existing
+runtime grammar; only positive stored revisions on eligible public apps and
+non-deleted pending/building/imaging/snapshotting/live targets participate.
+Superseded, failed and cancelled targets do not serve revision URLs. The
+immutable namespace remains reserved when its target is unavailable and never
+publishes another hostname's fallback.
+
+Deployment creation and creation with activity join the shared binding guard.
+The native transaction serializes account/app policy before allocating the
+revision and superseding an older pending row. Memory creation stages both rows
+and checks the complete proposal before publishing either or its activity.
+A new revision hostname receives zero legacy allowance. Positive status changes,
+mark-live paths and app restoration/visibility/rename see the same revision
+projection; an unchanged eligible hostname keeps incremental repair behavior.
+Dark promotion uses the guard without altering its existing eligibility fence.
+Native deployment mutations repeat captured app ownership and deployment
+membership under the established account/app/deployment lock order.
+
+Revision identities join the existing metadata, input, automaton and phase-time
+bounds; no plan limit, schema or customer configuration field is added.
+Creation refusals use the existing traffic-policy problems and preserve pending
+rows and activity. Remaining writer/resolver coverage, path agreement, real
+fleet/store/load/recovery, staging and native VM/network acceptance remain open.
+
 ### Follow-up: bounded request decision evidence
+
+Ordinary response completion checks the attached budget's wall-clock expiry as
+well as context cancellation when sealing decision evidence. A transport or
+socket deadline can finish before the context timer exposes its error. Successful
+detached streams retain their independent lifetime cause and do not inherit this
+expired handshake verdict.
 
 Public-handler requests and managed HTTP service calls receive a separate,
 request-owned decision record at entry. Fixed fields report the traffic path,

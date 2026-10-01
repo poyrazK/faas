@@ -274,7 +274,9 @@ func trafficDecisionEvidence(ctx context.Context, status int, seal bool) traffic
 		result.outcome, result.refusal = "deadline", "deadline"
 	case result.refusal != "":
 		result.outcome = "refused"
-	case errors.Is(err, context.DeadlineExceeded):
+	// A socket or derived transport timer can finish before ctx.Err is
+	// visible. Ordinary exchanges retain the budget's wall-clock verdict.
+	case errors.Is(err, context.DeadlineExceeded) || !result.streamDetached && requestBudgetExpired(ctx):
 		result.outcome, result.refusal = "deadline", "deadline"
 	case err != nil:
 		result.outcome = "canceled"

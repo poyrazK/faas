@@ -59,6 +59,7 @@ type trafficHostAnalysis struct {
 	Environments      []trafficHostEnvironment
 	PrimaryHosts      []string
 	AliasHosts        []string
+	RevisionHosts     []string
 	Domains           []trafficHostDomain
 	Tenants           []trafficHostTenant
 	Reservations      []trafficHostReservation
@@ -99,7 +100,7 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
 		// Scoped domains can be longer than a generated environment host.
 		// Reserve maximum hostname length and JSON escape amplification.
-		Defaults: defaults, AppsSuffix: appsSuffix, EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
+		Defaults: defaults, AppsSuffix: appsSuffix, DeploySuffix: hostidentity.DeployWildcardSuffix, EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.QueryCanceled {
@@ -122,6 +123,7 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		return result, fmt.Errorf("state: decode traffic host analysis: %w", err)
 	}
 	result.PrimaryHosts = servingTrafficPrimaryHosts(appsSuffix, result.PrimaryHosts)
+	result.RevisionHosts = servingTrafficRevisionHosts(result.RevisionHosts)
 	result.AppsSuffix = appsSuffix
 	return result, prepareTrafficEnvironmentHosts(&result)
 }
@@ -554,7 +556,7 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				return err
 			}
 		}
-		for _, host := range append(append([]string(nil), view.PrimaryHosts...), view.AliasHosts...) {
+		for _, host := range append(append(append([]string(nil), view.PrimaryHosts...), view.AliasHosts...), view.RevisionHosts...) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

@@ -10,11 +10,29 @@ import (
 )
 
 func (s *PgStore) beginDeploymentTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {
-	account, err := sqlc.New().ReadDeploymentTrafficAccount(ctx, s.pool, mustPgUUID(id))
+	owner, err := sqlc.New().ReadDeploymentTrafficOwner(ctx, s.pool, mustPgUUID(id))
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return s.beginTrafficPolicyMutation(ctx, account)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, owner.AccountID.String(), owner.AppID.String())
+	if err != nil {
+		return nil, err
+	}
+	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		app, err := sqlc.New().LockTrafficDeploymentApp(bounded, tx, mustPgUUID(id))
+		if err != nil {
+			return mapErr(err)
+		}
+		if app != owner.AppID {
+			return ErrConflict
+		}
+		return nil
+	})
+	if err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, appTrafficBindingError(err)
+	}
+	return tx, nil
 }
 
 func (s *PgStore) updateTrafficDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
@@ -39,8 +57,8 @@ func (s *PgStore) updateTrafficDeploymentStatus(ctx context.Context, id string, 
 	return tx.Commit(ctx)
 }
 
-// Only the target's eligibility changes here. Other alias inputs and ordinary
-// host policy remain unchanged; the caller holds m.mu and publishes afterward.
+// The target changes alias/revision eligibility. Shared binding analysis also
+// applies raw alias precedence before granting any legacy primary allowance.
 func (m *MemStore) checkMemTrafficDeploymentChangeLocked(ctx context.Context, after Deployment) error {
 	if !after.DeploymentAliasActive() {
 		return nil
@@ -49,9 +67,5 @@ func (m *MemStore) checkMemTrafficDeploymentChangeLocked(ctx context.Context, af
 	if !found {
 		return ErrNotFound
 	}
-	view, err := m.readBoundedMemTrafficAnalysisLocked(ctx, app.AccountID)
-	if err != nil {
-		return err
-	}
-	return m.checkMemTrafficPolicyChangeLocked(ctx, app.AccountID, view, memTrafficPolicyChange{Deployments: map[string]Deployment{after.ID: after}})
+	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: map[string]Deployment{after.ID: after}}))
 }

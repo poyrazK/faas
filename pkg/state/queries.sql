@@ -5432,6 +5432,14 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND sqlc.arg(apps_suffix)::text<>''
     ORDER BY a.id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
+), revision_hosts AS (
+    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || sqlc.arg(deploy_suffix)::text) AS data
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+      AND a.visibility<>'internal' AND d.deleted_at IS NULL AND d.revision>0
+      AND d.status IN ('pending','building','imaging','snapshotting','live')
+      AND sqlc.arg(deploy_suffix)::text<>''
+    ORDER BY a.id,d.revision LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), tenant_hosts AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
         'PlatformTenant',coalesce(s.platform_tenant_id::text,'')) AS data
@@ -5461,17 +5469,18 @@ WITH environment_policies AS MATERIALIZED (
         WHERE sqlc.narg(account_id)::uuid IS NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM revision_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM revision_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenant_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'RevisionHosts','[]'::jsonb,'Domains','[]'::jsonb,
             'Tenants','[]'::jsonb,'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(max_bytes)::bigint
@@ -5480,6 +5489,7 @@ SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(m
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
+        'RevisionHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM revision_hosts),
         'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
         'Tenants',(SELECT coalesce(jsonb_agg(data),'[]') FROM tenant_hosts),
         'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
@@ -5856,3 +5866,10 @@ FROM reservations r WHERE q.account_id=r.account_id;
 -- Retain the alias claim independently from current owner/target eligibility.
 SELECT EXISTS(SELECT 1 FROM deployment_aliases
     WHERE 'tag-'||name||'-'||replace(app_id::text,'-','')=sqlc.arg(host_label)::text)::boolean AS reserved;
+
+-- name: ReadDeploymentTrafficOwner :one
+SELECT a.account_id,a.id AS app_id FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: LockTrafficDeploymentApp :one
+SELECT app_id FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid FOR UPDATE;

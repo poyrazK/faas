@@ -16,5 +16,5 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 		s.notFound(w, "app no longer accepts deployments")
 		return
 	}
-	api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+	api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not create deployment")))
 }

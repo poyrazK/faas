@@ -150,7 +150,7 @@ func globalTrafficTenantProposal(ctx context.Context, before trafficHostAnalysis
 		a, b := after.Reservations[i], after.Reservations[j]
 		return a.Kind < b.Kind || a.Kind == b.Kind && a.Host < b.Host
 	})
-	inputs := len(after.Groups) + len(after.Assets) + len(after.Environments) + len(after.PrimaryHosts) + len(after.AliasHosts) + len(after.Domains) + len(after.Tenants) + len(after.Reservations)
+	inputs := len(after.Groups) + len(after.Assets) + len(after.Environments) + len(after.PrimaryHosts) + len(after.AliasHosts) + len(after.RevisionHosts) + len(after.Domains) + len(after.Tenants) + len(after.Reservations)
 	if err := checkMemTrafficAnalysisInputs(inputs); err != nil {
 		return after, err
 	}

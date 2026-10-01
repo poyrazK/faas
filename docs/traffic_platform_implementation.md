@@ -2277,3 +2277,101 @@ and observations. Real daemon fleet/load/restart/outage/recovery, customer
 capability and staging qualification, and Linux x86_64 KVM VM/firewall/restore/
 process-death/leak acceptance remain pending. The user reports no acceptance host
 available; no further host request is needed until availability changes.
+
+### 2026-10-01 — immutable revision publication and captured deployment ownership
+
+The aggregate projection now includes each canonical positive stored revision
+URL on a public, non-deleted app and an eligible non-deleted deployment. Its
+deployment suffix is independent from the primary/alias apps-domain setting.
+Pending, building, imaging, snapshotting and live revisions participate;
+superseded, failed, cancelled and deleted targets do not. A shared hostname
+writer/parser preserves runtime grammar, including supported legacy slugs.
+Revision zero does not gain a rank-based URL. Ordinary revision compilation
+retains matching sibling rules and charges shared referenced presets once.
+
+Deployment creation and creation with activity use the shared binding guard.
+Memory creation stages the new row and any prior pending supersede before
+publication; PostgreSQL keeps allocation, supersede and activity inside its
+guarded transaction. A new revision hostname has no legacy overload allowance.
+Positive status writes, mark-live and app restore, visibility and rename validate
+the same projection. An unchanged eligible URL retains policy repair behavior.
+Dark promotion uses the guard and keeps its explicit-zero-traffic pending fence.
+Native mutations repeat captured app ownership and deployment membership under
+account, app and deployment locks. Alias revival applies raw reservation
+precedence so a hidden primary cannot grant a false before-publication allowance.
+
+Creation refusals map to the existing stable 422 traffic-policy problems and
+withhold foreign witnesses, scopes and exact counts. Refusal and cancellation
+retain deployment, predecessor, cron, snapshot, activity and webhook intent;
+repair permits retry. No schema, migration, customer API/SDK shape or central
+limit value changed. SQLC adds bounded revision identities and captured
+deployment ownership/membership reads.
+
+Native runtime checks retain exact revision ingress and prevent primary or
+synthetic fallback when a target or owner becomes unavailable. Stale resolution
+cannot reach dispatch; lookups and refusals release their transactions. The
+valid pre-change baseline accepted unsafe creation in all four memory/native
+plain/activity cases. Original refusal assertions remain.
+
+The first broad unit run exposed a real deadline decision-evidence race: an
+ordinary response was correctly truncated, but transport completion preceded
+observable context cancellation and recorded `edge_response`. Sealed ordinary
+evidence now consults the budget wall clock. Detached streams keep their separate
+lifetime cause. The original real-gRPC assertion remains, and ten focused
+repetitions plus a deterministic expired-budget regression passed before the
+final freeze.
+
+The final 12,477-file source freeze passed:
+
+- Full state, hostname, gateway, internal gateway, API, reconciliation, GitHub
+  service and grace unit scope: 9,238 named passes, 1,411 guarded/skipped results,
+  171.953 s.
+- Selected four-package PostgreSQL-enabled traffic, deployment, ownership,
+  domain/tenant/project/preview/alias/account, runtime and API profile: 857 named
+  passes, one pre-existing skip, 437.544 s. State 632, internal gateway 127,
+  API 92 and reconciliation 6. The skipped EXPLAIN access-path test was already
+  disabled by ADR-091 / PR-D; it supplies no acceptance evidence. The profile
+  includes memory-backed cases alongside real PostgreSQL fixtures.
+- Removing duplicates gives 9,913 distinct named passes: state 2,723, hostname
+  26, gateway 2,226, internal gateway 843, API 3,694, reconciliation 77, GitHub
+  service 302 and grace 22. There are 851 guarded results without acceptance
+  evidence: state 828, internal gateway 7 and API 16.
+- SQLC 1.31.1 reproduced all four generated files. GolangCI-Lint 2.4.0 checked
+  all eight packages with tests and reported zero issues in 147.813 s.
+  Accepted Go/lint gates used complete package source without overlays,
+  exclusions, changed limits or weakened assertions.
+- The source PostgreSQL public schema remained empty, with fsync,
+  full-page writes and synchronous commit enabled. These macOS fixtures do not
+  establish native VM/network, real daemon fleet, deployed load or staging
+  acceptance.
+
+Initial activity fixtures lacked required activity fields; corrected fixtures
+reproduced the unsafe creation baseline before production edits. An expanded
+fixture used a nonexistent app-update slug field and was corrected to call
+RenameApp. Dark promotion fixtures were corrected to satisfy their existing
+zero-traffic fence. A post-change native focused run hit SQLSTATE 53100 while
+cloning fixture databases; after shared disk space recovered, identical source,
+scope and flags passed. These failed/setup runs and pre-freeze focused runs
+are retained separately from accepted aggregate counts.
+
+Shared disk/load pressure later drove existing memory fixtures past the unchanged
+two-second analysis bound. Only this task's Go/test processes were terminated;
+that entire gate is excluded. Owned-cache cleanups removed three older large
+files (3,536,339,030 bytes), then six (5,387,562,890 bytes), retaining the four
+newest each time. Each cleanup tool closed before subsequent Go/lint work began.
+No sibling cache, process or PostgreSQL cluster was changed. An unchanged-source
+unit retry hit the existing API Argon2id timing-ratio assertion; that failed run
+is also retained and excluded. No auth code, timing limit or assertion changed.
+The complete scope then passed against the same source freeze.
+
+Only this tracker changed after the final gate freeze. Operations documentation
+was included in that freeze. Evidence and exact staged/committed source receipts
+are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-revision-bindings-20261001/`.
+
+All six release requirements remain unchecked. Remaining work includes operator
+and alias/revision writer/resolver coverage, complete runtime/preview/synthetic
+path agreement and observations, real daemon fleet/load/restart/outage/recovery,
+customer capability and staging qualification, and Linux x86_64 KVM
+VM/firewall/restore/process-death/leak acceptance. No KVM host is currently
+available; another host request is unnecessary until availability changes.

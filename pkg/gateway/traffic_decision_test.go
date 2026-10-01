@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -566,6 +567,30 @@ func TestTrafficDecisionDetachedStreamKeepsLifetimeReason(t *testing.T) {
 			}
 			if evidence.outcome != want {
 				t.Fatalf("stream evidence=%+v, want %s", evidence, want)
+			}
+		})
+	}
+}
+
+func TestTrafficDecisionExpiredBudgetBeforeContextTimer(t *testing.T) {
+	for _, detached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("detached=%v", detached), func(t *testing.T) {
+			ctx := reqbudget.NewContext(withTrafficDecision(t.Context(), false), reqbudget.Budget{
+				Started: time.Now().Add(-time.Second), Total: time.Millisecond, Ceiling: time.Millisecond,
+			})
+			if ctx.Err() != nil || !requestBudgetExpired(ctx) {
+				t.Fatal("fixture must retain an expired budget before context cancellation")
+			}
+			if detached {
+				recordTrafficStreamDetached(ctx)
+			}
+			evidence := trafficDecisionEvidence(ctx, http.StatusOK, true)
+			want := "deadline"
+			if detached {
+				want = "edge_response"
+			}
+			if evidence.outcome != want {
+				t.Fatalf("budget/context timer race lost its decision: %+v want=%s", evidence, want)
 			}
 		})
 	}

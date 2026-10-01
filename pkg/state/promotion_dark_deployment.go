@@ -15,11 +15,11 @@ var _ ProjectPromotionDeploymentStore = (*MemStore)(nil)
 // MarkDeploymentLiveDark makes a prepared deployment eligible as a release
 // graph member without changing the workload's weighted route.
 func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: mark dark deployment live begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var appID string
 	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
@@ -105,6 +105,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	if dep.RolloutCompletedAt == nil {
 		now := time.Now().UTC()
 		dep.RolloutCompletedAt = &now
+	}
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, dep); err != nil {
+		return err
 	}
 	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, dep)
 	if err != nil {

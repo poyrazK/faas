@@ -112,7 +112,7 @@ func (m *MemStore) appendMemTrafficReservationsLocked(ctx context.Context, view 
 			return nil
 		}
 		view.Reservations = append(view.Reservations, trafficHostReservation{Kind: kind, Host: host})
-		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Assets) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains) + len(view.Reservations))
+		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Assets) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.RevisionHosts) + len(view.Domains) + len(view.Reservations))
 	}
 	if err := visitMemTrafficRows(ctx, m.apps, change.Apps, func(app App) error {
 		if app.ID == "" || m.trafficAppsSuffix == "" {

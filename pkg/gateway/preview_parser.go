@@ -147,16 +147,5 @@ func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug strin
 //
 // Issue #976 / ADR-122 / SAFE-RELEASES-C.
 func BuildDeploymentPreviewURL(deploySuffix string, ordinal int, slug string) string {
-	if deploySuffix == "" || !strings.HasPrefix(deploySuffix, ".") {
-		return ""
-	}
-	if ordinal <= 0 || slug == "" {
-		return ""
-	}
-	host := "deploy-" + strconv.Itoa(ordinal) + "-" + slug + deploySuffix
-	parsedOrdinal, parsedSlug, ok := DeploymentScopeFromHost(deploySuffix, host)
-	if !ok || parsedOrdinal != ordinal || parsedSlug != slug {
-		return ""
-	}
-	return host
+	return hostidentity.BuildDeploymentHost(deploySuffix, ordinal, slug)
 }

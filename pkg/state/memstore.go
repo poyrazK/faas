@@ -6816,16 +6816,16 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil)
+func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	created, _, err := m.createDeployment(ctx, d, nil)
 	return created, err
 }
 
-func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity)
+func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	return m.createDeployment(ctx, d, &activity)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6910,10 +6910,10 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 			hasPrior = true
 		}
 	}
+	proposed := make(map[string]Deployment)
 	if hasPrior && d.CanaryTotalSteps <= 0 && !serviceRollout {
-		// Match PgStore exactly: mutate the stored prior in-place so
-		// subsequent LatestDeployment / DeploymentByID readers see
-		// the supersede immediately, under m.mu.
+		// Stage the prior alongside the new row. The traffic verdict
+		// precedes publication of either row or the activity receipt.
 		//
 		// Issue #556 PR-A: zero the prior row's traffic_percent so
 		// Σ over live rows remains 100 by construction. The new row
@@ -6923,7 +6923,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 		prior := m.deployments[priorID]
 		prior.Status = DeploySuperseded
 		prior.TrafficPercent = 0
-		m.deployments[priorID] = prior
+		proposed[priorID] = prior
 	}
 
 	if d.CreatedAt.IsZero() {
@@ -6956,7 +6956,13 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if d.Revision <= 0 {
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
-	m.deployments[d.ID] = d
+	proposed[d.ID] = d
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
+		return Deployment{}, 0, err
+	}
+	for id, row := range proposed {
+		m.deployments[id] = row
+	}
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)

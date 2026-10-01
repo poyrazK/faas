@@ -6,6 +6,20 @@ import (
 	"strings"
 )
 
+// BuildDeploymentHost is the shared writer counterpart to the runtime parser.
+// Preserve legacy parser grammar rather than adding allocation-only DNS checks.
+func BuildDeploymentHost(deploySuffix string, revision int, slug string) string {
+	if deploySuffix == "" || !strings.HasPrefix(deploySuffix, ".") || revision <= 0 || slug == "" {
+		return ""
+	}
+	host := "deploy-" + strconv.Itoa(revision) + "-" + slug + deploySuffix
+	parsed, parsedSlug, ok := DeploymentScopeFromHost(deploySuffix, host)
+	if !ok || parsed != revision || parsedSlug != slug {
+		return ""
+	}
+	return host
+}
+
 // DeploymentScopeFromHost peels the canonical deploy-{ordinal}-{slug} URL.
 func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug string, ok bool) {
 	if deploySuffix == "" {

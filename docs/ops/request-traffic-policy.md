@@ -95,7 +95,7 @@ close to the byte ceiling before the exact compiler size reaches that ceiling.
 Each before/after analysis phase has a two-second allowance. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
-Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/domain/reservation identities, metadata to 64 MiB,
+Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/revision/domain/reservation identities, metadata to 64 MiB,
 automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
@@ -722,8 +722,8 @@ or rollback of application side effects. Captured app guards recheck customer
 ownership under an app row lock and refuse a changed owner before mutation.
 Node reassignment changes placement and does not transfer customer ownership.
 
-Immutable revision URL aggregate projection and the remaining operator and
-alias/revision writer and resolver coverage remain pending. VM, firewall, restore,
+The remaining operator and alias/revision writer and resolver coverage needs
+complete-path qualification. VM, firewall, restore,
 process-death, leak, real fleet/load/recovery and staging acceptance remain
 pending. No native KVM acceptance host is currently available.
 
@@ -755,6 +755,46 @@ an alias projection whose mapping or serving eligibility changed before dispatch
 Local memory and PostgreSQL tests cover these transitions, safe primary fallback
 after removal, stale dispatch refusal, reservation-reader failure and transaction
 release. Injected reader failure does not establish real fleet/store outage or
-recovery acceptance. Immutable revision URL aggregate projection, complete path
+recovery acceptance. Complete writer/resolver coverage and path
 agreement, native VM/network/leak checks, fleet/load/recovery and staging
 qualification remain pending.
+
+## Immutable deployment revision publication
+
+The aggregate guard includes canonical
+`deploy-{positive stored revision}-{slug}.gregale.dev` URLs on eligible public
+apps. The revision namespace uses the deployment suffix independently from the
+primary/alias apps domain; setting the apps domain to empty does not disable
+revision URLs. Pending, building, imaging, snapshotting and live targets with no
+deletion timestamp participate. Superseded, failed, cancelled and deleted targets,
+and deleted or internal owners, do not supply a serving allowance. Legacy rows
+with revision zero do not receive a rank-based revision URL.
+
+Revision URLs retain ordinary account-wide matching rules and referenced presets.
+Deployment creation, including creation with activity, validates the new revision
+and any pending predecessor supersede before committing either. A new hostname
+must fit the platform allowance even when its selectors predate the URL. Positive
+status changes, mark-live, app restoration, public visibility and rename validate
+the same projection. An unchanged eligible URL retains incremental policy repair.
+Dark promotion keeps its existing pending, explicit-zero-traffic eligibility
+requirements and uses the shared guard.
+
+Native mutations repeat captured app ownership and deployment membership under
+the account, app and deployment locks. Memory mutations check the complete staged
+proposal before publishing rows or activity. Alias revival also applies raw alias
+precedence: a primary hostname hidden by an alias reservation cannot grant the
+alias a legacy policy allowance. Refusal preserves rows and side effects; repair
+the policy and retry. Creation returns the existing structured 422 traffic-policy
+problem, including the cap and a proven lower bound while withholding foreign
+witnesses, scopes and exact counts.
+
+The hostname writer and runtime parser share the existing grammar. An unavailable
+canonical revision URL stays reserved, cannot substitute a synthetic route or
+fall through to a primary hostname, and invalidates a previously resolved dispatch
+projection. Local PostgreSQL tests exercise these cases without notifications
+and verify transaction release. They do not establish deployed fleet, load,
+outage/recovery, staging or native VM/network/leak acceptance.
+
+Ordinary response decision evidence uses the budget's wall-clock expiry even
+when transport completion precedes its context timer. A successfully detached
+stream retains its independent lifetime reason.
