@@ -217,6 +217,7 @@ gregale flags requests --project exports --key export-pipeline --variant new --u
 gregale flags requests --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111
 gregale flags outcomes --project exports --key export-pipeline --since 24h
 gregale flags outcomes --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111
+gregale flags outcomes --project exports --key new-export --rule-id selected-customers --config-version 4 --since 6h
 gregale flags history --project exports
 gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --version 1
 gregale flags inspect --project exports --key future-export --fallback-variant legacy
@@ -251,6 +252,52 @@ ones and sets `truncated: true`. Filter to one verified customer with
 it does not advance a rollout or establish that a flag caused an outcome. When
 configuration or targeting rules changed during the window, rows for the same
 value may include decisions from more than one configuration version.
+
+## Promote a guarded rollout stage
+
+Attach a progression plan to a boolean rule that selects `true`. The rule's
+`rollout` must equal its current stage; stages use basis points, increase
+strictly, and end at 10000 (100%). The rule's stable allocation seed keeps
+customers in the same cohort as the percentage grows.
+
+```json
+{
+  "key": "new-export",
+  "enabled": true,
+  "default": false,
+  "rules": [{
+    "id": "selected-customers",
+    "rollout": 100,
+    "value": true,
+    "progression": {
+      "stages": [100, 500, 2500, 10000],
+      "current_stage": 0,
+      "minimum_used_requests": 25,
+      "maximum_http_5xx_rate_basis_points": 200,
+      "maximum_p95_latency_ms": 800,
+      "window_seconds": 1800
+    }
+  }]
+}
+```
+
+After publishing the plan and observing its first stage, request one promotion:
+
+```bash
+gregale flags promote --project exports --key new-export \
+  --rule-id selected-customers --expected-version 4
+```
+
+Promotion reads retained evidence matched to that exact rule, active
+configuration version, and configured window. It advances one stage only when
+application-reported `used` requests meet the minimum and both the 5xx-rate and
+conservative p95 latency limits pass.
+A `held` response explains the failed gate and leaves configuration unchanged;
+refresh the flag version before trying again. `complete` means the final stage is
+already active. Promotion requires debugger telemetry entitlement and retention
+at least as long as the configured window. These thresholds are operational
+signals, not proof that the flag caused an outcome; promotion is always an
+explicit operator action.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and
@@ -310,7 +357,8 @@ Safeguards from `pkg/api/limits.go`: 100 flags and 100 groups per environment,
 entries and 16 KiB decoded evidence per request.
 
 Synchronous decision inheritance is available for managed service calls when
-the Node SDK fetch helper is explicitly configured. Arbitrary user attributes,
-automatic rollout progression, and propagation through queues or background
-jobs remain future work; those workloads reevaluate with their own environment
-and verified customer identity.
+the Node SDK fetch helper is explicitly configured. Producers can also carry
+marked decisions into `queues/send` and the app inbox. Arbitrary user attributes,
+automatic stage advancement, and propagation through cron, delayed tasks, and
+external broker deliveries remain future work; those workloads otherwise
+evaluate flags using their own environment and verified customer identity.

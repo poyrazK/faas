@@ -69,6 +69,15 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Progressive rollout controls are structural bounds, not plan allowances.
+const (
+	FlagsMaxProgressiveStages                = 8
+	FlagsMaxProgressiveMinimumRequests int64 = 100000000
+	FlagsMaxProgressiveLatencyMS             = 600000
+	FlagsMinProgressiveWindowSeconds         = 60
+	FlagsMaxProgressiveWindowSeconds         = 604800
+)
+
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
 // below are at or below this value. See ADR-257.

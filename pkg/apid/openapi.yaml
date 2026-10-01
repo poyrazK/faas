@@ -23030,9 +23030,11 @@ paths:
       tags: [flags]
       operationId: getProjectFlagOutcomes
       summary: Compare retained request outcomes by evaluated flag value.
-      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. Optional rule and configuration-version filters isolate a targeting decision. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
       parameters:
         - { name: customer_id, in: query, description: Restrict the rollup to one gateway-attributed customer UUID., schema: { type: string, format: uuid } }
+        - { name: rule_id, in: query, description: Restrict the rollup to decisions matched by one targeting rule., schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' } }
+        - { name: config_version, in: query, description: Restrict the rollup to one immutable flag configuration version., schema: { type: integer, format: int64, minimum: 1 } }
         - { name: since, in: query, description: Aggregation duration capped by the account's debugger retention., schema: { type: string, default: 24h } }
       responses:
         '200':
@@ -23043,6 +23045,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: promoteProjectFlagRollout
+      summary: Promote one progressive flag rollout stage when its health gates pass.
+      description: Requires deploy-write scope and MFA. Evidence is isolated to the target rule and its configured window. A held result is a successful evaluation with no configuration change; latency is the conservative upper bound of retained telemetry buckets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagRolloutPromotionRequest' }
+      responses:
+        '200':
+          description: Stage promotion, health hold, or completed rollout with evidence summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagRolloutPromotion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -23717,7 +23747,7 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
     FlagRule:
-      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment.
+      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
       type: object
       additionalProperties: false
       required: [id]
@@ -23726,10 +23756,56 @@ components:
         customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
         group: { type: string, description: Owner-managed customer group key. }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    ProgressiveRollout:
+      description: Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
+      type: object
+      additionalProperties: false
+      required: [stages, current_stage, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms, window_seconds]
+      properties:
+        stages: { type: array, minItems: 2, maxItems: 8, items: { type: integer, minimum: 1, maximum: 10000 }, description: Strictly increasing rollout percentages in basis points, ending at 10000. }
+        current_stage: { type: integer, minimum: 0, maximum: 7, description: Zero-based active stage index. }
+        minimum_used_requests: { type: integer, format: int64, minimum: 1, maximum: 100000000, description: Minimum application-reported used requests for the targeted rule before promotion. }
+        maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000, description: Highest allowed 5xx rate for the targeted rule; 100 basis points is one percent. }
+        maximum_p95_latency_ms: { type: integer, minimum: 1, maximum: 600000, description: Highest allowed conservative p95 latency bucket bound for the targeted rule. }
+        window_seconds: { type: integer, minimum: 60, maximum: 604800, description: Evidence lookback window; must fit within debugger retention. }
+    FlagRolloutPromotionRequest:
+      description: Optimistic stage promotion request; an expected-version conflict requires a fresh read.
+      type: object
+      additionalProperties: false
+      required: [expected_version, rule_id]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        rule_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FlagRolloutPromotion:
+      description: Health-gate evaluation for a progressive rollout stage. A held or complete status does not publish a new configuration version.
+      type: object
+      required: [status, flag, rule_id, config_version, current_stage, stage_count, rollout_basis_points, request_count, used_count, http_5xx_count, http_5xx_rate, p95_latency_ms, latency_quantized, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms]
+      properties:
+        status: { type: string, enum: [held, promoted, complete] }
+        reason: { type: string, enum: [insufficient_used_requests, http_5xx_rate_exceeded, p95_latency_exceeded, all_stages_complete] }
+        flag: { type: string }
+        rule_id: { type: string }
+        config_version: { type: integer, format: int64, minimum: 0, description: Current version after promotion, unchanged when held or complete. }
+        current_stage: { type: integer, minimum: 1, description: "One-based ordinal of the currently configured stage." }
+        stage_count: { type: integer, minimum: 2 }
+        rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Active rollout percentage in basis points." }
+        next_rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Next configured percentage after promotion, omitted when already at the final stage." }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        used_count: { type: integer, format: int64, minimum: 0 }
+        http_5xx_count: { type: integer, format: int64, minimum: 0 }
+        http_5xx_rate: { type: number, minimum: 0, maximum: 1, description: "Observed 5xx count divided by the target rule request count." }
+        p95_latency_ms: { type: integer, minimum: 0 }
+        latency_quantized: { type: boolean, description: True when p95 came from stored bucket bounds; false when no matching evidence was available. }
+        minimum_used_requests: { type: integer, format: int64, minimum: 1 }
+        maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        maximum_p95_latency_ms: { type: integer, minimum: 1 }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
     FlagVariant:
       description: Variant allocation weight in basis points; all weights on a flag total 10000.
       type: object

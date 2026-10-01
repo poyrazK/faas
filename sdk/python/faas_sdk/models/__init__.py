@@ -807,6 +807,10 @@ from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
 from .flag_request_evidence import FlagRequestEvidence
+from .flag_rollout_promotion import FlagRolloutPromotion
+from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
+from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
+from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
@@ -1395,6 +1399,7 @@ from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
+from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
@@ -2779,6 +2784,10 @@ __all__ = (
     "FlagOutcomesResponse",
     "FlagOutcomeType",
     "FlagRequestEvidence",
+    "FlagRolloutPromotion",
+    "FlagRolloutPromotionReason",
+    "FlagRolloutPromotionRequest",
+    "FlagRolloutPromotionStatus",
     "FlagRule",
     "FlagsBundle",
     "FlagsConfig",
@@ -3343,6 +3352,7 @@ __all__ = (
     "ProgrammaticAuthResponsePlan",
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
+    "ProgressiveRollout",
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",

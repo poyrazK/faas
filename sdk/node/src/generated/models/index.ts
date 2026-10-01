@@ -417,6 +417,8 @@ export type { FlagEvidencePage } from './FlagEvidencePage.js';
 export type { FlagOutcome } from './FlagOutcome.js';
 export type { FlagOutcomesResponse } from './FlagOutcomesResponse.js';
 export type { FlagRequestEvidence } from './FlagRequestEvidence.js';
+export type { FlagRolloutPromotion } from './FlagRolloutPromotion.js';
+export type { FlagRolloutPromotionRequest } from './FlagRolloutPromotionRequest.js';
 export type { FlagRule } from './FlagRule.js';
 export type { FlagVariant } from './FlagVariant.js';
 export type { FlagsBundle } from './FlagsBundle.js';
@@ -737,6 +739,7 @@ export type { PrivateNetworkPeeringListResponse } from './PrivateNetworkPeeringL
 export type { Problem } from './Problem.js';
 export type { ProgrammaticAPIKey } from './ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './ProgrammaticAuthResponse.js';
+export type { ProgressiveRollout } from './ProgressiveRollout.js';
 export type { ProjectApplyRequest } from './ProjectApplyRequest.js';
 export type { ProjectDeletePreviewResponse } from './ProjectDeletePreviewResponse.js';
 export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApprovalResponse.js';

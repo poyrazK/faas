@@ -531,11 +531,12 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
-	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
+	"FlagRequestEvidence": true, "FlagEvidencePage": true,
 	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and

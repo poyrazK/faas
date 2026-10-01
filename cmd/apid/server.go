@@ -1461,6 +1461,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateFeatureFlags))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.promoteFeatureFlagRollout))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.inspectFeatureFlag)))
 	mux.Handle("GET /v1/runtime/flags", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.runtimeFeatureFlags)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagEvidence)))

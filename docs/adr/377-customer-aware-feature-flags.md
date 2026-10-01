@@ -65,8 +65,9 @@ changed by this decision. SDK allocation vectors and
 rollout monotonicity, optimistic concurrency, tenant ownership, history, rollback,
 workload-token audience and scope, and evidence stripping are separate gates.
 
-Multivariate flags, arbitrary user attributes, and automatic progressive
-release are future extensions. For synchronous managed service calls, the Node
+Arbitrary user attributes and automatic stage advancement are future extensions;
+the current staged rollout plan uses explicit operator promotions guarded by
+retained per-rule request evidence. For synchronous managed service calls, the Node
 SDK can explicitly propagate only decisions marked used. The service proxy
 forwards a bounded, canonical envelope only after its existing caller identity
 and binding checks; public ingress removes caller-supplied copies. Downstream

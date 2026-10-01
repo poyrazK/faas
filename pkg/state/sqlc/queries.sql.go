@@ -4147,6 +4147,8 @@ WITH evidence AS MATERIALIZED (
   AND t.received_at < $5::timestamptz
   AND ($6::text = '' OR t.platform_tenant_id::text = $6::text)
   AND e->>'flag' = $7::text
+  AND ($8::text = '' OR e->>'rule_id' = $8::text)
+  AND ($9::bigint = 0 OR (e->>'config_version')::bigint = $9::bigint)
   AND jsonb_typeof(e->'value') IN ('boolean', 'string')
   AND COALESCE(e->>'type', 'boolean') IN ('boolean', 'variant')
 ), totals AS (
@@ -4183,6 +4185,8 @@ type FeatureFlagRequestOutcomesParams struct {
 	ReceivedUntil   pgtype.Timestamptz
 	CustomerID      string
 	FlagKey         string
+	RuleID          string
+	ConfigVersion   int64
 }
 
 type FeatureFlagRequestOutcomesRow struct {
@@ -4206,6 +4210,8 @@ func (q *Queries) FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg F
 		arg.ReceivedUntil,
 		arg.CustomerID,
 		arg.FlagKey,
+		arg.RuleID,
+		arg.ConfigVersion,
 	)
 	if err != nil {
 		return nil, err

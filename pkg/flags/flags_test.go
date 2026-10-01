@@ -117,6 +117,54 @@ func TestVariantValidationAndExplicitTargeting(t *testing.T) {
 		t.Fatal("accepted variant weights that do not total 10000")
 	}
 }
+
+func TestProgressiveRolloutValidation(t *testing.T) {
+	rollout := 100
+	config := Config{Flags: []Flag{{
+		Key: "new-export", Enabled: true,
+		Rules: []Rule{{ID: "customers", Rollout: &rollout, Value: true, Progression: &ProgressiveRollout{
+			Stages: []int{100, 1000, 10000}, CurrentStage: 0,
+			MinimumUsedRequests: 50, MaximumHTTP5xxRateBasisPoints: 200,
+			MaximumP95LatencyMS: 500, WindowSeconds: 900,
+		}}},
+	}}}
+	if err := Validate(config); err != nil {
+		t.Fatalf("valid progression: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "rollout does not match current stage", mutate: func(c *Config) { c.Flags[0].Rules[0].Rollout = intPtr(500) }},
+		{name: "stages are not increasing", mutate: func(c *Config) { c.Flags[0].Rules[0].Progression.Stages = []int{100, 100, 10000} }},
+		{name: "stages do not reach full rollout", mutate: func(c *Config) {
+			c.Flags[0].Rules[0].Progression.Stages[2] = 9000
+			c.Flags[0].Rules[0].Rollout = intPtr(100)
+		}},
+		{name: "true behavior required", mutate: func(c *Config) { c.Flags[0].Rules[0].Value = false }},
+		{name: "sample threshold required", mutate: func(c *Config) { c.Flags[0].Rules[0].Progression.MinimumUsedRequests = 0 }},
+		{name: "window bounded", mutate: func(c *Config) { c.Flags[0].Rules[0].Progression.WindowSeconds = 30 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := cloneConfig(config)
+			tt.mutate(&candidate)
+			if err := Validate(candidate); err == nil {
+				t.Fatal("invalid progressive rollout accepted")
+			}
+		})
+	}
+}
+
+func intPtr(value int) *int { return &value }
+
+func cloneConfig(c Config) Config {
+	raw, _ := json.Marshal(c)
+	var clone Config
+	_ = json.Unmarshal(raw, &clone)
+	return clone
+}
+
 func TestTargetingOrderAndAnonymous(t *testing.T) {
 	pct := 10000
 	b := Bundle{Version: 12, Config: Config{Groups: map[string][]string{"internal": {"a"}}, Flags: []Flag{{Key: "export", Seed: "seed", Enabled: true, Rules: []Rule{

@@ -5079,6 +5079,8 @@ WITH evidence AS MATERIALIZED (
   AND t.received_at < sqlc.arg(received_until)::timestamptz
   AND (sqlc.arg(customer_id)::text = '' OR t.platform_tenant_id::text = sqlc.arg(customer_id)::text)
   AND e->>'flag' = sqlc.arg(flag_key)::text
+  AND (sqlc.arg(rule_id)::text = '' OR e->>'rule_id' = sqlc.arg(rule_id)::text)
+  AND (sqlc.arg(config_version)::bigint = 0 OR (e->>'config_version')::bigint = sqlc.arg(config_version)::bigint)
   AND jsonb_typeof(e->'value') IN ('boolean', 'string')
   AND COALESCE(e->>'type', 'boolean') IN ('boolean', 'variant')
 ), totals AS (
