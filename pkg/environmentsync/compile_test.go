@@ -57,7 +57,7 @@ func TestCompileRejectsUnsafeOrUnsupportedIntent(t *testing.T) {
 		change func(*api.EnvironmentDefinition)
 	}{
 		{"schema version", func(d *api.EnvironmentDefinition) { d.APIVersion = "v999" }},
-		{"empty environment", func(d *api.EnvironmentDefinition) { d.Workloads = nil }},
+		{"missing workload membership", func(d *api.EnvironmentDefinition) { d.Workloads = nil }},
 		{"secret variable", func(d *api.EnvironmentDefinition) { d.Workloads["api"].Variables["API_TOKEN"] = "must-not-leak" }},
 		{"source traversal", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Directory: "../../outside"}
@@ -108,6 +108,23 @@ func TestCompileRejectsUnsafeOrUnsupportedIntent(t *testing.T) {
 				t.Fatal("validation error exposed sensitive value")
 			}
 		})
+	}
+}
+
+func TestCompileExplicitEmptyEnvironment(t *testing.T) {
+	d := definition()
+	d.Workloads = map[string]api.EnvironmentWorkload{}
+	empty, err := Compile(d)
+	if err != nil || len(empty.Fields) != 0 || empty.Definition.Workloads == nil {
+		t.Fatalf("explicit empty environment: %+v %v", empty, err)
+	}
+	d.Configuration = map[string]json.RawMessage{"LOG_LEVEL": json.RawMessage(`"info"`)}
+	configurationOnly, err := Compile(d)
+	if err != nil || len(configurationOnly.Fields) != 1 || configurationOnly.Fields[0].Resource != "environment" {
+		t.Fatalf("configuration-only environment: %+v %v", configurationOnly, err)
+	}
+	if empty.Digest == configurationOnly.Digest {
+		t.Fatal("configuration-only revision reused the empty definition digest")
 	}
 }
 

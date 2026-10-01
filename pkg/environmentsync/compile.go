@@ -35,8 +35,8 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 	if d.APIVersion != APIVersion || !api.ValidProjectSlug(d.Project) || !api.ValidProjectEnvironmentSlug(d.Environment) {
 		return DesiredState{}, fmt.Errorf("definition needs api_version %q and valid project/environment slugs", APIVersion)
 	}
-	if len(d.Workloads) == 0 {
-		return DesiredState{}, fmt.Errorf("environment definition must declare at least one workload")
+	if d.Workloads == nil {
+		return DesiredState{}, fmt.Errorf("environment definition must explicitly declare its workloads map")
 	}
 	var fields []Field
 	if d.Configuration != nil {

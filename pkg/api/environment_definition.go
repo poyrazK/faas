@@ -6,11 +6,13 @@ import "encoding/json"
 // Omitted fields are unmanaged. Collection ownership is explicit: routes and
 // policies are replaced as a whole, while maps own only their declared keys.
 type EnvironmentDefinition struct {
-	APIVersion    string                         `json:"api_version"`
-	Project       string                         `json:"project"`
-	Environment   string                         `json:"environment"`
-	Configuration map[string]json.RawMessage     `json:"configuration,omitempty"`
-	Workloads     map[string]EnvironmentWorkload `json:"workloads"`
+	APIVersion    string                     `json:"api_version"`
+	Project       string                     `json:"project"`
+	Environment   string                     `json:"environment"`
+	Configuration map[string]json.RawMessage `json:"configuration,omitempty"`
+	// An explicit empty map represents an empty environment. Missing or null
+	// membership is invalid; deletion still requires a reviewed prune plan.
+	Workloads map[string]EnvironmentWorkload `json:"workloads"`
 }
 
 type EnvironmentWorkload struct {

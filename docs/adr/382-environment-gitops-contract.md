@@ -204,6 +204,12 @@ Unsupported resource fields currently block the complete plan. The approved-inte
 worker is not started from apid until these integration contracts are wired;
 candidate discovery is running independently.
 
+Workload membership must be explicit. `workloads: {}` represents an empty
+environment or one that manages only environment configuration; a missing or
+null map is rejected. Removing the last workload produces the same reviewed
+prune candidates as any other removal, preserves unmanaged resources and
+other managers, and remains blocked by the workload pruning adapter gate.
+
 ## Review and control workflow
 
 The current manual-approval interface uses an exact GitHub commit SHA. The

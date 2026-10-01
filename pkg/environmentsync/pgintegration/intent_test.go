@@ -154,6 +154,52 @@ func TestRealEnvironmentGitOpsAdoptionAndEnforcement(t *testing.T) {
 	})
 }
 
+func TestEnvironmentGitOpsEmptyMembershipCannotBypassWorkloadPruning(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		store := basic.(intentTestStore)
+		source, prior, app := intentFixture(t, store, "enforce")
+		preview, err := store.PreviewEnvironmentGitOpsAdoption(t.Context(), source.AccountID, source.ID)
+		if err != nil || !preview.CanApply() {
+			t.Fatalf("adoption: %+v %v", preview, err)
+		}
+		if err := store.AdoptEnvironmentGitOps(t.Context(), source.AccountID, source.ID, preview.Hash); err != nil {
+			t.Fatal(err)
+		}
+		emptyDefinition := prior.Definition
+		emptyDefinition.Workloads = map[string]api.EnvironmentWorkload{}
+		empty, err := environmentsync.Compile(emptyDefinition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prune := true
+		source, err = store.UpdateEnvironmentGitSource(t.Context(), source.AccountID, source.ID,
+			state.EnvironmentGitSourceUpdate{ExpectedGeneration: source.Generation, Prune: &prune})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, empty, strings.Repeat("b", 40))); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := store.ClaimEnvironmentGitOps(t.Context(), "empty-environment-worker", time.Now(), time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := claimedIntentPlan(t, store, lease, empty)
+		if plan.CanApply() || !strings.Contains(strings.Join(plan.BlockingReasons, " "), "workload pruning adapter") {
+			t.Fatalf("empty definition bypassed graph pruning gate: %+v", plan)
+		}
+		if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, plan); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("unsupported prune mutated intent: %v", err)
+		}
+		current, err := store.AppByID(t.Context(), app.ID)
+		if err != nil || current.Status != app.Status {
+			t.Fatalf("empty definition deleted the adopted application: %+v %v", current, err)
+		}
+		assertVariable(t, store, source, app, "production", "MODE", "console")
+		assertVariable(t, store, source, app, "production", "MANUAL", "keep")
+	})
+}
+
 func TestEnvironmentGitOpsQuotaAcrossScopesBlocksWholePlan(t *testing.T) {
 	stores(t, func(t *testing.T, basic gitOpsTestStore) {
 		store := basic.(intentTestStore)

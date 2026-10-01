@@ -116,6 +116,55 @@ func TestPlanPrunesOnlyPreviouslyOwnedFields(t *testing.T) {
 	}
 }
 
+func TestPlanEmptyEnvironmentRequiresPruneAndPreservesOtherManagers(t *testing.T) {
+	previous, err := Compile(definition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := definition()
+	d.Workloads = map[string]api.EnvironmentWorkload{}
+	empty, err := Compile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := ObservedState{ResourceIDs: map[string]string{"workload/api": "existing-app"}, Fields: append([]Field{}, previous.Fields...)}
+	owners := []Ownership{}
+	for _, field := range previous.Fields {
+		owners = append(owners, Ownership{Field: field, Manager: "git"})
+	}
+	foreign := Field{Resource: "workload/terraform", Path: "presence", Value: json.RawMessage(`true`)}
+	unmanaged := Field{Resource: "workload/manual", Path: "presence", Value: json.RawMessage(`true`)}
+	owners = append(owners, Ownership{Field: foreign, Manager: "terraform"})
+	observed.Fields = append(observed.Fields, foreign, unmanaged)
+	for _, prune := range []bool{false, true} {
+		plan, err := BuildPlan(empty, observed, owners, PlanOptions{Manager: "git", Revision: "empty", Generation: 1, Prune: prune})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.CanApply() != prune || !plan.HasDrift() {
+			t.Fatalf("empty membership skipped prune authorization: %+v", plan)
+		}
+		for _, change := range plan.Changes {
+			switch change.Resource {
+			case "workload/api":
+				want := "remove_candidate"
+				if prune {
+					want = "remove"
+				}
+				if change.Action != want {
+					t.Fatalf("owned field removal: %+v", change)
+				}
+			case "workload/manual":
+				if change.Action != "retain_unmanaged" {
+					t.Fatalf("empty definition removed unmanaged workload: %+v", change)
+				}
+			default:
+				t.Fatalf("empty definition touched another manager: %+v", change)
+			}
+		}
+	}
+}
+
 func TestPlanOverrideExpiryChangesPlanAndNeverClaimsConvergence(t *testing.T) {
 	desired, _ := Compile(definition())
 	presence, field := desired.Fields[0], desired.Fields[1]

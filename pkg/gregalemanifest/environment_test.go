@@ -81,3 +81,26 @@ workloads:
 		t.Fatalf("YAML and JSON normalize differently: %v", digests)
 	}
 }
+
+func TestParseAndCompileEnvironmentExplicitEmptyMembership(t *testing.T) {
+	prefix := "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\n"
+	for _, raw := range []string{prefix, prefix + "workloads: null\n"} {
+		definition, err := gregalemanifest.ParseEnvironment([]byte(raw))
+		if err == nil {
+			_, err = environmentsync.Compile(definition)
+		}
+		if err == nil {
+			t.Fatal("missing or null workload membership was accepted")
+		}
+	}
+	for _, raw := range []string{prefix + "workloads: {}\n", `{"api_version":"gregale.dev/environment/v1","project":"shop","environment":"production","workloads":{}}`} {
+		definition, err := gregalemanifest.ParseEnvironment([]byte(raw))
+		if err != nil || definition.Workloads == nil {
+			t.Fatalf("explicit empty membership: %+v %v", definition, err)
+		}
+		compiled, err := environmentsync.Compile(definition)
+		if err != nil || len(compiled.Fields) != 0 {
+			t.Fatalf("compile empty membership: %+v %v", compiled, err)
+		}
+	}
+}
