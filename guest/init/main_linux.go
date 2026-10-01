@@ -488,25 +488,16 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	cmd := exec.Command(argv0, argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
 	cmd.Env = env
-	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
-	// into the supervisor's ring buffer so the characterize probe can
-	// populate the report's LogTail field. The MultiWriter preserves
-	// the live console stream (os.Stdout) so operators watching
-	// journalctl -u faas-vmmd still see the boot log in real time.
-	// When sup is nil (unit tests that exercise runAppWithEnv directly
-	// without a supervisor), we fall back to the legacy bare stdout
-	// wiring — those tests don't read LogTail.
-	if sup != nil {
-		mw := io.MultiWriter(os.Stdout, sup.LogBuffer())
-		cmd.Stdout, cmd.Stderr = mw, mw
-	} else {
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	}
 	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
 		}
 	}
+	output, err := prepareWorkloadOutput(cmd, sup)
+	if err != nil {
+		return err
+	}
+	defer output.close()
 	// ADR-051 Phase 4: expose the forked cmd to the supervisor so
 	// runCharacterizationForSup can read the PID via LastAppPID().
 	// The supervisor's Run() loop captures the cmd at every
@@ -527,8 +518,10 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
 	if err := cmd.Start(); err != nil {
+		output.started()
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	output.started()
 	if sup != nil {
 		sup.markStarted()
 		if sup.onHealthy != nil {
@@ -2440,7 +2433,7 @@ func pivotInto(root string) error {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
 	}
-	return nil
+	return ensureGuestFDLinks("/dev")
 }
 
 // lookupUID resolves the app user name to a uid. The runner images create the

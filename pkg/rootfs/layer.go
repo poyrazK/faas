@@ -100,6 +100,9 @@ type layerApplyOptions struct {
 	resolver               Resolver
 	preserveWhiteouts      bool
 	skipRuntimeMountpoints bool
+	// Full OCI roots carry explicit numeric ownership, including UID/GID 0.
+	// Source app layers retain their legacy daemon-owned zero-header behavior.
+	preserveZeroOwnership bool
 }
 
 func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
@@ -185,7 +188,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 					return fmt.Errorf("rootfs: clear replacement whiteout %s: %w", marker, err)
 				}
 			}
-			if err := applyEntry(dst, target, hdr, tr, opts.resolver); err != nil {
+			if err := applyEntryWithOptions(dst, target, hdr, tr, opts); err != nil {
 				return err
 			}
 			continue
@@ -204,6 +207,10 @@ func ApplyLayerGz(dst string, r io.Reader) error {
 // ApplyLayerWithResolver after gunzip.
 func ApplyLayerGzWithResolver(dst string, r io.Reader, res Resolver) error {
 	return applyLayerGz(dst, r, layerApplyOptions{resolver: res})
+}
+
+func applyFullRootfsLayerGz(dst string, r io.Reader, res Resolver) error {
+	return applyLayerGz(dst, r, layerApplyOptions{resolver: res, preserveZeroOwnership: true})
 }
 
 // ApplyLayerGzWithOverlayWhiteouts is the gzip-compressed counterpart to
@@ -254,12 +261,16 @@ func isRuntimeMountpointPath(name string) bool {
 }
 
 func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver) error {
+	return applyEntryWithOptions(base, target, hdr, tr, layerApplyOptions{resolver: res})
+}
+
+func applyEntryWithOptions(base, target string, hdr *tar.Header, tr io.Reader, opts layerApplyOptions) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := os.MkdirAll(target, os.FileMode(hdr.Mode)&os.ModePerm); err != nil {
 			return err
 		}
-		return preserveOwnershipWithResolver(target, hdr, res)
+		return preserveEntryOwnership(target, hdr, opts)
 	case tar.TypeReg:
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -290,7 +301,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		if err := f.Close(); err != nil {
 			return err
 		}
-		return preserveOwnershipWithResolver(target, hdr, res)
+		return preserveEntryOwnership(target, hdr, opts)
 	case tar.TypeSymlink:
 		// A symlink's Linkname is GUEST-side data, not a host path: the
 		// string is stored verbatim in the ext4 inode and is resolved by
@@ -318,7 +329,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		}
 		// os.Lchown on a symlink targets the link itself, not its target,
 		// which is what we want: ownership metadata travels with the link.
-		return preserveOwnershipWithResolver(target, hdr, res)
+		return preserveEntryOwnership(target, hdr, opts)
 	case tar.TypeLink:
 		// A hardlink's Linkname IS resolved host-side (os.Link needs a
 		// real path), and per tar semantics it is relative to the
@@ -331,7 +342,7 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		if err := os.Link(source, target); err != nil {
 			return err
 		}
-		return preserveOwnershipWithResolver(target, hdr, res)
+		return preserveEntryOwnership(target, hdr, opts)
 	case tar.TypeChar, tar.TypeBlock:
 		// Char/block devices are not expected in app layers and have no
 		// safe representation inside a Firecracker guest's rootfs.
@@ -357,6 +368,33 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 // returned uid/gid are still passed through inOwnershipRange; out-
 // of-range values trip recordOwnershipClamp + the fall-through path
 // (the same gate as the numeric branch).
+func preserveEntryOwnership(target string, hdr *tar.Header, opts layerApplyOptions) error {
+	if !opts.preserveZeroOwnership {
+		return preserveOwnershipWithResolver(target, hdr, opts.resolver)
+	}
+	uid, gid, ok := fullRootfsOwnership(hdr, opts.resolver)
+	if !ok {
+		return nil
+	}
+	return preserveOwnershipUsing(target, uid, gid, os.Lchown)
+}
+
+func fullRootfsOwnership(hdr *tar.Header, res Resolver) (int, int, bool) {
+	uid, gid := hdr.Uid, hdr.Gid
+	// Preserve the existing image-passwd resolver for archives that encode a
+	// named UID as zero. A numeric GID of zero is still a valid root group.
+	if uid == 0 && hdr.Uname != "" && res != nil {
+		if resolved, _, ok := res.Resolve(hdr.Uname); ok {
+			uid = resolved
+		}
+	}
+	if !inOwnershipRange(uid) || !inOwnershipRange(gid) {
+		recordOwnershipClamp(ownershipClampOutOfRange)
+		return 0, 0, false
+	}
+	return uid, gid, true
+}
+
 func preserveOwnershipWithResolver(target string, hdr *tar.Header, res Resolver) error {
 	uid, gid, ok := parseOwnershipWithResolver(hdr, res)
 	if !ok {

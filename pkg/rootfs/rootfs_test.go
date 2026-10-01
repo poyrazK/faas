@@ -36,7 +36,9 @@ func gzLayer(t *testing.T, entries []entry) io.Reader {
 		if flag == 0 {
 			flag = tar.TypeReg
 		}
-		hdr := &tar.Header{Name: e.name, Mode: 0o644, Typeflag: flag, Linkname: e.linkname}
+		// Generic filesystem fixtures belong to the test user; explicit OCI
+		// ownership regressions construct their own numeric tar headers.
+		hdr := &tar.Header{Name: e.name, Mode: 0o644, Typeflag: flag, Linkname: e.linkname, Uid: os.Getuid(), Gid: os.Getgid()}
 		if flag == tar.TypeReg {
 			hdr.Size = int64(len(e.body))
 		}
