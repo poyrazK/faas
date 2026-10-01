@@ -68,7 +68,10 @@ func (h *Handler) materializeClaimedJob(ctx context.Context, images state.JobIma
 		}
 		workCtx, stopRenewal := startJobMaterializationLeaseRenewal(ctx, renewer, job, owner, h.jobMaterializationLeaseTTL())
 		defer func() {
-			if renewalErr := stopRenewal(); renewalErr != nil {
+			// Work returns nil only after claim-fenced publication succeeds.
+			// That atomic write releases the claim, so a concurrent renewal may
+			// correctly refuse it. Join the renewer without undoing that success.
+			if renewalErr := stopRenewal(); renewalErr != nil && err != nil {
 				err = errors.Join(err, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
 			}
 		}()
@@ -244,7 +247,9 @@ func (h *Handler) MaterializePendingJobs(ctx context.Context) error {
 			jobErr = h.materializeClaimedJobWork(ctx, images, job, owner)
 		}
 		if stopRenewals[i] != nil {
-			if renewalErr := stopRenewals[i](); renewalErr != nil {
+			// Successful work already published under the live claim fence;
+			// its released lease no longer requires a renewal acknowledgment.
+			if renewalErr := stopRenewals[i](); renewalErr != nil && jobErr != nil {
 				jobErr = errors.Join(jobErr, fmt.Errorf("imaged: job %s materialization lease renewal failed: %w", job.ID, renewalErr))
 			}
 		}
