@@ -19,6 +19,7 @@ root = pathlib.Path(sys.argv[1])
 expected = set()
 for package, filename in [
     ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_udp_listeners_test.go'),
+    ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_udp_recovery_test.go'),
     ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_listener_app_purge_test.go'),
     ('github.com/onebox-faas/faas/migrations', 'migrations/20260930193000001_app_udp_listeners_test.go'),
 ]:

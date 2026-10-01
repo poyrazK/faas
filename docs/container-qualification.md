@@ -937,3 +937,7 @@ Integration commit `05d46cfff` expands the required gate to include both Go clie
 ### Real PostgreSQL UDP listener read stall recovery
 
 `TestPgStoreUDPListenerReadDeadlineAndRecovery` passed three race-detector runs without skips against the owned local PostgreSQL 16 cluster. An exclusive lock on the private fixture table forces the enabled-listener query to honor a 100ms context deadline. After rollback releases the lock, a fresh read returns the unchanged listener, and disabling it removes it from the enabled projection. Scoped lint reported zero issues. Logs `/tmp/gregale-udp-pg-read-recovery.log` and `/tmp/gregale-udp-pg-read-recovery-lint.log`. The owned cluster was stopped afterward. Database restart/reconnection and deployed daemon recovery remain unverified.
+
+### Expanded PostgreSQL UDP acceptance gate
+
+The strict PostgreSQL gate now requires `pgstore_udp_recovery_test.go` in addition to store, retirement and migration fixtures. Full `make udp-postgres-check` passed all seven required cases with race detection enabled via GOFLAGS against the owned local PostgreSQL 16 cluster; skips are rejected. Log `/tmp/gregale-udp-current-postgres-gate.log`. The test cluster was stopped afterward. Native and deployed recovery acceptance remain pending.
