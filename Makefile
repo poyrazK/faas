@@ -1348,3 +1348,8 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh
+
+.PHONY: issues-smoke
+issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confirmed staging API
+	@npm run build --prefix sdk/node
+	@node tests/issues-smoke/run.mjs
