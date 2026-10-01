@@ -303,3 +303,13 @@ Go cache cleanup recovered space for subsequent verification. Node build and
 test was deselected). SDK route coverage and native E2E runner contract checks
 passed. The merged metal E2E suite cross-compiled for Linux/amd64. This remains
 compilation evidence; no native KVM qualification was performed.
+
+Startup timeout diagnostics now use the recorded runtime phase: guest-startup
+failures explain missing probe responses, and handler-healthcheck failures
+explain answered probes without HTTP 2xx or gRPC SERVING readiness. Unknown
+phases retain generic guidance for the configured startup deadline and check.
+The explanation no longer assumes every timeout concerns `/healthz` or a fixed
+35-second deadline. Phase selection only uses known markers and does not copy
+raw error text into guidance. Race-enabled whycopy and scheduler regressions
+passed, including persisted deployment guidance, and changed-code lint passed.
+Native phase behavior remains subject to the qualification requirements above.
