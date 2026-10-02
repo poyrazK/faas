@@ -489,45 +489,18 @@ func (p *S3) presignGetObject(ctx context.Context, bucket, key string, options f
 }
 
 func (p *S3) GetObjectTags(ctx context.Context, bucket, key string) (map[string]string, error) {
-	if !ValidKey(key) {
-		return nil, ErrInvalid
-	}
-	out, err := p.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
-	if err != nil {
-		return nil, normalize(err)
-	}
-	tags := make(map[string]string, len(out.TagSet))
-	for _, tag := range out.TagSet {
-		key, value := aws.ToString(tag.Key), aws.ToString(tag.Value)
-		tags[key] = value
-	}
-	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
-		return nil, ErrUnavailable
-	}
-	return tags, nil
+	out, err := p.GetObjectVersionTags(ctx, bucket, key, "")
+	return out.Tags, err
 }
 
 func (p *S3) PutObjectTags(ctx context.Context, bucket, key string, tags map[string]string) error {
-	if !ValidKey(key) {
-		return ErrInvalid
-	}
-	if err := ValidateObjectMetadata(ObjectMetadata{Tags: tags}); err != nil {
-		return err
-	}
-	tagSet := make([]types.Tag, 0, len(tags))
-	for key, value := range tags {
-		tagSet = append(tagSet, types.Tag{Key: aws.String(key), Value: aws.String(value)})
-	}
-	_, err := p.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key), Tagging: &types.Tagging{TagSet: tagSet}})
-	return normalize(err)
+	_, err := p.PutObjectVersionTags(ctx, bucket, key, "", tags)
+	return err
 }
 
 func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
-	if !ValidKey(key) {
-		return ErrInvalid
-	}
-	_, err := p.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: aws.String(bucket), Key: aws.String(key)})
-	return normalize(err)
+	_, err := p.DeleteObjectVersionTags(ctx, bucket, key, "")
+	return err
 }
 
 func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {

@@ -6,7 +6,6 @@
 package s3gateway
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5" // #nosec G501 -- Content-MD5 is an S3 wire-integrity check.
 	"crypto/sha256"
@@ -40,7 +39,6 @@ const defaultMaxConcurrentPuts = 4
 const (
 	maxDeleteObjectsBodyBytes     = 2 << 20
 	maxCompleteMultipartBodyBytes = 4 << 20
-	maxObjectTaggingBodyBytes     = 16 << 10
 )
 
 type Store interface {
@@ -420,6 +418,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("tagging") {
+		if !queryKeysOnly(query, "tagging", "versionId") {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.objectTags(w, r, req, key)
+		return
+	}
 	if query.Has("versionId") {
 		if r.Method == http.MethodDelete && queryKeysOnly(query, "versionId") {
 			h.deleteVersion(w, r, req, key, query.Get("versionId"))
@@ -472,14 +478,6 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		default:
 			h.unsupported(w, r, req.requestID)
 		}
-		return
-	}
-	if query.Has("tagging") {
-		if !queryKeysOnly(query, "tagging") {
-			h.unsupported(w, r, req.requestID)
-			return
-		}
-		h.objectTags(w, r, req, key)
 		return
 	}
 	if r.Method == http.MethodPost && query.Has("uploads") {
@@ -745,91 +743,6 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if r.Method == http.MethodGet {
 		_, _ = io.Copy(w, response.Body)
 	}
-}
-
-func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	tagger, ok := req.provider.(objectstorage.ObjectTagger)
-	if !ok {
-		h.unsupported(w, r, req.requestID)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, key, 0, false) || !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		tags, err := tagger.GetObjectTags(r.Context(), req.bucket.PhysicalName, key)
-		if err != nil {
-			h.providerError(w, r, req, err, key)
-			return
-		}
-		writeS3XML(w, http.StatusOK, req.requestID, objectTaggingResult{XMLNS: s3XMLNamespace, Tags: objectTagSet(tags)})
-	case http.MethodPut:
-		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
-			return
-		}
-		tags, err := decodeObjectTags(w, r, req.signature.PayloadHash)
-		if err != nil {
-			if h.writeAWSChunkedError(w, r, req.requestID, err) {
-				return
-			}
-			writeS3Error(w, http.StatusBadRequest, "InvalidTag", "The object tags are invalid.", r.URL.Path, req.requestID)
-			return
-		}
-		if !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		if err := tagger.PutObjectTags(r.Context(), req.bucket.PhysicalName, key, tags); err != nil {
-			h.providerError(w, r, req, err, key)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	case http.MethodDelete:
-		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) || !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		if err := tagger.DeleteObjectTags(r.Context(), req.bucket.PhysicalName, key); err != nil {
-			h.providerError(w, r, req, err, key)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		h.unsupported(w, r, req.requestID)
-	}
-}
-
-func decodeObjectTags(w http.ResponseWriter, r *http.Request, payloadHash string) (map[string]string, error) {
-	if r.ContentLength > 16<<10 {
-		return nil, objectstorage.ErrInvalid
-	}
-	bodyBytes, err := readVerifiedRequestBody(w, r, payloadHash, maxObjectTaggingBodyBytes)
-	if err != nil {
-		return nil, err
-	}
-	decoder := xml.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.Strict = true
-	var body objectTaggingRequest
-	if err := decoder.Decode(&body); err != nil {
-		return nil, objectstorage.ErrInvalid
-	}
-	if body.XMLName.Local != "Tagging" {
-		return nil, objectstorage.ErrInvalid
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, objectstorage.ErrInvalid
-	}
-	tags := make(map[string]string, len(body.Tags))
-	for _, tag := range body.Tags {
-		if _, exists := tags[tag.Key]; exists {
-			return nil, objectstorage.ErrInvalid
-		}
-		tags[tag.Key] = tag.Value
-	}
-	if err := objectstorage.ValidateObjectMetadata(objectstorage.ObjectMetadata{Tags: tags}); err != nil {
-		return nil, err
-	}
-	return tags, nil
 }
 
 func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash string, maxBytes int64) ([]byte, error) {

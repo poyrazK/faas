@@ -1569,6 +1569,66 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/objects/tags:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application containing the object whose tags are requested., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket used for this object tag operation., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Exact object key; URL-encode it., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: false, description: Omit for the current object; use null or an owned public version UUID for a selected version., schema: { type: string, pattern: '^(null|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$' } }
+    get:
+      operationId: getObjectBucketTags
+      summary: Read the tags of a current or selected object
+      description: Requires storage read scope and a bucket read grant. Public version IDs remain stable after restart. Native provider version IDs are never exposed.
+      tags: [storage]
+      responses:
+        '200':
+          description: Stored object tags and public version identity; response is never cached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectTaggingResult' }
+        default:
+          description: Tag read rejected for invalid ownership, permission, capability, input, budget or provider response
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketTags
+      summary: Replace the complete tag set of a current or selected object
+      description: Requires storage write scope and a bucket write grant. Tags change in place and preserve private write-completion metadata. S3 dispatches once per request; after an uncertain acknowledgment, read the selected version or explicitly retry the desired tag set. No data version or storage reservation is created.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectTaggingRequest' }
+      responses:
+        '200':
+          description: Replacement tag set acknowledged by the provider; public identity is retained
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectTaggingResult' }
+        default:
+          description: Tag replacement failed validation, authorization or admission, or has an uncertain provider acknowledgment
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketTags
+      summary: Remove all tags from a current or selected object
+      description: Requires storage write scope and a bucket write grant. Returns an empty tag set after acknowledgment. An uncertain response does not trigger automatic mutation replay. Tags change in place; storage capacity is unchanged.
+      tags: [storage]
+      responses:
+        '200':
+          description: Empty tag set after acknowledged removal; public version identity is retained
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectTaggingResult' }
+        default:
+          description: Tag removal denied or unsupported, safety budget exhausted, or provider acknowledgment unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/objects/versions:
     parameters:
       - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
@@ -1595,7 +1655,7 @@ paths:
 
   /v1/apps/{slug}/buckets/{bucket}/objects/deletions:
     parameters:
-      - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
+      - { name: slug, in: path, required: true, description: Application whose object deletion will be journaled., schema: { type: string } }
       - { name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: { type: string, format: uuid } }
     post:
       operationId: createObjectDeletion
@@ -1626,8 +1686,8 @@ paths:
 
   /v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}:
     parameters:
-      - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
-      - { name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: { type: string, format: uuid } }
+      - { name: slug, in: path, required: true, description: Application associated with the requested deletion receipt., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Bucket to which the durable deletion receipt belongs., schema: { type: string, format: uuid } }
       - { name: deletion, in: path, required: true, description: Durable deletion request ID., schema: { type: string, format: uuid } }
     get:
       operationId: getObjectDeletion
@@ -23317,6 +23377,30 @@ components:
         last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ObjectTaggingRequest:
+      type: object
+      description: Complete replacement object tag set, including an empty set to clear all tags.
+      additionalProperties: false
+      required: [tags]
+      properties:
+        tags:
+          type: object
+          description: Complete replacement set. Empty removes all tags. Keys and values use the portable UTF-8 byte limits.
+          maxProperties: 10
+          propertyNames: { minLength: 1, maxLength: 128 }
+          additionalProperties: { type: string, maxLength: 256 }
+    ObjectTaggingResult:
+      type: object
+      description: Acknowledged object tags and optional owned public version identity.
+      additionalProperties: false
+      required: [tags]
+      properties:
+        version_id: { type: string, description: Public version UUID or null. Omitted for unversioned or legacy current-object providers. }
+        tags:
+          type: object
+          description: Acknowledged complete tag set; native provider IDs and private completion metadata are never exposed.
+          maxProperties: 10
+          additionalProperties: { type: string }
     ObjectVersionDeleteResult:
       type: object
       description: Selected immutable public version and the acknowledged marker flag after permanent deletion.

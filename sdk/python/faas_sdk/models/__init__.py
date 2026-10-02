@@ -1116,6 +1116,10 @@ from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
+from .object_tagging_request import ObjectTaggingRequest
+from .object_tagging_request_tags import ObjectTaggingRequestTags
+from .object_tagging_result import ObjectTaggingResult
+from .object_tagging_result_tags import ObjectTaggingResultTags
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
 from .object_version_delete_result import ObjectVersionDeleteResult
@@ -3068,6 +3072,10 @@ __all__ = (
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
+    "ObjectTaggingRequest",
+    "ObjectTaggingRequestTags",
+    "ObjectTaggingResult",
+    "ObjectTaggingResultTags",
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
     "ObjectVersionDeleteResult",

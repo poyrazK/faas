@@ -461,7 +461,7 @@ PUT, CopyObject, CompleteMultipartUpload and current GET/HEAD also return custom
 x-amz-version-id when the provider supplies a native ID. Multipart completion
 returns the actual provider ETag and durably stores its public version ID;
 repeating the same completion returns that result even after later overwrites
-without another provider request. Version-specific tagging remains open.
+without another provider request. Version-specific tagging is described below.
 
 Observing a non-null native version or any delete marker activates the retained
 version accounting fence. Reads and listings continue under ordinary read
@@ -1249,9 +1249,54 @@ block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
 GCS configuration and unsupported provider endpoints return NotImplemented.
 See [ADR-403](adr/403-durable-bucket-versioning-configuration.md). Delete-marker
 admission and mutable null deletion are implemented in
-[ADR-405](adr/405-durable-s3-mutable-deletion.md). Version tagging, replay-safe
-direct writes and recovery proof for uncertain mutable deletions remain gaps.
+[ADR-405](adr/405-durable-s3-mutable-deletion.md). Replay-safe direct writes and
+recovery proof for uncertain mutable deletions remain gaps.
 
+
+## Tagging current and retained versions
+
+S3 `GetObjectTagging`, `PutObjectTagging` and `DeleteObjectTagging` accept an
+owned public `VersionId`, including `null`. Omit the selector for the current
+object. Non-null IDs address the same immutable data version after a restart;
+`null` and the current object retain standard mutable S3 semantics. Successful
+responses translate provider version headers into public IDs. Delete markers
+cannot be tagged. Unsupported providers reject selected-version requests;
+existing GCS and other legacy tagging capabilities continue to support current
+objects.
+
+The control API provides GET, PUT and DELETE at
+`/v1/apps/{slug}/buckets/{bucket}/objects/tags?key=KEY&version_id=ID`.
+Omit `version_id` for current-object operations. PUT takes
+`{"tags":{"team":"archive"}}`; all three methods return the acknowledged
+`tags` map and an optional public `version_id`. DELETE returns an empty map.
+GET requires storage read scope and bucket read access; PUT and DELETE require
+storage write scope and bucket write access. Tag cleanup remains available when
+storage ingress is disabled. Typed Go, Node and Python clients expose all three
+methods, and the CLI provides:
+
+```sh
+gregale bucket tags get <app> <bucket-id> hello.txt [version-id|null]
+gregale bucket tags set <app> <bucket-id> hello.txt 'team=archive' [version-id|null]
+gregale bucket tags clear <app> <bucket-id> hello.txt [version-id|null]
+```
+
+Tag replacement changes tags in place and preserves data, version history and
+private completion metadata. It creates no data version, storage reservation or
+capacity refund; provider requests still count toward usage and must pass the
+customer safety budget. Observed version IDs activate the existing all-version
+accounting fence. Tagging accepts at most ten tags, with portable UTF-8 byte
+limits of 128 for keys and 256 for values. Empty values and empty tag sets are
+valid; malformed, duplicate or oversized XML and ASCII control characters are
+rejected.
+XML and control JSON bodies are bounded to 16 KiB.
+
+S3 sends one provider attempt per request. An interrupted acknowledgment reports
+an error without replaying the mutation. Read the selected version to inspect
+its tags, or explicitly repeat the desired replacement/clear. Concurrent tag
+requests follow provider last-writer behavior; selectors do not serialize tag
+changes. Local SDK/gateway/control/PostgreSQL tests cover selector ownership,
+acknowledgment loss, store reconstruction, permissions and conservative capacity.
+See [ADR-407](adr/407-version-specific-object-tagging.md).
 
 ## Permanently deleting retained versions
 

@@ -27,6 +27,8 @@ import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageComputeBinding } from '../models/ObjectStorageComputeBinding.js';
 import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageComputeBindingList.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
+import type { ObjectTaggingRequest } from '../models/ObjectTaggingRequest.js';
+import type { ObjectTaggingResult } from '../models/ObjectTaggingResult.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
 import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
@@ -634,6 +636,139 @@ export class StorageService {
     });
   }
   /**
+   * Read the tags of a current or selected object
+   * Requires storage read scope and a bucket read grant. Public version IDs remain stable after restart. Native provider version IDs are never exposed.
+   * @returns ObjectTaggingResult Stored object tags and public version identity; response is never cached
+   * @returns Problem Tag read rejected for invalid ownership, permission, capability, input, budget or provider response
+   * @throws ApiError
+   */
+  public static getObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Replace the complete tag set of a current or selected object
+   * Requires storage write scope and a bucket write grant. Tags change in place and preserve private write-completion metadata. S3 dispatches once per request; after an uncertain acknowledgment, read the selected version or explicitly retry the desired tag set. No data version or storage reservation is created.
+   * @returns ObjectTaggingResult Replacement tag set acknowledged by the provider; public identity is retained
+   * @returns Problem Tag replacement failed validation, authorization or admission, or has an uncertain provider acknowledgment
+   * @throws ApiError
+   */
+  public static putObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    requestBody,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    requestBody: ObjectTaggingRequest,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove all tags from a current or selected object
+   * Requires storage write scope and a bucket write grant. Returns an empty tag set after acknowledgment. An uncertain response does not trigger automatic mutation replay. Tags change in place; storage capacity is unchanged.
+   * @returns ObjectTaggingResult Empty tag set after acknowledged removal; public version identity is retained
+   * @returns Problem Tag removal denied or unsupported, safety budget exhausted, or provider acknowledgment unavailable
+   * @throws ApiError
+   */
+  public static deleteObjectBucketTags({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application containing the object whose tags are requested.
+     */
+    slug: string,
+    /**
+     * Logical bucket used for this object tag operation.
+     */
+    bucket: string,
+    /**
+     * Exact object key; URL-encode it.
+     */
+    key: string,
+    /**
+     * Omit for the current object; use null or an owned public version UUID for a selected version.
+     */
+    versionId?: string,
+  }): CancelablePromise<ObjectTaggingResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
    * Permanently delete an immutable object version or delete marker
    * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt API. Quota is reclaimed only through verified capacity inventory.
    * @returns ObjectVersionDeleteResult Deleted or already removed immutable version; Cache-Control no-store
@@ -689,7 +824,7 @@ export class StorageService {
     requestBody,
   }: {
     /**
-     * App owning the logical bucket.
+     * Application whose object deletion will be journaled.
      */
     slug: string,
     /**
@@ -722,11 +857,11 @@ export class StorageService {
     deletion,
   }: {
     /**
-     * App owning the logical bucket.
+     * Application associated with the requested deletion receipt.
      */
     slug: string,
     /**
-     * Logical bucket owning the deletion.
+     * Bucket to which the durable deletion receipt belongs.
      */
     bucket: string,
     /**

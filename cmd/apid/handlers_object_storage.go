@@ -211,6 +211,8 @@ func bucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 409, "object_storage_conditional_conflict", "Start a new multipart upload after a conflicting write."
 	case errors.Is(err, objectstorage.ErrConditionalNotFound):
 		status, code, detail = 404, "object_storage_conditional_not_found", "The conditional destination object no longer exists."
+	case errors.Is(err, objectstorage.ErrObjectNotTaggable):
+		status, code, detail = 405, "object_storage_not_taggable", "The specified object version does not support tagging."
 	case errors.Is(err, objectstorage.ErrInvalid):
 		status, code, detail = 400, "object_storage_invalid", "Invalid object storage request."
 	case errors.Is(err, objectstorage.ErrUnsupported):

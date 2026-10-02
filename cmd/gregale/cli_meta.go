@@ -314,7 +314,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage versioning, delete versions, inspect receipts and reconcile capacity",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object tags, versioning, deletion receipts and capacity",
 		Subcommands: []cliSub{{Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 			{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
@@ -330,6 +330,10 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "maximum wait (default 5m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
 			}},
+		}}, {Name: "tags", Short: "Read, replace or clear tags on current or selected data", Subcommands: []cliSub{
+			{Name: "get", Short: "Read object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
+			{Name: "set", Short: "Replace the complete tag set", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<URL-encoded-tags>", "[version-id|null]"}},
+			{Name: "clear", Short: "Remove all object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
 		}}, {Name: "deletions", Short: "Create or inspect durable object deletions", Subcommands: []cliSub{
 			{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
 			{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},

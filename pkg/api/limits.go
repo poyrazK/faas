@@ -7831,3 +7831,12 @@ const (
 	ObjectDeletionHistoryVersions        = 4096
 	MaxObjectDeletionBodyBytes     int64 = 8 << 10
 )
+
+const (
+	MaxObjectTaggingBodyBytes     int64 = 16 << 10
+	MaxObjectTags                       = 10
+	MaxObjectTagKeyBytes                = 128
+	MaxObjectTagValueBytes              = 256
+	MaxObjectTaggingBytes               = 8 << 10
+	ObjectTaggingOperationTimeout       = 30 * time.Second
+)

@@ -34,6 +34,9 @@ func isCleanupRequest(r *http.Request, q url.Values, hasBucket, hasKey bool) boo
 	if !hasBucket {
 		return false
 	}
+	if hasKey && r.Method == http.MethodDelete && q.Has("tagging") {
+		return q.Get("tagging") == "" && queryKeysOnly(q, "tagging", "versionId")
+	}
 	return hasKey && r.Method == http.MethodDelete && (len(q) == 0 || q.Get("uploadId") != "" && queryKeysOnly(q, "uploadId")) || !hasKey && r.Method == http.MethodPost && q.Has("delete") && queryKeysOnly(q, "delete")
 }
 func (h *Handler) validateRequestSemantics(w http.ResponseWriter, r *http.Request, req requestContext, hasKey bool, q url.Values) bool {

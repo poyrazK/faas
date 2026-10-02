@@ -593,6 +593,8 @@ export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageUsage } from './models/ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './models/ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './models/ObjectStorageUsageResponse.js';
+export type { ObjectTaggingRequest } from './models/ObjectTaggingRequest.js';
+export type { ObjectTaggingResult } from './models/ObjectTaggingResult.js';
 export type { ObjectUploadRoute } from './models/ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './models/ObjectUploadRouteList.js';
 export type { ObjectVersionDeleteResult } from './models/ObjectVersionDeleteResult.js';

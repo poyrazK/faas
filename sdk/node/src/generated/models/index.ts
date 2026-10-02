@@ -589,6 +589,8 @@ export type { ObjectStoragePricing } from './ObjectStoragePricing.js';
 export type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './ObjectStorageUsageResponse.js';
+export type { ObjectTaggingRequest } from './ObjectTaggingRequest.js';
+export type { ObjectTaggingResult } from './ObjectTaggingResult.js';
 export type { ObjectUploadRoute } from './ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './ObjectUploadRouteList.js';
 export type { ObjectVersionDeleteResult } from './ObjectVersionDeleteResult.js';

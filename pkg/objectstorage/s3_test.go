@@ -186,6 +186,7 @@ func TestS3ObjectTags(t *testing.T) {
 					t.Errorf("tagging body = %s", body)
 				}
 			case http.MethodDelete:
+				w.WriteHeader(http.StatusNoContent)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}

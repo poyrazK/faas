@@ -30,6 +30,7 @@ var (
 	ErrInvalid             = errors.New("invalid object storage request")
 	ErrUnsupported         = errors.New("object storage operation is not supported")
 	ErrConfiguration       = errors.New("object storage provider configuration requires attention")
+	ErrObjectNotTaggable   = errors.New("the object version does not support tagging")
 )
 
 // Provider owns data operations for a single immutable backend placement.
@@ -416,6 +417,20 @@ type ObjectTagger interface {
 	DeleteObjectTags(context.Context, string, string) error
 }
 
+// ObjectVersionTagger changes tags in place without creating a data version or
+// replacing Gregale's private write-completion metadata. An empty selector
+// addresses the current object; null and native version IDs select a version.
+type ObjectVersionTagger interface {
+	GetObjectVersionTags(context.Context, string, string, string) (ObjectTaggingResult, error)
+	PutObjectVersionTags(context.Context, string, string, string, map[string]string) (ObjectTaggingResult, error)
+	DeleteObjectVersionTags(context.Context, string, string, string) (ObjectTaggingResult, error)
+}
+
+type ObjectTaggingResult struct {
+	Tags              map[string]string
+	ProviderVersionID string `json:"-"`
+}
+
 // PUT sizes are signed, not merely advisory client-side limits.
 type SignRequest api.ObjectSignRequest
 
@@ -526,10 +541,10 @@ const (
 	maxObjectMetadataEntries = 90
 	maxObjectMetadataKey     = 128
 	maxObjectMetadataValue   = 2048
-	maxObjectTags            = 10
-	maxObjectTagKey          = 128
-	maxObjectTagValue        = 256
-	maxObjectTaggingBytes    = 8 << 10
+	maxObjectTags            = api.MaxObjectTags
+	maxObjectTagKey          = api.MaxObjectTagKeyBytes
+	maxObjectTagValue        = api.MaxObjectTagValueBytes
+	maxObjectTaggingBytes    = api.MaxObjectTaggingBytes
 	// ReservedObjectTagsMetadataKey is used only by providers without a native
 	// object-tagging API (currently the GCS adapter). It never crosses the
 	// branded S3 response boundary as ordinary user metadata.
@@ -562,7 +577,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 	}
 	total := 0
 	for key, value := range metadata.Tags {
-		if key == "" || len(key) > maxObjectTagKey || len(value) > maxObjectTagValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+		if key == "" || len(key) > maxObjectTagKey || len(value) > maxObjectTagValue || !validTagText(key) || !validTagText(value) {
 			return ErrInvalid
 		}
 		total += len(key) + len(value) + 2

@@ -138,15 +138,23 @@ type copyObjectResult struct {
 	ETag         string   `xml:"ETag"`
 }
 
-type objectTaggingRequest struct {
-	XMLName xml.Name    `xml:"Tagging"`
-	Tags    []objectTag `xml:"TagSet>Tag"`
-}
-
 type objectTaggingResult struct {
 	XMLName xml.Name    `xml:"Tagging"`
 	XMLNS   string      `xml:"xmlns,attr"`
 	Tags    []objectTag `xml:"TagSet>Tag"`
+}
+
+// Empty tags still require a TagSet element in the S3 response document.
+func (v objectTaggingResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	var wire struct {
+		XMLNS string `xml:"xmlns,attr,omitempty"`
+		Set   struct {
+			Tags []objectTag `xml:"Tag"`
+		} `xml:"TagSet"`
+	}
+	wire.XMLNS, wire.Set.Tags = v.XMLNS, v.Tags
+	start.Name = xml.Name{Local: "Tagging"}
+	return e.EncodeElement(wire, start)
 }
 
 type objectTag struct {
