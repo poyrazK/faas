@@ -36,7 +36,12 @@ failed-boot ownership through confirmed teardown and serializes concurrent stops
 ([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)). Scheduler fault,
 operator restart and pressure-recycling paths now retain their admission and
 resident state through failed Destroy, including schedd restart reconstruction
-([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Admission
+([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Liveness
+and workload OOM reports now persist on vmmd and retry until schedd confirms
+application; replay with unknown guest ownership stays pending
+([ADR-397](adr/397-managed-postgres-failure-report-redelivery.md)). Its nested-node
+[diagnostics](ops/evidence/20261002-managed-postgres-failure-reports/README.md) passed
+34 top-level checks and three leak checks. Admission
 fencing and local teardown do not yet provide durable all-node drain proof. Customer cutover
 activation remains disabled, and supported native lifecycle acceptance remains
 pending.

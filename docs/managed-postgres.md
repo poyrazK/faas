@@ -486,9 +486,20 @@ also retain their resident state, admission and host-port ownership when Destroy
 fails; a schedd restart rebuilds those reservations. Read failures and state races
 cannot free another operation's resident capacity
 ([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Remaining
-boot/migration cleanup paths and failure-report redelivery need further work.
+boot/migration cleanup paths need further work. Liveness and workload OOM reports
+now persist on vmmd and retry failed delivery/cleanup; schedd distinguishes
+acceptance from applied outcomes, including across-node relays. Source node
+binding refuses reports delayed past a completed migration
+([ADR-397](adr/397-managed-postgres-failure-report-redelivery.md)).
 This proof is local to the running daemon. Crash recovery, all-node
 capability/ownership checks and durable drain receipts remain pending.
+Operators must keep `/var/lib/faas/vmmd-failures` on persistent storage. Pending
+report logs include instance ID, kind, attempt and retry delay; a growing backlog,
+unsupported RPC, missing durable row or persistence error needs investigation.
+Committed reports survive process exit. A recovered report with unknown Manager
+ownership stays pending until guest inventory is reconciled; do not delete the
+spool or treat a cold instance row as fleet teardown proof.
+
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

@@ -51,6 +51,9 @@ func UnitVmmd() daemonunit.Unit {
 		StartLimitBurst:       "5",
 
 		Type: "notify",
+		// ADR-397: persistent, root-only reports survive daemon/host restarts.
+		StateDirectory:     "faas/vmmd-failures",
+		StateDirectoryMode: "0700",
 		// No User=/Group=: vmmd is root by design.
 		ExecStart: `/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml`,
 		ExecStartPre: []string{

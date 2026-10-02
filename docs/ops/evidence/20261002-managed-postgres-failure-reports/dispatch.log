@@ -1,0 +1,11 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+/var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-selected.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-supplement.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/source-node-supplement.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27/remote-run.sh: OK
+Running as unit: gregale-managed-pg-failure-reports-d598bb27-source-bound.service; invocation ID: c902aa95e05e46cfb5ded807a178d0b8

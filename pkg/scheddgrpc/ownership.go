@@ -125,10 +125,45 @@ func (s *Server) relayForeignFailure(ctx context.Context, authErr error, r sched
 	if err != nil || ins.NodeID == "" || ins.NodeID != string(s.owner) {
 		return false, authErr
 	}
+	if err := sched.ValidateFailureReportSource(ctx, ins); err != nil {
+		return false, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if failureReportSuperseded(ins) {
+		return true, nil
+	}
 	r.AppID = ins.AppID
 	if err := s.failureRelay.RelayInstanceFailure(ctx, r); err != nil {
 		s.log.Warn("schedd: relay foreign instance failure", "instance", r.InstanceID, "kind", r.Kind, "err", err)
 		return false, status.Errorf(codes.Unavailable, "relay %s report for instance %s: %v", r.Kind, r.InstanceID, err)
 	}
 	return true, nil
+}
+
+// Acknowledgements retire an observation, not a fleet drain receipt. Only these
+// cold states supersede it; resident transitions, missing rows and read failures
+// keep the vmmd outbox pending. In particular an account-deletion marker can be
+// published before cleanup and cannot acknowledge this report (ADR-397).
+func failureReportSuperseded(ins state.Instance) bool {
+	switch state.State(ins.State) {
+	case state.StateParked, state.StateStopped, state.StateFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) failureReportApplied(ctx context.Context, instanceID string) (bool, error) {
+	if s.resolver == nil {
+		// Legacy in-process adapters without a resolver retain their contract.
+		// Production schedd always wires the durable resolver, including local.
+		return true, nil
+	}
+	ins, err := s.resolver.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return false, status.Errorf(codes.Unavailable, "read failure-report outcome for instance %s: %v", instanceID, err)
+	}
+	if err := sched.ValidateFailureReportSource(ctx, ins); err != nil {
+		return false, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return failureReportSuperseded(ins), nil
 }

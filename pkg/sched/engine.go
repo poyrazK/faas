@@ -8425,6 +8425,9 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	if err != nil {
 		return fmt.Errorf("sched: liveness: read instance %s: %w", instanceID, err)
 	}
+	if err := ValidateFailureReportSource(ctx, freshLocked); err != nil {
+		return err
+	}
 	if state.State(freshLocked.State) != state.StateRunning {
 		// The operation that moved the row owns its reservation. It may
 		// still hold a resident guest, for example while snapshotting.
@@ -8820,6 +8823,9 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	freshLocked, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("DestroyForWorkloadOOMFailure: locked read instance %s: %w", instanceID, err)
+	}
+	if err := ValidateFailureReportSource(ctx, freshLocked); err != nil {
+		return err
 	}
 	if state.State(freshLocked.State) != state.StateRunning {
 		// Another operation owns the new state and any resident capacity.

@@ -1797,10 +1797,9 @@ func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 // unit test that doesn't construct a relay doesn't have to stub
 // one.
 //
-// Best-effort: the workload is dead at the time of the call, so a
-// failed relay is logged + dropped. The relay's own context
-// cancellation (from vmmd shutdown) is honoured by the closing
-// goroutine.
+// Production wiring persists this report in vmmd's failure outbox before
+// returning, then retries delivery independently of the receiver context
+// (ADR-397). A storage error is logged and retained for persistence retry.
 func (m *Manager) ReportWorkloadOOM(ctx context.Context, instanceID string, peakMB, planMB int) {
 	if m.workloadOOMRelay == nil {
 		return
@@ -1860,7 +1859,7 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 		ctx = context.Background()
 	}
 	if m.livenessRelay != nil {
-		// The relay synchronously asks schedd to destroy the instance. That
+		// The relay may synchronously ask schedd to destroy the instance. That
 		// destroy RPC cancels vmmd's liveness loop as part of teardown; passing
 		// the loop context through would cancel the RPC itself midway through
 		// the state transition and leave a stale RUNNING row. Preserve values
@@ -2591,6 +2590,18 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 		return "", "", fmt.Errorf("fcvm: InstanceIdentity %s: not live", instance)
 	}
 	return inst.AppID, inst.AccountID, nil
+}
+
+// HasInstanceOwnership gates recovered failure reports (ADR-397). An absent
+// entry after vmmd restart is not evidence that Firecracker or its resources
+// have gone. Include failed teardown ownership even when it is no longer live.
+func (m *Manager) HasInstanceOwnership(instance string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, waking := m.waking[instance]
+	// A stop reservation alone can exist for an unknown ID and does not
+	// establish ownership of any process, lease or resource identity.
+	return m.live[instance] != nil || waking || m.pendingCleanup[instance] != nil
 }
 
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account

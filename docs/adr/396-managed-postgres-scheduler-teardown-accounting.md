@@ -73,3 +73,7 @@ spec §14; nested internal-node diagnostics cannot replace that release gate.
 records 19 passing top-level checks (82 including subtests), no selected skips or
 failures and three passing in-run leak checks. Supported native acceptance remains
 pending; the extra host-wide check could not acquire the shared acceptance lock.
+
+[ADR-397](397-managed-postgres-failure-report-redelivery.md) adds persistent
+redelivery for liveness/OOM reports, with an explicit boundary for unknown guest
+ownership after vmmd restart. The all-node drain and crash-inventory gaps remain.

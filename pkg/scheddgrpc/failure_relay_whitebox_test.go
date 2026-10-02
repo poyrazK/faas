@@ -1,3 +1,4 @@
+// adr: 397 — a notification publish is not an application acknowledgement.
 package scheddgrpc
 
 import (
@@ -59,8 +60,8 @@ func TestReportLivenessFailed_RelaysHostedForeignInstance(t *testing.T) {
 			if got := status.Code(err); got != tc.wantCode {
 				t.Fatalf("code = %v (err %v), want %v", got, err, tc.wantCode)
 			}
-			if tc.wantCode == codes.OK && !ack.GetOk() {
-				t.Fatalf("ack.Ok = false, want true")
+			if tc.wantCode == codes.OK && (!ack.GetOk() || ack.GetApplied()) {
+				t.Fatalf("expected accepted report without application acknowledgement")
 			}
 			var relayed []sched.InstanceFailureReport
 			if tc.relay != nil {
@@ -93,13 +94,54 @@ func TestReportWorkloadOOM_RelaysHostedForeignInstance(t *testing.T) {
 	ack, err := srv.ReportWorkloadOOM(context.Background(), &scheddpb.ReportWorkloadOOMRequest{
 		InstanceId: "ins-1", PeakMb: 300, PlanMb: 256,
 	})
-	if err != nil || !ack.GetOk() {
-		t.Fatalf("ReportWorkloadOOM = (%v, %v), want ok", ack, err)
+	if err != nil || !ack.GetOk() || ack.GetApplied() {
+		t.Fatalf("ReportWorkloadOOM = (%v, %v), want pending", ack, err)
 	}
 	want := sched.InstanceFailureReport{
 		InstanceID: "ins-1", AppID: "app-1", Kind: sched.InstanceFailureWorkloadOOM, PeakMB: 300, PlanMB: 256,
 	}
 	if len(relay.got) != 1 || relay.got[0] != want {
 		t.Fatalf("relayed = %+v, want [%+v]", relay.got, want)
+	}
+}
+
+func TestFailureReportAckRequiresColdOutcome(t *testing.T) {
+	for _, st := range []state.State{state.StateRunning, state.StateWaking, state.StateColdBooting,
+		state.StateSnapshotting, state.StateMigrating, state.StateWarm, state.StateDraining,
+		state.StateEvictingAccountDeleting, state.StateStopped, state.StateParked, state.StateFailed} {
+		t.Run(string(st), func(t *testing.T) {
+			res := &fakeResolver{insts: map[string]state.Instance{"instance": {ID: "instance", AppID: "app", NodeID: "host", State: string(st)}}}
+			srv := New(nil, nil, nil).WithOwner("host", res)
+			ok, err := srv.failureReportApplied(t.Context(), "instance")
+			want := st == state.StateStopped || st == state.StateParked || st == state.StateFailed
+			if err != nil || ok != want {
+				t.Fatalf("ack=%v err=%v want=%v", ok, err, want)
+			}
+			res.instErr = state.ErrNotFound
+			if ok, err := srv.failureReportApplied(t.Context(), "instance"); ok || status.Code(err) != codes.Unavailable {
+				t.Fatalf("missing row ack=%v err=%v", ok, err)
+			}
+		})
+	}
+}
+
+func TestFailureReportHostedRelayAcknowledgesAfterOwnerApplies(t *testing.T) {
+	res := &fakeResolver{
+		apps:  map[string]state.App{"app": {ID: "app", NodeID: "owner"}},
+		insts: map[string]state.Instance{"instance": {ID: "instance", AppID: "app", NodeID: "host", State: string(state.StateRunning)}},
+	}
+	relay := &recordingRelay{}
+	srv := New(nil, nil, nil).WithOwner("host", res).WithForeignReportRelay(relay)
+	for _, st := range []state.State{state.StateRunning, state.StateRunning, state.StateStopped} {
+		ins := res.insts["instance"]
+		ins.State = string(st)
+		res.insts["instance"] = ins
+		ack, err := srv.ReportLivenessFailed(t.Context(), &scheddpb.LivenessFailedReport{InstanceId: "instance", Reason: "timeout"})
+		if err != nil || !ack.GetOk() || ack.GetApplied() != (st == state.StateStopped) {
+			t.Fatalf("state=%s ack=%v err=%v", st, ack, err)
+		}
+	}
+	if len(relay.got) != 2 {
+		t.Fatalf("relay attempts=%d, want 2 before cold outcome", len(relay.got))
 	}
 }
