@@ -671,6 +671,9 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel the subscription at period end"},
 			{Name: "payment-method", Short: "Show the card on file"},
 			{Name: "status", Short: "Show subscription status"},
+			{Name: "costs", Short: "Explain retained usage costs and source coverage", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "json", Short: "Print the machine-readable cost report"}}, Examples: []string{"gregale billing costs --month 2026-10 --json"}},
+			{Name: "forecast", Short: "Show usage cost forecasts and their availability", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "json", Short: "Print the machine-readable forecast"}}, Examples: []string{"gregale billing forecast --json"}},
+			{Name: "budget-preview", Short: "Preview a budget's cost and workload consequences without writes", Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file", Value: "PATH"}, {Name: "json", Short: "Print the machine-readable preview"}}, Examples: []string{"gregale billing budget-preview --file budget.json --json"}},
 			{Name: "refresh-invoice", Short: "Refresh provider facts for an existing invoice", Positionals: []string{"ID"}, Examples: []string{"gregale billing refresh-invoice INVOICE_ID"}},
 			{Name: "backfill-invoices", Short: "Import one page of missing provider invoices", Examples: []string{"gregale billing backfill-invoices", "gregale billing backfill-invoices --cursor TOKEN"}},
 			{Name: "export", Short: "Export a partial FOCUS 1.4 invoice projection", Flags: []cliFlag{

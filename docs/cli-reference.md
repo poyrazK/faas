@@ -1155,6 +1155,51 @@ Show the card on file
 
 Show subscription status
 
+### billing costs
+
+Explain retained usage costs and source coverage
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--json` | Print the machine-readable cost report |  |
+
+Examples:
+
+```sh
+gregale billing costs --month 2026-10 --json
+```
+
+### billing forecast
+
+Show usage cost forecasts and their availability
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--json` | Print the machine-readable forecast |  |
+
+Examples:
+
+```sh
+gregale billing forecast --json
+```
+
+### billing budget-preview
+
+Preview a budget&#39;s cost and workload consequences without writes
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | Budget spec JSON file |  |
+| `--json` | Print the machine-readable preview |  |
+
+Examples:
+
+```sh
+gregale billing budget-preview --file budget.json --json
+```
+
 ### billing refresh-invoice
 
 Refresh provider facts for an existing invoice

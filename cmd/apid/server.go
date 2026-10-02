@@ -2972,6 +2972,9 @@ func (s *server) handler() http.Handler {
 	// session-cookie routes (IAM-2 / issue #186).
 	mux.HandleFunc("GET /v1/invoices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.listInvoices))))
 	mux.HandleFunc("GET /v1/billing/focus", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.exportFOCUSInvoices))))
+	mux.HandleFunc("GET /v1/billing/costs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getFinancialCosts))))
+	mux.HandleFunc("GET /v1/billing/forecast", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getFinancialForecast))))
+	mux.HandleFunc("POST /v1/billing/budgets/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.previewFinancialBudget))))
 	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
 	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 

@@ -6,6 +6,10 @@ import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
+import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
+import type { FinancialBudgetPreviewResponse } from '../models/FinancialBudgetPreviewResponse.js';
+import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js';
+import type { FinancialForecastResponse } from '../models/FinancialForecastResponse.js';
 import type { InvoiceHistoryBackfillResponse } from '../models/InvoiceHistoryBackfillResponse.js';
 import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -111,6 +115,126 @@ export class BillingService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read attributable usage costs and historical price contracts.
+   * Requires usage:read and session MFA. Uses retained account-owned evidence
+   * and immutable price versions. Applies a single shared monthly allowance;
+   * when the plan changes, the largest recorded grant is retained and shared
+   * proportionally across versions. Known usage amounts use integer millicents.
+   * Missing samples and historical prices are explicit coverage gaps.
+   * The reported compute/interface-egress scope excludes other bill components.
+   * Stored provider invoices are separate facts and are not automatically
+   * reconciled to this usage ledger. The UTC usage month and provider invoice
+   * periods can differ. At most 10000 allocations are returned; larger reports
+   * fail without returning truncated totals. This endpoint has no writes.
+   *
+   * @returns FinancialCostsResponse Account-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+   * @throws ApiError
+   */
+  public static getFinancialCosts({
+    month,
+  }: {
+    /**
+     * Current or historical UTC usage month; defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<FinancialCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/costs',
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read usage cost forecasts with coverage and method.
+   * Requires usage:read and session MFA. Elapsed-time quantity forecasts apply
+   * the recorded price after the shared allowance. At least one complete day,
+   * fresh evidence, and unchanged pricing are required. Unavailable forecasts
+   * contain a reason and omit projected amounts. The overall invoice forecast
+   * remains unavailable until all bill components have authoritative coverage.
+   * This endpoint is read-only and never changes workload admission.
+   *
+   * @returns FinancialForecastResponse Meter forecasts and explicit missing bill components.
+   * @throws ApiError
+   */
+  public static getFinancialForecast({
+    month,
+  }: {
+    /**
+     * UTC usage month for the projection; defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<FinancialForecastResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/forecast',
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a scoped budget and its workload consequences without writes.
+   * Requires usage:read and session MFA. Uses the current UTC usage period.
+   * Validates account ownership and authoritative workload eligibility.
+   * Reports known attributed cost, coverage, affected and continuing targets.
+   * Net usage shares the account allowance once; strict scoped policies use
+   * gross compute. Rejecting traffic does not stop background or idle compute.
+   * A broad strict policy must suspend every covered workload; selective
+   * preview/background actions cannot cap continuing production spending.
+   * Environment targets are discovered from current live deployment scopes.
+   * No policies, holds, decisions, dispatches or instances are written.
+   * Enforcement remains unavailable while owner integrations and native
+   * lifecycle acceptance are pending, as reported by enforcement_ready=false.
+   *
+   * @returns FinancialBudgetPreviewResponse Financial observation, workload consequences and enforcement readiness.
+   * @throws ApiError
+   */
+  public static previewFinancialBudget({
+    requestBody,
+  }: {
+    requestBody: FinancialBudgetPreviewRequest,
+  }): CancelablePromise<FinancialBudgetPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/billing/budgets/preview',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

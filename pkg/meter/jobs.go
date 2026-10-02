@@ -168,6 +168,18 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // operator can alert on.
 func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error) {
 	minute := MinuteKey(s.now())
+	var residency map[string]int64
+	exactResidency := false
+	if exact, ok := s.store.(instanceBillingSecondsStore); ok {
+		exactResidency = true
+		windowEnd := s.now().UTC().Truncate(time.Minute)
+		minute = windowEnd.Add(-time.Minute)
+		var err error
+		residency, err = exact.InstanceBillingSeconds(ctx, minute, windowEnd)
+		if err != nil {
+			return nil, fmt.Errorf("meter: job billing residency: %w", err)
+		}
+	}
 	instances, err := s.store.ListJobInstances(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("meter: SampleJobsAndRoll list: %w", err)
@@ -181,7 +193,11 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 	}
 	var out []JobRolledRow
 	for _, ins := range instances {
-		if ins.State == "destroyed" || ins.State == "parked" {
+		seconds := int64(60)
+		if exactResidency {
+			seconds = residency[ins.ID]
+		}
+		if seconds == 0 || (!exactResidency && (ins.State == "destroyed" || ins.State == "parked")) {
 			continue
 		}
 		// Mirror the app path's billable-RAM math (spec §4.7:
@@ -198,7 +214,7 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 			AccountID:   accountID,
 			Minute:      minute,
 			AdmissionMB: admissionMB,
-			MBSeconds:   MBSecondsPerMinute(admissionMB),
+			MBSeconds:   int64(admissionMB) * seconds,
 		}
 		if err := appender.AppendJobUsage(ctx, accountID, ins.JobID, ins.ID, minute, row.MBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 			return out, err
