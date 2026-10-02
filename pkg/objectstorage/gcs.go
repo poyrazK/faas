@@ -467,6 +467,9 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 }
 
 func (p *GCS) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if r.SourceProviderVersionID != "" {
+		return CopyObjectResult{}, ErrUnsupported
+	}
 	if sourceBucket == "" || destinationBucket == "" {
 		return CopyObjectResult{}, ErrInvalid
 	}

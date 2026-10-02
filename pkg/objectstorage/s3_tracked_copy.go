@@ -19,27 +19,33 @@ var _ ConditionalTrackedObjectCopier = (*S3)(nil)
 var _ DateConditionalTrackedObjectCopier = (*S3)(nil)
 
 func (p *S3) SnapshotCopySource(ctx context.Context, bucket, key string) (CopySourceSnapshot, error) {
-	return p.snapshotCopySource(ctx, bucket, key, api.MaxObjectSinglePutBytes)
+	return p.snapshotCopySource(ctx, bucket, key, "", api.MaxObjectSinglePutBytes)
 }
 
-func (p *S3) snapshotCopySource(ctx context.Context, bucket, key string, maxBytes int64) (CopySourceSnapshot, error) {
-	if !ValidKey(key) {
+func (p *S3) snapshotCopySource(ctx context.Context, bucket, key, version string, maxBytes int64) (CopySourceSnapshot, error) {
+	if !ValidKey(key) || version != "" && !validNativeVersionID(version) {
 		return CopySourceSnapshot{}, ErrInvalid
 	}
-	out, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	out, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: stringPtrOrNil(version)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
-		return CopySourceSnapshot{}, normalize(err)
+		return CopySourceSnapshot{}, copySourceHeadError(err, version)
 	}
 	if out == nil || out.ContentLength == nil {
 		return CopySourceSnapshot{}, ErrUnavailable
 	}
+	if !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), version) {
+		return CopySourceSnapshot{}, ErrUnavailable
+	}
 	if aws.ToBool(out.DeleteMarker) {
+		if version != "" {
+			return CopySourceSnapshot{}, ErrInvalid
+		}
 		return CopySourceSnapshot{}, ErrNotFound
 	}
 	snapshot := CopySourceSnapshot{SizeBytes: *out.ContentLength, ETag: aws.ToString(out.ETag), Metadata: ObjectMetadata{ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl), ContentDisposition: aws.ToString(out.ContentDisposition), ContentEncoding: aws.ToString(out.ContentEncoding), ContentLanguage: aws.ToString(out.ContentLanguage), Metadata: copyCustomerMetadata(out.Metadata)}}
 	snapshot.ProviderVersionID = aws.ToString(out.VersionId)
-	if snapshot.ProviderVersionID != "" && !validNativeVersionID(snapshot.ProviderVersionID) {
-		return CopySourceSnapshot{}, ErrUnavailable
+	if version == "null" && snapshot.ProviderVersionID == "" {
+		snapshot.ProviderVersionID = "null"
 	}
 	if !validCopySourceSize(snapshot, maxBytes) {
 		return CopySourceSnapshot{}, ErrInvalid
@@ -68,7 +74,7 @@ func immutableCopySource(s CopySourceSnapshot) bool {
 
 func trackedCopySource(bucket, key string, s CopySourceSnapshot) string {
 	value := url.PathEscape(bucket + "/" + key)
-	if immutableCopySource(s) {
+	if s.ProviderVersionID != "" {
 		value += "?versionId=" + url.QueryEscape(s.ProviderVersionID)
 	}
 	return value
@@ -102,7 +108,7 @@ func (p *S3) CopyDateConditionalTrackedObject(ctx context.Context, bucket, recei
 }
 
 func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
-	if _, err := uuid.Parse(receipt); err != nil || ctx.Err() != nil || !validCopySource(source) || ValidateObjectMetadata(r.Metadata) != nil {
+	if _, err := uuid.Parse(receipt); err != nil || ctx.Err() != nil || !validCopySource(source) || ValidateObjectMetadata(r.Metadata) != nil || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
 	if err := conditions.Check(source); err != nil {
@@ -135,6 +141,9 @@ func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt s
 	out, err := p.client.CopyObject(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return CopyObjectResult{}, trackedCopyError(err)
+	}
+	if out != nil && !validCopyResponseSource(out.ResultMetadata, aws.ToString(out.CopySourceVersionId), source.ProviderVersionID) {
+		return CopyObjectResult{}, ErrUnavailable
 	}
 	return copyObjectResult(out)
 }

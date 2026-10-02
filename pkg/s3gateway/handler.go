@@ -664,12 +664,16 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	if !h.validCopyBody(w, r, req) {
 		return
 	}
-	sourceBucket, sourceKey, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
-	if err != nil || sourceBucket != req.bucket.Name {
+	source, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	if err != nil || source.Bucket != req.bucket.Name {
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
 		return
 	}
-	copy, ok := gatewayCopyRequest(w, r, req, sourceKey, destinationKey)
+	copy, ok := gatewayCopyRequest(w, r, req, source.Key, destinationKey)
+	if !ok {
+		return
+	}
+	copy.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, req, source, false)
 	if !ok {
 		return
 	}
@@ -682,26 +686,6 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 		return
 	}
 	h.performLegacyGatewayCopy(w, r, req, copier, copy)
-}
-
-func parseCopySource(value string) (string, string, error) {
-	if value == "" || strings.ContainsRune(value, '?') {
-		return "", "", objectstorage.ErrInvalid
-	}
-	value = strings.TrimPrefix(value, "/")
-	parts := strings.SplitN(value, "/", 2)
-	if len(parts) != 2 {
-		return "", "", objectstorage.ErrInvalid
-	}
-	bucket, err := url.PathUnescape(parts[0])
-	if err != nil {
-		return "", "", objectstorage.ErrInvalid
-	}
-	key, err := url.PathUnescape(parts[1])
-	if err != nil || !objectstorage.ValidKey(key) {
-		return "", "", objectstorage.ErrInvalid
-	}
-	return bucket, key, nil
 }
 
 func copyMetadata(r *http.Request, directive string) (objectstorage.ObjectMetadata, error) {

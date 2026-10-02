@@ -22,9 +22,13 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 	if !h.admit(w, r, req, copy.SourceKey, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	source, err := copier.SnapshotCopySource(ctx, req.bucket.PhysicalName, copy.SourceKey)
+	source, err := snapshotGatewayCopySource(ctx, req, copy, copier)
 	if err != nil {
 		h.providerError(w, r, req, err, copy.SourceKey)
+		return
+	}
+	sourceID, ok := h.publicObjectVersionID(w, r, req, copy.SourceKey, source.ProviderVersionID, false)
+	if !ok {
 		return
 	}
 	if !h.checkCopySource(w, r, req, copy.SourceKey, source, conditions) {
@@ -55,7 +59,7 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 	} else {
 		result, err = copier.(objectstorage.ConditionalTrackedObjectCopier).CopyConditionalTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source, conditions)
 	}
-	h.completeGatewayCopy(w, r, req, st, c, result, err)
+	h.completeGatewayCopy(w, r, req, st, c, sourceID, result, err)
 }
 
 func gatewayCopyContentType(copy objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot) string {
@@ -65,7 +69,7 @@ func gatewayCopyContentType(copy objectstorage.CopyObjectRequest, source objects
 	return copy.Metadata.ContentType
 }
 
-func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayCopyStore, c state.ObjectUploadCompletion, result objectstorage.CopyObjectResult, err error) {
+func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayCopyStore, c state.ObjectUploadCompletion, sourceID string, result objectstorage.CopyObjectResult, err error) {
 	if err != nil {
 		if errors.Is(err, objectstorage.ErrWriteRejected) {
 			c.Status, c.ErrorCode = "failed", "provider_write_rejected"
@@ -95,6 +99,9 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 	}
 	if !h.publicVersionHeader(w, r, req, c.Key, result.ProviderVersionID, false) {
 		return
+	}
+	if sourceID != "" {
+		w.Header().Set("X-Amz-Copy-Source-Version-Id", sourceID)
 	}
 	writeGatewayCopyResult(w, req.requestID, result)
 }

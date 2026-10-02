@@ -110,13 +110,13 @@ func versionedSourceCopiesEndToEnd(t *testing.T, store func(*testing.T) multipar
 					id = f.initiate(t, "destination")
 					out, e := f.client.UploadPartCopy(t.Context(), &awss3.UploadPartCopyInput{Bucket: aws.String("assets"), Key: aws.String("destination"), UploadId: aws.String(id), PartNumber: aws.Int32(1), CopySource: aws.String("assets/source"), CopySourceRange: aws.String("bytes=0-9"), CopySourceIfMatch: stringPtr(tc.match), CopySourceIfNoneMatch: stringPtr(tc.none), CopySourceIfModifiedSince: tc.modified, CopySourceIfUnmodifiedSince: tc.unmodified})
 					err = e
-					if tc.code == "" && (out == nil || out.CopyPartResult == nil || aws.ToString(out.CopyPartResult.ETag) != `"part"` || out.CopySourceVersionId != nil) {
+					if tc.code == "" && (out == nil || out.CopyPartResult == nil || aws.ToString(out.CopyPartResult.ETag) != `"part"` || !state.ValidObjectVersionID(aws.ToString(out.CopySourceVersionId))) {
 						t.Fatal("invalid or leaking copy result", out)
 					}
 				} else {
 					out, e := f.client.CopyObject(t.Context(), &awss3.CopyObjectInput{Bucket: aws.String("assets"), Key: aws.String("destination"), CopySource: aws.String("assets/source"), CopySourceIfMatch: stringPtr(tc.match), CopySourceIfNoneMatch: stringPtr(tc.none), CopySourceIfModifiedSince: tc.modified, CopySourceIfUnmodifiedSince: tc.unmodified})
 					err = e
-					if tc.code == "" && (out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) != `"copied"` || out.CopySourceVersionId != nil) {
+					if tc.code == "" && (out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) != `"copied"` || !state.ValidObjectVersionID(aws.ToString(out.CopySourceVersionId))) {
 						t.Fatal("invalid or leaking copy result", out)
 					}
 				}

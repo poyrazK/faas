@@ -343,7 +343,8 @@ listing, `start-after`, URL encoding, ETags, and zero-key pages, GetObject/HeadO
 `DeleteObjects` (up to 1,000 keys), and the standard multipart
 initiate/list-parts/upload-part/part-copy/complete/abort operations, plus CopyObject with
 COPY/REPLACE metadata and tagging directives. S3 backends also support
-ListObjectVersions and GET/HEAD with a customer versionId (see below). It validates AWS
+ListObjectVersions, GET/HEAD with a customer versionId, and selected-version
+CopyObject/UploadPartCopy (see below). It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
 remain subject to credential revocation when a request arrives. Uploads
@@ -435,7 +436,7 @@ Rollback requires conditional completion or cleanup to be terminal. See
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication, bucket lifecycle APIs,
-bucket versioning configuration, version deletion/restore, ACLs, and bucket
+bucket versioning configuration, version deletion, ACLs, and bucket
 create/delete through the S3 protocol remain
 explicit `NotImplemented` gaps. Bucket lifecycle remains on the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
@@ -456,16 +457,43 @@ request. Exact-version reads preserve ranges, conditions, metadata and available
 checksums. A current delete marker returns 404; requesting that marker by ID
 returns 405 with `x-amz-delete-marker: true` and Last-Modified. Successful ordinary
 PUT, CopyObject and current GET/HEAD also return customer x-amz-version-id when
-the provider supplies a native ID. Multipart completion headers and versioned
-copy sources/tagging remain open.
+the provider supplies a native ID. Multipart completion headers and
+version-specific tagging remain open.
 
 Observing a non-null native version or any delete marker activates the retained
 version accounting fence. Reads and listings continue under ordinary read
 accounting. New writes wait for capacity reconciliation to establish an inventory
 of all retained data versions and delete markers. A current-only inventory cannot
 refund this history. This does not enable provider versioning or create markers;
-configuration, version deletion and restore remain explicit NotImplemented gaps.
+configuration and version deletion remain explicit NotImplemented gaps.
 See [ADR-400](adr/400-customer-s3-version-identities-and-reads.md).
+
+Copy a retained version with the standard SDK `CopySource` value
+`assets/hello.txt?versionId=ID`. URL-encode the key and query value separately;
+an encoded `?` in a key is not a version selector. The ID must belong to that
+source key and the credential's bucket. Unknown or foreign IDs fail before a
+provider request. Copies require both read and write permission, a verified
+all-version accounting baseline for retained sources, and copied-byte quota.
+The source HEAD and provider copy both select the resolved native version.
+Metadata/tagging directives, source predicates and multipart ranges still apply.
+`x-amz-copy-source-version-id` reports the customer source ID; ordinary copies
+also report the destination's new customer version ID when supplied by the
+provider. Native IDs remain private.
+
+Restore an older version by copying it back to the same key. This creates a new
+current version when provider versioning is enabled, preserving existing history
+and charging the new retained entry. It does not remove a delete marker or refund
+quota for an older version. Explicit `null` copies keep `versionId=null` on both
+provider requests and retain the measured ETag fence; `null` is mutable and is
+not an immutable restore point. Selected delete markers cannot be copied.
+Uncertain responses retain write receipts or part transfer fences and do not
+automatically replay the copy. See [ADR-401](adr/401-customer-selected-s3-copy-sources.md).
+
+```sh
+aws --endpoint-url "$S3_ENDPOINT" s3api copy-object \
+  --bucket assets --key hello.txt \
+  --copy-source "assets/hello.txt?versionId=$VERSION_ID"
+```
 
 ## Recovery and operator attention
 
@@ -1049,7 +1077,8 @@ existing 5 TiB total-object ceiling. A range source must exceed 5 MiB. Open-ende
 suffix and multiple ranges are invalid. Every completed part except the last
 must meet the 5 MiB multipart minimum. Native source versions use the same
 immutable-source and `all_versions` baseline requirements as CopyObject, with
-the same source date predicates. Customer-supplied version IDs remain pending.
+the same source date predicates. Append `?versionId=ID` to the URL-encoded
+`--copy-source` value to select a customer version ID (ADR-401).
 
 Gregale measures the source, reserves only the copied bytes and atomically
 requires the measured ETag at the provider. Customer source ETag conditions
@@ -1163,8 +1192,10 @@ Afterward each tracked PUT/application upload/copy or multipart completion reser
 its full size and one additional entry even when overwriting the same key.
 Direct signed PUTs, legacy untracked writes/completion and current-object
 single/bulk DELETE return a conflict or NotImplemented in this mode until their
-replay/marker admission is implemented. Public bucket versioning, customer
-version IDs and version-specific listing/deletion/restore remain pending.
+replay/marker admission is implemented. Public bucket versioning configuration
+and version-specific deletion remain pending. Customer IDs, version listing,
+exact reads and restoration by same-key selected-version copy are implemented
+(ADRs 400–401).
 See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
 See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
 rolling-upgrade guarantees.

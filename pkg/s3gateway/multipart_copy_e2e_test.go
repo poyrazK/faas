@@ -175,9 +175,6 @@ func (p *multipartCopyHTTPProvider) checkSourceCopy(t *testing.T, w http.Respons
 	source, err := url.PathUnescape(path)
 	query, qe := url.ParseQuery(rawQuery)
 	version := p.sourceVersion
-	if version == "null" {
-		version = ""
-	}
 	if err != nil || qe != nil || source != "physical/source" || query.Get("versionId") != version || len(query) > 1 {
 		t.Error("copy did not select the inspected version", source, query)
 	}

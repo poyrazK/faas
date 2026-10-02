@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -174,7 +173,7 @@ func copyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest
 	if sourceBucket == "" || destinationBucket == "" {
 		return nil, ErrInvalid
 	}
-	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
+	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) || r.SourceProviderVersionID != "" && !validNativeVersionID(r.SourceProviderVersionID) {
 		return nil, ErrInvalid
 	}
 	if r.MetadataDirective == "" {
@@ -205,7 +204,7 @@ func copyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest
 func buildCopyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest, tagging string) *s3.CopyObjectInput {
 	in := &s3.CopyObjectInput{
 		Bucket:             aws.String(destinationBucket),
-		CopySource:         aws.String(url.PathEscape(sourceBucket + "/" + r.SourceKey)),
+		CopySource:         aws.String(trackedCopySource(sourceBucket, r.SourceKey, CopySourceSnapshot{ProviderVersionID: r.SourceProviderVersionID})),
 		Key:                aws.String(r.DestinationKey),
 		Metadata:           r.Metadata.Metadata,
 		ContentType:        stringPtrOrNil(r.Metadata.ContentType),

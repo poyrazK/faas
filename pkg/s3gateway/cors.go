@@ -29,7 +29,7 @@ func (h *Handler) handleCORS(w http.ResponseWriter, r *http.Request, id string) 
 		return true
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Set("Access-Control-Expose-Headers", "ETag, X-Gregale-Upload-ID, X-Amz-Version-Id, X-Amz-Delete-Marker, Last-Modified, Content-Length, Content-Range, Accept-Ranges, x-amz-request-id, x-amz-checksum-crc32, x-amz-checksum-crc32c, x-amz-checksum-crc64nvme, x-amz-checksum-sha1, x-amz-checksum-sha256, x-amz-checksum-type")
+	w.Header().Set("Access-Control-Expose-Headers", "ETag, X-Gregale-Upload-ID, X-Amz-Version-Id, X-Amz-Copy-Source-Version-Id, X-Amz-Delete-Marker, Last-Modified, Content-Length, Content-Range, Accept-Ranges, x-amz-request-id, x-amz-checksum-crc32, x-amz-checksum-crc32c, x-amz-checksum-crc64nvme, x-amz-checksum-sha1, x-amz-checksum-sha256, x-amz-checksum-type")
 	if r.Method != http.MethodOptions {
 		return false
 	}

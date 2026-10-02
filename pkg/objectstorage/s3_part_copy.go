@@ -13,7 +13,7 @@ var _ MultipartPartCopier = (*S3)(nil)
 var _ DateConditionalMultipartPartCopier = (*S3)(nil)
 
 func (p *S3) SnapshotMultipartCopySource(ctx context.Context, bucket, key string) (CopySourceSnapshot, error) {
-	return p.snapshotCopySource(ctx, bucket, key, api.MaxObjectUploadBytes)
+	return p.snapshotCopySource(ctx, bucket, key, "", api.MaxObjectUploadBytes)
 }
 
 func (p *S3) CopyDateConditionalMultipartPart(ctx context.Context, bucket string, r MultipartPartCopyRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
@@ -21,7 +21,7 @@ func (p *S3) CopyDateConditionalMultipartPart(ctx context.Context, bucket string
 }
 
 func (p *S3) CopyMultipartPart(ctx context.Context, bucket string, r MultipartPartCopyRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
-	if bucket == "" || !ValidKey(r.SourceKey) || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || ctx.Err() != nil || !validCopySourceSize(source, api.MaxObjectUploadBytes) {
+	if bucket == "" || !ValidKey(r.SourceKey) || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || ctx.Err() != nil || !validCopySourceSize(source, api.MaxObjectUploadBytes) || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
 	if _, err := MultipartCopySize(source, r.Range); err != nil {
@@ -41,6 +41,9 @@ func (p *S3) CopyMultipartPart(ctx context.Context, bucket string, r MultipartPa
 		return CopyObjectResult{}, trackedCopyError(err)
 	}
 	if out == nil || out.CopyPartResult == nil || !validUploadETag(aws.ToString(out.CopyPartResult.ETag)) {
+		return CopyObjectResult{}, ErrUnavailable
+	}
+	if !validCopyResponseSource(out.ResultMetadata, aws.ToString(out.CopySourceVersionId), source.ProviderVersionID) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	return CopyObjectResult{ETag: aws.ToString(out.CopyPartResult.ETag), LastModified: aws.ToTime(out.CopyPartResult.LastModified)}, nil

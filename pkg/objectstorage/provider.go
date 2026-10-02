@@ -273,11 +273,12 @@ type ObjectMetadata struct {
 }
 
 type CopyObjectRequest struct {
-	SourceKey         string
-	DestinationKey    string
-	MetadataDirective string
-	TaggingDirective  string
-	Metadata          ObjectMetadata
+	SourceKey               string
+	SourceProviderVersionID string `json:"-"`
+	DestinationKey          string
+	MetadataDirective       string
+	TaggingDirective        string
+	Metadata                ObjectMetadata
 }
 
 type CopyObjectResult struct {
@@ -314,6 +315,13 @@ type TrackedObjectCopier interface {
 	CopyTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot) (CopyObjectResult, error)
 }
 
+// VersionedTrackedObjectCopier inspects the exact native selector before
+// admission. CopyTrackedObject must retain that selector, including null.
+type VersionedTrackedObjectCopier interface {
+	TrackedObjectCopier
+	SnapshotVersionCopySource(context.Context, string, string, string) (CopySourceSnapshot, error)
+}
+
 // ConditionalTrackedObjectCopier also enforces customer source conditions.
 // Older copy adapters must decline these conditions instead of ignoring them.
 type ConditionalTrackedObjectCopier interface {
@@ -337,6 +345,11 @@ type MultipartPartCopier interface {
 	CopyMultipartPart(context.Context, string, MultipartPartCopyRequest, CopySourceSnapshot) (CopyObjectResult, error)
 }
 
+type VersionedMultipartPartCopier interface {
+	MultipartPartCopier
+	SnapshotVersionMultipartCopySource(context.Context, string, string, string) (CopySourceSnapshot, error)
+}
+
 type DateConditionalMultipartPartCopier interface {
 	MultipartPartCopier
 	CopyDateConditionalMultipartPart(context.Context, string, MultipartPartCopyRequest, CopySourceSnapshot) (CopyObjectResult, error)
@@ -344,6 +357,7 @@ type DateConditionalMultipartPartCopier interface {
 
 type MultipartPartCopyRequest struct {
 	SourceKey, Key, ProviderUploadID string
+	SourceProviderVersionID          string `json:"-"`
 	PartNumber                       int32
 	Range                            *CopySourceRange
 	Conditions                       CopySourceConditions

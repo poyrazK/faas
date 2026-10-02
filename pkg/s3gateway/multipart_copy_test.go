@@ -25,7 +25,7 @@ func TestMultipartCopyRequestIsolation(t *testing.T) {
 		{"foreign destination bucket", "NoSuchBucket", func(in *awss3.UploadPartCopyInput) { in.Bucket = aws.String("other") }},
 		{"unknown upload", "NoSuchUpload", func(in *awss3.UploadPartCopyInput) { in.UploadId = aws.String(uuid.NewString()) }},
 		{"wrong destination key", "NoSuchUpload", func(in *awss3.UploadPartCopyInput) { in.Key = aws.String("other") }},
-		{"source version", "NoSuchKey", func(in *awss3.UploadPartCopyInput) { in.CopySource = aws.String("assets/source?versionId=unowned") }},
+		{"source version", "NoSuchVersion", func(in *awss3.UploadPartCopyInput) { in.CopySource = aws.String("assets/source?versionId=unowned") }},
 		{"reversed range", "InvalidArgument", func(in *awss3.UploadPartCopyInput) { in.CopySourceRange = aws.String("bytes=9-0") }},
 		{"suffix range", "InvalidArgument", func(in *awss3.UploadPartCopyInput) { in.CopySourceRange = aws.String("bytes=-9") }},
 		{"multiple ranges", "InvalidArgument", func(in *awss3.UploadPartCopyInput) { in.CopySourceRange = aws.String("bytes=0-9,20-29") }},

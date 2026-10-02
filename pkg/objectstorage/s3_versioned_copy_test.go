@@ -36,9 +36,6 @@ func TestS3VersionedSourceCopy(t *testing.T) {
 					path, err := url.PathUnescape(rawPath)
 					q, qe := url.ParseQuery(query)
 					wantVersion := version
-					if version == "null" {
-						wantVersion = ""
-					}
 					if err != nil || qe != nil || path != "physical/"+key || q.Get("versionId") != wantVersion || len(q) > 1 || r.Header.Get("X-Amz-Copy-Source-If-Match") != `"same-etag"` {
 						t.Error("copy did not retain the measured source identity", path, q, err, qe)
 					}

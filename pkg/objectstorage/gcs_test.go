@@ -131,6 +131,15 @@ func TestGCSCopyObjectBetweenBuckets(t *testing.T) {
 	}
 }
 
+func TestGCSCopyRejectsVersionSelector(t *testing.T) {
+	store := &fakeGCSStore{}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	_, err := provider.CopyObject(context.Background(), "bucket", CopyObjectRequest{SourceKey: "source", DestinationKey: "destination", SourceProviderVersionID: "native"})
+	if !errors.Is(err, ErrUnsupported) || store.copySourceBucket != "" {
+		t.Fatal("GCS ignored native version selection", err, store.copySourceBucket)
+	}
+}
+
 func TestGCSBucketSafetyRecoveryAndErrors(t *testing.T) {
 	store := &fakeGCSStore{}
 	p := testGCS(gcsDefaultEndpoint, store)

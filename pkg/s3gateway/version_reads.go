@@ -11,23 +11,30 @@ import (
 )
 
 func (h *Handler) publicVersionHeader(w http.ResponseWriter, r *http.Request, req requestContext, key, native string, marker bool) bool {
+	id, ok := h.publicObjectVersionID(w, r, req, key, native, marker)
+	if ok && id != "" {
+		w.Header().Set("X-Amz-Version-Id", id)
+	}
+	return ok
+}
+
+func (h *Handler) publicObjectVersionID(w http.ResponseWriter, r *http.Request, req requestContext, key, native string, marker bool) (string, bool) {
 	if native == "" {
-		return true
+		return "", true
 	}
 	st, ok := h.store.(state.ObjectVersionReferenceStore)
 	if !ok {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
-		return false
+		return "", false
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer cancel()
 	refs, err := st.RecordObjectVersions(ctx, req.bucket.AccountID, req.bucket.ID, []state.ObjectVersionIdentity{{Key: key, ProviderVersionID: native, DeleteMarker: marker}})
 	if err != nil || len(refs) != 1 || !validReturnedVersionIdentity(refs[0], key, native) {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
-		return false
+		return "", false
 	}
-	w.Header().Set("X-Amz-Version-Id", refs[0].ID)
-	return true
+	return refs[0].ID, true
 }
 
 func (h *Handler) resolveReadVersion(w http.ResponseWriter, r *http.Request, req requestContext, key string) (string, bool) {

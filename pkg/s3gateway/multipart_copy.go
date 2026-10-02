@@ -64,12 +64,17 @@ func (h *Handler) multipartCopyRequest(w http.ResponseWriter, r *http.Request, r
 		return c, false
 	}
 	c.PartNumber = int32(part)
-	bucket, source, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
-	if err != nil || bucket != req.bucket.Name {
+	source, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	if err != nil || source.Bucket != req.bucket.Name {
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
 		return c, false
 	}
-	c.SourceKey = source
+	c.SourceKey = source.Key
+	var ok bool
+	c.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, req, source, true)
+	if !ok {
+		return c, false
+	}
 	c.Range, err = objectstorage.ParseCopySourceRange(r.Header.Get("X-Amz-Copy-Source-Range"))
 	values, present := r.Header[http.CanonicalHeaderKey("X-Amz-Copy-Source-Range")]
 	if err != nil || present && (len(values) != 1 || values[0] == "") {
@@ -83,7 +88,6 @@ func (h *Handler) multipartCopyRequest(w http.ResponseWriter, r *http.Request, r
 			return c, false
 		}
 	}
-	var ok bool
 	c.Conditions, ok = gatewayCopyConditions(w, r, req)
 	return c, ok
 }
@@ -94,9 +98,13 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 	if !h.admit(w, r, req, upload.Key, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	source, err := copier.SnapshotMultipartCopySource(ctx, req.bucket.PhysicalName, c.SourceKey)
+	source, err := snapshotGatewayPartCopySource(ctx, req, c, copier)
 	if err != nil {
 		h.providerError(w, r, req, err, c.SourceKey)
+		return
+	}
+	sourceID, ok := h.publicObjectVersionID(w, r, req, c.SourceKey, source.ProviderVersionID, false)
+	if !ok {
 		return
 	}
 	if !h.checkCopySource(w, r, req, c.SourceKey, source, c.Conditions) {
@@ -143,6 +151,9 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	safeToSettle = true
+	if sourceID != "" {
+		w.Header().Set("X-Amz-Copy-Source-Version-Id", sourceID)
+	}
 	lastModified := ""
 	if !result.LastModified.IsZero() {
 		lastModified = result.LastModified.UTC().Format(time.RFC3339Nano)
