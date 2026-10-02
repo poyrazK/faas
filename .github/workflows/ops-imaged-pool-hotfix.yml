@@ -1,63 +1,55 @@
-name: ops-imaged-pool-hotfix
+name: ops-request-evidence-component-hotfix
+run-name: RC231 request evidence hotfix (${{ inputs.release_tag }})
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Signed tag of the qualified RC231 backport
+        required: true
+        type: string
 
 concurrency:
-  group: production-imaged-pool-hotfix
+  group: production-us-platform-rollout
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  repair-fsn-3:
-    name: Split fsn-3 imaged session pool
+  gateway-hotfix:
+    name: Apply signed gateway hotfix sequentially with rollback
     if: github.repository == 'poyrazK/faas'
-    environment: production
-    runs-on: [self-hosted, linux, faas-fleet]
-    timeout-minutes: 10
+    environment: production-us
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    timeout-minutes: 25
     steps:
-      - name: Configure the existing direct Postgres endpoint
-        shell: bash
+      - uses: actions/checkout@v7
+      - name: Verify rollback and artifact contracts
+        run: python3 -m unittest discover -s scripts/ops -p 'request_evidence_hotfix_test.py' -v
+      - name: Install pinned signature verifier
         env:
-          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COSIGN_VERSION: 2.4.1
+          COSIGN_SHA256: 8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
+        shell: bash
         run: |
           set -euo pipefail
-          test -n "$COMPUTE_SSH_KEY"
-          key="$RUNNER_TEMP/imaged-pool-hotfix-key"
-          known_hosts="$RUNNER_TEMP/imaged-pool-hotfix-known-hosts"
-          trap 'rm -f "$key" "$known_hosts"' EXIT
-          umask 077
-          printf '%s\n' "$COMPUTE_SSH_KEY" > "$key"
-          ssh-keyscan -T 10 -t ed25519 fsn-3.gregale.dev > "$known_hosts" 2>/dev/null
-          fingerprint="$(ssh-keygen -lf "$known_hosts" -E sha256 | awk 'NR == 1 { print $2 }')"
-          test "$fingerprint" = 'SHA256:fa3t2ZW/lTugFP9xBomcfm/olwZ0+b1FAh3nbGfpTX8'
-
-          ssh -i "$key" -o BatchMode=yes -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" \
-            poyrazk@fsn-3.gregale.dev 'sudo -n bash -s' <<'REMOTE'
-          set -euo pipefail
-          file=/etc/faas/compute-db.env
-          backup=/etc/faas/compute-db.env.pre-imaged-pool-hotfix-20260924
-          test "$(stat -c '%U:%G:%a' "$file")" = root:root:600
-          test "$(grep -c '^DATABASE_URL=' "$file")" -eq 1
-          direct_count="$(grep -c '^FAAS_DATABASE_URL_DIRECT=' "$file" || true)"
-          if test "$direct_count" -eq 0; then
-            test ! -e "$backup"
-            cp -p "$file" "$backup"
-            line="$(sed -n 's/^DATABASE_URL=/FAAS_DATABASE_URL_DIRECT=/p' "$backup")"
-            test -n "$line"
-            printf '%s\n' "$line" >> "$file"
-          else
-            test "$direct_count" -eq 1
-          fi
-          test "$(grep -c '^FAAS_DATABASE_URL_DIRECT=' "$file")" -eq 1
-          test "$(stat -c '%U:%G:%a' "$file")" = root:root:600
-          systemctl restart faas-imaged
-          systemctl is-active --quiet faas-imaged
-          pid="$(systemctl show -p MainPID --value faas-imaged)"
-          test "$pid" -gt 0
-          grep -azq '^FAAS_DATABASE_URL_DIRECT=' "/proc/$pid/environ"
-          echo 'fsn-3 imaged direct pool configured and service active'
-          REMOTE
+          verifier="$RUNNER_TEMP/request-evidence-cosign"
+          curl --fail --location --retry 3 --output "$verifier" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          printf '%s  %s\n' "$COSIGN_SHA256" "$verifier" | sha256sum --check --strict
+          chmod 755 "$verifier"
+      - name: Apply exact-source gateway hotfix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          HOTFIX_TAG: ${{ inputs.release_tag }}
+        run: python3 scripts/ops/request_evidence_hotfix.py --cosign "$RUNNER_TEMP/request-evidence-cosign"
+      - name: Preserve activation and rollback receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: request-evidence-component-hotfix-${{ github.run_id }}
+          path: request-evidence-hotfix-receipt.json
+          if-no-files-found: error
