@@ -61,8 +61,12 @@ type capacityResources struct {
 // ServiceCapacityPlacement is an internal scheduler projection. Database
 // admission still serializes the eventual write after this placement hint.
 type ServiceCapacityPlacement struct {
-	Enabled bool                            `json:"enabled"`
-	Nodes   map[string]ServiceCapacitySlots `json:"placement"`
+	Enabled             bool                            `json:"enabled"`
+	Nodes               map[string]ServiceCapacitySlots `json:"placement"`
+	report              api.ServiceCapacityProtection
+	ordinaryInputs      bool
+	regions             map[string]*regionalServiceCapacity
+	totalLegacyCapacity int64
 }
 
 type ServiceCapacitySlots struct {
@@ -73,6 +77,11 @@ type ServiceCapacitySlots struct {
 	Region        string `json:"region"`
 	LegacyUsed    int64  `json:"legacy_used"`
 	Fits          bool   `json:"fits"`
+	// Remaining budgets after ordinary usage, before service residency.
+	// They preserve fractional slot headroom for prospective ordinary guests.
+	RAMBudgetMB         int64 `json:"service_ram_budget_mb"`
+	CPUBudgetMillicores int64 `json:"service_cpu_budget_millicores"`
+	VCPUBudget          int64 `json:"service_vcpu_budget"`
 }
 
 func (s *PgStore) ServiceCapacityPlacement(ctx context.Context) (ServiceCapacityPlacement, error) {
@@ -80,11 +89,15 @@ func (s *PgStore) ServiceCapacityPlacement(ctx context.Context) (ServiceCapacity
 	if err != nil {
 		return ServiceCapacityPlacement{}, mapErr(err)
 	}
-	var out ServiceCapacityPlacement
-	if err := json.Unmarshal(data, &out); err != nil {
-		return out, fmt.Errorf("state: decode service placement capacity: %w", err)
+	var wire struct {
+		api.ServiceCapacityProtection
+		Nodes          map[string]ServiceCapacitySlots `json:"placement"`
+		OrdinaryInputs bool                            `json:"ordinary_inputs"`
 	}
-	return out, nil
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return ServiceCapacityPlacement{}, fmt.Errorf("state: decode service placement capacity: %w", err)
+	}
+	return newServiceCapacityPlacement(wire.ServiceCapacityProtection, wire.Nodes, wire.OrdinaryInputs), nil
 }
 
 func (m *MemStore) ServiceCapacityPlacement(_ context.Context) (ServiceCapacityPlacement, error) {
@@ -93,7 +106,8 @@ func (m *MemStore) ServiceCapacityPlacement(_ context.Context) (ServiceCapacityP
 	if !m.serviceCapacityProtection {
 		return ServiceCapacityPlacement{}, nil
 	}
-	return ServiceCapacityPlacement{Enabled: true, Nodes: m.serviceCapacitySnapshotLocked().Placement}, nil
+	snapshot := m.serviceCapacitySnapshotLocked()
+	return newServiceCapacityPlacement(snapshot.Report, snapshot.Placement, true), nil
 }
 
 type serviceCapacitySnapshot struct {
@@ -267,7 +281,8 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		r.FleetSlots += slots
 		largest = max(largest, slots)
 		fits := s.ServiceUsage[n.ID] <= slots && other.RAM <= int64(n.AdmissionCeilingMB) && other.CPU <= int64(n.VPCPUs)*1000*api.CPUOvercommit && other.VCPU <= int64(n.VCPUBudget)
-		s.Placement[n.ID] = ServiceCapacitySlots{Slots: slots, Used: s.ServiceUsage[n.ID], Region: stringValue(n.Region), LegacyUsed: s.LegacyUsage[n.ID], LegacyAllowed: slots > s.ServiceUsage[n.ID], PinnedAllowed: slots > s.ServiceUsage[n.ID], Fits: fits}
+		s.Placement[n.ID] = ServiceCapacitySlots{Slots: slots, Used: s.ServiceUsage[n.ID], Region: stringValue(n.Region), LegacyUsed: s.LegacyUsage[n.ID], LegacyAllowed: slots > s.ServiceUsage[n.ID], PinnedAllowed: slots > s.ServiceUsage[n.ID], Fits: fits,
+			RAMBudgetMB: int64(n.AdmissionCeilingMB) - other.RAM, CPUBudgetMillicores: int64(n.VPCPUs)*1000*api.CPUOvercommit - other.CPU, VCPUBudget: int64(n.VCPUBudget) - other.VCPU}
 		if !fits {
 			r.PlacementsFit = false
 		}

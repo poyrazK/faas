@@ -24092,6 +24092,9 @@ eligible AS (
 ), nodes AS (
     SELECT n.id, n.name, coalesce(n.region,'') AS region, coalesce(s.legacy_count,0) AS legacy_count, coalesce(s.region_fit,true) AS region_fit, coalesce(u.ram,0) AS other_ram, coalesce(u.cpu,0) AS other_cpu, coalesce(u.vcpu,0) AS other_vcpu,
            coalesce(s.count,0) AS service_count,
+           n.admission_ceiling_mb-coalesce(u.ram,0) AS service_ram_budget_mb,
+           n.vpcpus::bigint*1000*p.cpu_overcommit-coalesce(u.cpu,0) AS service_cpu_budget_millicores,
+           n.vcpu_budget-coalesce(u.vcpu,0) AS service_vcpu_budget,
            (coalesce(u.ram,0)<=n.admission_ceiling_mb AND coalesce(u.cpu,0)<=n.vpcpus::bigint*1000*p.cpu_overcommit AND coalesce(u.vcpu,0)<=n.vcpu_budget) AS ordinary_fit,
            greatest(0,least((n.admission_ceiling_mb-coalesce(u.ram,0))/sh.ram,
                        (n.vpcpus::bigint*1000*p.cpu_overcommit-coalesce(u.cpu,0))/sh.cpu,
@@ -24108,7 +24111,7 @@ eligible AS (
 actual_targets AS (SELECT key,count(*) AS count FROM resident WHERE service GROUP BY key),
 projection AS (
     SELECT jsonb_build_object(
-        'enabled',p.enabled,
+        'enabled',p.enabled,'ordinary_inputs',true,
         'state',CASE WHEN NOT p.enabled THEN 'disabled'
                      WHEN t.healthy_nodes>=2 AND t.placements_fit AND r.count<=t.failover_slots
                        AND NOT EXISTS (SELECT 1 FROM actual_targets a JOIN demand d ON d.key=a.key WHERE a.count>d.count) THEN 'protected'
@@ -24118,7 +24121,8 @@ projection AS (
         'fleet_slots',t.fleet_slots,'failover_slots',t.failover_slots,'placements_fit',t.placements_fit,
         'demands',coalesce((SELECT jsonb_object_agg(key,jsonb_build_object('count',count,'desired',desired,'region',region,'ram',ram,'cpu',cpu,'vcpu',vcpu)) FROM demand),'{}'::jsonb),
         'other',coalesce((SELECT jsonb_object_agg(id::text,jsonb_build_object('ram',other_ram,'cpu',other_cpu,'vcpu',other_vcpu)) FROM nodes),'{}'::jsonb),
-        'placement',coalesce((SELECT jsonb_object_agg(id::text,jsonb_build_object('slots',slots,'used',service_count,'region',region,'legacy_used',legacy_count,'legacy_allowed',slots>service_count,'pinned_allowed',slots>service_count,'fits',service_count<=slots AND ordinary_fit AND region_fit)) FROM nodes),'{}'::jsonb),
+        'placement',coalesce((SELECT jsonb_object_agg(id::text,jsonb_build_object('slots',slots,'used',service_count,
+            'service_ram_budget_mb',service_ram_budget_mb,'service_cpu_budget_millicores',service_cpu_budget_millicores,'service_vcpu_budget',service_vcpu_budget,'region',region,'legacy_used',legacy_count,'legacy_allowed',slots>service_count,'pinned_allowed',slots>service_count,'fits',service_count<=slots AND ordinary_fit AND region_fit)) FROM nodes),'{}'::jsonb),
         'region_ids',coalesce((SELECT jsonb_agg(id ORDER BY id) FROM (SELECT id FROM compute_regions UNION SELECT coalesce(region,'') FROM compute_nodes UNION SELECT region FROM demand WHERE region<>'') ids),'[]'::jsonb),
         'legacy_usage',coalesce((SELECT jsonb_object_agg(node_id::text,count) FROM (SELECT node_id,count(*) AS count FROM resident WHERE service AND region='' GROUP BY node_id) legacy),'{}'::jsonb),
         'service_usage',coalesce((SELECT jsonb_object_agg(node_id::text,count) FROM service_usage),'{}'::jsonb),

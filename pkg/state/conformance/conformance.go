@@ -181,6 +181,7 @@ func Run(t *testing.T, open Open) {
 		{"service_capacity/regional_legacy_intent", testRegionalCapacityLegacyIntent},
 		{"service_capacity/regional_placement_recovery", testRegionalCapacityPlacementRecovery},
 		{"service_capacity/regional_concurrent", testRegionalCapacityConcurrent},
+		{"service_capacity/ordinary_stale_hint", testOrdinaryCapacityStaleHint},
 		{"job_attempt_replay_and_flexible_expiry_are_durable", testJobAttemptReplayAndFlexibleExpiry},
 		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},

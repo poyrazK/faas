@@ -52,8 +52,10 @@ change replica targets or stop services.
 
 ## Behavior during incidents
 
-New service capacity and bursts that consume the protected margin receive
-`service_recovery_capacity_unavailable` (HTTP 503). Instance admission remains
+New service intent and database writes that consume the protected margin receive
+`service_recovery_capacity_unavailable` (HTTP 503). Placement without a safe host
+returns a retryable capacity refusal; a pinned request with eligible hosts returns
+`compute_region_capacity_exhausted`. Instance admission remains
 retryable capacity, not a startup failure. A database outage fails admission
 closed; a restart does not release declarations.
 
@@ -71,6 +73,18 @@ Promoting a warm VM also revalidates its service slots and retained guest size;
 unchanged physical usage does not bypass admission. An unsafe promotion leaves
 the VM warm and returns retryable capacity. Promotion into an existing declared
 slot on a healthy surviving host remains possible while degraded.
+
+Ordinary placement checks the prospective RAM, CPU and guest-vCPU cost against
+the certificate before applying affinity (ADR-438). Unrestricted wakes and jobs
+can use safe foreign capacity when a preferred region's spare slots are reserved.
+Pinned workloads remain local. Mirrors, warm fills and internal app tasks consume
+ordinary headroom; normal service wake and prime retain declared recovery slots.
+Owner claims allocate no VM and can proceed during degradation. Install migration
+`20261002200131931_service_capacity_ordinary_placement.sql` before using the new
+scheduler with protection enabled. Downgrading this metadata preserves database
+admission protection but causes the new scheduler to refuse ordinary growth until
+the metadata is restored. Disabled fleets retain physical placement behavior.
+
 Turning a service VM into an ordinary warm guest must also leave the fleet
 protected; removing service intent remains allowed during degradation.
 Workers, function floors and jobs have no new service guarantee and cannot
@@ -126,6 +140,19 @@ acceptance harness has not been executed for regional capacity.
 
 This is portable implementation evidence. Native fleet qualification below
 is still pending; protection remains opt-in and disabled by default.
+
+Ordinary-placement follow-up evidence recorded on 2026-10-02 (macOS ARM64,
+Go 1.25.13): full portable state, conformance and scheduler suites pass. Shared
+MemStore/Postgres regressions cover unsafe preferred-region selection, safe
+foreign placement, pinned jobs, deployment sidecars, plan guest-vCPU bounds,
+normal service recovery, ordinary service-bound residents and owner claims.
+An independent exhaustive small-fleet oracle checks prospective slot reductions.
+Concurrent stale-hint admission, populated replay, policy-lock serialization
+and enabled downgrade/re-upgrade pass. Focused conformance/scheduler capacity
+race checks (including Postgres scheduler cases), API capacity tests, migration
+policy checks, SQLC v1.31.1 drift and diff lint with golangci-lint v2.12.2 pass.
+Linux amd64 apid/schedd and metal-harness builds pass with normal optimization
+and stripped debug metadata. These results do not replace native execution.
 
 On an isolated native x86_64 Linux KVM fleet, measure admission throughput with
 protection enabled and disabled at representative workload counts. Record

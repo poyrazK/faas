@@ -65,7 +65,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
+		AppID: app.ID, DeploymentID: dep.ID, ordinaryResident: true, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
 		CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})

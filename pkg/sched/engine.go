@@ -3104,6 +3104,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	placementRequest := Request{
 		AppID:                      appID,
+		DeploymentID:               dep.ID,
+		ordinaryResident:           mode != string(state.InstanceModeNormal) && mode != string(state.InstanceModeService),
 		Plan:                       acct.Plan,
 		RAMMB:                      app.RAMMB,
 		VCPU:                       limits.VCPU,
@@ -4394,20 +4396,9 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 			eligibleRegionalNodes++
 		}
 	}
-	if isServiceReplicaPlacementSpread(ctx) {
-		capacity, err := e.store.ServiceCapacityPlacement(ctx)
-		if err != nil {
-			return placementSnapshot{}, fmt.Errorf("sched: placement: read service recovery slots: %w", err)
-		}
-		if capacity.Enabled {
-			eligible := make([]state.ComputeNode, 0, len(nodes))
-			for _, node := range nodes {
-				if slots, healthy := capacity.Nodes[node.ID]; healthy && slots.Used < slots.Slots && ((requiredRegion != "" && slots.PinnedAllowed) || (requiredRegion == "" && slots.LegacyAllowed)) {
-					eligible = append(eligible, node)
-				}
-			}
-			nodes = eligible
-		}
+	nodes, err = e.serviceCapacityPlacementNodes(ctx, r, app, nodes, requiredRegion)
+	if err != nil {
+		return placementSnapshot{}, err
 	}
 	// One pass over the fleet — use fresh vmmd capacity where available, and
 	// resolve all misses through one bulk store aggregate (Tier A1). The
@@ -4627,6 +4618,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID:          appID,
+		placementOnly:  true,
 		RAMMB:          app.RAMMB,
 		VCPU:           limits.VCPU,
 		CPUMillicores:  effectiveAppCPUMillicores(app),
@@ -5759,7 +5751,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: appID, Plan: acct.Plan,
+		AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})

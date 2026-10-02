@@ -95,13 +95,14 @@ func exerciseRegionalServiceCapacityPlacement(t *testing.T, store state.Store) {
 		if err := engine.SeedLedger(ctx); err != nil {
 			t.Fatal(err)
 		}
-		ownerHint := Request{AppID: apps[region].ID, RAMMB: 512, VCPU: 2}
+		ownerHint := Request{AppID: apps[region].ID, RAMMB: 512, VCPU: 2, placementOnly: true}
 		if placement, err := engine.choosePlacementLocked(ctx, ownerHint); err != nil || placement.NodeID != owner.ID {
 			t.Fatalf("placement snapshot lost owner affinity: %+v %v", placement, err)
 		}
 		request := Request{AppID: apps[region].ID, RAMMB: 512, VCPU: 2, CPUMillicores: 1000, PreferredNodeID: owner.ID, PrioritizeSnapshotLocality: true}
-		if placement, err := engine.choosePlacementLocked(ctx, request); err != nil || placement.NodeID != owner.ID {
-			t.Fatalf("ordinary placement should prefer roomy owner: %+v %v", placement, err)
+		// ADR-438: ordinary service wakes also use the safe survivor hints.
+		if placement, err := engine.choosePlacementLocked(ctx, request); err != nil || placement.NodeID == owner.ID || placement.Region != "eu-fsn" {
+			t.Fatalf("service placement without convergence context selected unsafe owner: %+v %v", placement, err)
 		}
 		placement, err := engine.choosePlacementLocked(withServiceReplicaPlacementSpread(ctx), request)
 		if err != nil || placement.NodeID == owner.ID || placement.Region != "eu-fsn" {

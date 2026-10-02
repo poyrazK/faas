@@ -99,8 +99,14 @@ func exerciseProtectedServiceMixedSlots(t *testing.T, store state.Store) {
 		t.Fatal(err)
 	}
 	request := Request{AppID: small.ID, RAMMB: 128, VCPU: 4, CPUMillicores: 250}
-	if p, err := e.choosePlacementLocked(ctx, request); err != nil || p.NodeID != fleet[0].ID {
-		t.Fatalf("ordinary placement did not expose the full-slot host: %+v %v", p, err)
+	physical := request
+	physical.placementOnly = true
+	if p, err := e.choosePlacementLocked(ctx, physical); err != nil || p.NodeID != fleet[0].ID {
+		t.Fatalf("allocation-free placement did not expose the full-slot host: %+v %v", p, err)
+	}
+	// ADR-438: normal service wake/prime must recover without a spread context.
+	if p, err := e.choosePlacementLocked(ctx, request); err != nil || p.NodeID != fleet[1].ID {
+		t.Fatalf("normal service placement did not use spare slots: %+v %v", p, err)
 	}
 	if p, err := e.choosePlacementLocked(withServiceReplicaPlacementSpread(ctx), request); err != nil || p.NodeID != fleet[1].ID {
 		t.Fatalf("service placement did not use spare slots: %+v %v", p, err)

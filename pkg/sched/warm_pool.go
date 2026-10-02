@@ -210,7 +210,7 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
 	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
+		AppID: app.ID, DeploymentID: dep.ID, ordinaryResident: true, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
 	})
 	if err != nil {

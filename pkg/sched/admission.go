@@ -240,6 +240,11 @@ type Request struct {
 	PreferredRegion string
 	// RequiredRegion is a hard compute constraint, applied before affinity and capacity scoring.
 	RequiredRegion string
+	// Ordinary residents (mirrors, warm fills and app tasks) cannot spend
+	// declared service recovery slots even when bound to a service app.
+	ordinaryResident bool
+	// Owner claims allocate no VM and do not consume recovery capacity.
+	placementOnly bool
 	// restorePressureAware marks snapshot restores whose placement may account
 	// for other in-flight restore RPCs on each node. The Engine sets this only
 	// for real snapshot restores; cold boots and deployment smokes keep their
