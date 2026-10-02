@@ -3,10 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthRoute } from './RouteHealthRoute.js';
+/**
+ * Replacement critical-route health configuration and the revision the caller expects to update.
+ */
 export type SetRouteHealthGateRequest = {
   mode: 'report' | 'enforce';
   /**
-   * Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.
+   * Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.
    */
   on_regression?: 'hold' | 'abort';
   expected_revision: number;

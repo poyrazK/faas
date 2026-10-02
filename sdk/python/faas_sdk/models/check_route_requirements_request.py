@@ -13,6 +13,8 @@ T = TypeVar("T", bound="CheckRouteRequirementsRequest")
 
 @_attrs_define
 class CheckRouteRequirementsRequest:
+    """App-owned deployment capture to evaluate against saved route intent, with an optional intent revision pin."""
+
     deployment_id: UUID
     expected_revision: int | Unset = UNSET
     """Optional saved revision pin; a changed revision returns 409."""

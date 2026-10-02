@@ -26,6 +26,8 @@ T = TypeVar("T", bound="RouteHealthFinding")
 
 @_attrs_define
 class RouteHealthFinding:
+    """Combined verdict and both closed-window evidence records for one selected critical route."""
+
     method: str
     path: str
     status: RouteHealthFindingStatus

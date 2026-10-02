@@ -26,6 +26,11 @@ T = TypeVar("T", bound="RouteHealthReport")
 
 @_attrs_define
 class RouteHealthReport:
+    """Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry
+    provenance.
+
+    """
+
     app_id: UUID
     deployment_id: UUID
     candidate_commit_sha: str
@@ -42,8 +47,8 @@ class RouteHealthReport:
     minimum_requests: int
     routes: list[RouteHealthFinding]
     on_regression: RouteHealthReportOnRegression | Unset = UNSET
-    """Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for
-    confirmed route 5xx regressions during an enforced canary; report mode is observational."""
+    """Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors
+    in enforce mode; reading the report never performs that action."""
     observation_anchor: datetime.datetime | Unset = UNSET
     """Latest stage or configuration timestamp that both windows must follow."""
     minimum_latency_requests: int | Unset = UNSET

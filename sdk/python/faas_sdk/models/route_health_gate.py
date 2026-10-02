@@ -21,6 +21,8 @@ T = TypeVar("T", bound="RouteHealthGate")
 
 @_attrs_define
 class RouteHealthGate:
+    """Current critical-route selection, health guard mode, recovery policy, and configuration revision."""
+
     app_id: UUID
     mode: RouteHealthGateMode
     revision: int

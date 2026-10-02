@@ -34,8 +34,8 @@ class RouteHealthDecision:
     reason: str
     checked_at: datetime.datetime
     on_regression: RouteHealthDecisionOnRegression | Unset = UNSET
-    """Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for
-    confirmed route 5xx regressions during an enforced canary; report mode is observational."""
+    """Hold or abort policy captured with this rollout evaluation so retained decisions can be interpreted
+    independently of later configuration updates."""
     history_id: UUID | Unset = UNSET
     """Retained saved decision UUID when selected routes were evaluated."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

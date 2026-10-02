@@ -51,6 +51,8 @@ class RouteHealthHistoryEntry:
     """Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact
     saved evidence with the advance response and traffic audit."""
     report: RouteHealthReport
+    """Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry
+    provenance."""
     purpose: RouteHealthHistoryEntryPurpose | Unset = UNSET
     """Abort identifies a committed automatic rollback with worker source and requested traffic 0. Omitted for
     advance evaluations."""

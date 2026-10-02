@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RouteCheckChangeSummary")
 
 @_attrs_define
 class RouteCheckChangeSummary:
+    """Exact finding-change counts across the bounded comparison, including observations omitted from truncated detail."""
+
     newly_violated: int
     resolved: int
     changed: int

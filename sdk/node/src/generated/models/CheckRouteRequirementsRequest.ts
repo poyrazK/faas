@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * App-owned deployment capture to evaluate against saved route intent, with an optional intent revision pin.
+ */
 export type CheckRouteRequirementsRequest = {
   deployment_id: string;
   /**

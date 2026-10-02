@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window.
+ */
 export type RouteHealthCounts = {
   requests: number;
   server_errors: number;

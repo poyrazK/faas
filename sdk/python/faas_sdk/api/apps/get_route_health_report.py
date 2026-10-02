@@ -95,9 +95,10 @@ def sync_detailed(
     and at least 100 ms additional latency. Each signal is confirmed independently across both windows.
     Both windows must begin after the current stage and latest configuration update. Missing, sparse,
     ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests
-    dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every
-    selected route is healthy; never automatically aborts. Stable deployment is the sole other live
-    serving deployment in the same scope.
+    dropped before storage cannot be established. Enforce mode holds subsequent advances unless every
+    selected route is healthy. This read does not change traffic; the configured recovery action is
+    evaluated separately by the canary worker. Stable deployment is the sole other live serving
+    deployment in the same scope.
 
     Args:
         slug (str):
@@ -140,9 +141,10 @@ def sync(
     and at least 100 ms additional latency. Each signal is confirmed independently across both windows.
     Both windows must begin after the current stage and latest configuration update. Missing, sparse,
     ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests
-    dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every
-    selected route is healthy; never automatically aborts. Stable deployment is the sole other live
-    serving deployment in the same scope.
+    dropped before storage cannot be established. Enforce mode holds subsequent advances unless every
+    selected route is healthy. This read does not change traffic; the configured recovery action is
+    evaluated separately by the canary worker. Stable deployment is the sole other live serving
+    deployment in the same scope.
 
     Args:
         slug (str):
@@ -180,9 +182,10 @@ async def asyncio_detailed(
     and at least 100 ms additional latency. Each signal is confirmed independently across both windows.
     Both windows must begin after the current stage and latest configuration update. Missing, sparse,
     ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests
-    dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every
-    selected route is healthy; never automatically aborts. Stable deployment is the sole other live
-    serving deployment in the same scope.
+    dropped before storage cannot be established. Enforce mode holds subsequent advances unless every
+    selected route is healthy. This read does not change traffic; the configured recovery action is
+    evaluated separately by the canary worker. Stable deployment is the sole other live serving
+    deployment in the same scope.
 
     Args:
         slug (str):
@@ -223,9 +226,10 @@ async def asyncio(
     and at least 100 ms additional latency. Each signal is confirmed independently across both windows.
     Both windows must begin after the current stage and latest configuration update. Missing, sparse,
     ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests
-    dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every
-    selected route is healthy; never automatically aborts. Stable deployment is the sole other live
-    serving deployment in the same scope.
+    dropped before storage cannot be established. Enforce mode holds subsequent advances unless every
+    selected route is healthy. This read does not change traffic; the configured recovery action is
+    evaluated separately by the canary worker. Stable deployment is the sole other live serving
+    deployment in the same scope.
 
     Args:
         slug (str):

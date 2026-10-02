@@ -30,6 +30,8 @@ class RouteCheckChanges:
     check_id: UUID
     status: RouteCheckChangesStatus
     summary: RouteCheckChangeSummary
+    """Exact finding-change counts across the bounded comparison, including observations omitted from truncated
+    detail."""
     truncated: bool
     findings: list[RouteFindingChange]
     compared_to_check_id: UUID | Unset = UNSET

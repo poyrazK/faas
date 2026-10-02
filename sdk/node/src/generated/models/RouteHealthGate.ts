@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthRoute } from './RouteHealthRoute.js';
+/**
+ * Current critical-route selection, health guard mode, recovery policy, and configuration revision.
+ */
 export type RouteHealthGate = {
   app_id: string;
   mode: 'report' | 'enforce';

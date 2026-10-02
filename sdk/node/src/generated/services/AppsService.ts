@@ -3174,7 +3174,7 @@ export class AppsService {
   }
   /**
    * Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
-   * Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every selected route is healthy; never automatically aborts. Stable deployment is the sole other live serving deployment in the same scope.
+   * Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.
    * @returns RouteHealthReport Current observation evidence, identities and route verdicts.
    * @throws ApiError
    */
@@ -3186,6 +3186,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
+     */
     deployment: string,
   }): CancelablePromise<RouteHealthReport> {
     return __request(OpenAPI, {
@@ -3223,7 +3226,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID whose retained canary route-health decisions are listed.
+     */
     deployment: string,
+    /**
+     * Maximum number of saved health decisions to return in this page; defaults to 5 and cannot exceed 10.
+     */
     limit?: number,
     /**
      * Retained decision UUID from this deployment; excludes this entry and every newer entry.
@@ -3268,7 +3277,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID that owns the requested saved canary health decision.
+     */
     deployment: string,
+    /**
+     * Retained health decision UUID identifying the exact rollout evaluation evidence to retrieve.
+     */
     decisionId: string,
   }): CancelablePromise<RouteHealthHistoryEntry> {
     return __request(OpenAPI, {
@@ -3294,7 +3309,7 @@ export class AppsService {
   /**
    * Read canary route gate mode and revision.
    * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
-   * @returns CanaryRouteGate Current app canary route gate.
+   * @returns CanaryRouteGate Current saved route-requirements gate mode and revision.
    * @throws ApiError
    */
   public static getCanaryRouteGate({
@@ -3325,7 +3340,7 @@ export class AppsService {
   /**
    * Set report or enforce mode with a gate revision check.
    * Requires deploy:write or admin and completed MFA. Enforce mode requires saved route requirements and a plan with canaries and captured endpoint discovery. Report mode remains available after downgrade. expected_revision is mandatory; use 0 initially. Identical mode is a no-op after checking the revision.
-   * @returns CanaryRouteGate Updated or unchanged gate configuration.
+   * @returns CanaryRouteGate Saved or unchanged canary route-requirements gate configuration.
    * @throws ApiError
    */
   public static setCanaryRouteGate({
@@ -3373,6 +3388,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * App-owned captured deployment UUID whose latest automatic requirement check and freshness are requested.
+     */
     deployment: string,
   }): CancelablePromise<AutomaticRouteCheck> {
     return __request(OpenAPI, {
@@ -3411,8 +3429,17 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Captured deployment UUID whose retained route requirement check history is listed.
+     */
     deployment: string,
+    /**
+     * Maximum number of completed requirement-check summaries in this page; defaults to 5 with a maximum of 10.
+     */
     limit?: number,
+    /**
+     * Retained check UUID from this deployment; return only older entries and exclude the selected entry.
+     */
     before?: string,
   }): CancelablePromise<RouteCheckHistoryPage> {
     return __request(OpenAPI, {
@@ -3429,7 +3456,7 @@ export class AppsService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
-        402: `Current plan does not include captured endpoint discovery.`,
+        402: `Current plan lacks the captured endpoint discovery entitlement required to list route check history.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
@@ -3454,7 +3481,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Captured deployment UUID that owns the requested historical route requirement check.
+     */
     deployment: string,
+    /**
+     * Retained completed check UUID selecting the exact immutable requirement and finding-change evidence.
+     */
     checkId: string,
   }): CancelablePromise<RouteCheckHistoryEntry> {
     return __request(OpenAPI, {
@@ -3468,7 +3501,7 @@ export class AppsService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
-        402: `Current plan does not include captured endpoint discovery.`,
+        402: `Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
@@ -3492,6 +3525,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * App-owned captured deployment UUID to queue for automatic route requirements reevaluation.
+     */
     deployment: string,
   }): CancelablePromise<{
     app_id: string;
@@ -3508,7 +3544,7 @@ export class AppsService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
-        402: `Current plan does not include captured endpoint discovery.`,
+        402: `The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.

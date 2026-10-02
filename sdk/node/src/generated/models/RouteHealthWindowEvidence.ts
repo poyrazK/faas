@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthCounts } from './RouteHealthCounts.js';
+/**
+ * Candidate and stable observations within one closed window, with independent error and latency verdicts.
+ */
 export type RouteHealthWindowEvidence = {
   start: string;
   end: string;

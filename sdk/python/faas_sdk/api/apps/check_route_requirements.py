@@ -105,7 +105,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (CheckRouteRequirementsRequest):
+        body (CheckRouteRequirementsRequest): App-owned deployment capture to evaluate against
+            saved route intent, with an optional intent revision pin.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,7 +144,8 @@ def sync(
 
     Args:
         slug (str):
-        body (CheckRouteRequirementsRequest):
+        body (CheckRouteRequirementsRequest): App-owned deployment capture to evaluate against
+            saved route intent, with an optional intent revision pin.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,7 +178,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (CheckRouteRequirementsRequest):
+        body (CheckRouteRequirementsRequest): App-owned deployment capture to evaluate against
+            saved route intent, with an optional intent revision pin.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,7 +215,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (CheckRouteRequirementsRequest):
+        body (CheckRouteRequirementsRequest): App-owned deployment capture to evaluate against
+            saved route intent, with an optional intent revision pin.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

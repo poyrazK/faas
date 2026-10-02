@@ -30,10 +30,16 @@ T = TypeVar("T", bound="RouteHealthWindowEvidence")
 
 @_attrs_define
 class RouteHealthWindowEvidence:
+    """Candidate and stable observations within one closed window, with independent error and latency verdicts."""
+
     start: datetime.datetime
     end: datetime.datetime
     candidate: RouteHealthCounts
+    """Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one
+    window."""
     stable: RouteHealthCounts
+    """Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one
+    window."""
     status: RouteHealthWindowEvidenceStatus
     reason: str
     error_status: RouteHealthWindowEvidenceErrorStatus | Unset = UNSET

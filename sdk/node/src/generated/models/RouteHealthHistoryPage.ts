@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthHistoryEntry } from './RouteHealthHistoryEntry.js';
+/**
+ * Newest-first page of immutable rollout health decisions and an optional cursor for older entries.
+ */
 export type RouteHealthHistoryPage = {
   app_id: string;
   deployment_id: string;

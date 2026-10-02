@@ -14,6 +14,8 @@ T = TypeVar("T", bound="RouteHealthRoute")
 
 @_attrs_define
 class RouteHealthRoute:
+    """Exact normalized telemetry operation selected for canary error checks and optional latency checks."""
+
     method: RouteHealthRouteMethod
     path: str
     """Exact gateway-normalized telemetry path without method prefix, query, fragment or wildcard. For example

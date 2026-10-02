@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Exact finding-change counts across the bounded comparison, including observations omitted from truncated detail.
+ */
 export type RouteCheckChangeSummary = {
   newly_violated: number;
   resolved: number;

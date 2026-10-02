@@ -25,12 +25,14 @@ T = TypeVar("T", bound="SetRouteHealthGateRequest")
 
 @_attrs_define
 class SetRouteHealthGateRequest:
+    """Replacement critical-route health configuration and the revision the caller expects to update."""
+
     mode: SetRouteHealthGateRequestMode
     expected_revision: int
     routes: list[RouteHealthRoute]
     on_regression: SetRouteHealthGateRequestOnRegression | Unset = UNSET
-    """Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for
-    confirmed route 5xx regressions during an enforced canary; report mode is observational."""
+    """Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-
+    route 5xx windows before automatic recovery."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

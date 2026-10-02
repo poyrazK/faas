@@ -27,14 +27,15 @@ class RoutePolicyApplyRequest:
     expected_plan_sha256: str
     confirm: bool
     saved: bool | Unset = False
-    """Use current saved app requirements instead of inline requirements."""
+    """Apply using the saved app intent bound by the reviewed plan rather than an inline requirements document."""
     expected_revision: int | Unset = UNSET
-    """Saved mode only; optional for planning and mandatory for applying the reviewed saved plan."""
+    """Required saved intent revision from the reviewed plan when saved=true; a changed revision rejects the apply."""
     requirements: RouteRequirementsConfig | Unset = UNSET
     """Version 1 requires 1..500 concrete routes. Version 2 assigns every captured operation to groups, concrete
     routes, or public exceptions; overlapping groups are conjunctive."""
     deployment_id: UUID | Unset = UNSET
-    """Required for saved or inline version 2 requirements; captured deployment must belong to the app."""
+    """App-owned captured deployment required for saved or version 2 apply; its contract must match the reviewed
+    plan."""
     throttle_burst: int | Unset = UNSET
     consolidate_budgets: bool | Unset = False
     """Must match the reviewed group plan; synthesis is recomputed under transaction locks."""

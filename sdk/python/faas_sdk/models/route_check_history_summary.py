@@ -36,6 +36,8 @@ class RouteCheckHistorySummary:
     requirements_sha256: str
     comparison_status: RouteCheckHistorySummaryComparisonStatus
     summary: RouteCheckChangeSummary
+    """Exact finding-change counts across the bounded comparison, including observations omitted from truncated
+    detail."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

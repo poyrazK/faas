@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RouteHealthHistoryPage")
 
 @_attrs_define
 class RouteHealthHistoryPage:
+    """Newest-first page of immutable rollout health decisions and an optional cursor for older entries."""
+
     app_id: UUID
     deployment_id: UUID
     entries: list[RouteHealthHistoryEntry]

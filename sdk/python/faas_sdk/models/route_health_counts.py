@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RouteHealthCounts")
 
 @_attrs_define
 class RouteHealthCounts:
+    """Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window."""
+
     requests: int
     server_errors: int
     error_rate: float

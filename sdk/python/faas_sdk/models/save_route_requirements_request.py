@@ -14,6 +14,8 @@ T = TypeVar("T", bound="SaveRouteRequirementsRequest")
 
 @_attrs_define
 class SaveRouteRequirementsRequest:
+    """Replacement version 2 route requirements with an optimistic revision check."""
+
     expected_revision: int
     """Current revision; 0 creates the first saved record."""
     requirements: RouteRequirementsConfig

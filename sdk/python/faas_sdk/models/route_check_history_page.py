@@ -18,6 +18,8 @@ T = TypeVar("T", bound="RouteCheckHistoryPage")
 
 @_attrs_define
 class RouteCheckHistoryPage:
+    """Deployment-scoped page of retained route check summaries and an optional continuation cursor."""
+
     app_id: UUID
     deployment_id: UUID
     entries: list[RouteCheckHistorySummary]

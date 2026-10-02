@@ -16,6 +16,8 @@ T = TypeVar("T", bound="SetCanaryRouteGateRequest")
 
 @_attrs_define
 class SetCanaryRouteGateRequest:
+    """Route requirements gate mode to save after comparing the current gate revision."""
+
     mode: SetCanaryRouteGateRequestMode
     expected_revision: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

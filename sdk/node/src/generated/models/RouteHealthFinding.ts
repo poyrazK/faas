@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthWindowEvidence } from './RouteHealthWindowEvidence.js';
+/**
+ * Combined verdict and both closed-window evidence records for one selected critical route.
+ */
 export type RouteHealthFinding = {
   method: string;
   path: string;

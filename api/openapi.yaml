@@ -9730,6 +9730,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9737,7 +9738,7 @@ paths:
       tags: [apps]
       operationId: getRouteHealthReport
       summary: Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
-      description: 'Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode pauses subsequent advances unless every selected route is healthy; never automatically aborts. Stable deployment is the sole other live serving deployment in the same scope.'
+      description: 'Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.'
       responses:
         '200':
           description: Current observation evidence, identities and route verdicts.
@@ -9754,6 +9755,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Deployment UUID whose retained canary route-health decisions are listed.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9764,6 +9766,7 @@ paths:
       description: 'Requires apps:read or admin and completed MFA. Available after plan downgrade and rollout completion. Only real advance evaluations with selected routes create snapshots; reads never create history. Identical retries reuse the original decision. Retains the newest 100 entries within 4 MiB per deployment, with each encoded entry bounded to 64 KiB. Pages are newest first by checked_at and id. A missing, foreign or pruned cursor returns 404. Historical evidence does not establish current health or continuous incident duration.'
       parameters:
         - name: limit
+          description: Maximum number of saved health decisions to return in this page; defaults to 5 and cannot exceed 10.
           in: query
           schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
         - name: before
@@ -9786,10 +9789,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Deployment UUID that owns the requested saved canary health decision.
         in: path
         required: true
         schema: { type: string, format: uuid }
       - name: decision_id
+        description: Retained health decision UUID identifying the exact rollout evaluation evidence to retrieve.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9820,7 +9825,7 @@ paths:
       description: Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
       responses:
         '200':
-          description: Current app canary route gate.
+          description: Current saved route-requirements gate mode and revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CanaryRouteGate' }
@@ -9840,7 +9845,7 @@ paths:
             schema: { $ref: '#/components/schemas/SetCanaryRouteGateRequest' }
       responses:
         '200':
-          description: Updated or unchanged gate configuration.
+          description: Saved or unchanged canary route-requirements gate configuration.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CanaryRouteGate' }
@@ -9859,6 +9864,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: App-owned captured deployment UUID whose latest automatic requirement check and freshness are requested.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9888,6 +9894,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Captured deployment UUID whose retained route requirement check history is listed.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9898,9 +9905,11 @@ paths:
       description: 'Read bounded completed evidence newest first. Retains at most 20 entries and 64 MiB of encoded history per deployment. A missing/pruned cursor returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical satisfied evidence cannot satisfy a current deployment gate.'
       parameters:
         - name: limit
+          description: Maximum number of completed requirement-check summaries in this page; defaults to 5 with a maximum of 10.
           in: query
           schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
         - name: before
+          description: Retained check UUID from this deployment; return only older entries and exclude the selected entry.
           in: query
           schema: { type: string, format: uuid }
       responses:
@@ -9912,7 +9921,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
-          description: Current plan does not include captured endpoint discovery.
+          description: Current plan lacks the captured endpoint discovery entitlement required to list route check history.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -9924,10 +9933,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: Captured deployment UUID that owns the requested historical route requirement check.
         in: path
         required: true
         schema: { type: string, format: uuid }
       - name: check_id
+        description: Retained completed check UUID selecting the exact immutable requirement and finding-change evidence.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9945,7 +9956,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
-          description: Current plan does not include captured endpoint discovery.
+          description: Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -9957,6 +9968,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment
+        description: App-owned captured deployment UUID to queue for automatic route requirements reevaluation.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -9980,7 +9992,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
-          description: Current plan does not include captured endpoint discovery.
+          description: The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -24968,6 +24980,7 @@ components:
         updated_at: { type: string, format: date-time }
     SaveRouteRequirementsRequest:
       type: object
+      description: Replacement version 2 route requirements with an optimistic revision check.
       additionalProperties: false
       required: [expected_revision, requirements]
       properties:
@@ -24975,6 +24988,7 @@ components:
         requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
     CheckRouteRequirementsRequest:
       type: object
+      description: App-owned deployment capture to evaluate against saved route intent, with an optional intent revision pin.
       additionalProperties: false
       required: [deployment_id]
       properties:
@@ -24995,6 +25009,7 @@ components:
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
     RouteHealthRoute:
       type: object
+      description: Exact normalized telemetry operation selected for canary error checks and optional latency checks.
       required: [method, path]
       properties:
         method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
@@ -25003,6 +25018,7 @@ components:
         max_p95_ms: { type: integer, format: int64, minimum: 0, maximum: 86400000, description: 'Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero disables it. Does not enable the relative slowdown check.' }
     RouteHealthGate:
       type: object
+      description: Current critical-route selection, health guard mode, recovery policy, and configuration revision.
       required: [app_id, mode, revision, routes]
       properties:
         app_id: { type: string, format: uuid }
@@ -25013,14 +25029,16 @@ components:
         updated_at: { type: string, format: date-time }
     SetRouteHealthGateRequest:
       type: object
+      description: Replacement critical-route health configuration and the revision the caller expects to update.
       required: [mode, expected_revision, routes]
       properties:
         mode: { type: string, enum: [report, enforce] }
-        on_regression: { type: string, enum: [hold, abort], description: 'Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.' }
+        on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
     RouteHealthCounts:
       type: object
+      description: Represented request and server-error counts, error rate, and optional weighted p95 for one deployment in one window.
       required: [requests, server_errors, error_rate]
       properties:
         requests: { type: integer, format: int64, minimum: 0 }
@@ -25029,6 +25047,7 @@ components:
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
     RouteHealthWindowEvidence:
       type: object
+      description: Candidate and stable observations within one closed window, with independent error and latency verdicts.
       required: [start, end, candidate, stable, status, reason]
       properties:
         start: { type: string, format: date-time }
@@ -25045,6 +25064,7 @@ components:
         latency_factor: { type: number, minimum: 0, description: Candidate p95 divided by stable p95. Omitted when stable p95 is zero or evidence is insufficient. }
     RouteHealthFinding:
       type: object
+      description: Combined verdict and both closed-window evidence records for one selected critical route.
       required: [method, path, status, reason, windows]
       properties:
         method: { type: string }
@@ -25060,6 +25080,7 @@ components:
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
     RouteHealthReport:
       type: object
+      description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
       required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
       properties:
         app_id: { type: string, format: uuid }
@@ -25069,7 +25090,7 @@ components:
         stable_commit_sha: { type: string }
         canary_step: { type: integer, minimum: 0 }
         mode: { type: string, enum: [report, enforce] }
-        on_regression: { type: string, enum: [hold, abort], description: 'Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.' }
+        on_regression: { type: string, enum: [hold, abort], description: 'Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors in enforce mode; reading the report never performs that action.' }
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         checked_at: { type: string, format: date-time }
         observation_anchor: { type: string, format: date-time, description: Latest stage or configuration timestamp that both windows must follow. }
@@ -25085,7 +25106,7 @@ components:
       required: [mode, revision, deployment_id, stable_deployment_id, status, reason, checked_at]
       properties:
         mode: { type: string, enum: [report, enforce] }
-        on_regression: { type: string, enum: [hold, abort], description: 'Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.' }
+        on_regression: { type: string, enum: [hold, abort], description: 'Hold or abort policy captured with this rollout evaluation so retained decisions can be interpreted independently of later configuration updates.' }
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         deployment_id: { type: string, format: uuid }
         stable_deployment_id: { type: string }
@@ -25130,6 +25151,7 @@ components:
         report: { $ref: '#/components/schemas/RouteHealthReport' }
     RouteHealthHistoryPage:
       type: object
+      description: Newest-first page of immutable rollout health decisions and an optional cursor for older entries.
       required: [app_id, deployment_id, entries]
       properties:
         app_id: { type: string, format: uuid }
@@ -25148,6 +25170,7 @@ components:
         updated_at: { type: string, format: date-time }
     SetCanaryRouteGateRequest:
       type: object
+      description: Route requirements gate mode to save after comparing the current gate revision.
       required: [mode, expected_revision]
       properties:
         mode: { type: string, enum: [report, enforce] }
@@ -25189,6 +25212,7 @@ components:
         check: { $ref: '#/components/schemas/RouteRequirementsCheck' }
     RouteCheckChangeSummary:
       type: object
+      description: Exact finding-change counts across the bounded comparison, including observations omitted from truncated detail.
       required: [newly_violated, resolved, changed, unknown, removed, observed]
       properties:
         newly_violated: { type: integer, minimum: 0 }
@@ -25246,6 +25270,7 @@ components:
         summary: { $ref: '#/components/schemas/RouteCheckChangeSummary' }
     RouteCheckHistoryPage:
       type: object
+      description: Deployment-scoped page of retained route check summaries and an optional continuation cursor.
       required: [app_id, deployment_id, entries]
       properties:
         app_id: { type: string, format: uuid }
@@ -25355,10 +25380,10 @@ components:
       additionalProperties: false
       required: [expected_plan_sha256, confirm]
       properties:
-        saved: { type: boolean, default: false, description: Use current saved app requirements instead of inline requirements. }
-        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Saved mode only; optional for planning and mandatory for applying the reviewed saved plan. }
+        saved: { type: boolean, default: false, description: Apply using the saved app intent bound by the reviewed plan rather than an inline requirements document. }
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: Required saved intent revision from the reviewed plan when saved=true; a changed revision rejects the apply. }
         requirements: { $ref: '#/components/schemas/RouteRequirementsConfig' }
-        deployment_id: { type: string, format: uuid, description: Required for saved or inline version 2 requirements; captured deployment must belong to the app. }
+        deployment_id: { type: string, format: uuid, description: App-owned captured deployment required for saved or version 2 apply; its contract must match the reviewed plan. }
         throttle_burst: { type: integer, minimum: 0 }
         consolidate_budgets: { type: boolean, default: false, description: Must match the reviewed group plan; synthesis is recomputed under transaction locks. }
         expected_plan_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }

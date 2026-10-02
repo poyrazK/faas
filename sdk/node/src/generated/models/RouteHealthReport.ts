@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteHealthFinding } from './RouteHealthFinding.js';
+/**
+ * Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
+ */
 export type RouteHealthReport = {
   app_id: string;
   deployment_id: string;
@@ -15,7 +18,7 @@ export type RouteHealthReport = {
   canary_step: number;
   mode: 'report' | 'enforce';
   /**
-   * Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.
+   * Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors in enforce mode; reading the report never performs that action.
    */
   on_regression?: 'hold' | 'abort';
   revision: number;

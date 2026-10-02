@@ -8,7 +8,7 @@
 export type RouteHealthDecision = {
   mode: 'report' | 'enforce';
   /**
-   * Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for confirmed route 5xx regressions during an enforced canary; report mode is observational.
+   * Hold or abort policy captured with this rollout evaluation so retained decisions can be interpreted independently of later configuration updates.
    */
   on_regression?: 'hold' | 'abort';
   revision: number;

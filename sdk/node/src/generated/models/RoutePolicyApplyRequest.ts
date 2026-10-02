@@ -8,16 +8,16 @@ import type { RouteRequirementsConfig } from './RouteRequirementsConfig.js';
  */
 export type RoutePolicyApplyRequest = {
   /**
-   * Use current saved app requirements instead of inline requirements.
+   * Apply using the saved app intent bound by the reviewed plan rather than an inline requirements document.
    */
   saved?: boolean;
   /**
-   * Saved mode only; optional for planning and mandatory for applying the reviewed saved plan.
+   * Required saved intent revision from the reviewed plan when saved=true; a changed revision rejects the apply.
    */
   expected_revision?: number;
   requirements?: RouteRequirementsConfig;
   /**
-   * Required for saved or inline version 2 requirements; captured deployment must belong to the app.
+   * App-owned captured deployment required for saved or version 2 apply; its contract must match the reviewed plan.
    */
   deployment_id?: string;
   throttle_burst?: number;
