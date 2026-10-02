@@ -1,12 +1,12 @@
 # Bare-metal service capacity protection
 
-ADR-422 preserves compute capacity for recovery after one host fails. It uses
+ADR-422 and ADR-437 preserve compute capacity for recovery after one host fails. It uses
 desired service intent, including pending deployments and rollout overlap,
 rather than waiting for VMs to consume physical memory.
 
 ## Inspect and enable
 
-Apply migration `20261001084654053_service_capacity_protection.sql` first.
+Apply migrations through `20261002181905649_regional_service_capacity.sql` first.
 Protection defaults to disabled and migration replay preserves the setting.
 Inspect `gregalectl obs capacity --json` or the operator capacity API. Its
 `service_protection` object includes:
@@ -17,9 +17,17 @@ Inspect `gregalectl obs capacity --json` or the operator capacity API. Its
 - `replica_ram_mb`, `replica_cpu_millicores`, `replica_vcpu`: conservative recovery slot shape.
 - `fleet_slots` and `failover_slots`: slots now and after the largest slot contributor is lost.
 - `placements_fit`: current service residency fits its host's slots.
+- `legacy_reserved_replicas` and `legacy_placement_capacity`: unrestricted intent and its safe final placement capacity.
+- `regions`: sorted named-region certificates with pinned targets, healthy hosts, available/failover slots, legacy residents and stable legacy placement capacity.
+
+Legacy placement capacity includes existing unrestricted residents and pending
+intent; it reports a final population.
 
 Disabled snapshots still report all inputs, so compare reserved replicas with
-failover slots before enable. Only fully active hosts qualify; drained,
+failover slots before enable. Also inspect each selected region and unrestricted
+placement capacity: spare slots in another region cannot recover a pinned app,
+and unrestricted pending replicas must have a safe final placement. Regions
+without pinned reservations need no regional recovery guarantee. Only fully active hosts qualify; drained,
 recovering, unavailable, retired and stale hosts do not supply headroom.
 
 Use the existing protected operator database connection:
@@ -50,7 +58,10 @@ retryable capacity, not a startup failure. A database outage fails admission
 closed; a restart does not release declarations.
 
 Existing declarations remain usable after host loss even when the report is
-degraded. Failure controllers retire old rows, ownership recovery transfers
+degraded. Pinned replicas recover only within their selected region. Healthy
+unrestricted replicas stay put; lost unrestricted replicas may recover in
+another region, provided they leave room for that region's pinned targets.
+A shortfall in one region does not block declared recovery in another. Failure controllers retire old rows, ownership recovery transfers
 apps, and the service controller fills missing replicas. Reductions and stops
 remain allowed. Service placement skips hosts whose recovery slots are full,
 including mixed-size services with unused physical headroom. Recovery slots
@@ -71,9 +82,9 @@ Portable checks against a disposable Postgres cluster:
 
 ```sh
 FAAS_PGTEST_TEMPLATE_DATABASE=1 go test -race -count=1 ./pkg/state ./pkg/state/conformance ./pkg/sched \
-  -run 'Test(MemStoreConformance|PgStoreConformance)/service_capacity|TestServiceCapacityPostgres|TestProtectedServiceRecovery|TestConformanceCoverage'
+  -run 'Test(MemStoreConformance|PgStoreConformance)/service_capacity|TestRegionalLegacyCapacity|TestServiceCapacityPostgres|TestRegionalServiceCapacityPostgres|TestProtectedServiceRecovery|TestRegionalServiceCapacityPlacement|TestConformanceCoverage'
 go test -race -count=1 ./cmd/apid ./cmd/gregalectl \
-  -run 'TestServiceCapacityAPI|TestWriteObsCapacityHuman'
+  -run 'TestServiceCapacityAPI|TestRegionalServiceCapacityAPI|TestWriteObsCapacityHuman'
 ```
 
 Local evidence recorded on 2026-10-01 (macOS ARM64, Go 1.25.13): all eleven
@@ -98,6 +109,21 @@ skipping Postgres. Pinned golangci-lint v2.4.0 reports zero issues, sqlc
 v1.31.1 drift and repository policy checks pass, and schedd/apid/gregalectl
 builds pass. Debug metadata was stripped to limit local disk usage.
 
+Regional follow-up evidence recorded on 2026-10-02 (macOS ARM64, Go 1.25.13):
+full portable state, conformance, scheduler, API, apid and CLI suites pass.
+Shared capacity cases pass against disposable Postgres, including regional
+intent, mixed legacy placement and recovery, concurrent writers and ordinary
+headroom. Exhaustive small-fleet checks validate both the Go and SQL legacy
+solvers; candidate hints are compared to the same independent placement oracle.
+Direct SQL refusal, restart, populated replay, policy-lock serialization and
+guarded downgrade pass. Focused state/scheduler race checks, SQLC v1.31.1 drift,
+diff lint with golangci-lint v2.12.2, and Linux amd64 apid/schedd plus metal
+acceptance-harness builds pass. Test compilation used `-p=1`,
+`-gcflags='all=-l -dwarf=false'` and stripped internal linking. API fixtures used
+APFS for subsecond file timestamps. Linux builds retained normal optimization
+and omitted debug metadata. These builds are compilation evidence; the native
+acceptance harness has not been executed for regional capacity.
+
 This is portable implementation evidence. Native fleet qualification below
 is still pending; protection remains opt-in and disabled by default.
 
@@ -114,7 +140,11 @@ and withhold node/app notification delivery. Without changing admission
 ceilings or generating customer traffic, verify desired services recover,
 desired-zero remains stopped, public routing serves surviving replicas, old
 host reservations are retired, and the report becomes degraded. Repeat with
-differently sized hosts and a concurrent destination drain. Verify stops and
+differently sized hosts and a concurrent destination drain. For regional
+qualification, use at least two hosts in the selected region and a foreign
+region. Verify abundant foreign capacity does not admit unprotected pinned
+intent, pending unrestricted intent has a stable placement, and recovery
+retains healthy legacy survivors while restoring pinned replicas locally. Verify stops and
 capacity reductions succeed during the incident.
 
 Run `make test-metal` and `make leakcheck` on supported native hosts and record

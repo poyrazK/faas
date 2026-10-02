@@ -43,7 +43,6 @@ AuthenticateOIDCBearer
 AutoRollbackDeploymentsTx
 BeginServiceRolloutCutover
 BuildByDeployment
-BuildByID
 BuildProvenanceByBuildID
 BumpFirst5xxCount
 BumpInstanceTailCount
@@ -354,7 +353,6 @@ ListInstancesByNodeID
 ListInstancesByStatesOlderThan
 ListInstancesForAccount
 ListInstancesForAccountPaged
-ListInstancesForApp
 ListInstancesForLifecycleReconciliation
 ListInstancesInTerminalStatesOlderThan
 ListInstancesOnNodeID
@@ -415,7 +413,6 @@ MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
 MarkAutoRollback
-MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
@@ -612,7 +609,6 @@ UpsertAppSecret
 UpsertAppSecretWithKid
 UpsertAppTrustedSigner
 UpsertComputeNode
-UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings

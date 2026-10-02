@@ -461,10 +461,11 @@ var dtoExclude = map[string]bool{
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
 	// ADR-422: this aggregate belongs to the same operator capacity response.
-	"ServiceCapacityProtection": true,
-	"ObsDeploymentRow":          true,
-	"ObsInstanceRow":            true,
-	"ObsInvocationRow":          true,
+	"ServiceCapacityProtection":       true,
+	"ServiceRegionCapacityProtection": true,
+	"ObsDeploymentRow":                true,
+	"ObsInstanceRow":                  true,
+	"ObsInvocationRow":                true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,

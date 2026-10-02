@@ -4324,6 +4324,7 @@ func effectiveAppCPUMillicores(app state.App) int {
 
 type placementSnapshot struct {
 	requiredRegion        string
+	preferredNodeID       string
 	eligibleRegionalNodes int
 	nodes                 []state.ComputeNode
 	usedMB                map[string]int64
@@ -4333,6 +4334,7 @@ type placementSnapshot struct {
 
 func (s placementSnapshot) choose(r Request) (Placement, error) {
 	r.RequiredRegion = s.requiredRegion
+	r.PreferredNodeID = s.preferredNodeID
 	placement, err := choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
 	if p := api.AsProblem(err); p != nil && p.Code == api.CodeComputeRegionUnavailable && s.eligibleRegionalNodes > 0 {
 		return Placement{}, api.ErrComputeRegionCapacityExhausted(s.requiredRegion)
@@ -4400,7 +4402,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		if capacity.Enabled {
 			eligible := make([]state.ComputeNode, 0, len(nodes))
 			for _, node := range nodes {
-				if slots, healthy := capacity.Nodes[node.ID]; healthy && slots.Used < slots.Slots {
+				if slots, healthy := capacity.Nodes[node.ID]; healthy && slots.Used < slots.Slots && ((requiredRegion != "" && slots.PinnedAllowed) || (requiredRegion == "" && slots.LegacyAllowed)) {
 					eligible = append(eligible, node)
 				}
 			}
@@ -4421,7 +4423,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
 	return placementSnapshot{
-		requiredRegion: requiredRegion, eligibleRegionalNodes: eligibleRegionalNodes, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
+		requiredRegion: requiredRegion, preferredNodeID: r.PreferredNodeID, eligibleRegionalNodes: eligibleRegionalNodes, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
 	}, nil
 }

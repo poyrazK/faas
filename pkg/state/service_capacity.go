@@ -52,7 +52,11 @@ func (s *PgStore) SetServiceCapacityProtection(ctx context.Context, enabled bool
 	return decodeServiceCapacity(sqlc.New().SetServiceCapacityProtection(ctx, s.pool, enabled))
 }
 
-type capacityResources struct{ Count, RAM, CPU, VCPU int64 }
+type capacityResources struct {
+	Count, RAM, CPU, VCPU int64
+	Region                string
+	Desired               int64
+}
 
 // ServiceCapacityPlacement is an internal scheduler projection. Database
 // admission still serializes the eventual write after this placement hint.
@@ -62,8 +66,13 @@ type ServiceCapacityPlacement struct {
 }
 
 type ServiceCapacitySlots struct {
-	Slots int64 `json:"slots"`
-	Used  int64 `json:"used"`
+	Slots         int64  `json:"slots"`
+	Used          int64  `json:"used"`
+	LegacyAllowed bool   `json:"legacy_allowed"`
+	PinnedAllowed bool   `json:"pinned_allowed"`
+	Region        string `json:"region"`
+	LegacyUsed    int64  `json:"legacy_used"`
+	Fits          bool   `json:"fits"`
 }
 
 func (s *PgStore) ServiceCapacityPlacement(ctx context.Context) (ServiceCapacityPlacement, error) {
@@ -94,6 +103,7 @@ type serviceCapacitySnapshot struct {
 	Actual       map[string]int64
 	Resident     map[string]capacityResources
 	ServiceUsage map[string]int64
+	LegacyUsage  map[string]int64
 	Placement    map[string]ServiceCapacitySlots
 }
 
@@ -147,7 +157,7 @@ func capacityResident(status State) bool {
 // admitted service replica fits in one slot, and survivors keep their slots;
 // no repacking of healthy replicas is assumed after a failure.
 func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
-	s := serviceCapacitySnapshot{Demands: map[string]capacityResources{}, Other: map[string]capacityResources{}, Actual: map[string]int64{}, Resident: map[string]capacityResources{}, ServiceUsage: map[string]int64{}, Placement: map[string]ServiceCapacitySlots{}}
+	s := serviceCapacitySnapshot{Demands: map[string]capacityResources{}, Other: map[string]capacityResources{}, Actual: map[string]int64{}, Resident: map[string]capacityResources{}, ServiceUsage: map[string]int64{}, LegacyUsage: map[string]int64{}, Placement: map[string]ServiceCapacitySlots{}}
 	r := api.ServiceCapacityProtection{Enabled: m.serviceCapacityProtection, ReplicaRAMMB: 1, ReplicaCPUMillicores: 1, ReplicaVCPU: 1, PlacementsFit: true}
 	for _, app := range m.apps {
 		if (app.Status != AppActive && app.Status != AppEvictedCold) || app.Manifest.ExecutionMode != api.ExecutionModeService {
@@ -188,7 +198,7 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 			if desired > 0 && live > 0 && (pending || live > 1) {
 				count += api.RolloutConcurrencyGrant
 			}
-			resource := capacityResources{Count: int64(count), RAM: int64(max(app.RAMMB, api.MustLimitsFor(api.PlanFree).RAMMB)+api.PerVMOverheadMB) + sideRAM, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + sideCPU, VCPU: vcpu}
+			resource := capacityResources{Region: app.ComputeRegion, Desired: int64(desired), Count: int64(count), RAM: int64(max(app.RAMMB, api.MustLimitsFor(api.PlanFree).RAMMB)+api.PerVMOverheadMB) + sideRAM, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + sideCPU, VCPU: vcpu}
 			s.Demands[app.ID+":"+scope] = resource
 			r.DesiredReplicas += int64(desired)
 			r.ReservedReplicas += resource.Count
@@ -230,6 +240,9 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		if service {
 			s.Actual[key]++
 			s.ServiceUsage[ins.NodeID]++
+			if app.ComputeRegion == "" {
+				s.LegacyUsage[ins.NodeID]++
+			}
 			r.ReplicaRAMMB = max(r.ReplicaRAMMB, cost.RAM)
 			r.ReplicaCPUMillicores = max(r.ReplicaCPUMillicores, cost.CPU)
 			r.ReplicaVCPU = max(r.ReplicaVCPU, cost.VCPU)
@@ -253,8 +266,9 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		r.HealthyNodes++
 		r.FleetSlots += slots
 		largest = max(largest, slots)
-		s.Placement[n.ID] = ServiceCapacitySlots{Slots: slots, Used: s.ServiceUsage[n.ID]}
-		if s.ServiceUsage[n.ID] > slots || other.RAM > int64(n.AdmissionCeilingMB) || other.CPU > int64(n.VPCPUs)*1000*api.CPUOvercommit || other.VCPU > int64(n.VCPUBudget) {
+		fits := s.ServiceUsage[n.ID] <= slots && other.RAM <= int64(n.AdmissionCeilingMB) && other.CPU <= int64(n.VPCPUs)*1000*api.CPUOvercommit && other.VCPU <= int64(n.VCPUBudget)
+		s.Placement[n.ID] = ServiceCapacitySlots{Slots: slots, Used: s.ServiceUsage[n.ID], Region: stringValue(n.Region), LegacyUsed: s.LegacyUsage[n.ID], LegacyAllowed: slots > s.ServiceUsage[n.ID], PinnedAllowed: slots > s.ServiceUsage[n.ID], Fits: fits}
+		if !fits {
 			r.PlacementsFit = false
 		}
 	}
@@ -276,6 +290,14 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 		r.State = "needs_hardware"
 	}
 	s.Report = r
+	registered := make([]string, 0, len(m.computeRegions))
+	for id := range m.computeRegions {
+		registered = append(registered, id)
+	}
+	for _, node := range m.computeNodes {
+		registered = append(registered, stringValue(node.Region))
+	}
+	s.applyRegionalServiceCapacity(registered)
 	return s
 }
 
@@ -341,6 +363,21 @@ func (m *MemStore) checkServiceCapacityChangeLocked(prior serviceCapacitySnapsho
 	// VM becomes a service, even though no new resources were allocated.
 	if next.Report.ReplicaRAMMB > prior.Report.ReplicaRAMMB || next.Report.ReplicaCPUMillicores > prior.Report.ReplicaCPUMillicores || next.Report.ReplicaVCPU > prior.Report.ReplicaVCPU {
 		grew = true
+	}
+	// Freezing any new survivor must preserve a currently protected certificate.
+	if serviceGrowth && prior.Report.State == "protected" && next.Report.State != "protected" {
+		return &ServiceCapacityError{}
+	}
+	if physicalGrowth || serviceGrowth {
+		priorRegions := make(map[string]api.ServiceRegionCapacityProtection, len(prior.Report.Regions))
+		for _, r := range prior.Report.Regions {
+			priorRegions[r.ComputeRegion] = r
+		}
+		for _, r := range next.Report.Regions {
+			if r.AvailableSlots < r.ReservedReplicas && r.AvailableSlots < priorRegions[r.ComputeRegion].AvailableSlots {
+				return &ServiceCapacityError{}
+			}
+		}
 	}
 	if ((grew || excess) && next.Report.State != "protected") || ((physicalGrowth || serviceGrowth) && !next.Report.PlacementsFit) {
 		return &ServiceCapacityError{}

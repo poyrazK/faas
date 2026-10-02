@@ -177,3 +177,17 @@ uncataloged data. Historical backlog still needs verified operator backfill or
 explicit inventory/removal. Account for one small witness per collected day in
 spool inode capacity. Native qualification remains pending and admission stays
 internal and default-off.
+
+## Regional service recovery capacity
+
+Apply migration `20261002181905649` before using the ADR-437 regional capacity
+certificate. The existing service protection policy remains opt-in. Inspect
+`gregalectl obs capacity` for each region's pinned reservation and failover
+slots, plus the aggregate legacy reservation and stable placement capacity.
+Foreign spare capacity cannot protect a pinned service. Pending unrestricted
+replicas must also have a safe final placement beside pinned targets and fixed
+healthy survivors. See [service capacity protection](service-capacity-protection.md)
+for enable, incident behavior and native qualification. An already-enabled
+fleet can become degraded after upgrade if its old global certificate
+counted recovery room in the wrong region; the migration preserves the policy
+and declarations. Downgrade requires explicitly disabling the policy first.

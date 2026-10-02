@@ -954,15 +954,36 @@ type ObsIncidentListResponse struct {
 // Disabled is explicit; degraded means current demand fits but another host
 // failure is not covered. This is compute capacity, not a data durability SLA.
 type ServiceCapacityProtection struct {
-	Enabled              bool   `json:"enabled"`
-	State                string `json:"state"`
-	HealthyNodes         int    `json:"healthy_nodes"`
-	DesiredReplicas      int64  `json:"desired_replicas"`
-	ReservedReplicas     int64  `json:"reserved_replicas"`
-	ReplicaRAMMB         int64  `json:"replica_ram_mb"`
-	ReplicaCPUMillicores int64  `json:"replica_cpu_millicores"`
-	ReplicaVCPU          int64  `json:"replica_vcpu"`
-	FleetSlots           int64  `json:"fleet_slots"`
-	FailoverSlots        int64  `json:"failover_slots"`
-	PlacementsFit        bool   `json:"placements_fit"`
+	Enabled                 bool                              `json:"enabled"`
+	State                   string                            `json:"state"`
+	HealthyNodes            int                               `json:"healthy_nodes"`
+	DesiredReplicas         int64                             `json:"desired_replicas"`
+	ReservedReplicas        int64                             `json:"reserved_replicas"`
+	ReplicaRAMMB            int64                             `json:"replica_ram_mb"`
+	ReplicaCPUMillicores    int64                             `json:"replica_cpu_millicores"`
+	ReplicaVCPU             int64                             `json:"replica_vcpu"`
+	FleetSlots              int64                             `json:"fleet_slots"`
+	FailoverSlots           int64                             `json:"failover_slots"`
+	PlacementsFit           bool                              `json:"placements_fit"`
+	LegacyReservedReplicas  int64                             `json:"legacy_reserved_replicas"`
+	LegacyPlacementCapacity int64                             `json:"legacy_placement_capacity"`
+	Regions                 []ServiceRegionCapacityProtection `json:"regions,omitempty"`
+}
+
+// ServiceRegionCapacityProtection reports the named region's uniform recovery
+// slots after retaining healthy legacy replicas on their current hosts.
+// AvailableSlots is the current pinned capacity; FailoverSlots also excludes
+// the largest loss of capacity not already occupied by a legacy survivor.
+type ServiceRegionCapacityProtection struct {
+	ComputeRegion           string `json:"compute_region"`
+	State                   string `json:"state"`
+	HealthyNodes            int    `json:"healthy_nodes"`
+	DesiredReplicas         int64  `json:"desired_replicas"`
+	ReservedReplicas        int64  `json:"reserved_replicas"`
+	FleetSlots              int64  `json:"fleet_slots"`
+	AvailableSlots          int64  `json:"available_slots"`
+	FailoverSlots           int64  `json:"failover_slots"`
+	LegacyPlacementCapacity int64  `json:"legacy_placement_capacity"`
+	LegacyResidentReplicas  int64  `json:"legacy_resident_replicas"`
+	PlacementsFit           bool   `json:"placements_fit"`
 }

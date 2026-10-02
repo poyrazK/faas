@@ -473,7 +473,10 @@ func writeObsOverviewHuman(w io.Writer, response api.ObsOverviewResponse) {
 
 func writeObsCapacityHuman(w io.Writer, response api.ObsCapacityResponse) {
 	if p := response.ServiceProtection; p.State != "" {
-		_, _ = fmt.Fprintf(w, "service_protection=%s healthy_nodes=%d desired_replicas=%d reserved_replicas=%d failover_slots=%d fleet_slots=%d replica_ram_mb=%d replica_cpu_millicores=%d replica_vcpu=%d\n", p.State, p.HealthyNodes, p.DesiredReplicas, p.ReservedReplicas, p.FailoverSlots, p.FleetSlots, p.ReplicaRAMMB, p.ReplicaCPUMillicores, p.ReplicaVCPU)
+		_, _ = fmt.Fprintf(w, "service_protection=%s healthy_nodes=%d desired_replicas=%d reserved_replicas=%d failover_slots=%d fleet_slots=%d replica_ram_mb=%d replica_cpu_millicores=%d replica_vcpu=%d legacy_reserved_replicas=%d legacy_placement_capacity=%d\n", p.State, p.HealthyNodes, p.DesiredReplicas, p.ReservedReplicas, p.FailoverSlots, p.FleetSlots, p.ReplicaRAMMB, p.ReplicaCPUMillicores, p.ReplicaVCPU, p.LegacyReservedReplicas, p.LegacyPlacementCapacity)
+		for _, region := range p.Regions {
+			_, _ = fmt.Fprintf(w, "  service_region=%s state=%s healthy_nodes=%d reserved_replicas=%d available_slots=%d failover_slots=%d legacy_resident_replicas=%d legacy_placement_capacity=%d\n", region.ComputeRegion, region.State, region.HealthyNodes, region.ReservedReplicas, region.AvailableSlots, region.FailoverSlots, region.LegacyResidentReplicas, region.LegacyPlacementCapacity)
+		}
 	}
 	_, _ = fmt.Fprintf(w, "generated_at=%s\n", response.GeneratedAt.UTC().Format(time.RFC3339))
 	summary := response.Summary

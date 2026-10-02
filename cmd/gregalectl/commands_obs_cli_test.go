@@ -99,7 +99,7 @@ func TestWriteObsCapacityHuman_IncludesHeadroom(t *testing.T) {
 	var out bytes.Buffer
 	writeObsCapacityHuman(&out, api.ObsCapacityResponse{
 		GeneratedAt:       time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
-		ServiceProtection: api.ServiceCapacityProtection{Enabled: true, State: "protected", HealthyNodes: 2, ReservedReplicas: 4, FailoverSlots: 4, FleetSlots: 8, ReplicaRAMMB: 520, ReplicaCPUMillicores: 1000, ReplicaVCPU: 2},
+		ServiceProtection: api.ServiceCapacityProtection{Enabled: true, State: "protected", HealthyNodes: 2, ReservedReplicas: 4, FailoverSlots: 4, FleetSlots: 8, ReplicaRAMMB: 520, ReplicaCPUMillicores: 1000, ReplicaVCPU: 2, LegacyReservedReplicas: 1, LegacyPlacementCapacity: 2, Regions: []api.ServiceRegionCapacityProtection{{ComputeRegion: "eu-fsn", State: "degraded", HealthyNodes: 1, ReservedReplicas: 2, AvailableSlots: 4, FailoverSlots: 0, LegacyResidentReplicas: 1, LegacyPlacementCapacity: 0}}},
 		Summary:           api.ObsCapacitySummary{AdmissionMarginMB: 512, UnplacedApps: 2},
 		Nodes:             []api.ObsCapacityNode{{Name: "node-a", Active: true, AdmissionMarginMB: 512}},
 	})
@@ -108,6 +108,11 @@ func TestWriteObsCapacityHuman_IncludesHeadroom(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "unplaced_apps=2") {
 		t.Fatalf("human output missing unplaced apps: %s", out.String())
+	}
+	for _, field := range []string{"legacy_reserved_replicas=1", "legacy_placement_capacity=2", "service_region=eu-fsn state=degraded", "available_slots=4", "legacy_resident_replicas=1", "legacy_placement_capacity=0"} {
+		if !strings.Contains(out.String(), field) {
+			t.Fatalf("missing regional capacity field %s: %s", field, out.String())
+		}
 	}
 	if !strings.Contains(out.String(), "service_protection=protected") || !strings.Contains(out.String(), "failover_slots=4") || !strings.Contains(out.String(), "replica_ram_mb=520") {
 		t.Fatalf("human output missing service recovery certificate: %s", out.String())
