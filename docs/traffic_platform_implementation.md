@@ -3466,3 +3466,101 @@ and native Linux x86_64 KVM probe/VM/network/firewall/restore/leak acceptance re
 pending. The user has no available KVM host; no further host request is needed
 until availability changes. A large or slow repair backlog can fail closed at its
 verification lease expiry. The broad implementation goal remains active.
+
+## Readiness and eviction bound to VM lifetime — 2026-10-02
+
+Identified routing targets now read readiness for their exact app, instance, wake
+and serving node. The SQLC query filters that tuple before choosing the latest
+observation for each primary/sidecar source. A retired wake or source node cannot
+certify the current target or mask its current observation, even with a later
+timestamp. The bounded reader rejects more than 128 targets and conflicting
+identities for the same instance before database access. The memory reader follows
+the same contract. Admission and the recurring readiness worker use this reader;
+returned snapshots also echo the captured identity. Existing by-source readers
+remain available for compatibility. A legacy target without a wake matches only
+legacy observations without a wake and retains its weaker node contract.
+
+Primary readiness captures wake and node from the live VM entry when its loop
+starts. The serving vmmd stamps its own node at cold/restore/adopt boundaries.
+Jailer boot/restore listeners capture their original app/wake/node before VM startup
+and wrap accepted streams with that host-owned origin. A delayed sidecar frame
+cannot borrow the identity of a replacement Manager entry; mismatched or
+unidentified streams are dropped. Migration preserves the existing wake in
+scheduler-to-vmmd correlation metadata while the destination stamps its own node.
+Identified paused-pool restore likewise carries the retained lifetime. A regression
+confirms the existing resume helper clears the paused flag before starting probes;
+it needed no additional lifecycle edit.
+
+An append-only notification migration adds wake/node to readiness trigger payloads;
+its rollback restores the previous trigger. Gateway notification caches and
+readiness setters match the captured lifetime. Modern scheduler terminal events
+include serving node, and modern cache eviction checks app/instance/wake/node.
+Public forwarding failure evicts only the target captured for that attempt.
+Quarantine is scoped to known lifetimes, allowing a known fresh wake or placement
+to enter while excluding the retired one. Unknown eviction remains conservative,
+and a loader result without a wake cannot bypass a known fence for that app and
+instance. The existing 30-second duration now lives in `pkg/api/limits.go`.
+Managed service leases retain the wake privately and reject replacement identity;
+their public JSON shape is unchanged. Legacy optional API fallbacks remain weaker
+and require the coordinated migration/producer/observation/consumer rollout in
+the traffic policy runbook. ADR 375 records the contract.
+
+Verification against the final unchanged 12,539-file source freeze:
+
+- The complete prior 12-package unit scope is retained and expanded with events
+  and vmmd: 11,368 accepted named passes and 1,513 guarded/skipped results in
+  182.074 s. Raw output contains 11,415 passes and 1,466 skips; 47 all-guarded
+  parent passes are classified as guarded rather than acceptance.
+- The additive PostgreSQL selector preserves the previous selector and all 14
+  packages: 263 named passes, zero skips, 83.718 s. Thirty-two actual database
+  fixture roots account for 51 named results; the other 212 are memory/transport
+  checks. New fixtures exercise the actual stored readiness reader and trigger,
+  LISTEN receipt and gateway invalidator for current/retired wake and node,
+  independent primary/sidecar withdrawal, and recovery with retained capacity.
+- Deduplicated acceptance is 11,416 named passes, with 1,479 guarded results
+  without acceptance. These counts include named subtests and do not establish
+  native VM behavior.
+- Portable regressions cover stale public failure and terminal eviction, old
+  quarantine versus fresh wake, conservative missing-wake loaders, managed lease
+  replacement, listener replacement while an old accepted stream is blocked,
+  captured probe-loop identity, paused resume/failure, and migration/pool metadata.
+  They use memory state, local Unix sockets or bufconn where documented. The
+  recurring Linux readiness regression checks the scoped reader but was compiled
+  locally without executing its native path.
+- Lint v2.4.0 checks all 14 complete packages with tests: zero issues, 122.964 s.
+  Linux amd64 lint checks complete vmmd/fcvm packages with tests: zero issues,
+  88.084 s. Linux amd64 vmmd and Firecracker `metal` test binaries compile in
+  75.595 s and 21.884 s. Both outputs are ELF x86-64 binaries; neither was executed.
+  Metal coverage is compilation only, not native acceptance or a metal lint run.
+- SQLC v1.31.1 reproduces all four generated files byte for byte. SQL, encoding,
+  quoting and ADR-number gates pass in 27.439 s; the 71 pre-existing ADR-number
+  duplicates stay at baseline. The source Postgres public schema remains empty,
+  with fsync, synchronous_commit and full_page_writes enabled. No customer quota,
+  source exclusion, test overlay, suppression or relaxed assertion/bound.
+
+Whole failed/preliminary runs remain diagnostic evidence, excluded from acceptance.
+The baseline reproduced old-wake readiness certifying a current target, a delayed
+old terminal event evicting its replacement, and fresh wake admission blocked by
+old quarantine. The separate paused-probe baseline passed and is not an unsafe
+accept reproduction. Initial focused builds exposed a method-name collision,
+an older fixture missing the scheduler's actual wake/node, and an existing vmmd
+factory signature incompatible with variadic `NewPgStore`; all were corrected.
+The first full unit gate also exposed the missing-wake loader bypass, fixed with
+the conservative fence while retaining its assertion. Its whole output is
+excluded, including otherwise passing tests. The expanded vmmd scope compiles
+with an explicit store-factory closure. Final heavy gates ran serially, with no
+source edits through their terminal receipts. Only this tracker changed afterward.
+No owned cache cleanup, sibling process/cache change, push or PR occurred in this
+continuation. Source, failed/final gate, ELF artifact, staged/commit and durability
+receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-target-lifetime-20261002/`.
+
+All six release requirements remain unchecked. This certifies observations for
+the requested cached lifetime; it does not verify that the cached placement is
+still the current instances row. Missing placement/lifecycle notification repair,
+authoritative current-state discovery, complete path coverage, deployed daemon
+fleet/load/restart/outage/recovery and customer/staging qualification remain open.
+Actual migration/pool/initial sidecar readiness, clock/entropy behavior, VM and
+probe process death, networking/firewall/restore/leak acceptance require native
+Linux x86_64 KVM execution. No dedicated host is available; no further host request
+is needed until availability changes. The broad implementation goal remains active.

@@ -1334,6 +1334,51 @@ behavior. A large or slow repair backlog may fail closed at lease expiry. Native
 network/firewall/leak acceptance, complete path/load/recovery and staging qualification
 remain required separately.
 
+### Follow-up: readiness and eviction belong to a VM lifetime
+
+The routing lifetime is the app, instance, wake and node tuple. An instance ID
+alone cannot certify a later wake or a migration's new owner. Production readiness
+hydration and periodic repair use a bounded SQLC reader that filters this tuple
+before selecting the latest observation per source. A newer retired observation
+cannot mask the current source. Missing current observations still reserve capacity
+and refuse routing. Identified targets also require the repair snapshot to echo
+their wake and node identity.
+
+vmmd retains the wake and its serving node on the live Manager instance. Recurring
+primary-app loops capture these values when started, independently from the daemon
+context. JailerVMM binds a guest stream's origin when preparing the VM listener,
+before boot/restore; readiness dispatch rejects a stream whose origin differs from
+the current live instance. Delayed frames cannot acquire a replacement Manager
+entry's identity. Pool restore and migration adoption preserve the existing row's
+wake through scheduler metadata; the destination vmmd supplies its own node.
+Successful pool resume uses the existing forwarding reopen path to clear the pause
+flag before starting recurring readiness. Instance and customer-intent ownership
+are unchanged.
+
+A new append-only migration adds wake/node fields to readiness notifications and
+preserves the previous trigger on rollback. Source event caches are scoped by wake
+and node. Modern terminal notifications carry the row's node and wake; a delayed
+withdrawal from another wake or node leaves the replacement cached. Public forward
+failures evict the captured target tuple. Quarantine stays 30 seconds, now centrally
+specified in pkg/api/limits.go, and cannot block a different known wake/node.
+Unknown legacy evictions retain their conservative fence. Managed endpoint leases
+retain a private wake identity and cannot match a later wake of the same instance.
+
+Unidentified legacy targets use only legacy observations; older notifications
+without node/wake retain their compatibility behavior. A coordinated rollout must
+migrate the trigger and update producers, then establish current identified probe
+observations before enabling the stricter consumers. Historical unscoped rows do
+not certify an identified VM. Compatibility behavior is not a lifetime guarantee
+for legacy producers.
+
+Local qualification uses actual PostgreSQL source queries, trigger/LISTEN payloads
+and gateway consumers, plus real Unix listener replacement and gRPC metadata.
+Scheduler placement, VM execution and native readiness probes remain fixtures or
+unexecuted native paths. These fences do not discover missed placement/lifecycle
+notifications, repair all stale database snapshots, or prove native migration,
+pool/restore clock and entropy behavior, firewall or leak freedom. Native x86_64
+Linux KVM and deployed recovery/load/staging acceptance remain required.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

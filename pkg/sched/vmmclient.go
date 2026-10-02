@@ -405,6 +405,9 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	// WakeID preserves an existing VM lifetime through migration or pool restore metadata.
+	// It is control-plane identity, independent of the guest AppSpec proto.
+	WakeID        string
 	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
 	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
 	VCPUCount     int32  // 2, or 4 for Scale
@@ -850,6 +853,9 @@ func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance strin
 func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
+	if keepPaused && app.WakeID != "" {
+		fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instance, app.DeploymentID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance:  instance,
@@ -1251,6 +1257,9 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
+	fields, _ := wire.FromContext(ctx)
+	fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instanceID, app.DeploymentID
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
 		AppSpec:           app.toProto(),

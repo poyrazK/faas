@@ -73,7 +73,7 @@ func TestTargetAdmissionRequiresStoredReadinessBeforeFirstNotification(t *testin
 	instance := "instance-" + deployment.ID
 	publish := func(status string, at time.Time) {
 		t.Helper()
-		body, err := json.Marshal(map[string]string{"app_id": target.ID, "instance_id": instance, "status": status})
+		body, err := json.Marshal(map[string]string{"app_id": target.ID, "instance_id": instance, "wake_id": "wake-" + deployment.ID, "node_id": "node", "status": status})
 		if err != nil {
 			t.Fatal(err)
 		}

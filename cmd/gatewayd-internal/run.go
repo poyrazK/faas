@@ -1447,7 +1447,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return nil, err
 			}
 			targets := make([]gateway.Target, 0, len(instances))
-			readinessInstanceIDs := make([]string, 0, len(instances))
+			readinessTargets := make([]state.ReadinessTarget, 0, len(instances))
 			for _, instance := range instances {
 				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
 					continue
@@ -1472,11 +1472,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 					},
 				})
 				if requiresReadiness {
-					readinessInstanceIDs = append(readinessInstanceIDs, instance.ID)
+					readinessTargets = append(readinessTargets, state.ReadinessTarget{AppID: appID, InstanceID: instance.ID, WakeID: instance.WakeID, NodeID: instance.NodeID})
 				}
 			}
-			if len(readinessInstanceIDs) > 0 {
-				readiness, err := pgStore.LatestInstanceReadinessBySource(ctx, readinessInstanceIDs)
+			if len(readinessTargets) > 0 {
+				readiness, err := pgStore.LatestInstanceReadinessForTargets(ctx, readinessTargets)
 				if err != nil {
 					return nil, fmt.Errorf("load readiness for live targets: %w", err)
 				}

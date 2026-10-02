@@ -1104,6 +1104,8 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		inv.FlushRoutes()
 	case db.NotifyInstanceReadinessChanged:
 		var p struct {
+			WakeID     string    `json:"wake_id"`
+			NodeID     string    `json:"node_id"`
 			AppID      string    `json:"app_id"`
 			InstanceID string    `json:"instance_id"`
 			Source     string    `json:"source"`
@@ -1116,6 +1118,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			return
 		}
 		if setter, ok := inv.(interface {
+			SetInstanceReadinessForTarget(appID, instanceID, wakeID, nodeID, source, status string, at time.Time, eventID int64)
+		}); ok {
+			setter.SetInstanceReadinessForTarget(p.AppID, p.InstanceID, p.WakeID, p.NodeID, p.Source, p.Status, p.At, p.EventID)
+		} else if setter, ok := inv.(interface {
 			SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64)
 		}); ok {
 			setter.SetInstanceReadinessSource(p.AppID, p.InstanceID, p.Source, p.Status, p.At, p.EventID)
@@ -1130,6 +1136,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			InstanceID string `json:"instance_id"`
 			State      string `json:"state"`
 			WakeID     string `json:"wake_id"`
+			NodeID     string `json:"node_id"`
 			Kind       string `json:"kind"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil ||
@@ -1186,7 +1193,15 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 				}
 			}
 		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
-			inv.EvictInstance(p.AppID, p.InstanceID)
+			if scoped, ok := inv.(interface {
+				EvictInstanceForRoutingIdentity(string, string, string, string)
+			}); ok {
+				scoped.EvictInstanceForRoutingIdentity(p.AppID, p.InstanceID, p.WakeID, p.NodeID)
+			} else if scoped, ok := inv.(interface{ EvictInstanceForWake(string, string, string) }); ok {
+				scoped.EvictInstanceForWake(p.AppID, p.InstanceID, p.WakeID)
+			} else {
+				inv.EvictInstance(p.AppID, p.InstanceID)
+			}
 		}
 	case db.NotifyAppChanged:
 		// APID publishes a JSON envelope, while the maintenance-mode

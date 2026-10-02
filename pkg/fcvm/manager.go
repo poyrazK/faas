@@ -465,6 +465,8 @@ type Instance struct {
 	// stays allocator-owned and the Instance carries the
 	// schedd-owned app identity.
 	AppID string
+	// WakeID and NodeID bind traffic-readiness observations to this live VM.
+	WakeID, NodeID string
 
 	// AccountID is the apps.account_id the instance was woken
 	// for (mirrors AppID). Captured from WakeRequest.AccountID
@@ -3134,6 +3136,8 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
+	// NodeID is supplied by the serving vmmd, never by a guest frame.
+	NodeID   string
 	Instance string
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
@@ -3805,10 +3809,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
 	}
-	var wakeID string
-	if fields, ok := wire.FromContext(ctx); ok {
-		wakeID = fields.WakeID
+	fields, _ := wire.FromContext(ctx)
+	wakeID := fields.WakeID
+	fields.AppID = req.AppID
+	if req.NodeID != "" {
+		fields.NodeID = req.NodeID
 	}
+	ctx = wire.WithContext(ctx, fields)
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -4382,6 +4389,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		Lease: lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
 		AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
+		WakeID: wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
 		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),

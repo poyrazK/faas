@@ -30,6 +30,8 @@ const (
 	TrafficReadinessReadTimeout       = time.Second
 	TrafficReadinessBatchSize         = 128
 	TrafficReadinessLease             = 30 * time.Second
+	// A transport-proven stale VM lifetime cannot be immediately reinserted.
+	TrafficStaleTargetQuarantine = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is
 	// released. Failure fences and reaps the bridge process instead.
 	TrafficBridgeCompletionTimeout    = 5 * time.Second

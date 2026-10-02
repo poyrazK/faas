@@ -13,6 +13,8 @@ import (
 // plane addresses to workloads. Port is the effective workload HTTP port;
 // legacy targets that carry zero use the vmmd default of 8080.
 type ServiceEndpoint struct {
+	// Internal lease identity; the discovery JSON remains backward compatible.
+	wakeID              string
 	InstanceID          string `json:"instance_id"`
 	NodeID              string `json:"node_id"`
 	DeploymentID        string `json:"deployment_id,omitempty"`
@@ -109,6 +111,7 @@ func (b *PGBackend) ServiceEndpoints(ctx context.Context, appID string) (Service
 				port = 8080
 			}
 			candidate := ServiceEndpoint{
+				wakeID:              target.WakeID,
 				InstanceID:          target.InstanceID,
 				NodeID:              target.NodeID,
 				DeploymentID:        deploymentID,
@@ -161,7 +164,7 @@ func (b *PGBackend) ServiceEndpointRoutable(appID string, endpoint ServiceEndpoi
 		if port == 0 {
 			port = 8080
 		}
-		if target.InstanceID == endpoint.InstanceID && target.NodeID == endpoint.NodeID && port == endpoint.Port && target.routeReady() {
+		if target.InstanceID == endpoint.InstanceID && target.NodeID == endpoint.NodeID && target.WakeID == endpoint.wakeID && port == endpoint.Port && target.routeReady() {
 			return true
 		}
 	}

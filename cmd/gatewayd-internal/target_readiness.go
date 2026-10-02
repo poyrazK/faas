@@ -12,7 +12,7 @@ import (
 
 type targetReadinessStore interface {
 	DeploymentReadinessConfigs(context.Context, []string) (map[string]state.DeploymentReadinessConfig, error)
-	LatestInstanceReadinessBySource(context.Context, []string) (map[string]map[string]state.InstanceReadiness, error)
+	LatestInstanceReadinessForTargets(context.Context, []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error)
 }
 
 func newTargetReadinessLoader(store targetReadinessStore) gateway.TargetReadinessLoader {
@@ -36,7 +36,7 @@ func newTargetReadinessLoader(store targetReadinessStore) gateway.TargetReadines
 			return nil, fmt.Errorf("load target readiness configuration: %w", err)
 		}
 		out := make(map[string]gateway.TargetReadinessSnapshot, len(targets))
-		instances := make([]string, 0, len(targets))
+		instances := make([]state.ReadinessTarget, 0, len(targets))
 		for _, target := range targets {
 			config, ok := configs[target.DeploymentID]
 			if !ok || config.AppID != target.AppID || config.DeploymentID != target.DeploymentID {
@@ -46,13 +46,13 @@ func newTargetReadinessLoader(store targetReadinessStore) gateway.TargetReadines
 			if err != nil {
 				continue
 			}
-			out[target.InstanceID] = gateway.TargetReadinessSnapshot{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID,
+			out[target.InstanceID] = gateway.TargetReadinessSnapshot{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID, WakeID: target.WakeID, NodeID: target.NodeID,
 				RequiredSources: sources, States: make(map[string]gateway.ReadinessState)}
 			if len(sources) > 0 {
-				instances = append(instances, target.InstanceID)
+				instances = append(instances, state.ReadinessTarget{AppID: target.AppID, InstanceID: target.InstanceID, WakeID: target.WakeID, NodeID: target.NodeID})
 			}
 		}
-		states, err := store.LatestInstanceReadinessBySource(ctx, instances)
+		states, err := store.LatestInstanceReadinessForTargets(ctx, instances)
 		if err != nil {
 			return nil, fmt.Errorf("load target readiness observations: %w", err)
 		}

@@ -7087,10 +7087,7 @@ haveApp:
 		// RecoverStaleTarget detaches and bounds lifecycle work in
 		// the production backend; it does not inherit the client
 		// cancellation even though the request context is passed in.
-		if evictor, ok := h.backend.(interface {
-			EvictInstance(appID, instanceID string)
-		}); ok {
-			evictor.EvictInstance(app.ID, failed.InstanceID)
+		if evictStaleTarget(h.backend, app.ID, failed) {
 			h.log.Warn("gateway: evicted stale target", "app_id", app.ID,
 				"instance_id", failed.InstanceID, "node_id", failed.NodeID)
 		}

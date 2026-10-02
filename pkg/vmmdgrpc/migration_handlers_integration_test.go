@@ -16,6 +16,7 @@ import (
 )
 
 type migrationHandlerVMM struct {
+	wakeCorrelation wire.CorrelationFields
 	vmmStubBase
 	snapshots                        int
 	resumes                          int
@@ -47,8 +48,9 @@ func (f *migrationHandlerVMM) ResumeVM(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *migrationHandlerVMM) Wake(_ context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
+func (f *migrationHandlerVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
 	f.wakeReq = req
+	f.wakeCorrelation, _ = wire.FromContext(ctx)
 	return &fcvm.Instance{
 		Lease: fcvm.Lease{
 			HostIP: netip.MustParseAddr("10.100.0.9"),
@@ -98,7 +100,7 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	vmm := &migrationHandlerVMM{}
-	s := New(vmm, wire.NewOpsMetrics("vmmd_test"), "1.10.0", nil).WithMigrationStore(store)
+	s := New(vmm, wire.NewOpsMetrics("vmmd_test"), "1.10.0", nil).WithMigrationStore(store).WithNodeID("destination")
 	instanceID := seedMigrationHandlerInstance(t, store)
 
 	prepared, err := s.PrepareLiveMigration(ctx, &vmmdpb.PrepareLiveMigrationRequest{
@@ -118,7 +120,7 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 	if err := store.MarkInstanceMigrating(ctx, instanceID, "source", prepared.GetLeaseToken()); err != nil {
 		t.Fatalf("MarkInstanceMigrating: %v", err)
 	}
-	adopted, err := s.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
+	adopted, err := s.AdoptMigratedInstance(wire.WithContext(ctx, wire.CorrelationFields{WakeID: "source-wake", AppID: "app-id"}), &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
 		AppSpec:           &vmmdpb.AppSpec{BaseKey: "base/node22", LayerKey: "layer/app", VcpuCount: 2, MemSizeMib: 128, AppId: "app-id"},
 		MemStorageKey:     prepared.GetMemStorageKey(),
@@ -139,6 +141,9 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 		vmm.wakeReq.Snapshot.VMStateStorageKey != prepared.GetVmstateStorageKey() ||
 		vmm.wakeReq.Snapshot.FCVersion != prepared.GetFcVersion() {
 		t.Fatalf("wake snapshot = %+v, want prepared snapshot metadata", vmm.wakeReq.Snapshot)
+	}
+	if vmm.wakeReq.NodeID != "destination" || vmm.wakeCorrelation.WakeID != "source-wake" {
+		t.Fatalf("adopted routing lifetime: node=%q correlation=%+v", vmm.wakeReq.NodeID, vmm.wakeCorrelation)
 	}
 	if vmm.wakeReq.Plan != api.PlanHobby || vmm.wakeReq.AccountID != "acct-id" ||
 		vmm.wakeReq.DeploymentID != "deployment-id" || vmm.wakeReq.AppID != "app-id" {

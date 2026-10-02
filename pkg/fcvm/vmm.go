@@ -883,7 +883,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if !l.IsBuilder && cfg.VsockDevice != nil {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -1745,7 +1745,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !l.IsBuilder {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -1987,7 +1987,28 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // instance. A preparation failure aborts boot/restore and marks the daemon
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
-func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+// GuestVsockStreamOrigin is fixed when a VM listener is prepared. It is never
+// read from a guest frame or looked up through a replacement Manager entry.
+type GuestVsockStreamOrigin struct{ AppID, WakeID, NodeID string }
+type guestVsockOriginConn struct {
+	net.Conn
+	origin GuestVsockStreamOrigin
+}
+
+func GuestVsockOrigin(conn net.Conn) (GuestVsockStreamOrigin, bool) {
+	identified, ok := conn.(*guestVsockOriginConn)
+	if !ok {
+		return GuestVsockStreamOrigin{}, false
+	}
+	return identified.origin, true
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListenersForWake(ctx context.Context, l Lease) error {
+	fields, _ := wire.FromContext(ctx)
+	return v.prepareRegisteredGuestVsockListeners(l, GuestVsockStreamOrigin{AppID: fields.AppID, WakeID: fields.WakeID, NodeID: fields.NodeID})
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease, origins ...GuestVsockStreamOrigin) error {
 	v.mu.Lock()
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
@@ -2006,6 +2027,12 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
 		}
 		v.notifyGuestVsockTransport(port, "", nil)
+		if len(origins) > 0 {
+			origin, original := origins[0], handler
+			handler = func(instance string, conn net.Conn) (string, error) {
+				return original(instance, &guestVsockOriginConn{Conn: conn, origin: origin})
+			}
+		}
 		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
 	}
 	return nil

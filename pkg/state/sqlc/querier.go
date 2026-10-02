@@ -545,6 +545,9 @@ type Querier interface {
 	// Gateway hydration keeps each required readiness source independent so one
 	// recovered probe cannot override another probe that is still unready.
 	LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error)
+	// Filter each routing lifetime BEFORE choosing its latest source transition.
+	// A delayed observation from a retired node/wake cannot mask a current probe.
+	LatestInstanceReadinessForTargets(ctx context.Context, db DBTX, arg LatestInstanceReadinessForTargetsParams) ([]LatestInstanceReadinessForTargetsRow, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.

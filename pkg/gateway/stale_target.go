@@ -45,3 +45,17 @@ func staleTargetDetected(ctx context.Context) bool {
 	signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal)
 	return ok && signal != nil && signal.stale.Load()
 }
+
+// A delayed failure from an old forward cannot retire a replacement target.
+func evictStaleTarget(backend any, appID string, target Target) bool {
+	target.AppID = appID
+	if scoped, ok := backend.(interface{ EvictRoutedTarget(Target) }); ok {
+		scoped.EvictRoutedTarget(target)
+		return true
+	}
+	if legacy, ok := backend.(interface{ EvictInstance(string, string) }); ok {
+		legacy.EvictInstance(appID, target.InstanceID)
+		return true
+	}
+	return false
+}

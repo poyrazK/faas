@@ -5610,6 +5610,78 @@ func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const latestInstanceReadinessForTargets = `-- name: LatestInstanceReadinessForTargets :many
+WITH targets AS (
+ SELECT unnest($1::text[]) AS app_id,
+        unnest($2::text[]) AS instance_id,
+        unnest($3::text[]) AS wake_id,
+        unnest($4::text[]) AS node_id
+)
+SELECT DISTINCT ON (t.instance_id,
+       CAST(CASE WHEN e.kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || (e.data->>'sidecar_name') END AS text))
+       CAST(t.instance_id AS text) AS instance_id,
+       CAST(CASE WHEN e.kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || (e.data->>'sidecar_name') END AS text) AS source,
+       CAST(e.data->>'status' AS text) AS status, e.at, e.id
+ FROM targets t JOIN events e ON e.data->>'instance_id' = t.instance_id
+ WHERE e.kind IN ('wake.sidecar_health', 'wake.app_readiness')
+   AND e.data->>'status' IN ('ready', 'unready')
+   AND e.data->>'app_id' = t.app_id
+   AND COALESCE(e.data->>'wake_id', '') = t.wake_id
+   AND (t.wake_id = '' OR COALESCE(e.data->>'node_id', '') = t.node_id)
+   AND (e.kind <> 'wake.sidecar_health' OR COALESCE(e.data->>'sidecar_name', '') <> '')
+ ORDER BY t.instance_id, source, e.at DESC, e.id DESC
+`
+
+type LatestInstanceReadinessForTargetsParams struct {
+	AppIds      []string
+	InstanceIds []string
+	WakeIds     []string
+	NodeIds     []string
+}
+
+type LatestInstanceReadinessForTargetsRow struct {
+	InstanceID string
+	Source     string
+	Status     string
+	At         pgtype.Timestamptz
+	ID         int64
+}
+
+// Filter each routing lifetime BEFORE choosing its latest source transition.
+// A delayed observation from a retired node/wake cannot mask a current probe.
+func (q *Queries) LatestInstanceReadinessForTargets(ctx context.Context, db DBTX, arg LatestInstanceReadinessForTargetsParams) ([]LatestInstanceReadinessForTargetsRow, error) {
+	rows, err := db.Query(ctx, latestInstanceReadinessForTargets,
+		arg.AppIds,
+		arg.InstanceIds,
+		arg.WakeIds,
+		arg.NodeIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LatestInstanceReadinessForTargetsRow{}
+	for rows.Next() {
+		var i LatestInstanceReadinessForTargetsRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.Source,
+			&i.Status,
+			&i.At,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),

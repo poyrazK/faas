@@ -957,3 +957,35 @@ outbox. Local tests cover canceled uploads, unchanged-ID replay, timeout loss,
 concurrent stop and actual daemon shutdown RPC delivery. The telemetry receiver
 and VM endpoint in those daemon tests are fixtures; deployed persistence,
 forced-termination, load and staging qualification remain pending.
+
+### Readiness identity across wake and migration
+
+For an identified VM, readiness observations and notifications must name its
+`app_id`, `instance_id`, `wake_id` and current `node_id`. The gateway selects source
+history inside that tuple before comparing observation time/event ID. An old
+wake's ready event, a former migration node's event, or a historical unscoped event
+cannot certify the current target. Unknown readiness keeps the resident capacity
+reservation and refuses new routing until each configured source is observed.
+Primary-app and ingress companion gates remain independent and reversible.
+
+The primary probe captures vmmd's live instance identity when its loop starts.
+Guest sidecar readiness uses the host-bound VM listener origin and verifies it
+against the current live instance. Scheduler pool restores and migration adoption
+preserve the existing wake identity; destination vmmd supplies its serving node.
+Managed endpoint leases also retain their wake identity internally. A delayed
+public transport failure retires only its selected target lifetime. Modern
+terminal notifications retain the row's wake/node; legacy notifications without
+these fields keep their earlier compatibility behavior.
+
+Roll out the notification migration and updated producers first. Establish current
+identified observations for probe-bearing VMs through the scheduler-owned lifecycle
+before enabling the updated gateways. Older unscoped event history cannot release
+an identified target's readiness gate. Verify current tuple, independent source
+states, local readiness repair completion and resident count when diagnosing a
+post-upgrade refusal. A quarantine for a known retired wake/node does not block a
+fresh known lifetime; unknown legacy eviction still fences conservatively.
+
+These changes require native KVM VM/probe/restore/migration and leak acceptance.
+Local SQL, Unix listener and gRPC checks do not establish those results. Missing
+placement/lifecycle notification repair and deployed load/recovery/staging remain
+separate open qualification work.

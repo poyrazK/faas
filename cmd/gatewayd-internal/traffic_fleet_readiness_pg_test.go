@@ -31,12 +31,12 @@ type fleetReadinessInvalidator struct {
 	drop         bool
 }
 
-func (i *fleetReadinessInvalidator) SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64) {
+func (i *fleetReadinessInvalidator) SetInstanceReadinessForTarget(appID, instanceID, wakeID, nodeID, source, status string, at time.Time, eventID int64) {
 	if i.drop {
 		i.droppedEvent.Store(eventID)
 		return
 	}
-	i.PGBackend.SetInstanceReadinessSource(appID, instanceID, source, status, at, eventID)
+	i.PGBackend.SetInstanceReadinessForTarget(appID, instanceID, wakeID, nodeID, source, status, at, eventID)
 	i.lastEvent.Store(eventID)
 }
 

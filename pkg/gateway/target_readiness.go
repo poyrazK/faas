@@ -14,9 +14,9 @@ import (
 // Each result echoes its owner and immutable deployment. Missing or mismatched
 // results cannot certify a cached target's readiness.
 type TargetReadinessSnapshot struct {
-	AppID, InstanceID, DeploymentID string
-	RequiredSources                 []string
-	States                          map[string]ReadinessState
+	AppID, InstanceID, DeploymentID, WakeID, NodeID string
+	RequiredSources                                 []string
+	States                                          map[string]ReadinessState
 }
 
 type TargetReadinessLoader func(context.Context, []Target) (map[string]TargetReadinessSnapshot, error)
@@ -140,7 +140,7 @@ func (b *PGBackend) ReconcileTargetReadiness(ctx context.Context) error {
 }
 
 func applyTargetReadiness(target *Target, snapshot TargetReadinessSnapshot, now time.Time) bool {
-	if snapshot.AppID != target.AppID || snapshot.InstanceID != target.InstanceID || snapshot.DeploymentID != target.DeploymentID {
+	if snapshot.AppID != target.AppID || snapshot.InstanceID != target.InstanceID || snapshot.DeploymentID != target.DeploymentID || (target.WakeID != "" && (snapshot.WakeID != target.WakeID || snapshot.NodeID != target.NodeID)) {
 		target.ReadinessUnavailable = true
 		return false
 	}

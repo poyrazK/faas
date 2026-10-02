@@ -5288,12 +5288,13 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
-		BaseKey:       baseKey(app.Runtime),
-		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:     int32(limits.VCPU),
-		MemSizeMiB:    int32(app.RAMMB),
-		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit:    int32(limits.EgressMbit),
+		WakeID: ins.WakeID,
+		BaseKey:         baseKey(app.Runtime),
+		LayerKey:        layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:       int32(limits.VCPU),
+		MemSizeMiB:      int32(app.RAMMB),
+		CPUMillicores:   int32(effectiveAppCPUMillicores(app)),
+		EgressMbit:      int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -9242,7 +9243,7 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 // runtime identity and RUNNING state with one store CAS while preserving the
 // same observable transition contract as transitionWithKind.
 func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
-	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
+	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID, ins.NodeID)
 	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
@@ -9265,7 +9266,7 @@ func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins stat
 	}
 }
 
-func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State, wakeID string) {
+func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State, wakeID string, nodeIDs ...string) {
 	if e.notif == nil {
 		return
 	}
@@ -9285,6 +9286,9 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 		"app_id":      appID,
 		"state":       string(st),
 		"wake_id":     wakeID,
+	}
+	if len(nodeIDs) > 0 {
+		payloadFields["node_id"] = nodeIDs[0]
 	}
 	// Job-task instances intentionally have no app row. Mark that
 	// shape explicitly so gateway subscribers can ignore the event

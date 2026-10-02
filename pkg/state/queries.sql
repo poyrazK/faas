@@ -5932,3 +5932,28 @@ WHERE i.host_ip = sqlc.arg(host_ip)::text::inet
   ))
 GROUP BY i.app_id
 LIMIT 2;
+
+-- name: LatestInstanceReadinessForTargets :many
+-- Filter each routing lifetime BEFORE choosing its latest source transition.
+-- A delayed observation from a retired node/wake cannot mask a current probe.
+WITH targets AS (
+ SELECT unnest(sqlc.arg(app_ids)::text[]) AS app_id,
+        unnest(sqlc.arg(instance_ids)::text[]) AS instance_id,
+        unnest(sqlc.arg(wake_ids)::text[]) AS wake_id,
+        unnest(sqlc.arg(node_ids)::text[]) AS node_id
+)
+SELECT DISTINCT ON (t.instance_id,
+       CAST(CASE WHEN e.kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || (e.data->>'sidecar_name') END AS text))
+       CAST(t.instance_id AS text) AS instance_id,
+       CAST(CASE WHEN e.kind = 'wake.app_readiness' THEN 'primary_app'
+            ELSE 'sidecar:' || (e.data->>'sidecar_name') END AS text) AS source,
+       CAST(e.data->>'status' AS text) AS status, e.at, e.id
+ FROM targets t JOIN events e ON e.data->>'instance_id' = t.instance_id
+ WHERE e.kind IN ('wake.sidecar_health', 'wake.app_readiness')
+   AND e.data->>'status' IN ('ready', 'unready')
+   AND e.data->>'app_id' = t.app_id
+   AND COALESCE(e.data->>'wake_id', '') = t.wake_id
+   AND (t.wake_id = '' OR COALESCE(e.data->>'node_id', '') = t.node_id)
+   AND (e.kind <> 'wake.sidecar_health' OR COALESCE(e.data->>'sidecar_name', '') <> '')
+ ORDER BY t.instance_id, source, e.at DESC, e.id DESC;

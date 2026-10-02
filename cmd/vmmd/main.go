@@ -409,7 +409,7 @@ func defaultDeps() runDeps {
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
-		openStore:           state.NewPgStore,
+		openStore:           func(pool *pgxpool.Pool) *state.PgStore { return state.NewPgStore(pool) },
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
 		loadHostKeys:        secretbox.LoadFleetAndHostKeys,

@@ -27,9 +27,12 @@ func (s *readinessStoreFixture) DeploymentReadinessConfigs(_ context.Context, id
 	return s.configs, s.configErr
 }
 
-func (s *readinessStoreFixture) LatestInstanceReadinessBySource(_ context.Context, ids []string) (map[string]map[string]state.InstanceReadiness, error) {
+func (s *readinessStoreFixture) LatestInstanceReadinessForTargets(_ context.Context, targets []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error) {
 	s.reads++
-	s.instances = append([]string(nil), ids...)
+	s.instances = nil
+	for _, target := range targets {
+		s.instances = append(s.instances, target.InstanceID)
+	}
 	return s.states, s.stateErr
 }
 

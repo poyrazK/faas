@@ -346,7 +346,7 @@ type PGBackend struct {
 	// target eviction. Without this guard, a burst that discovers the same
 	// dead instance could start one replacement per failed request.
 	staleTargetRecovery singleflight.Group
-	// staleTargets quarantines instances that the forwarding transport has
+	// staleTargets quarantines VM lifetimes that the forwarding transport has
 	// proved unusable. The database row can remain RUNNING until vmmd's
 	// liveness report reaches schedd; without this short-lived fence,
 	// ReconcileLiveTargets can immediately put the same dead instance back
@@ -1486,14 +1486,14 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	}
 	b.purgeStaleTargetsLocked(time.Now())
 	b.purgeReadinessStateLocked(time.Now())
-	if until, ok := b.staleTargets[staleTargetKey(appID, target.InstanceID)]; ok && until.After(time.Now()) {
+	if b.targetQuarantinedLocked(appID, target, time.Now()) {
 		return
 	}
 	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
 		target.RequiresReadiness = true
 	}
 	if !target.RequiresReadiness {
-		if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, "")]; ok {
+		if readiness, ok := b.readinessState[readinessLifetimeStateKey(appID, target.InstanceID, target.WakeID, target.NodeID, "")]; ok {
 			target.RequiresReadiness = true
 			applyReadinessState(&target, "", readiness)
 		}
@@ -1511,7 +1511,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 			sources = []string{""}
 		}
 		for _, source := range sources {
-			if readiness, ok := b.readinessState[readinessStateKey(appID, target.InstanceID, source)]; ok {
+			if readiness, ok := b.readinessState[readinessLifetimeStateKey(appID, target.InstanceID, target.WakeID, target.NodeID, source)]; ok {
 				applyReadinessState(&target, source, readiness)
 			}
 		}
@@ -1561,6 +1561,12 @@ func (b *PGBackend) SetInstanceReadiness(appID, instanceID, status string, at ti
 // to matching cached targets. Updates are ordered per source so one gate cannot
 // mask or roll back another gate's independent state.
 func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status string, at time.Time, eventID int64) {
+	b.SetInstanceReadinessForTarget(appID, instanceID, "", "", source, status, at, eventID)
+}
+
+// Identified wakes accept only observations from their current node and wake.
+// The cache key also scopes events that arrive before admission.
+func (b *PGBackend) SetInstanceReadinessForTarget(appID, instanceID, wakeID, nodeID, source, status string, at time.Time, eventID int64) {
 	if b == nil || appID == "" || instanceID == "" || at.IsZero() {
 		return
 	}
@@ -1578,7 +1584,7 @@ func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status
 	if b.readinessState == nil {
 		b.readinessState = make(map[string]instanceReadiness)
 	}
-	key := readinessStateKey(appID, instanceID, source)
+	key := readinessLifetimeStateKey(appID, instanceID, wakeID, nodeID, source)
 	current := b.readinessState[key]
 	if !current.at.IsZero() && !readinessAfter(at, eventID, current.at, current.eventID) {
 		return
@@ -1586,7 +1592,7 @@ func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status
 	if picker := b.appsPicker[appID]; picker != nil {
 		for _, set := range picker.sets {
 			for _, target := range set.entries {
-				if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+				if target.InstanceID != instanceID || target.WakeID != wakeID || (wakeID != "" && target.NodeID != nodeID) || !target.requiresReadinessSource(source) {
 					continue
 				}
 				if target.ReadinessGates != nil {
@@ -1605,7 +1611,7 @@ func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status
 	for _, set := range picker.sets {
 		for i := range set.entries {
 			target := &set.entries[i]
-			if target.InstanceID != instanceID || !target.requiresReadinessSource(source) {
+			if target.InstanceID != instanceID || target.WakeID != wakeID || (wakeID != "" && target.NodeID != nodeID) || !target.requiresReadinessSource(source) {
 				continue
 			}
 			if target.ReadinessGates == nil {
@@ -1628,6 +1634,39 @@ func (b *PGBackend) SetInstanceReadinessSource(appID, instanceID, source, status
 
 func readinessStateKey(appID, instanceID, source string) string {
 	return staleTargetKey(appID, instanceID) + "\x00" + source
+}
+
+func (b *PGBackend) targetQuarantinedLocked(appID string, target Target, now time.Time) bool {
+	for _, key := range []string{staleTargetKey(appID, target.InstanceID), staleTargetWakeKey(appID, target.InstanceID, target.WakeID), staleTargetLifetimeKey(appID, target.InstanceID, target.WakeID, target.NodeID)} {
+		if until, ok := b.staleTargets[key]; ok && until.After(now) {
+			return true
+		}
+	}
+	// Missing wake metadata cannot prove that this is a replacement VM.
+	if target.WakeID == "" {
+		prefix := staleTargetKey(appID, target.InstanceID) + "\x00"
+		for key, until := range b.staleTargets {
+			if strings.HasPrefix(key, prefix) && until.After(now) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func readinessLifetimeStateKey(appID, instanceID, wakeID, nodeID, source string) string {
+	if wakeID == "" {
+		return readinessStateKey(appID, instanceID, source)
+	}
+	return staleTargetLifetimeKey(appID, instanceID, wakeID, nodeID) + "\x00" + source
+}
+
+func staleTargetWakeKey(appID, instanceID, wakeID string) string {
+	return staleTargetKey(appID, instanceID) + "\x00" + wakeID
+}
+
+func staleTargetLifetimeKey(appID, instanceID, wakeID, nodeID string) string {
+	return staleTargetWakeKey(appID, instanceID, wakeID) + "\x00" + nodeID
 }
 
 func cloneReadinessGates(in *ReadinessGates) *ReadinessGates {
@@ -1685,8 +1724,6 @@ func (b *PGBackend) purgeReadinessStateLocked(now time.Time) {
 func readinessAfter(at time.Time, eventID int64, otherAt time.Time, otherEventID int64) bool {
 	return at.After(otherAt) || (at.Equal(otherAt) && eventID > otherEventID)
 }
-
-const staleTargetQuarantine = 30 * time.Second
 
 func staleTargetKey(appID, instanceID string) string {
 	return appID + "\x00" + instanceID
@@ -1918,35 +1955,88 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 // removal is RefreshDeploymentWeights's job — that's where we
 // learn a deployment is no longer 'live'.
 func (b *PGBackend) EvictInstance(appID, instanceID string) {
-	if appID == "" || instanceID == "" {
+	b.evictTargetLifetime(Target{AppID: appID, InstanceID: instanceID}, false, false)
+}
+
+// EvictInstanceForWake consumes lifecycle notifications without letting a
+// delayed terminal event remove a replacement wake of the same instance.
+func (b *PGBackend) EvictInstanceForWake(appID, instanceID, wakeID string) {
+	if wakeID == "" {
+		b.EvictInstance(appID, instanceID)
+		return
+	}
+	b.evictTargetLifetime(Target{AppID: appID, InstanceID: instanceID, WakeID: wakeID}, true, false)
+}
+
+// EvictInstanceForRoutingIdentity also fences a migration's previous node.
+func (b *PGBackend) EvictInstanceForRoutingIdentity(appID, instanceID, wakeID, nodeID string) {
+	if nodeID == "" {
+		b.EvictInstanceForWake(appID, instanceID, wakeID)
+		return
+	}
+	b.evictTargetLifetime(Target{AppID: appID, InstanceID: instanceID, WakeID: wakeID, NodeID: nodeID}, true, true)
+}
+
+// EvictRoutedTarget is used by a forward already bound to one routing lifetime.
+func (b *PGBackend) EvictRoutedTarget(target Target) {
+	b.evictTargetLifetime(target, true, true)
+}
+
+func (b *PGBackend) evictTargetLifetime(captured Target, matchWake, matchNode bool) {
+	if b == nil || captured.AppID == "" || captured.InstanceID == "" {
 		return
 	}
 	b.tgtMu.Lock()
+	defer b.tgtMu.Unlock()
 	if b.staleTargets == nil {
 		b.staleTargets = make(map[string]time.Time)
 	}
 	now := time.Now()
-	prefix := staleTargetKey(appID, instanceID) + "\x00"
-	for key := range b.readinessState {
-		if strings.HasPrefix(key, prefix) {
-			delete(b.readinessState, key)
+	b.purgeStaleTargetsLocked(now)
+	picker := b.appsPicker[captured.AppID]
+	removed, remaining := false, 0
+	if picker != nil {
+		for _, set := range picker.sets {
+			for _, target := range set.entries {
+				if target.InstanceID != captured.InstanceID || (matchWake && target.WakeID != captured.WakeID) || (matchNode && target.NodeID != captured.NodeID) {
+					continue
+				}
+				target.AppID = captured.AppID
+				b.quarantineTargetLocked(target, now)
+				set.remove(target.InstanceID)
+				removed = true
+				break
+			}
+			remaining += len(set.entries)
+		}
+		if remaining == 0 {
+			delete(b.appsPicker, captured.AppID)
 		}
 	}
-	b.purgeStaleTargetsLocked(now)
-	b.staleTargets[staleTargetKey(appID, instanceID)] = now.Add(staleTargetQuarantine)
-	picker := b.appsPicker[appID]
-	if picker == nil {
-		b.tgtMu.Unlock()
-		return
+	if !removed {
+		key := staleTargetKey(captured.AppID, captured.InstanceID)
+		if matchWake {
+			key = staleTargetWakeKey(captured.AppID, captured.InstanceID, captured.WakeID)
+		}
+		if matchNode {
+			key = staleTargetLifetimeKey(captured.AppID, captured.InstanceID, captured.WakeID, captured.NodeID)
+		}
+		b.staleTargets[key] = now.Add(api.TrafficStaleTargetQuarantine)
 	}
-	totalRemaining := 0
-	for _, set := range picker.sets {
-		totalRemaining += set.remove(instanceID)
+}
+
+func (b *PGBackend) quarantineTargetLocked(target Target, now time.Time) {
+	key := staleTargetKey(target.AppID, target.InstanceID)
+	if target.WakeID != "" {
+		key = staleTargetLifetimeKey(target.AppID, target.InstanceID, target.WakeID, target.NodeID)
 	}
-	if totalRemaining == 0 {
-		delete(b.appsPicker, appID)
+	b.staleTargets[key] = now.Add(api.TrafficStaleTargetQuarantine)
+	prefix := key + "\x00"
+	for stateKey := range b.readinessState {
+		if strings.HasPrefix(stateKey, prefix) {
+			delete(b.readinessState, stateKey)
+		}
 	}
-	b.tgtMu.Unlock()
 }
 
 // RecoverStaleTarget asynchronously restores one serving slot after the

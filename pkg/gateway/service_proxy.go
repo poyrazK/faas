@@ -1599,6 +1599,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 
 func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
 	return Target{
+		WakeID:              endpoint.wakeID,
 		AppID:               appID,
 		NodeID:              endpoint.NodeID,
 		InstanceID:          endpoint.InstanceID,

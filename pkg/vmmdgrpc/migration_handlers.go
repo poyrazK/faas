@@ -508,6 +508,7 @@ func (s *Server) resumeMigrationVM(ctx context.Context, instanceID string) (bool
 //	codes.PermissionDenied  lease token mismatch
 func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMigratedInstanceRequest) (*vmmdpb.AdoptMigratedInstanceResponse, error) {
 	const op = "AdoptMigratedInstance"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	if req.GetInstanceId() == "" || req.GetMemStorageKey() == "" ||
 		req.GetVmstateStorageKey() == "" || req.GetLeaseToken() == "" {
@@ -535,6 +536,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wakeReq.NodeID = s.nodeID
 	inst, err := s.vmm.Wake(ctx, wakeReq)
 	if err != nil {
 		// Manager.Wake normally cleans its own partial allocation. The
