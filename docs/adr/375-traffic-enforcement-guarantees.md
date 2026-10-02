@@ -1424,6 +1424,36 @@ request/notification paths. Large or slow scan backlogs can fail closed at lease
 expiry. This is bounded convergence from a statement snapshot, not instantaneous
 validation of every dispatched request or termination of already admitted work.
 
+### Readiness before first publication and direct synthetic delivery
+
+Production gateways require a stored readiness-configuration certificate before
+a newly published target can serve public or managed traffic. Missing probe
+fields mean unknown configuration, not a disabled probe. Certificates bind app,
+instance, deployment, node, wake, normalized runtime port and complete required
+source list; copying a target
+and changing its identity cannot transfer verification. Bare exact-lifetime
+replays preserve an existing certificate, readiness failure and expiry, without
+renewing its lease. Unknown configurations join the bounded readiness scan.
+Only an owner-matched snapshot can certify a deployment with no probes; that
+immutable disabled configuration does not gain a recurring read dependency.
+
+EnsureWarm, ordinary admission and the synthetic wake callback use the shared
+bounded configuration reader before publishing scheduler results. Read failures
+and missing observations retain resident capacity while blocking routing. Source
+notifications received before configuration discovery remain scoped to their
+captured lifetime and are merged after the complete required source set is known;
+an older ready snapshot cannot mask a newer withdrawal from a newly discovered
+source.
+
+Pre-woken synthetic and debug mirror forwarding check the same stored source set
+before invoking the node forwarder. Normal synthetic residents enter the public
+cache even on readiness refusal, preserving admission accounting. Dedicated
+mirror VMs remain outside the public picker and its resident count. Configuration
+and observation reads inherit the request deadline and the existing one-second
+read bound. These checks establish traffic eligibility, not termination of work
+already delivered. Legacy optional backends without the stored reader/verifier
+remain a weaker compatibility path; production wires both capabilities.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

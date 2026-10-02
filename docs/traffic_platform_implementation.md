@@ -3665,3 +3665,98 @@ Native VM/probe death, actual restore/migration/pool readiness, networking,
 firewall, clock/entropy and leak evidence still require dedicated Linux x86_64
 KVM execution. No host is available; no repeated host request is needed. The
 broad implementation goal remains active.
+
+## Readiness before target publication and synthetic delivery — 2026-10-03
+
+A production target now needs a stored readiness-configuration certificate
+before public or managed routing. Missing local probe fields mean unknown
+configuration. The certificate binds app, instance, deployment, node, wake,
+normalized runtime port and the complete required source list. Copied targets
+cannot carry verification into another identity, source configuration or app
+picker. Unknown configurations join the existing bounded readiness repair scan.
+Only an owner-matched no-probe configuration permits routing without observations;
+that immutable disabled configuration has no recurring read dependency.
+
+Warm, ordinary admission and synthetic wake publication use the shared scoped
+reader with the existing one-second bound and request cancellation. Failed reads,
+missing configuration and unready/missing sources retain admitted resident
+capacity while denying routing. Bare exact-lifetime replays preserve certificates,
+failure and expiry without renewing verification. Retained lifetime-scoped source
+notifications are merged after configuration discovery, so an older ready read
+cannot mask a newer withdrawal from a previously unknown source.
+
+Pre-woken synthetic and debug mirror delivery verify readiness before calling
+the node forwarder. Ordinary synthetic refusals retain public resident capacity;
+dedicated mirror VMs stay outside the public picker and count. Scoped verification
+normalizes target ownership. Legacy optional backends without the stored
+reader/verifier retain weaker compatibility behavior. Production wiring supplies
+both. The existing daemon fleet fixture now uses verified publication without
+relaxing its readiness, routing or capacity assertions. ADR 375 and the traffic
+policy runbook describe the contract and its limits; customer quotas are unchanged.
+
+Verification against the 12,550-file executed source freeze:
+
+- All fourteen complete unit packages pass in 229.464 s: 11,427 accepted named
+  results and 1,516 guarded/skipped results. Raw output has 11,474 passes and
+  1,469 skips; 47 all-guarded parent passes are classified as guarded.
+- The additive PostgreSQL selector retains the previous selector and all fourteen
+  packages, adding publication coverage: 325 named passes, zero skips, 160.078 s.
+  Thirty-five actual database fixture roots account for 54 named results; the
+  other 271 are memory/transport checks. The new fixture uses actual owner and
+  instance rows, stored primary/ingress-sidecar configuration, scoped readiness
+  events, withdrawal, SQL table-lock timeout and recovery without LISTEN delivery.
+  Guest forwarding remains a fixture. Existing local daemon process checks do
+  not establish deployed fleet or native VM behavior.
+- Deduplicated acceptance is 11,478 named passes, with 1,479 guarded results
+  without acceptance. Portable coverage includes unknown/disabled configuration,
+  complete source sets, owner/lifetime/port mutation, bare replay and expiry,
+  notifications during configuration reads, warm publication, synthetic refusal
+  before forwarding, and dedicated mirrors remaining outside ordinary capacity.
+- Lint v2.4.0 checks all fourteen complete packages with tests: zero reported
+  issues, 213.217 s. Linux amd64 lint checks complete vmmd/fcvm packages with
+  tests: zero reported issues, 25.117 s. Linux amd64 vmmd and Firecracker metal
+  test binaries compile in 91.828 s and 18.703 s. Both are verified ELF x86-64
+  binaries and were not executed. Metal evidence is compilation only.
+- SQLC v1.31.1 reproduces all four generated files byte for byte. SQL, encoding,
+  quoting and ADR-number gates pass in 22.205 s; the 71 pre-existing ADR-number
+  duplicates remain at baseline. The source PostgreSQL public schema remains
+  empty with fsync, synchronous_commit and full_page_writes enabled.
+
+Whole failed/preliminary runs remain preserved and excluded from acceptance.
+The unchanged-production baseline reproduced absent configuration reads and
+eligible bare publications; it exited 1 in 154.813 s with eleven named failures,
+including parents/subtests. The first focused PostgreSQL fixture used production
+scope for an ordinary app; correcting it to the default scope retained every
+assertion. The corrected focused run passed 104 named results with zero skips.
+The first complete unit attempt caught unnecessary ownership normalization on a
+legacy debug mirror. Normalization was limited to scoped readiness verification,
+retaining the existing mirror assertion. Another unit attempt hit the unchanged
+two-second policy analysis bound before the expected projection refusal. That
+whole failure is excluded; the complete final scope subsequently passed with the
+same bound and runtime settings. This is not deployed latency/load acceptance.
+
+SSD capacity repeatedly refused launches and interrupted the pipeline after its
+complete unit, PostgreSQL and lint gates. After owned Go jobs terminated, 7,723
+older files from this task's Go cache were removed, reclaiming 1,653,567,488 physical
+bytes. Source, receipts, PostgreSQL and sibling caches/processes/volumes were
+retained. One preflight wrapper receipt was replaced by a second preflight
+refusal while cleanup was still in progress; both errors are recorded and neither
+created a Go subprocess or counts as acceptance. Static SQLC and policy checks
+used small temporary files without Go compilation. Their first storage refusal
+is also retained. Compile/lint launches retain the ten-GiB preflight and two-GiB
+phase floor. The Linux resume verifies every frozen source hash and exact complete
+package/selector/argument receipts, retaining successful gates rather than
+rerunning them. All owned heavy jobs reached terminal receipts before this tracker
+changed; no program source changed afterward. No source exclusion, test overlay,
+suppression, relaxed assertion/bound, push or PR. Source, failure/final gate,
+artifact, staged/commit and durability receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-publication-readiness-20261002/`.
+
+All six release requirements remain unchecked. Known-cache discovery still has
+its documented limits, and the older additive loader still reads historical
+instances. Complete path coverage, deployed fleet/load/restart/outage/recovery,
+customer release and staging qualification remain open. Native VM/probe death,
+actual restore/migration/pool readiness, networking/firewall, clock/entropy and
+leak evidence require dedicated Linux x86_64 KVM execution. The user confirmed
+no available host; no further host request is needed until availability changes.
+The broad implementation goal remains active.

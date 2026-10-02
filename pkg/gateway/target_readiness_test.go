@@ -21,6 +21,7 @@ func repairReadyTarget() (Target, TargetReadinessSnapshot) {
 		ReadinessGates: &ReadinessGates{RequiredSources: []string{"primary_app", "sidecar:proxy"}, States: states}}
 	snapshot := TargetReadinessSnapshot{AppID: target.AppID, InstanceID: target.InstanceID, DeploymentID: target.DeploymentID,
 		RequiredSources: append([]string(nil), target.ReadinessGates.RequiredSources...), States: cloneReadinessGates(target.ReadinessGates).States}
+	applyTargetReadiness(&target, snapshot, time.Now()) // This fixture starts with verified configuration.
 	return target, snapshot
 }
 
@@ -205,11 +206,15 @@ func TestTargetReadinessRepairFairBoundedBatchesAndDisabledProbes(t *testing.T) 
 		return out, nil
 	})
 	for i := range 2*api.TrafficReadinessBatchSize + 1 {
-		target, _ := repairReadyTarget()
+		target, snapshot := repairReadyTarget()
 		target.AppID, target.InstanceID, target.DeploymentID = fmt.Sprintf("app-%d", i%3), fmt.Sprintf("instance-%03d", i), fmt.Sprintf("deployment-%d", i%2)
+		snapshot.AppID, snapshot.InstanceID, snapshot.DeploymentID = target.AppID, target.InstanceID, target.DeploymentID
+		applyTargetReadiness(&target, snapshot, time.Now())
 		backend.RecordTarget(target.AppID, target)
 	}
-	backend.RecordTarget("app", Target{AppID: "app", InstanceID: "no-probe", DeploymentID: "deployment", NodeID: "node"})
+	noProbe := Target{AppID: "app", InstanceID: "no-probe", DeploymentID: "deployment", NodeID: "node"}
+	applyTargetReadiness(&noProbe, TargetReadinessSnapshot{AppID: noProbe.AppID, InstanceID: noProbe.InstanceID, DeploymentID: noProbe.DeploymentID}, time.Now())
+	backend.RecordTarget("app", noProbe)
 	for range 3 {
 		if err := backend.ReconcileTargetReadiness(t.Context()); err != nil {
 			t.Fatal(err)

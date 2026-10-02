@@ -124,7 +124,9 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 				}
 			}
 			expectedReady[app.ID][instance] = ready
-			backend.RecordTarget(app.ID, target)
+			if err := backend.RecordTargetWithReadiness(t.Context(), app.ID, target); err != nil {
+				t.Fatalf("verify warm fixture readiness for %s/%s: %v", app.ID, instance, err)
+			}
 		}
 	}
 	// Warm placement is a fixture boundary. Verify its real registry view

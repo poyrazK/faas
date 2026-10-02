@@ -46,6 +46,7 @@ func (b *PGBackend) loadAdmissionReadiness(ctx context.Context, target *Target) 
 	if b.readinessLoader == nil {
 		return nil
 	}
+	target.readinessVerificationRequired = true
 	readCtx, cancel := context.WithTimeout(ctx, api.TrafficReadinessReadTimeout)
 	defer cancel()
 	snapshots, err := b.readinessLoader(readCtx, []Target{*target})
@@ -123,7 +124,7 @@ func (b *PGBackend) ReconcileTargetReadiness(ctx context.Context) error {
 				if err != nil {
 					target.ReadinessUnavailable = true
 				} else {
-					if !applyTargetReadiness(target, snapshots[target.InstanceID], now) {
+					if !b.applyTargetReadinessLocked(target, snapshots[target.InstanceID], now) {
 						status.Succeeded = false
 					}
 				}
@@ -144,6 +145,7 @@ func applyTargetReadiness(target *Target, snapshot TargetReadinessSnapshot, now 
 		target.ReadinessUnavailable = true
 		return false
 	}
+	target.readinessConfiguration = &targetReadinessConfiguration{identity: readinessIdentity(*target), sources: append([]string(nil), snapshot.RequiredSources...)}
 	target.RequiresReadiness = len(snapshot.RequiredSources) > 0
 	if !target.RequiresReadiness {
 		target.ReadinessGates, target.ReadinessVerifiedUntil = nil, time.Time{}
@@ -212,7 +214,8 @@ func (b *PGBackend) nextReadinessBatch() []Target {
 	for app, picker := range b.appsPicker {
 		for _, set := range picker.sets {
 			for _, target := range set.entries {
-				if !target.RequiresReadiness && !target.ReadinessUnavailable {
+				if !target.RequiresReadiness && !target.ReadinessUnavailable &&
+					(!target.readinessVerificationRequired || target.hasReadinessConfiguration()) {
 					continue
 				}
 				target.AppID = app

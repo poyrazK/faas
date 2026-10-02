@@ -731,7 +731,7 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 	if identity.DeploymentID != "" {
 		deploymentID = identity.DeploymentID
 	}
-	b.RecordTarget(appID, Target{
+	target := Target{
 		NodeID:              nodeID,
 		InstanceID:          instanceID,
 		WakeID:              wakeID,
@@ -743,9 +743,10 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		DeploymentTag:       identity.DeploymentTag,
 		DeploymentCreatedAt: identity.DeploymentCreatedAt,
 		ImageDigest:         identity.ImageDigest,
-	})
+	}
+	readinessErr := b.RecordTargetWithReadiness(ctx, appID, target)
 	markWakeTargetPublished(ctx)
-	return wakeID, scheddWakeMethodToGateway(rawMethod), false, nil
+	return wakeID, scheddWakeMethodToGateway(rawMethod), false, readinessErr
 }
 
 // WithWarmHint attaches the sticky-warm affinity source for the picker.
@@ -1486,7 +1487,13 @@ func (b *PGBackend) RecordTarget(appID string, target Target) {
 }
 
 func (b *PGBackend) recordTargetLocked(appID string, target Target) {
+	if target.AppID != "" && target.AppID != appID {
+		return
+	}
+	target.AppID = appID
 	if b.readinessLoader != nil {
+		target.readinessVerificationRequired = true
+		b.inheritTargetReadinessLocked(appID, &target)
 		b.readinessGeneration++
 		target.readinessGeneration = b.readinessGeneration
 	}
@@ -1498,7 +1505,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
 		target.RequiresReadiness = true
 	}
-	if !target.RequiresReadiness {
+	if !target.RequiresReadiness && !target.hasReadinessConfiguration() {
 		if readiness, ok := b.readinessState[readinessLifetimeStateKey(appID, target.InstanceID, target.WakeID, target.NodeID, "")]; ok {
 			target.RequiresReadiness = true
 			applyReadinessState(&target, "", readiness)
@@ -1948,10 +1955,7 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 		DeploymentCreatedAt: identity.DeploymentCreatedAt,
 		ImageDigest:         identity.ImageDigest,
 	}
-	readinessErr := b.loadAdmissionReadiness(ctx, &target)
-	b.tgtMu.Lock()
-	b.recordTargetLocked(appID, target)
-	b.tgtMu.Unlock()
+	readinessErr := b.RecordTargetWithReadiness(ctx, appID, target)
 	markWakeTargetPublished(ctx)
 	if readinessErr != nil {
 		return wakeID, method, false, readinessErr

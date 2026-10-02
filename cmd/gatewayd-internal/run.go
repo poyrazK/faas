@@ -540,7 +540,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			return inv, 0, fmt.Errorf("gateway synth: encode replay headers: %w", err)
 		}
 	}
-	out, statusCode, mirrorBody, err := a.forwardInvocationWithStatusAndBody(ctx, target, mirrorInv)
+	out, statusCode, mirrorBody, err := a.forwardInvocationWithStatusAndBody(ctx, target, mirrorInv, false)
 	latencyMs := int(time.Since(start) / time.Millisecond)
 	if err != nil {
 		statusCode = 0
@@ -743,12 +743,7 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 		return inv, 0, err
 	}
 	defer cleanup()
-	// A wake response must pass the same owner/target/security checks before it
-	// can enter the shared placement cache used by later public requests.
-	if recorder, ok := a.backend.(interface{ RecordTarget(string, gateway.Target) }); ok {
-		recorder.RecordTarget(inv.AppID, target)
-	}
-	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv)
+	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv, true)
 	if cause := context.Cause(ctx); cause != nil {
 		return inv, 0, cause
 	}
@@ -782,9 +777,13 @@ func (a *synthAdapter) prepareInvocation(ctx context.Context, inv state.Invocati
 	return ctx, prepared, version, cleanup, nil
 }
 
-func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, []byte, error) {
+func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation, publish bool) (state.Invocation, int, []byte, error) {
 	if a.forward == nil {
 		return inv, 0, nil, fmt.Errorf("gateway synth: invocation forwarder is not wired")
+	}
+	target, err := a.prepareInvocationTarget(ctx, inv.AppID, target, publish)
+	if err != nil {
+		return inv, 0, nil, err
 	}
 
 	method := inv.Method
@@ -864,6 +863,28 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		inv.State = state.InvocationDispatching
 	}
 	return inv, rec.Code, append([]byte(nil), body...), nil
+}
+
+func (a *synthAdapter) prepareInvocationTarget(ctx context.Context, appID string, target gateway.Target, publish bool) (gateway.Target, error) {
+	if target.AppID != "" && target.AppID != appID {
+		return target, gateway.ErrTargetReadinessUnavailable
+	}
+	var err error
+	if verifier, ok := a.backend.(interface {
+		VerifyTargetReadiness(context.Context, gateway.Target) (gateway.Target, error)
+	}); ok {
+		target.AppID = appID
+		target, err = verifier.VerifyTargetReadiness(ctx, target)
+	}
+	// Ownership/security verification precedes this call. Ordinary admitted
+	// residents retain capacity even on readiness failure; dedicated mirrors
+	// stay outside the ordinary public placement cache.
+	if publish {
+		if recorder, ok := a.backend.(interface{ RecordTarget(string, gateway.Target) }); ok {
+			recorder.RecordTarget(appID, target)
+		}
+	}
+	return target, err
 }
 
 func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {
@@ -1673,7 +1694,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			err = admitErr
 			if err == nil && !atCapacity {
-				backend.RecordTarget(appID, gateway.Target{
+				err = backend.RecordTargetWithReadiness(ctx, appID, gateway.Target{
 					AppID:               appID,
 					InstanceID:          instanceID,
 					NodeID:              nodeID,

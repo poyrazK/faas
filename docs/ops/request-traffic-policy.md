@@ -1019,3 +1019,31 @@ request/notification reads are still additive and include historical rows.
 Local database/cache and startup/shutdown tests establish these boundaries;
 deployed overflow/reconnect, fleet load/recovery, staging and native VM/network
 acceptance remain required.
+
+### Readiness at publication and synthetic forwarding
+
+Updated gateways hold a new bare publication unroutable until its immutable
+deployment's complete readiness configuration is verified. An absent local
+probe definition is not proof that probes are disabled. Warm and admission
+publications read configuration and required source observations with the
+existing one-second deadline before entering the picker. Failed reads and
+missing/unready sources retain resident capacity, preventing another wake from
+consuming the same slot. Unknown configurations participate in readiness repair.
+
+Verification binds app/instance/deployment/node/wake, normalized runtime port and
+the complete required source list.
+A bare replay of that exact identity preserves failure and expiry and cannot
+renew verification; a copied target with changed identity must verify again.
+Probe notifications alone cannot certify the complete required source list.
+Observations received before source discovery are retained and merged by their
+captured lifetime when configuration arrives. Only an owner-matched no-probe
+configuration permits a target to serve without probe observations.
+
+Normal synthetic invocation and debug mirror replay both check readiness before
+calling the node forwarder. Synthetic refusals preserve ordinary resident
+accounting. Dedicated mirror VMs do not enter the public picker. Diagnose a
+refusal using the current captured tuple, configured source set, latest source
+observations, reader errors/deadline and retained capacity. Legacy optional
+backends without these readers/verifiers do not establish the production
+guarantee. Native probe/VM behavior and deployed fleet/load/recovery/staging
+qualification remain open.

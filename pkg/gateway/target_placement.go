@@ -204,7 +204,7 @@ func (b *PGBackend) applyPlacementSnapshotLocked(picker *appPicker, snapshot Tar
 		target.PlacementUnavailable = false
 		target.PlacementVerifiedUntil = now.Add(api.TrafficPlacementLease)
 		if b.readinessLoader != nil {
-			applyTargetReadiness(&target, snapshot.readiness[target.InstanceID], now)
+			b.applyTargetReadinessLocked(&target, snapshot.readiness[target.InstanceID], now)
 		}
 		desired[target.InstanceID] = target
 	}
