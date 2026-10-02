@@ -1247,7 +1247,7 @@ jobs:
             pkg/promqlrules/data_placement.yaml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
-          make udp-alert-check tcp-tls-alert-check
+          make udp-alert-check tcp-tls-alert-check commit-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check

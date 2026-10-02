@@ -1599,6 +1599,47 @@ func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg Commit
 	return i, err
 }
 
+const commitRelayObservationSummary = `-- name: CommitRelayObservationSummary :one
+WITH observations AS (
+ SELECT relay_status,pending_events,blocked_events,oldest_pending_at,COALESCE(last_checked_at>=$1::timestamptz
+   AND last_checked_at<=now()+interval '1 minute',false) AS fresh
+ FROM commit_sources WHERE enabled
+), snapshots AS (
+ SELECT relay_status, pending_events, blocked_events, oldest_pending_at, fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
+ FROM observations
+)
+SELECT count(*)::bigint AS enabled_sources,
+ count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
+ count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
+ COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
+ COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
+ COALESCE(extract(epoch FROM min(oldest_pending_at) FILTER(WHERE known AND (pending_events>0 OR blocked_events>0))),0)::double precision AS oldest_pending_timestamp
+FROM snapshots
+`
+
+type CommitRelayObservationSummaryRow struct {
+	EnabledSources         int64
+	UnknownSources         int64
+	FailingSources         int64
+	PendingEvents          int64
+	BlockedEvents          int64
+	OldestPendingTimestamp float64
+}
+
+func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error) {
+	row := db.QueryRow(ctx, commitRelayObservationSummary, freshAfter)
+	var i CommitRelayObservationSummaryRow
+	err := row.Scan(
+		&i.EnabledSources,
+		&i.UnknownSources,
+		&i.FailingSources,
+		&i.PendingEvents,
+		&i.BlockedEvents,
+		&i.OldestPendingTimestamp,
+	)
+	return i, err
+}
+
 const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
  a.platform_tenant_required
@@ -14805,6 +14846,24 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockDeploymentHostingFailure = `-- name: LockDeploymentHostingFailure :one
+SELECT app_id, status FROM deployments
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+type LockDeploymentHostingFailureRow struct {
+	AppID  pgtype.UUID
+	Status string
+}
+
+func (q *Queries) LockDeploymentHostingFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingFailureRow, error) {
+	row := db.QueryRow(ctx, lockDeploymentHostingFailure, deploymentID)
+	var i LockDeploymentHostingFailureRow
+	err := row.Scan(&i.AppID, &i.Status)
+	return i, err
+}
+
 const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one
 SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -24156,8 +24215,36 @@ func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifes
 	return err
 }
 
+const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows
+UPDATE commit_sources SET sealed_connection=$1::bytea,
+ credential_revision=credential_revision+1,relay_status='unconfigured',
+ last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid
+`
+
+type SetCommitSourceConnectionParams struct {
+	Connection []byte
+	AccountID  string
+	SourceID   string
+}
+
+func (q *Queries) SetCommitSourceConnection(ctx context.Context, db DBTX, arg SetCommitSourceConnectionParams) (int64, error) {
+	result, err := db.Exec(ctx, setCommitSourceConnection, arg.Connection, arg.AccountID, arg.SourceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setCommitSourceEnabled = `-- name: SetCommitSourceEnabled :exec
-UPDATE commit_sources SET enabled=$1::boolean
+UPDATE commit_sources SET
+ credential_revision=CASE WHEN $1::boolean AND NOT enabled THEN credential_revision+1 ELSE credential_revision END,
+ relay_status=CASE WHEN $1::boolean AND NOT enabled THEN 'unconfigured' ELSE relay_status END,
+ last_checked_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE last_checked_at END,
+ pending_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE pending_events END,
+ blocked_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE blocked_events END,
+ oldest_pending_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE oldest_pending_at END,
+ enabled=$1::boolean
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid
 `
 
@@ -26205,4 +26292,22 @@ func (q *Queries) WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPool
 	var i WorkerPoolHistoryRow
 	err := row.Scan(&i.LastAdmissionAt, &i.LastTerminationAt)
 	return i, err
+}
+
+const writeDeploymentHostingFailureReceipt = `-- name: WriteDeploymentHostingFailureReceipt :execrows
+UPDATE deployments SET api_hosting_receipt = $1::jsonb
+WHERE id = $2::uuid AND status = 'snapshotting'
+`
+
+type WriteDeploymentHostingFailureReceiptParams struct {
+	Receipt      []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, writeDeploymentHostingFailureReceipt, arg.Receipt, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -3556,6 +3556,13 @@ var planLimits = map[Plan]Limits{
 // Global platform constants (spec §1, §13). These are the physics of the one
 // box; code enforces them, telemetry verifies them.
 const (
+	// ADR-431: diagnostic trace retention must fit the public gateway's 512 MiB
+	// cgroup. Byte accounting includes conservative Go object/map overhead;
+	// count and per-trace bounds also constrain tiny traces and merge work.
+	TraceRingMaxTraces              = 100_000
+	TraceRingMaxBytes         int64 = 64 << 20
+	TraceRingMaxSpansPerTrace       = 4096
+
 	// RAM ledger (megabytes).
 	HostOSReserveMB       = 2_048  // system.slice
 	ControlPlaneReserveMB = 6_144  // faas-cp.slice

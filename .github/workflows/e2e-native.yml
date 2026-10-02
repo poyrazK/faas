@@ -39,7 +39,7 @@ on:
     inputs:
       lane:
         description: >-
-          smoke: beta path (~10 min); full: complete metal matrix (~60 min);
+          smoke: beta path + 100 wake cycles (~45 min); full: complete metal matrix (~60 min);
           qualify: full plus runtime candidates; containers: OCI qualification;
           jobs-only: blocking Jobs lifecycle; exclusive-operations-only:
           blocking stale-owner KVM test.
@@ -213,9 +213,10 @@ jobs:
           # connection must not kill cleanup halfway through with the host still
           # quiesced. The DSN is NOT passed here — the node owns it in
           # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          # Outlast the 60m test alarm with 15m for compilation and cleanup.
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=75m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
       - name: Containers — OCI portability, lifecycle, ingress, and isolation
         id: phase_containers

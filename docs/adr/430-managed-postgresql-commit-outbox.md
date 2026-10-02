@@ -66,3 +66,12 @@ commit and after commit before its response, then verifies recovery and concurre
 duplicate suppression in a separate business database. All required gates fail
 when skipped. Production promotion additionally requires operator configuration,
 operational alerts, outage recovery, and the documented quota/storage audit.
+
+Operational diagnosis is read-only. CLI inspection joins existing acceptance,
+retained execution and source-observation APIs without inferring rollback from
+receipt absence. Local TLS/schema/grant checks do not establish scheduler
+connectivity. Rotation and resume invalidate the source observation fence;
+stale passes cannot restore an earlier healthy state. Aggregate metrics read
+the shared source ledger without customer-ID labels, exclude stale observations
+from known backlog totals, and separately report unknown sources. Alert queries
+use the fleet maximum because scheduler replicas observe the same ledger.

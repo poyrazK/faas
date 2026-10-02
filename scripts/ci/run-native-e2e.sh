@@ -432,8 +432,11 @@ if [[ -n "${phase}" ]]; then
     #     running tests: TestDeployOverridePortMetal (8m54s)
     # — killing the phase before its other tests ran at all.
     deploy) phase_timeout=45m ;;
-    # One real build plus one image deploy; the beta path, not the matrix.
-    smoke) phase_timeout=20m ;;
+    # Keep all 100 real idle-reaper wake cycles. Their documented ~34m
+    # runtime already exceeds the former whole-lane 20m budget, before
+    # source deployment and the security probes. Individual readiness,
+    # park, build, security, and latency limits remain unchanged.
+    smoke) phase_timeout=60m ;;
     containers) phase_timeout=75m ;;
     # One real guest/snapshot restore lifecycle, with a bounded test deadline.
     exclusive-operations-only) phase_timeout=20m ;;

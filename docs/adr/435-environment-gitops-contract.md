@@ -1,4 +1,4 @@
-# ADR-431 · Git-owned environment intent and continuous reconciliation
+# ADR-435 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
@@ -1308,6 +1308,11 @@ quarantine checks pass five repeated runs under Go's race detector. The Linux
 x86_64 test binary also cross-compiles; its Linux pidfd test has not been run
 here. The dedicated native acceptance host's cloud project remains suspended,
 so these results do not constitute native VM, snapshot or leak acceptance.
+
+The qualification admission and runtime-input migrations were authored under the
+branch's earlier ADR-431 number. Their append-only SQL comments retain that
+historical citation; this decision now uses ADR-435 to avoid the newer upstream
+ADR-431 for gateway trace retention.
 
 ## Review and control workflow
 

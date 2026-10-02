@@ -79,6 +79,66 @@ groups:
           description: "An apid replica configured for Git polling cannot read durable source health. Counts and ages are omitted when the bounded database query fails; check PostgreSQL reachability and the GitOps migrations before relying on source freshness."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
 
+  - name: faas_commit
+    interval: 30s
+    rules:
+      # Every scheduler reads the same durable source ledger. max avoids
+      # counting the same backlog once per scheduler replica.
+      - alert: FaasCommitBacklogOverdue
+        expr: (time() - max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 900) and (max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox work has waited more than fifteen minutes"
+          description: "A fresh source observation contains an unaccepted row older than fifteen minutes. Inspect Commit source health, blocked events and Operations capacity. Age is measured from insertion, not transaction commit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitBlockedEvents
+        expr: max(schedd_commit_relay_blocked_events) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox events require repair"
+          description: "Fresh source observations contain blocked events. Inspect their stable reason codes, correct unaccepted rows and request replay with the same event IDs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitSourceObservationUnknown
+        expr: max(schedd_commit_relay_unknown_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit source backlog cannot be established"
+          description: "An enabled source has no fresh known backlog observation. Check scheduler relay configuration, database access and source diagnostics. Unknown counts must not be treated as an empty queue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitRelaySourceFailure
+        expr: max(schedd_commit_relay_failing_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay source recovery is pending"
+          description: "A fresh source observation reports a relay failure. Inspect the source health code and recover database access, schema, binding, cleanup or downstream acceptance without deleting pending events."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitObservationUnavailable
+        expr: max(schedd_commit_relay_observation_snapshot_success) == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay observations are unavailable"
+          description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
   - name: faas_realtime_callbacks
     interval: 30s
     rules:

@@ -193,12 +193,11 @@ func (s *PgStore) SetCommitSourceConnection(ctx context.Context, account, id str
 	if len(blob) == 0 || len(blob) > 16384 {
 		return ErrInvalidArgument
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE commit_sources SET sealed_connection=$3,credential_revision=credential_revision+1
- WHERE account_id=$1::uuid AND id=$2::uuid`, account, id, blob)
+	rows, err := sqlc.New().SetCommitSourceConnection(ctx, s.pool, sqlc.SetCommitSourceConnectionParams{AccountID: account, SourceID: id, Connection: blob})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rows == 0 {
 		return ErrNotFound
 	}
 	return nil

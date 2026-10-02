@@ -1419,6 +1419,11 @@ udp-alert-check: ## Verify UDP ingress alert syntax and pressure/failure versus 
 
 .PHONY: udp-postgres-check
 .PHONY: tcp-tls-alert-check
+.PHONY: commit-alert-check
+commit-alert-check: ## Verify Commit backlog, unknown observation, blocked-event and recovery alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/commit.rules.test.yml
+
 tcp-tls-alert-check: ## Verify raw TCP TLS certificate availability and expiry alerts
 	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
