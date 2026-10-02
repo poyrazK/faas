@@ -5593,7 +5593,15 @@ func cmdOpen(args []string) int {
 	if *dash {
 		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
-	} else {
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			Slug      string `json:"slug"`
+			URL       string `json:"url"`
+			Dashboard bool   `json:"dashboard"`
+		}{slug, target, *dash}))
+	}
+	if !*dash {
 		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
 		// a 2 s deadline; if the response carries the cold-wake header
 		// (see pkg/wire.WakeHeader), print the cold-start line
