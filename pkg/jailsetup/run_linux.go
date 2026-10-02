@@ -13,15 +13,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Run handles the device setup commands shared by vmmd's compatibility mode
-// and the standalone jail helper. args includes argv[0]. A recognized command
-// exits the process on failure; unknown commands return false. Call only from
-// a helper process inside the jailer's private mount namespace.
+// Run handles launch gating and device setup for vmmd's compatibility mode
+// and the standalone helper. args includes argv[0]. A recognized command exits
+// on failure; unknown commands return false. Device setup runs inside the
+// jailer's private mount namespace; launch gating runs before execing jailer.
 func Run(args []string) bool {
 	if len(args) <= 1 {
 		return false
 	}
 	switch args[1] {
+	case "--launch-jailer":
+		if err := launchJailer(args); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: launch jailer: %v\n", err)
+			os.Exit(1)
+		}
+		return true
 	case "--setup-jail":
 		started := time.Now()
 		if len(args) != 8 {
@@ -165,4 +171,26 @@ func Run(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// This helper never forks another process: exec preserves the PID/start-time
+// pair that vmmd recorded before opening the gate. FD 3 belongs only to this
+// child; daemon death closes its writer even in the fork-to-exec crash window.
+func launchJailer(args []string) error {
+	if len(args) < 5 || args[2] != "3" || args[3] != "--" || !filepath.IsAbs(args[4]) {
+		return fmt.Errorf("--launch-jailer requires 3 -- absolute-jailer-path arguments")
+	}
+	gate := os.NewFile(3, "native-launch-gate")
+	if gate == nil {
+		return fmt.Errorf("native launch gate is missing")
+	}
+	err := AwaitLaunchGate(gate)
+	closeErr := gate.Close()
+	if err != nil {
+		return fmt.Errorf("native launch gate: %w", err)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return syscall.Exec(args[4], args[4:], os.Environ())
 }
