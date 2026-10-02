@@ -20,6 +20,10 @@ type capturedObjectWorkerProvider struct {
 	created, copiedSources, copiedTargets []string
 }
 
+func (*capturedObjectWorkerProvider) ObserveObjectVersionRetention(_ context.Context, _ string, item objectstorage.ObjectVersion) (objectstorage.ObjectVersionRetention, error) {
+	return objectstorage.ObjectVersionRetention{VersionID: item.VersionID, MetadataVersion: item.MetadataVersion, RetainedUntil: time.Now().Add(time.Hour)}, nil
+}
+
 func (p *capturedObjectWorkerProvider) CreateBucket(_ context.Context, name string) error {
 	p.created = append(p.created, name)
 	return nil

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -89,6 +90,8 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "data_checkpoint_unavailable"
 	case errors.Is(err, errCloneCompensationUnavailable):
 		return "compensation_unavailable"
+	case errors.Is(err, objectstorage.ErrObjectSnapshotRetentionUnavailable):
+		return "object_snapshot_retention_unavailable"
 	case errors.Is(err, state.ErrProjectEnvironmentCloneResourcePublicationProof):
 		return "resource_publication_proof_unavailable"
 	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):

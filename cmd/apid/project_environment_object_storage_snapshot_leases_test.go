@@ -17,6 +17,17 @@ type leasedEnvironmentSnapshotProvider struct {
 	*environmentSnapshotProvider
 	afterCopy        func() error
 	deadlineObserved bool
+	retainUntil      time.Time
+	retentionCalls   int
+}
+
+func (p *leasedEnvironmentSnapshotProvider) ObserveObjectVersionRetention(_ context.Context, _ string, item objectstorage.ObjectVersion) (objectstorage.ObjectVersionRetention, error) {
+	p.retentionCalls++
+	until := p.retainUntil
+	if until.IsZero() {
+		until = time.Now().Add(time.Hour)
+	}
+	return objectstorage.ObjectVersionRetention{VersionID: item.VersionID, MetadataVersion: item.MetadataVersion, RetainedUntil: until}, nil
 }
 
 func (p *leasedEnvironmentSnapshotProvider) CopyObjectBetweenBuckets(ctx context.Context, source, target string, request objectstorage.CopyObjectRequest) (objectstorage.CopyObjectResult, error) {

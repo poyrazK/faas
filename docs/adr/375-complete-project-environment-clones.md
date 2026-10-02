@@ -2865,3 +2865,58 @@ complete state/API or repository suites. The overlay files and diagnostics are
 retained in the task-owned runtime; repository test files were not reduced.
 Independent SQLC regeneration matched all generated files and whitespace checks
 passed. Provider and native KVM acceptance remain outstanding.
+
+### Observed object version retention (2026-10-02)
+
+Leased clone workers now require provider observations showing that every
+uncopied source version remains protected through the worker's deadline. The
+check runs before committing a manifest, before adopting an existing manifest,
+and before consuming its remaining bytes. It authenticates the manifest hash
+before provider IO, rejects mismatched version/metadata identities, and checks
+deadline and cancellation again after observations. Worker takeover still fences
+checkpoint writes. Already verified target copies can replay without reading
+the source version or depending on its continued retention.
+
+The S3 adapter reads the exact version with `HeadObject`, verifies the returned
+version, size, ETag and modification time, and observes its existing fixed
+COMPLIANCE retention. Governance retention and removable legal/event holds do
+not satisfy this conservative strategy. A bucket default does not establish
+protection for an older version. The adapter follows the provider's
+[per-version protection contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)
+and [HEAD retention fields](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).
+
+The GCS adapter requests the exact generation with a metageneration precondition
+and validates the returned bucket/key, generation, metageneration, size, ETag
+and creation time. It observes either an existing Locked object retention or a
+locked bucket policy with the server's per-generation expiration. Unlocked
+policies and removable holds are rejected. Sub-day bucket policies are excluded
+because the pinned Go SDK does not guarantee their enforcement. These checks
+use the provider's [Object Retention Lock](https://docs.cloud.google.com/storage/docs/object-lock)
+and [Bucket Lock](https://docs.cloud.google.com/storage/docs/bucket-lock) contracts.
+
+These adapters only read existing protection. They do not set irreversible
+retention on a customer's source. Missing or insufficient observations produce
+`object_snapshot_retention_unavailable`; a later lease obtains new observations
+and cannot substitute live keys or recapture a newer manifest. This secures the
+current worker IO window. Durable protection across a queued operation's entire
+lifetime, retention acquisition/renewal, and a strategy for sources without
+preconfigured permanent locks remain necessary. A retry can fail if its pinned
+source versions expire or disappear between leases.
+
+Retention protects object bytes. GCS editable metadata and S3 tags still require
+their own frozen capture strategy. These observations do not drain application,
+background, external, or shared-resource writers and do not establish a common
+database/object checkpoint. Pending/capturing coordinator dispatch, complete
+admission, remaining resource strategies and compensation remain closed pending
+that implementation and acceptance.
+
+Verification: the complete object-storage package passed (0.634 s), including
+native SDK requests against local S3/GCS HTTP fixtures, exact version and
+metageneration selection, identity mismatches, missing/short/bypassable
+protection, cancellation and expiry. Focused API contracts passed (2.616 s),
+including MemStore capture/copy rejection, lease takeover, durable target replay,
+and real PostgreSQL object-worker recovery after manifest/copy checkpoint
+failures. The API build used a temporary test-only overlay containing original
+selected declarations and helpers, with all production code included; initial
+attempts exceeded the shared host's available disk. This is scoped verification,
+not the complete API/repository suites or live provider/native KVM acceptance.

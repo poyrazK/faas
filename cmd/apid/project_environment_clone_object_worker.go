@@ -158,6 +158,9 @@ func (s *server) capturedCloneObjectProvider(plan capturedProjectEnvironmentObje
 	if _, ok := backend.Provider.(objectstorage.ObjectSnapshotCopier); !ok {
 		return nil, objectstorage.ErrUnsupported
 	}
+	if _, ok := backend.Provider.(objectstorage.ObjectVersionRetentionObserver); !ok {
+		return nil, objectstorage.ErrObjectSnapshotRetentionUnavailable
+	}
 	return backend.Provider, nil
 }
 
