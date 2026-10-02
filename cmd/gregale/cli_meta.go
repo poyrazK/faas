@@ -417,7 +417,7 @@ var cliCommands = []cliCommand{
 			// instantiate-from-preset. Two leaves under preset:
 			// list (no flags), enable <name> --app <slug>
 			// --webhook-url <url> --webhook-secret <s>.
-			{Name: "preset", Short: "Alert preset catalog (preset list|enable --app <slug> [--action <ACTION>])"},
+			alertPresetCLISubcommand(),
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "slug"}},
 	},
@@ -573,9 +573,14 @@ var cliCommands = []cliCommand{
 				{Name: "require-signed", Short: "require signed images on deploy", Value: "true|false", ClosedSet: []string{"true", "false"}},
 				{Name: "security-policy", Short: "deploy posture policy", Value: "off|warn|enforce", ClosedSet: []string{"off", "warn", "enforce"}},
 			}},
-			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
-			{Name: "egress-ports", Short: "Inspect or update the extra outbound TCP ports (Pro/Scale)"},
-			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
+			appEgressCLISubcommand(subEgressAllowlist, "Inspect or update the outbound CIDR allowlist", "<cidr>"),
+			appEgressCLISubcommand(subEgressPorts, "Inspect or update the extra outbound TCP ports (Pro/Scale)", "<port>"),
+			appNetworkCLISubcommand(),
+			{Name: subStaticEgressIP, Short: "Inspect or pin a static outbound address (Pro/Scale)", Subcommands: []cliSub{
+				{Name: "show", Short: "Show the pinned address and plan eligibility"},
+				{Name: "set", Short: "Pin a static outbound address", Positionals: []string{"<ip>"}},
+				{Name: "clear", Short: "Clear the pinned outbound address"},
+			}},
 			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},
@@ -1755,7 +1760,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/show/evidence/explain/trace/inspect/replay)"},
+			debugRequestsCLISubcommand(),
+			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Regressions (live watch, lifecycle actions, per-app/--all, rollback)"},
@@ -2073,16 +2079,18 @@ var cliCommands = []cliCommand{
 		DocSlug: "registry",
 		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List registry credentials"},
+			{Name: "list", Short: "List registry credentials", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "registry", Short: "registry host", Req: true, Value: "host"},
 				{Name: "user", Short: "registry username", Req: true, Value: "user"},
 				{Name: "password-stdin", Short: "read the registry password/token from stdin"},
 			}},
-			{Name: "rm", Short: "Remove a registry credential"},
+			{Name: "rm", Short: "Remove a registry credential", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "registry", Short: "registry host", Req: true, Value: "host"},
+			}},
 		},
-		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
 	},
 	{
 		Name:    "realtime",
@@ -2562,7 +2570,7 @@ var cliCommands = []cliCommand{
 				{Name: "secret", Short: "replacement HMAC-SHA256 secret", Value: "VALUE"},
 				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
 			}},
-			{Name: "account", Short: "Manage one release receiver across all account apps"},
+			accountWebhookCLISubcommand(),
 		},
 	},
 	{
