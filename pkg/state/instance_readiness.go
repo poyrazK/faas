@@ -3,8 +3,11 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -29,6 +32,38 @@ type InstanceReadinessReader interface {
 // deployment has both a primary-app probe and one or more ingress companions.
 type InstanceReadinessBySourceReader interface {
 	LatestInstanceReadinessBySource(ctx context.Context, instanceIDs []string) (map[string]map[string]InstanceReadiness, error)
+}
+
+type DeploymentReadinessConfig struct {
+	AppID, DeploymentID              string
+	OverrideReadinessProbe, Sidecars json.RawMessage
+}
+
+func (s *PgStore) DeploymentReadinessConfigs(ctx context.Context, deploymentIDs []string) (map[string]DeploymentReadinessConfig, error) {
+	if len(deploymentIDs) > api.TrafficReadinessBatchSize {
+		return nil, fmt.Errorf("deployment readiness batch exceeds %d identities", api.TrafficReadinessBatchSize)
+	}
+	if len(deploymentIDs) == 0 {
+		return map[string]DeploymentReadinessConfig{}, nil
+	}
+	ids := make([]pgtype.UUID, 0, len(deploymentIDs))
+	for _, id := range deploymentIDs {
+		var parsed pgtype.UUID
+		if err := parsed.Scan(id); err != nil {
+			return nil, fmt.Errorf("read deployment readiness identity: %w", err)
+		}
+		ids = append(ids, parsed)
+	}
+	rows, err := sqlc.New().DeploymentReadinessConfigs(ctx, s.pool, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]DeploymentReadinessConfig, len(rows))
+	for _, row := range rows {
+		out[row.DeploymentID] = DeploymentReadinessConfig{AppID: row.AppID, DeploymentID: row.DeploymentID,
+			OverrideReadinessProbe: row.OverrideReadinessProbe, Sidecars: row.Sidecars}
+	}
+	return out, nil
 }
 
 func (s *PgStore) LatestInstanceReadiness(ctx context.Context, instanceIDs []string) (map[string]InstanceReadiness, error) {

@@ -24,6 +24,12 @@ import (
 const (
 	TrafficCounterOperationTimeout = 100 * time.Millisecond
 	TrafficRetryBudgetWindow       = 10 * time.Second
+	// Readiness repair is independent of LISTEN. Batch reads and local leases
+	// bound recovery work and prevent indefinite use of an unverifiable gate.
+	TrafficReadinessReconcileInterval = time.Second
+	TrafficReadinessReadTimeout       = time.Second
+	TrafficReadinessBatchSize         = 128
+	TrafficReadinessLease             = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is
 	// released. Failure fences and reaps the bridge process instead.
 	TrafficBridgeCompletionTimeout    = 5 * time.Second

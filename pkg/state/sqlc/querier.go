@@ -233,6 +233,9 @@ type Querier interface {
 	// the wake flow on a successful cold boot. Resets the counter and
 	// clears the backoff_until so future wakes don't short-circuit.
 	DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Immutable probe configuration only; do not project customer credentials or
+	// unrelated manifest settings into the gateway's bounded readiness refresh.
+	DeploymentReadinessConfigs(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) ([]DeploymentReadinessConfigsRow, error)
 	// Bump snapshot_miss_count + stamp Retry-After until. Called by the
 	// wake flow when the snapshot-fetch path fails (stale cache, missing
 	// replica on the destination, etc.). Capped-exponential backoff math

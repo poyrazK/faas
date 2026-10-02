@@ -38,6 +38,7 @@ type fleetDaemonSpec struct {
 	Apps                                     []fleetDaemonApp
 	Managed                                  bool
 	DNSUpstream                              string
+	RepairWithoutNotifications               bool
 }
 
 type fleetDaemonReady struct {
@@ -89,6 +90,9 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	matcher := newGatewaydEdgeRules(store, log, nil, metrics).withPublicHostRouter(router)
 	backend := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), log).
 		WithStore(weightsStoreAdapter{store: store}).WithEdgeRules(matcher).WithResponseCache(cache)
+	if spec.RepairWithoutNotifications {
+		backend.WithTargetReadinessLoader(newTargetReadinessLoader(store))
+	}
 	readinessNotifications := false
 	expectedReady := make(map[string]map[string]bool)
 	for _, app := range spec.Apps {
@@ -195,7 +199,7 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	defer cancel()
 	var readinessEndpoint string
 	if readinessNotifications {
-		invalidations := &fleetReadinessInvalidator{PGBackend: backend}
+		invalidations := &fleetReadinessInvalidator{PGBackend: backend, drop: spec.RepairWithoutNotifications}
 		subscribed, watched := make(chan struct{}), make(chan struct{})
 		deps.invalidationsReady = subscribed
 		go func() {
@@ -218,7 +222,8 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 		control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			counts := make(map[string]fleetReadinessCounts)
 			for _, app := range spec.Apps {
-				counts[app.ID] = fleetReadinessCounts{Healthy: backend.HealthyCount(app.ID), Capacity: backend.CapacityCount(app.ID), LastEventID: invalidations.lastEvent.Load()}
+				counts[app.ID] = fleetReadinessCounts{Healthy: backend.HealthyCount(app.ID), Capacity: backend.CapacityCount(app.ID), LastEventID: invalidations.lastEvent.Load(),
+					DroppedEventID: invalidations.droppedEvent.Load(), Refresh: backend.TargetReadinessRefreshStatus()}
 			}
 			_ = json.NewEncoder(w).Encode(counts)
 		}))
@@ -322,6 +327,11 @@ func startFleetDaemonMode(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonAp
 
 func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool, dnsUpstream string) *fleetDaemonProcess {
 	t.Helper()
+	return startFleetDaemonOptions(t, pool, apps, nodeID, nodeName, usageSocket, managed, dnsUpstream, false)
+}
+
+func startFleetDaemonOptions(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool, dnsUpstream string, repairWithoutNotifications bool) *fleetDaemonProcess {
+	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "gatewayd.toml")
 	// Omit ratelimit.mode deliberately: LoadConfig's production default must
@@ -334,7 +344,7 @@ func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp
 		t.Fatal(err)
 	}
 	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
-		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream}
+		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)

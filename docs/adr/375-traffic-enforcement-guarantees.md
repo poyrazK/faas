@@ -1296,6 +1296,44 @@ addresses, guest serving, namespace selection and VM startup remain fixtures.
 All-unready ordinary wake, native readiness probes/VM networking, missed-notify
 recovery, deployed load and staging need their own acceptance evidence.
 
+### Follow-up: durable readiness repair and admission publication
+
+Before publishing a newly admitted target, the production PGBackend verifies the
+immutable deployment owner and readiness configuration through a narrow SQLC reader,
+then reads the latest durable observation per required source. Unknown or unavailable
+readiness reserves capacity without granting routing. The gateway writes no instance
+state and does not bypass scheduler or VM ownership. Probe-free deployments keep their
+existing eligibility after configuration verification.
+
+The internal gateway owns a cancellable, joined repair worker independent of LISTEN.
+It walks cached targets fairly using bounded retained scan memory, queries at most 128
+targets per one-second tick and permits at most one second for each read. Required
+sources remain ANDed, ordered by observation time and event ID. Newer notifications
+survive an older concurrent read. Cache generations prevent a captured read from
+mutating a replaced target or resurrecting an evicted one.
+
+Successful durable verification renews a 30-second local lease. Read failures, missing
+identity/configuration or required observations, and expired verification leases
+refuse fresh picks and managed endpoint checks while retaining resident capacity.
+Recovery makes the same instance eligible again. Verified deployments without probes
+are excluded from recurring reads. Bounds live in `pkg/api/limits.go`. The SQL
+projection excludes sidecar environment, image settings and probe command bodies;
+only owner/deployment and readiness requirement fields leave that query.
+
+Repair status exposes read start/completion, checked/unavailable counts and latest
+observed event ID for qualification. A completed read barrier is separate from a
+notification receipt. The local process fixture drops notification application after
+the actual durable event/trigger/LISTEN receipt and locks its private deployments
+table to exercise the production SQL timeout. Two gateways and a replacement recover
+public and managed routing through real node admission/reusable bridges. Placement,
+source addresses, native probes, namespace selection, guest and VM startup are fixtures.
+
+This does not guarantee instant propagation, cancel already admitted work, discover
+missing placement/lifecycle notifications, or establish actual hub overflow/reconnect
+behavior. A large or slow repair backlog may fail closed at lease expiry. Native KVM,
+network/firewall/leak acceptance, complete path/load/recovery and staging qualification
+remain required separately.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

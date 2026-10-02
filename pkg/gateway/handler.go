@@ -659,11 +659,14 @@ type Target struct {
 	// Required sources are ANDed, so a primary-app probe cannot mask an
 	// unhealthy ingress sidecar. Unready targets remain cached and consume
 	// capacity.
-	RequiresReadiness  bool
-	ReadinessGates     *ReadinessGates
-	Ready              bool
-	ReadinessUpdatedAt time.Time
-	ReadinessEventID   int64
+	RequiresReadiness      bool
+	ReadinessGates         *ReadinessGates
+	Ready                  bool
+	ReadinessUpdatedAt     time.Time
+	ReadinessEventID       int64
+	ReadinessUnavailable   bool
+	ReadinessVerifiedUntil time.Time
+	readinessGeneration    uint64
 }
 
 // ReadinessState is the latest reversible signal for one independently
@@ -682,6 +685,9 @@ type ReadinessGates struct {
 }
 
 func (t Target) routeReady() bool {
+	if t.ReadinessUnavailable || (!t.ReadinessVerifiedUntil.IsZero() && !time.Now().Before(t.ReadinessVerifiedUntil)) {
+		return false
+	}
 	if !t.RequiresReadiness {
 		return true
 	}

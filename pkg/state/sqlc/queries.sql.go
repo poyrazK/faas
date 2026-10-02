@@ -2449,6 +2449,59 @@ func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, i
 	return err
 }
 
+const deploymentReadinessConfigs = `-- name: DeploymentReadinessConfigs :many
+SELECT CAST(id AS text) AS deployment_id, CAST(app_id AS text) AS app_id,
+       override_readiness_probe,
+       CAST(COALESCE((
+           SELECT jsonb_agg(jsonb_build_object(
+               'name', companion->'name',
+               'type', companion->'type',
+               'primary_ingress', companion->'primary_ingress',
+               'readiness_probe', CASE jsonb_typeof(companion->'readiness_probe')
+                   WHEN 'object' THEN '{}'::jsonb
+                   WHEN 'null' THEN 'null'::jsonb
+                   ELSE CASE WHEN companion ? 'readiness_probe' THEN 'false'::jsonb ELSE 'null'::jsonb END
+               END))
+           FROM jsonb_array_elements(deployments.sidecars) AS companion
+       ), '[]'::jsonb) AS jsonb) AS sidecars
+FROM deployments
+WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+`
+
+type DeploymentReadinessConfigsRow struct {
+	DeploymentID           string
+	AppID                  string
+	OverrideReadinessProbe []byte
+	Sidecars               []byte
+}
+
+// Immutable probe configuration only; do not project customer credentials or
+// unrelated manifest settings into the gateway's bounded readiness refresh.
+func (q *Queries) DeploymentReadinessConfigs(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) ([]DeploymentReadinessConfigsRow, error) {
+	rows, err := db.Query(ctx, deploymentReadinessConfigs, deploymentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentReadinessConfigsRow{}
+	for rows.Next() {
+		var i DeploymentReadinessConfigsRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.AppID,
+			&i.OverrideReadinessProbe,
+			&i.Sidecars,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deploymentRecordSnapshotMiss = `-- name: DeploymentRecordSnapshotMiss :exec
 UPDATE deployments
 SET snapshot_miss_count          = snapshot_miss_count + 1,

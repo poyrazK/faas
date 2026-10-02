@@ -417,7 +417,12 @@ type PGBackend struct {
 	// no refresh; LookupMirrorRules stays in cache-miss mode
 	// for every app until a rule is poked (test seam; production
 	// wires this from cmd/gatewayd-internal).
-	mirrorStore mirrorRulesStore
+	mirrorStore         mirrorRulesStore
+	readinessLoader     TargetReadinessLoader
+	readinessRefreshMu  sync.Mutex
+	readinessCursor     string
+	readinessGeneration uint64 // guarded by tgtMu
+	readinessLast       atomic.Pointer[TargetReadinessRefreshStatus]
 
 	smokeMu         sync.Mutex
 	smokeChallenges map[string][]deploymentSmokeChallenge
@@ -1475,6 +1480,10 @@ func (b *PGBackend) RecordTarget(appID string, target Target) {
 }
 
 func (b *PGBackend) recordTargetLocked(appID string, target Target) {
+	if b.readinessLoader != nil {
+		b.readinessGeneration++
+		target.readinessGeneration = b.readinessGeneration
+	}
 	b.purgeStaleTargetsLocked(time.Now())
 	b.purgeReadinessStateLocked(time.Now())
 	if until, ok := b.staleTargets[staleTargetKey(appID, target.InstanceID)]; ok && until.After(time.Now()) {
@@ -1488,6 +1497,9 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 			target.RequiresReadiness = true
 			applyReadinessState(&target, "", readiness)
 		}
+	}
+	if b.readinessLoader != nil && target.RequiresReadiness && target.ReadinessVerifiedUntil.IsZero() && !target.ReadinessUnavailable {
+		target.ReadinessVerifiedUntil = time.Now().Add(api.TrafficReadinessLease)
 	}
 	if target.RequiresReadiness {
 		target.ReadinessGates = cloneReadinessGates(target.ReadinessGates)
@@ -1866,8 +1878,7 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 		}
 		return "", WakeMethodUnspecified, true, nil
 	}
-	b.tgtMu.Lock()
-	b.recordTargetLocked(appID, Target{
+	target := Target{
 		AppID:               appID,
 		NodeID:              nodeID,
 		InstanceID:          instanceID,
@@ -1880,9 +1891,15 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 		DeploymentTag:       identity.DeploymentTag,
 		DeploymentCreatedAt: identity.DeploymentCreatedAt,
 		ImageDigest:         identity.ImageDigest,
-	})
+	}
+	readinessErr := b.loadAdmissionReadiness(ctx, &target)
+	b.tgtMu.Lock()
+	b.recordTargetLocked(appID, target)
 	b.tgtMu.Unlock()
 	markWakeTargetPublished(ctx)
+	if readinessErr != nil {
+		return wakeID, method, false, readinessErr
+	}
 	return wakeID, method, false, nil
 }
 

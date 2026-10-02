@@ -3383,3 +3383,86 @@ deployed daemon fleet/load/restart/outage/recovery, customer/staging qualificati
 and native Linux x86_64 KVM VM/firewall/restore/process-death/leak acceptance remain
 pending. The user has no available KVM host; acceptance remains pending until
 availability changes.
+
+
+## Durable target readiness repair — 2026-10-02
+
+A newly admitted target now verifies its immutable deployment owner and readiness
+requirements, then reads durable observations for every required source before
+routing publication. Missing configuration or observations and read errors refuse
+routing while retaining the admitted instance as resident capacity. The actual
+Postgres startup fixture previously forwarded a request with a stored readiness
+probe but no readiness event; it now returns 503 with zero forwards and one
+resident. Repeated unknown/unready attempts respect the app cap without another
+scheduler admission. Durable ready/withdrawal/recovery transitions work without
+any LISTEN subscriber, and a later event ID with an older observation stays ignored.
+Scheduler lifecycle, caller identity and final forwarding in this fixture are
+explicit boundaries.
+
+Production internal-gateway startup wires an independent, cancellable and joined
+repair worker. It reads cached targets in rotating batches of at most 128, every
+second, with a one-second query deadline. Successful verification renews a
+30-second local lease; failed/missing verification or lease expiry refuses public
+picks and managed endpoint eligibility without evicting capacity. Verified
+probe-free deployments have no recurring readiness-read dependency. Bounds live
+in `pkg/api/limits.go`. Readiness remains reversible and separate from VM state.
+The SQLC projection excludes sidecar environment, image settings and probe command
+bodies, and checks deployment ownership/deletion. Input cardinality and invalid
+UUIDs are rejected before database access. Source observations retain their AND
+and time/ID ordering. Cache generations discard reads captured before replacement
+or eviction; newer notifications survive an older concurrent query.
+
+Two configured gateway processes and a replacement apply the production worker
+with actual Postgres reads. The fixture deliberately drops readiness notification
+application after durable event/trigger/LISTEN receipt. Completed read barriers
+prove repair began after each transition committed, independently from notification
+receipts. Warm public and managed routes exclude withdrawn targets before their
+normal service lease expires, independent primary/sidecar failures refuse no-wake
+probes, stale events stay withdrawn, and recovery reuses the resident. A private
+fixture-database table lock makes the actual SQLC read time out; both gateways
+retain capacity, refuse probes without node/guest work, then recover the same
+eligible instance after release. Node admission and reusable bridges are real;
+warm placement, translated source/listener addresses, guest serving, namespace,
+probe generation and VM startup remain fixtures.
+
+Verification against the final unchanged 12,531-file source freeze:
+
+- Complete fixed 12-package unit scope: 10,918 accepted named passes and 1,501
+  guarded/skipped results in 518.322 s. Raw output contains 10,964 passes and 1,455
+  skips; 46 all-guarded parent passes are classified as guarded, not acceptance.
+- The additive Postgres profile preserves the prior selector and package scope:
+  234 named passes, zero skips, 177.152 s. Twenty-nine actual database fixture roots
+  account for 46 named results; the remaining 188 are memory/transport checks.
+- Deduplicated acceptance is 10,963 named passes, with 1,470 guarded results
+  without acceptance. These guarded results do not establish native behavior.
+- Lint v2.4.0 checks all 12 complete packages with tests and reports zero issues
+  in 311.356 s. SQLC v1.31.1 reproduces all four generated files byte for byte.
+  SQL, encoding, quoting and ADR-number repository gates pass in 32.614 s; the
+  71 existing ADR-number duplicates stay at their baseline. No schema, customer
+  quota, source exclusion, suppression, overlay or relaxed test bound/assertion.
+
+Whole preliminary and failed evidence is preserved. An initial unused-import
+build failure is separate from the actual unsafe-accept reproduction. Focused
+backend, daemon/Postgres and projection checks passed. An initial final unit run
+was interrupted when disk space fell below 300 MiB; only its owned Go descendants
+were signaled, and its terminal receipt/logs are excluded from accepted counts.
+A restart was refused before Go to avoid overwriting that receipt. One old owned
+cache archive (1,187,942,400 physical bytes) had been removed earlier with all owned
+heavy runs stopped. A later cleanup attempt found both prior cache directories
+already absent and removed zero files. Fresh dedicated caches were created for
+accepted runs. The stopped private Postgres cluster recovered successfully, with
+fsync, synchronous_commit and full_page_writes enabled and its source public schema
+still unmigrated. No sibling process/cache/cluster was changed by this work.
+Accepted heavy runs were serialized; source stayed unchanged through their terminal
+receipts. Only this tracker changed afterward. Gate, source, failure, staged/commit
+and durability receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-readiness-repair-20261002/`.
+
+All six release requirements remain unchecked. This repairs known cached readiness;
+it does not prove actual hub overflow/reconnect or missing placement/lifecycle
+notification discovery. Complete path coverage, ordinary all-unready wake,
+producer/worker death and deployed load/recovery, customer/staging qualification,
+and native Linux x86_64 KVM probe/VM/network/firewall/restore/leak acceptance remain
+pending. The user has no available KVM host; no further host request is needed
+until availability changes. A large or slow repair backlog can fail closed at its
+verification lease expiry. The broad implementation goal remains active.

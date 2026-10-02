@@ -1370,6 +1370,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer func() { _ = responseCache.Close() }()
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
 			if errors.Is(err, state.ErrNotFound) {
@@ -2282,6 +2283,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 // Production calls run → runWithDeps(defaultDeps()); tests inject a custom
 // deps.listen so they can probe a real socket without binding :8080.
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+		repairCtx, stop := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		go func() { defer close(stopped); backend.RunTargetReadinessReconciler(repairCtx) }()
+		defer func() { stop(); <-stopped }()
+	}
 	cleanup := &gatewayShutdownBudget{}
 	cfg := deps.config
 	if cfg == nil {

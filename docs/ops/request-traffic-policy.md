@@ -712,14 +712,34 @@ circuit admission; retries cannot forward to a newly withdrawn alternate.
 Readiness refusals do not consume a half-open circuit's only trial permit.
 Exact retained revision pins keep their existing readiness requirements.
 
-The check applies after the gateway receives the readiness update. Existing
-exchanges are not canceled by ordinary readiness changes. Notification loss or
-cross-host delay can still leave a stale local view. Recovered replicas joining
-an already nonempty lease can wait for its normal five-second refresh. Use the
-separate security-generation contract for emergency withdrawal. The local
-configured process test covers durable event delivery, no-wake probes and
-replacement hydration; native probes/networking, ordinary all-unready wake,
-notification outage recovery and deployed load remain unqualified.
+New scheduler admissions read their immutable deployment's readiness requirements
+and latest durable source observations before the gateway publishes a routable
+target. Missing configuration, missing required observations and read errors
+refuse routing while preserving the admitted instance as resident capacity.
+Deployments without readiness probes retain their existing routing behavior.
+
+A daemon-owned worker independently repairs cached readiness from Postgres every
+second, in rotating batches of at most 128 targets with a one-second read deadline.
+It renews a 30-second verification lease for targets with readiness requirements.
+Failed verification or lease expiry removes routing eligibility, including cached
+managed endpoints; it does not evict the instance or free its capacity. Successful
+verification can restore the same resident. Older observations cannot undo newer
+notifications, and a read captured before replacement cannot change the replacement.
+Verified deployments without probes have no recurring readiness-store dependency.
+
+Existing exchanges are not canceled by ordinary readiness changes. Notification
+delivery and the next repair batch still permit a bounded stale view; a stalled
+worker's lease fails closed. Recovered replicas joining an already nonempty managed
+lease can wait for its normal five-second refresh. Use the separate security
+generation contract for emergency withdrawal. This repair covers known cached
+targets; missed placement/lifecycle discovery is a separate recovery concern.
+
+Local configured process checks cover durable events with notification application
+deliberately dropped, SQL query timeout/refusal/recovery, no-wake probes and
+replacement hydration, through real node admission and reusable bridges. Warm
+placement, guest serving, source addresses, namespace and VM startup remain fixtures.
+Actual subscriber overflow/reconnect, native probes/networking, ordinary all-unready
+wake across every path, deployed load and staging remain unqualified.
 
 ## Covered paths
 

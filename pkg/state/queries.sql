@@ -4676,6 +4676,26 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND (kind <> 'wake.sidecar_health' OR COALESCE(data->>'sidecar_name', '') <> '')
 ORDER BY CAST(data->>'instance_id' AS text), source, at DESC, id DESC;
 
+-- name: DeploymentReadinessConfigs :many
+-- Immutable probe configuration only; do not project customer credentials or
+-- unrelated manifest settings into the gateway's bounded readiness refresh.
+SELECT CAST(id AS text) AS deployment_id, CAST(app_id AS text) AS app_id,
+       override_readiness_probe,
+       CAST(COALESCE((
+           SELECT jsonb_agg(jsonb_build_object(
+               'name', companion->'name',
+               'type', companion->'type',
+               'primary_ingress', companion->'primary_ingress',
+               'readiness_probe', CASE jsonb_typeof(companion->'readiness_probe')
+                   WHEN 'object' THEN '{}'::jsonb
+                   WHEN 'null' THEN 'null'::jsonb
+                   ELSE CASE WHEN companion ? 'readiness_probe' THEN 'false'::jsonb ELSE 'null'::jsonb END
+               END))
+           FROM jsonb_array_elements(deployments.sidecars) AS companion
+       ), '[]'::jsonb) AS jsonb) AS sidecars
+FROM deployments
+WHERE id = ANY(sqlc.arg(deployment_ids)::uuid[]) AND deleted_at IS NULL;
+
 -- name: StampSafeReleaseWorkerLease :exec
 INSERT INTO safe_release_worker_lease (singleton, healthy_at, expires_at)
 VALUES (true, now(), now() + (sqlc.arg(ttl_seconds)::bigint * interval '1 second'))
