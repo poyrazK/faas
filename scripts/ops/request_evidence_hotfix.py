@@ -150,7 +150,8 @@ def main():
             for target, expected in TARGETS:
                 scan = run(['ssh-keyscan', '-T', '10', '-t', 'ed25519', target])
                 part = root / (target + '.known'); part.write_text(scan)
-                assert run(['ssh-keygen', '-lf', str(part), '-E', 'sha256']).split()[1] == expected
+                fingerprints = {line.split()[1] for line in run(['ssh-keygen', '-lf', str(part), '-E', 'sha256']).splitlines()}
+                assert fingerprints == {expected}
                 with known.open('a') as f: f.write(scan)
             options = ['-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
                        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(known), '-o', 'ConnectTimeout=15']
