@@ -11587,7 +11587,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectCapacityActive = `-- name: ObjectCapacityActive :one
-SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning')
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning')
 `
 
 func (q *Queries) ObjectCapacityActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
@@ -11612,6 +11612,12 @@ func (q *Queries) ObjectCapacityActive(ctx context.Context, db DBTX, bucketID pg
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
 	)
 	return i, err
 }
@@ -11635,7 +11641,7 @@ func (q *Queries) ObjectCapacityDeleteWrites(ctx context.Context, db DBTX, bucke
 }
 
 const objectCapacityDue = `-- name: ObjectCapacityDue :many
-SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
 `
 
 func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) ([]ObjectStorageCapacityReconciliation, error) {
@@ -11666,6 +11672,12 @@ func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) (
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.InventoryScope,
+			&i.InventoryCursor,
+			&i.InventoryVerified,
+			&i.ScannedPages,
+			&i.ScannedBytes,
+			&i.ScannedVersions,
 		); err != nil {
 			return nil, err
 		}
@@ -11689,30 +11701,36 @@ func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pg
 }
 
 const objectCapacityGet = `-- name: ObjectCapacityGet :one
-SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
+SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at, c.inventory_scope, c.inventory_cursor, c.inventory_verified, c.scanned_pages, c.scanned_bytes, c.scanned_versions,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
 `
 
 type ObjectCapacityGetRow struct {
-	ID             pgtype.UUID
-	BucketID       pgtype.UUID
-	State          string
-	LeaseToken     string
-	LeaseUntil     pgtype.Timestamptz
-	RetryAt        pgtype.Timestamptz
-	DeadlineAt     pgtype.Timestamptz
-	BeforeBytes    int64
-	BeforeKeys     int64
-	AfterBytes     int64
-	AfterKeys      int64
-	ReclaimedBytes int64
-	ReclaimedKeys  int64
-	PendingWrites  int64
-	LastErrorCode  string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	FinishedAt     pgtype.Timestamptz
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
 }
 
 func (q *Queries) ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectCapacityGetRow, error) {
@@ -11737,6 +11755,12 @@ func (q *Queries) ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
 		&i.AccountID,
 		&i.AppID,
 	)
@@ -11745,7 +11769,7 @@ func (q *Queries) ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID
 
 const objectCapacityInsert = `-- name: ObjectCapacityInsert :one
 INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,deadline_at,before_bytes,before_keys,after_bytes,after_keys)
-VALUES($1,$2,now()+make_interval(secs=>$5::int),$3,$4,$3,$4) RETURNING id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at
+VALUES($1,$2,now()+make_interval(secs=>$5::int),$3,$4,$3,$4) RETURNING id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions
 `
 
 type ObjectCapacityInsertParams struct {
@@ -11784,12 +11808,18 @@ func (q *Queries) ObjectCapacityInsert(ctx context.Context, db DBTX, arg ObjectC
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
 	)
 	return i, err
 }
 
 const objectCapacityLock = `-- name: ObjectCapacityLock :one
-SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE id=$1 FOR UPDATE
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at, inventory_scope, inventory_cursor, inventory_verified, scanned_pages, scanned_bytes, scanned_versions FROM object_storage_capacity_reconciliations WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
@@ -11814,6 +11844,12 @@ func (q *Queries) ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUI
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.InventoryScope,
+		&i.InventoryCursor,
+		&i.InventoryVerified,
+		&i.ScannedPages,
+		&i.ScannedBytes,
+		&i.ScannedVersions,
 	)
 	return i, err
 }
@@ -11863,14 +11899,14 @@ SELECT
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
- EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) AS versions
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions
 `
 
 type ObjectCapacityReadinessRow struct {
 	Pending   int64
 	Unsafe    bool
 	Multipart bool
-	Versions  bool
+	Versions  pgtype.Bool
 }
 
 func (q *Queries) ObjectCapacityReadiness(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectCapacityReadinessRow, error) {
@@ -11909,25 +11945,31 @@ func (q *Queries) ObjectCapacityRebase(ctx context.Context, db DBTX, arg ObjectC
 const objectCapacitySave = `-- name: ObjectCapacitySave :exec
 UPDATE object_storage_capacity_reconciliations SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,
  before_bytes=$6,before_keys=$7,after_bytes=$8,after_keys=$9,reclaimed_bytes=$10,reclaimed_keys=$11,
- pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15 WHERE id=$1
+ pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15,inventory_scope=$16,inventory_cursor=$17,inventory_verified=$18,scanned_pages=$19,scanned_bytes=$20,scanned_versions=$21 WHERE id=$1
 `
 
 type ObjectCapacitySaveParams struct {
-	ID             pgtype.UUID
-	State          string
-	LeaseToken     string
-	LeaseUntil     pgtype.Timestamptz
-	RetryAt        pgtype.Timestamptz
-	BeforeBytes    int64
-	BeforeKeys     int64
-	AfterBytes     int64
-	AfterKeys      int64
-	ReclaimedBytes int64
-	ReclaimedKeys  int64
-	PendingWrites  int64
-	LastErrorCode  string
-	UpdatedAt      pgtype.Timestamptz
-	FinishedAt     pgtype.Timestamptz
+	ID                pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
 }
 
 func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCapacitySaveParams) error {
@@ -11947,6 +11989,12 @@ func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCap
 		arg.LastErrorCode,
 		arg.UpdatedAt,
 		arg.FinishedAt,
+		arg.InventoryScope,
+		arg.InventoryCursor,
+		arg.InventoryVerified,
+		arg.ScannedPages,
+		arg.ScannedBytes,
+		arg.ScannedVersions,
 	)
 	return err
 }
@@ -12094,6 +12142,8 @@ baseline_keys = CASE WHEN observed_at IS NULL THEN $4::bigint ELSE baseline_keys
 observed_bytes=$3,observed_keys=$4,observed_at=attempt_at,lease_until=NULL,token=''
 WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
 AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
 AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 `
 
@@ -14401,7 +14451,7 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
-u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token,
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
 WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
@@ -14440,6 +14490,7 @@ type ObjectUsageBucketsRow struct {
 	AttemptAt                      pgtype.Timestamptz
 	InventoryLeaseUntil            pgtype.Timestamptz
 	Token                          pgtype.Text
+	InventoryScope                 pgtype.Text
 	MultipartBytes                 int64
 }
 
@@ -14483,6 +14534,7 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.AttemptAt,
 			&i.InventoryLeaseUntil,
 			&i.Token,
+			&i.InventoryScope,
 			&i.MultipartBytes,
 		); err != nil {
 			return nil, err
@@ -14685,9 +14737,104 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 	return items, nil
 }
 
+const objectVersionAccountingStatus = `-- name: ObjectVersionAccountingStatus :one
+SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2
+`
+
+type ObjectVersionAccountingStatusParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ObjectVersionAccountingStatusRow struct {
+	InventoryScope   string
+	VersionsObserved bool
+	NativeScanActive bool
+}
+
+func (q *Queries) ObjectVersionAccountingStatus(ctx context.Context, db DBTX, arg ObjectVersionAccountingStatusParams) (ObjectVersionAccountingStatusRow, error) {
+	row := db.QueryRow(ctx, objectVersionAccountingStatus, arg.ID, arg.AccountID)
+	var i ObjectVersionAccountingStatusRow
+	err := row.Scan(&i.InventoryScope, &i.VersionsObserved, &i.NativeScanActive)
+	return i, err
+}
+
+const objectVersionCapacityRebase = `-- name: ObjectVersionCapacityRebase :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes=$2,baseline_keys=$3,observed_bytes=$2,observed_keys=$3,
+ granted_bytes=0,granted_keys=0,observed_at=now(),attempt_at=now(),token='',lease_until=NULL,inventory_scope='all_versions'
+WHERE bucket_id=$1 AND EXISTS(SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+`
+
+type ObjectVersionCapacityRebaseParams struct {
+	BucketID pgtype.UUID
+	Bytes    int64
+	Objects  int64
+}
+
+func (q *Queries) ObjectVersionCapacityRebase(ctx context.Context, db DBTX, arg ObjectVersionCapacityRebaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectVersionCapacityRebase, arg.BucketID, arg.Bytes, arg.Objects)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectVersionInventoryCursorInsert = `-- name: ObjectVersionInventoryCursorInsert :exec
+INSERT INTO object_storage_version_inventory_cursors(job_id,cursor_hash) VALUES($1,$2)
+`
+
+type ObjectVersionInventoryCursorInsertParams struct {
+	JobID      pgtype.UUID
+	CursorHash string
+}
+
+func (q *Queries) ObjectVersionInventoryCursorInsert(ctx context.Context, db DBTX, arg ObjectVersionInventoryCursorInsertParams) error {
+	_, err := db.Exec(ctx, objectVersionInventoryCursorInsert, arg.JobID, arg.CursorHash)
+	return err
+}
+
+const objectVersionInventoryCursorsDelete = `-- name: ObjectVersionInventoryCursorsDelete :exec
+DELETE FROM object_storage_version_inventory_cursors WHERE job_id=$1
+`
+
+func (q *Queries) ObjectVersionInventoryCursorsDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectVersionInventoryCursorsDelete, jobID)
+	return err
+}
+
+const objectVersionInventoryEntriesDelete = `-- name: ObjectVersionInventoryEntriesDelete :exec
+DELETE FROM object_storage_version_inventory_entries WHERE job_id=$1
+`
+
+func (q *Queries) ObjectVersionInventoryEntriesDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectVersionInventoryEntriesDelete, jobID)
+	return err
+}
+
+const objectVersionInventoryEntriesInsert = `-- name: ObjectVersionInventoryEntriesInsert :execrows
+INSERT INTO object_storage_version_inventory_entries(job_id,identity_hash,bytes)
+SELECT $1,d.identity,d.bytes FROM jsonb_to_recordset($2::jsonb) AS d(identity text,bytes bigint)
+`
+
+type ObjectVersionInventoryEntriesInsertParams struct {
+	JobID pgtype.UUID
+	Items []byte
+}
+
+func (q *Queries) ObjectVersionInventoryEntriesInsert(ctx context.Context, db DBTX, arg ObjectVersionInventoryEntriesInsertParams) (int64, error) {
+	result, err := db.Exec(ctx, objectVersionInventoryEntriesInsert, arg.JobID, arg.Items)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
-INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt)
-VALUES($1,$2,$3,$4,$5,$6)
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
+VALUES($1,$2,$3,$4,$5,$6,$7::boolean,$8::bigint)
 `
 
 type ObjectWriteInsertParams struct {
@@ -14697,6 +14844,8 @@ type ObjectWriteInsertParams struct {
 	Kind              string
 	MultipartUploadID pgtype.UUID
 	RouteReceipt      bool
+	NativeVersion     bool
+	NativeBytes       int64
 }
 
 func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error {
@@ -14707,6 +14856,8 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 		arg.Kind,
 		arg.MultipartUploadID,
 		arg.RouteReceipt,
+		arg.NativeVersion,
+		arg.NativeBytes,
 	)
 	return err
 }

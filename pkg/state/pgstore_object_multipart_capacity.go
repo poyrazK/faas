@@ -83,16 +83,31 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
-		delta, keys, e := checkObjectAdmission(snapshot, bucket, size, old, e == nil, true, p, now)
+		all := versionAdmissionMode(snapshot, bucket)
+		mode, e2 := q.ObjectVersionAccountingStatus(ctx, tx, sqlc.ObjectVersionAccountingStatusParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+		if e2 != nil {
+			return mapErr(e2)
+		}
+		if mode.VersionsObserved && !all || all && preparation == nil {
+			return ErrConflict
+		}
+		exists := e == nil
+		if all {
+			old = 0
+			exists = false
+		}
+		delta, keys, e := checkObjectAdmission(snapshot, bucket, size, old, exists, true, p, now)
 		if e != nil {
 			return e
 		}
 		if preparation != nil {
 			writeID := mustPgUUID(uuid.NewString())
-			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: writeID, BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "multipart", MultipartUploadID: mustPgUUID(id)}); err != nil {
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: writeID, BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "multipart", MultipartUploadID: mustPgUUID(id), NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}); err != nil {
 				return err
 			}
-			err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: writeID})
+			if !all {
+				err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: writeID})
+			}
 		} else {
 			err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size})
 		}

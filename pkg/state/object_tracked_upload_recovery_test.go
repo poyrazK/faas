@@ -96,7 +96,7 @@ func TestTrackedObjectUploadRecoveryMem(t *testing.T) {
 		t.Fatal(err)
 	}
 	j, err = m.ClaimObjectCapacityReconciliation(ctx, j.ID, "capacity-worker")
-	if err != nil || j.State != "blocked" || j.LastErrorCode != "version_accounting_required" {
+	if err != nil || j.State != "scanning" || j.InventoryScope != ObjectInventoryAllVersions {
 		t.Fatal("current inventory could refund versions", j, err)
 	}
 	// A late transport failure cannot rewrite a recovered completion.

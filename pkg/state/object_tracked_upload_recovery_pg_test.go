@@ -107,7 +107,7 @@ func TestTrackedObjectUploadRecoveryPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	j, err = st.ClaimObjectCapacityReconciliation(ctx, j.ID, "capacity-worker")
-	if err != nil || j.State != "blocked" || j.LastErrorCode != "version_accounting_required" {
+	if err != nil || j.State != "scanning" || j.InventoryScope != state.ObjectInventoryAllVersions {
 		t.Fatal("current inventory could refund versions", j, err)
 	}
 	if _, err = pool.Exec(ctx, `UPDATE object_upload_completions SET recovery_versions_observed=false WHERE id=$1`, c.ID); err != nil {

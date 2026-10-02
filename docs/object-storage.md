@@ -1088,8 +1088,8 @@ cancellation return the job with reserved/reclaimed bytes and keys, pending-writ
 count, state, timestamps and a bounded error code. Repeated POST returns the
 active job. Finish or abort live multipart sessions before starting a job.
 
-An active job pauses new uploads for its bucket. Reads and object cleanup remain
-available. A complete inventory under a fenced lease atomically rebases quota;
+An active job pauses new uploads for its bucket. Reads remain available.
+Current-object cleanup remains available for buckets using current-object accounting. A complete inventory under a fenced lease atomically rebases quota;
 partial scans, cancelled jobs and stale workers cannot refund capacity. Billing
 usage and monthly authorization counts stay intact. Cleanup works with storage
 disabled or a spent budget. The worker processes up to 10 due jobs per sweep,
@@ -1103,9 +1103,23 @@ no confirmed outcome. An expired URL or elapsed deadline cannot settle an
 uncertain write. Those cases retain capacity; this release does not offer a force
 refund. Use dedicated managed buckets with versioning disabled, ordered complete
 listings, and no independent provider writers or replication introducing objects.
-`blocked/version_accounting_required` means recovery or an acknowledged tracked
-write detected retained native versions. Current-object inventory cannot count
-their storage, so reclamation stays blocked even after the receipt completes.
-Public versioning and accounting across all retained versions remain pending.
+When recovery or an acknowledged tracked write detects retained native S3
+versions, reconciliation selects `inventory_scope=all_versions`. It counts all
+retained data versions and delete markers, including null versions. A marker
+uses its key's UTF-8 byte length; the key quota counts each retained entry.
+The API reports `scanned_pages`, `scanned_bytes` and `scanned_versions`; the CLI
+shows that progress without native IDs. Every page commits durably and resumes
+after a restart. Native scans process at most ten pages per sweep within the
+same 1,000-page/job limit. Failed, duplicate or cyclic pages do not rebase quota.
+Periodic refreshes use the same native journal.
+
+New writes pause after native detection until a complete native baseline exists.
+Afterward each tracked PUT/application upload/copy or multipart completion reserves
+its full size and one additional entry even when overwriting the same key.
+Direct signed PUTs, legacy untracked writes/completion and current-object
+single/bulk DELETE return a conflict or NotImplemented in this mode until their
+replay/marker admission is implemented. Public bucket versioning, customer
+version IDs and version-specific listing/deletion/restore remain pending.
+See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
 See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
 rolling-upgrade guarantees.

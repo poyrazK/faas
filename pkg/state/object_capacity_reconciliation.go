@@ -25,11 +25,17 @@ type ObjectCapacityReconciliation struct {
 	api.ObjectCapacityReconciliation
 	AccountID, AppID, Token         string
 	LeaseUntil, RetryAt, DeadlineAt time.Time
+	InventoryCursor                 string          `json:"-"`
+	InventoryVerified               bool            `json:"-"`
+	InventoryEntries                map[string]bool `json:"-"`
+	InventoryCursors                map[string]bool `json:"-"`
 }
 
 type objectWriteAdmission struct {
 	BucketID, KeyHash, MultipartID string
 	Settled, Route                 bool
+	NativeVersion                  bool
+	NativeBytes                    int64
 }
 
 func objectCapacityActive(s string) bool { return s == "waiting" || s == "scanning" }
@@ -53,9 +59,6 @@ func prepareObjectCapacityClaim(j ObjectCapacityReconciliation, token string, pe
 	case !j.DeadlineAt.After(now):
 		j.State = "failed"
 		j.LastErrorCode = "deadline"
-	case versions:
-		j.State = "blocked"
-		j.LastErrorCode = "version_accounting_required"
 	case unsafe:
 		j.State = "blocked"
 		j.LastErrorCode = "untracked_writes"
@@ -68,6 +71,13 @@ func prepareObjectCapacityClaim(j ObjectCapacityReconciliation, token string, pe
 		j.Token = token
 		j.LeaseUntil = now.Add(api.ObjectCapacityReconciliationLease)
 	}
+	if j.InventoryScope == "" {
+		j.InventoryScope = ObjectInventoryCurrent
+	}
+	if versions {
+		j.InventoryScope = ObjectInventoryAllVersions
+	}
+	j.InventoryVerified = false
 	if !objectCapacityActive(j.State) {
 		j.FinishedAt = &now
 	}

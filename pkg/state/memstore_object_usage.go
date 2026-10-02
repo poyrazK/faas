@@ -148,19 +148,30 @@ func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64,
 	s := m.objectUsageLocked(account, now)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
+	all := versionAdmissionMode(s, bucket)
+	status := m.versionAccountingStatusLocked(bucket)
+	if put && (status.VersionsObserved && !all || all && token == "") {
+		return ErrConflict
+	}
+	if all {
+		old = 0
+		exists = false
+	}
 	delta, keys, err := checkObjectAdmission(s, bucket, size, old, exists, put, p, now)
 	if err != nil {
 		return err
 	}
 	if put {
-		if m.objectGrants == nil {
-			m.objectGrants = map[string]map[string]int64{}
+		if !all {
+			if m.objectGrants == nil {
+				m.objectGrants = map[string]map[string]int64{}
+			}
+			if m.objectGrants[bucket] == nil {
+				m.objectGrants[bucket] = map[string]int64{}
+			}
+			m.objectGrants[bucket][hash] = max(old, size)
+			m.trackObjectGrantLocked(bucket, hash, token, !exists)
 		}
-		if m.objectGrants[bucket] == nil {
-			m.objectGrants[bucket] = map[string]int64{}
-		}
-		m.objectGrants[bucket][hash] = max(old, size)
-		m.trackObjectGrantLocked(bucket, hash, token, !exists)
 		u := m.objectUsage[bucket]
 		u.GrantedBytes += delta
 		u.GrantedKeys += keys
@@ -240,7 +251,7 @@ func (m *MemStore) FinishObjectInventory(_ context.Context, bucket, token string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectUsage[bucket]
-	if m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
+	if m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}
 	if u.ObservedAt.IsZero() {

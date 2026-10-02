@@ -66,6 +66,9 @@ func (s *server) scanObjectCapacity(ctx context.Context, st state.ObjectCapacity
 	if s.objectStorage == nil {
 		return j, objectstorage.ErrConfiguration
 	}
+	if j.InventoryScope == state.ObjectInventoryAllVersions {
+		return s.scanObjectVersionCapacity(ctx, st, b, j)
+	}
 	scanCtx, cancel := context.WithTimeout(ctx, api.ObjectCapacityInventoryTimeout)
 	defer cancel()
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)

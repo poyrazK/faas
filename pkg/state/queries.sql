@@ -3868,7 +3868,7 @@ SELECT account_id FROM object_buckets WHERE id=$1;
 
 -- name: ObjectUsageBuckets :many
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
-u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token,
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
 WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
@@ -3953,6 +3953,8 @@ baseline_keys = CASE WHEN observed_at IS NULL THEN sqlc.arg(objects)::bigint ELS
 observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),observed_at=attempt_at,lease_until=NULL,token=''
 WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
 AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
 AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'));
 
 -- name: ObjectInventorySample :exec
@@ -5122,8 +5124,8 @@ WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 SELECT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning'));
 
 -- name: ObjectWriteInsert :exec
-INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt)
-VALUES($1,$2,$3,$4,$5,$6);
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
+VALUES($1,$2,$3,$4,$5,$6,sqlc.arg(native_version)::boolean,sqlc.arg(native_bytes)::bigint);
 
 -- name: ObjectWriteSettle :execrows
 UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
@@ -5141,7 +5143,7 @@ SELECT
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
- EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) AS versions;
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions;
 
 -- name: ObjectCapacityActive :one
 SELECT * FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning');
@@ -5162,7 +5164,7 @@ SELECT * FROM object_storage_capacity_reconciliations WHERE state IN ('waiting',
 -- name: ObjectCapacitySave :exec
 UPDATE object_storage_capacity_reconciliations SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,
  before_bytes=$6,before_keys=$7,after_bytes=$8,after_keys=$9,reclaimed_bytes=$10,reclaimed_keys=$11,
- pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15 WHERE id=$1;
+ pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15,inventory_scope=sqlc.arg(inventory_scope),inventory_cursor=sqlc.arg(inventory_cursor),inventory_verified=sqlc.arg(inventory_verified),scanned_pages=sqlc.arg(scanned_pages),scanned_bytes=sqlc.arg(scanned_bytes),scanned_versions=sqlc.arg(scanned_versions) WHERE id=$1;
 
 -- name: ObjectCapacityRebase :execrows
 INSERT INTO object_storage_bucket_usage(bucket_id,baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,attempt_at)
@@ -5241,3 +5243,27 @@ SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bu
 SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND (created_at,id) < (coalesce(sqlc.narg(cursor_created)::timestamptz,'infinity'::timestamptz),coalesce(sqlc.narg(cursor_id)::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectVersionAccountingStatus :one
+SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
+FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2;
+
+-- name: ObjectVersionInventoryEntriesInsert :execrows
+INSERT INTO object_storage_version_inventory_entries(job_id,identity_hash,bytes)
+SELECT sqlc.arg(job_id),d.identity,d.bytes FROM jsonb_to_recordset(sqlc.arg(items)::jsonb) AS d(identity text,bytes bigint);
+
+-- name: ObjectVersionInventoryCursorInsert :exec
+INSERT INTO object_storage_version_inventory_cursors(job_id,cursor_hash) VALUES($1,$2);
+
+-- name: ObjectVersionInventoryEntriesDelete :exec
+DELETE FROM object_storage_version_inventory_entries WHERE job_id=$1;
+
+-- name: ObjectVersionInventoryCursorsDelete :exec
+DELETE FROM object_storage_version_inventory_cursors WHERE job_id=$1;
+
+-- name: ObjectVersionCapacityRebase :execrows
+UPDATE object_storage_bucket_usage SET baseline_bytes=sqlc.arg(bytes),baseline_keys=sqlc.arg(objects),observed_bytes=sqlc.arg(bytes),observed_keys=sqlc.arg(objects),
+ granted_bytes=0,granted_keys=0,observed_at=now(),attempt_at=now(),token='',lease_until=NULL,inventory_scope='all_versions'
+WHERE bucket_id=$1 AND EXISTS(SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready');

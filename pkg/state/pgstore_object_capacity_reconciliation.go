@@ -34,7 +34,7 @@ func (s *PgStore) SettleObjectWrite(ctx context.Context, account, bucket, token 
 	return nil
 }
 func objectCapacityFromSQL(r sqlc.ObjectCapacityGetRow) ObjectCapacityReconciliation {
-	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: pgUUIDString(r.ID), BucketID: pgUUIDString(r.BucketID), State: r.State, BeforeBytes: r.BeforeBytes, BeforeKeys: r.BeforeKeys, AfterBytes: r.AfterBytes, AfterKeys: r.AfterKeys, ReclaimedBytes: r.ReclaimedBytes, ReclaimedKeys: r.ReclaimedKeys, PendingWrites: r.PendingWrites, LastErrorCode: r.LastErrorCode, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time, DeadlineAt: r.DeadlineAt.Time}
+	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: pgUUIDString(r.ID), BucketID: pgUUIDString(r.BucketID), State: r.State, InventoryScope: r.InventoryScope, ScannedPages: r.ScannedPages, ScannedBytes: r.ScannedBytes, ScannedVersions: r.ScannedVersions, BeforeBytes: r.BeforeBytes, BeforeKeys: r.BeforeKeys, AfterBytes: r.AfterBytes, AfterKeys: r.AfterKeys, ReclaimedBytes: r.ReclaimedBytes, ReclaimedKeys: r.ReclaimedKeys, PendingWrites: r.PendingWrites, LastErrorCode: r.LastErrorCode, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time, DeadlineAt: r.DeadlineAt.Time, InventoryCursor: r.InventoryCursor, InventoryVerified: r.InventoryVerified}
 	if r.FinishedAt.Valid {
 		j.FinishedAt = &r.FinishedAt.Time
 	}
@@ -51,6 +51,9 @@ func readObjectCapacityJob(ctx context.Context, db sqlc.DBTX, id string) (Object
 	return objectCapacityFromSQL(r), nil
 }
 func saveObjectCapacityJob(ctx context.Context, db sqlc.DBTX, j ObjectCapacityReconciliation) error {
+	if j.InventoryScope == "" {
+		j.InventoryScope = ObjectInventoryCurrent
+	}
 	finished := pgtype.Timestamptz{}
 	if j.FinishedAt != nil {
 		finished = objectUsageTime(*j.FinishedAt)
@@ -59,7 +62,7 @@ func saveObjectCapacityJob(ctx context.Context, db sqlc.DBTX, j ObjectCapacityRe
 	if !j.LeaseUntil.IsZero() {
 		lease = objectUsageTime(j.LeaseUntil)
 	}
-	return sqlc.New().ObjectCapacitySave(ctx, db, sqlc.ObjectCapacitySaveParams{ID: mustPgUUID(j.ID), State: j.State, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), BeforeBytes: j.BeforeBytes, BeforeKeys: j.BeforeKeys, AfterBytes: j.AfterBytes, AfterKeys: j.AfterKeys, ReclaimedBytes: j.ReclaimedBytes, ReclaimedKeys: j.ReclaimedKeys, PendingWrites: j.PendingWrites, LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt), FinishedAt: finished})
+	return sqlc.New().ObjectCapacitySave(ctx, db, sqlc.ObjectCapacitySaveParams{ID: mustPgUUID(j.ID), State: j.State, InventoryScope: j.InventoryScope, InventoryCursor: j.InventoryCursor, InventoryVerified: j.InventoryVerified, ScannedPages: j.ScannedPages, ScannedBytes: j.ScannedBytes, ScannedVersions: j.ScannedVersions, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), BeforeBytes: j.BeforeBytes, BeforeKeys: j.BeforeKeys, AfterBytes: j.AfterBytes, AfterKeys: j.AfterKeys, ReclaimedBytes: j.ReclaimedBytes, ReclaimedKeys: j.ReclaimedKeys, PendingWrites: j.PendingWrites, LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt), FinishedAt: finished})
 }
 func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, account, app, bucket string) (ObjectCapacityReconciliation, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -154,6 +157,10 @@ func (s *PgStore) CancelObjectCapacityReconciliation(ctx context.Context, accoun
 	}
 	if objectCapacityActive(j.State) {
 		now := time.Now().UTC()
+		j.InventoryCursor = ""
+		if err = clearObjectVersionInventory(ctx, tx, j.ID); err != nil {
+			return j, err
+		}
 		j.State = "cancelled"
 		j.Token = ""
 		j.LeaseUntil = time.Time{}
@@ -203,7 +210,13 @@ func (s *PgStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, tok
 	}
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(snap, j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
-	j = prepareObjectCapacityClaim(j, token, ready.Pending, ready.Unsafe, ready.Multipart, ready.Versions, now)
+	j = prepareObjectCapacityClaim(j, token, ready.Pending, ready.Unsafe, ready.Multipart, ready.Versions.Bool, now)
+	if !objectCapacityActive(j.State) {
+		j.InventoryCursor = ""
+		if err = clearObjectVersionInventory(ctx, tx, j.ID); err != nil {
+			return j, err
+		}
+	}
 	if err = saveObjectCapacityJob(ctx, tx, j); err != nil {
 		return j, err
 	}
@@ -224,7 +237,7 @@ func (s *PgStore) FinishObjectCapacityReconciliation(ctx context.Context, id, to
 	if err != nil {
 		return j, err
 	}
-	if ready.Pending > 0 || ready.Unsafe || ready.Multipart || ready.Versions {
+	if ready.Pending > 0 || ready.Unsafe || ready.Multipart || ready.Versions.Bool {
 		return j, ErrConflict
 	}
 	n, err := q.ObjectCapacityRebase(ctx, tx, sqlc.ObjectCapacityRebaseParams{ID: mustPgUUID(j.BucketID), Bytes: bytes, Keys: keys})

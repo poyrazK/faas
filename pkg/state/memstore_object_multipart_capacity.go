@@ -94,23 +94,33 @@ func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key strin
 	snapshot := withoutMultipartReservation(m.objectUsageLocked(account, now), bucket, reserved)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
+	all := versionAdmissionMode(snapshot, bucket)
+	if m.versionAccountingStatusLocked(bucket).VersionsObserved && !all || all && writeID == "" {
+		return ErrConflict
+	}
+	if all {
+		old = 0
+		exists = false
+	}
 	delta, keys, err := checkObjectAdmission(snapshot, bucket, size, old, exists, true, p, now)
 	if err != nil {
 		return err
 	}
-	if m.objectGrants == nil {
-		m.objectGrants = map[string]map[string]int64{}
+	if !all {
+		if m.objectGrants == nil {
+			m.objectGrants = map[string]map[string]int64{}
+		}
+		if m.objectGrants[bucket] == nil {
+			m.objectGrants[bucket] = map[string]int64{}
+		}
+		m.objectGrants[bucket][hash] = max(old, size)
+		m.trackObjectGrantLocked(bucket, hash, writeID, !exists)
 	}
-	if m.objectGrants[bucket] == nil {
-		m.objectGrants[bucket] = map[string]int64{}
-	}
-	m.objectGrants[bucket][hash] = max(old, size)
-	m.trackObjectGrantLocked(bucket, hash, writeID, !exists)
 	if writeID != "" {
 		if m.objectWriteAdmissions == nil {
 			m.objectWriteAdmissions = map[string]objectWriteAdmission{}
 		}
-		m.objectWriteAdmissions[writeID] = objectWriteAdmission{BucketID: bucket, KeyHash: hash, MultipartID: id}
+		m.objectWriteAdmissions[writeID] = objectWriteAdmission{BucketID: bucket, KeyHash: hash, MultipartID: id, NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}
 	}
 	u := m.objectUsage[bucket]
 	u.GrantedBytes += delta

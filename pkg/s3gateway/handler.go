@@ -486,6 +486,9 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 			return
 		}
+		if !h.allowCurrentObjectDelete(w, r, req, key) {
+			return
+		}
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
@@ -557,6 +560,9 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 
 func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requestContext) {
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
+		return
+	}
+	if !h.allowCurrentObjectDelete(w, r, req, "") {
 		return
 	}
 	if r.ContentLength <= 0 || r.ContentLength > maxDeleteObjectsBodyBytes {

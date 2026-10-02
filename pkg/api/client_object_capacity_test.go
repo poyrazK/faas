@@ -20,7 +20,7 @@ func TestClientObjectCapacityReconciliation(t *testing.T) {
 					t.Error(r.Method, r.URL.Path)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"id":"job","state":"waiting"}`)
+				_, _ = fmt.Fprint(w, `{"id":"job","state":"waiting","inventory_scope":"all_versions","scanned_pages":2,"scanned_bytes":30,"scanned_versions":3}`)
 			}))
 			defer srv.Close()
 			c := NewClient(srv.URL, "token")
@@ -34,7 +34,7 @@ func TestClientObjectCapacityReconciliation(t *testing.T) {
 			default:
 				j, err = c.CancelObjectCapacityReconciliation(context.Background(), "demo", "bucket", "job")
 			}
-			if err != nil || j.ID != "job" {
+			if err != nil || j.ID != "job" || j.InventoryScope != "all_versions" || j.ScannedPages != 2 || j.ScannedBytes != 30 || j.ScannedVersions != 3 {
 				t.Fatal(j, err)
 			}
 		})

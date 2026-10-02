@@ -140,9 +140,12 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					t.Fatal("acknowledged native version did not latch accounting guard", ack, err)
 				}
 				if mode != "overwritten" {
-					if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")}); err != nil {
-						t.Fatal(err)
+					if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")}); err == nil {
+						t.Fatal("unadmitted delete marker escaped")
 					}
+					object.mu.Lock()
+					object.deleted = true // Retained marker already present at the provider.
+					object.mu.Unlock()
 				}
 				f.enabled.Store(false)
 				f.report.ObservedAt = time.Now()
@@ -180,9 +183,6 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				}
 				object.mu.Lock()
 				writes, lists, requests := object.writes, object.lists, object.writes+object.lists+object.heads
-				if object.deleted {
-					requests++
-				}
 				object.mu.Unlock()
 				if writes != 2 || lists != 2 {
 					t.Fatal("recovery replayed a write or pagination", writes, lists)
@@ -196,7 +196,11 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					t.Fatal(err)
 				}
 				j, err = f.st.ClaimObjectCapacityReconciliation(ctx, j.ID, "capacity")
-				if err != nil || j.State != "blocked" || j.LastErrorCode != "version_accounting_required" || j.ReclaimedBytes != 0 {
+				wantState := "scanning"
+				if mode == "absent" {
+					wantState = "waiting"
+				}
+				if err != nil || j.State != wantState || j.InventoryScope != state.ObjectInventoryAllVersions || j.ReclaimedBytes != 0 {
 					t.Fatal("versions refunded by current inventory", j, err)
 				}
 				usage, err := f.st.ObjectUsage(ctx, f.account.ID, time.Now())

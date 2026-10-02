@@ -47,7 +47,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	if m.objectWriteAdmissions == nil {
 		m.objectWriteAdmissions = map[string]objectWriteAdmission{}
 	}
-	m.objectWriteAdmissions[c.ID] = objectWriteAdmission{BucketID: c.BucketID, KeyHash: objectKeyHash(c.Key), Route: true}
+	m.objectWriteAdmissions[c.ID] = objectWriteAdmission{BucketID: c.BucketID, KeyHash: objectKeyHash(c.Key), Route: true, NativeVersion: m.objectUsage[c.BucketID].InventoryScope == ObjectInventoryAllVersions, NativeBytes: nativeGrantBytes(m.objectUsage[c.BucketID].InventoryScope == ObjectInventoryAllVersions, c.Bytes)}
 	c.ETag = ""
 	c.ErrorCode = ""
 	c.RecoveryToken = ""

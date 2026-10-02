@@ -7902,11 +7902,13 @@ CREATE TABLE public.object_storage_bucket_usage (
     attempt_at timestamp with time zone,
     lease_until timestamp with time zone,
     token text DEFAULT ''::text NOT NULL,
+    inventory_scope text DEFAULT 'current'::text NOT NULL,
     CONSTRAINT object_storage_bucket_usage_baseline_bytes_check CHECK ((baseline_bytes >= 0)),
     CONSTRAINT object_storage_bucket_usage_baseline_keys_check CHECK ((baseline_keys >= 0)),
     CONSTRAINT object_storage_bucket_usage_check CHECK ((((token = ''::text) AND (lease_until IS NULL)) OR ((token <> ''::text) AND (lease_until IS NOT NULL)))),
     CONSTRAINT object_storage_bucket_usage_granted_bytes_check CHECK ((granted_bytes >= 0)),
     CONSTRAINT object_storage_bucket_usage_granted_keys_check CHECK ((granted_keys >= 0)),
+    CONSTRAINT object_storage_bucket_usage_inventory_scope_check CHECK ((inventory_scope = ANY (ARRAY['current'::text, 'all_versions'::text]))),
     CONSTRAINT object_storage_bucket_usage_observed_bytes_check CHECK ((observed_bytes >= 0)),
     CONSTRAINT object_storage_bucket_usage_observed_keys_check CHECK ((observed_keys >= 0))
 );
@@ -23001,6 +23003,12 @@ CREATE TABLE public.object_storage_capacity_reconciliations (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     finished_at timestamp with time zone,
+    inventory_scope text DEFAULT 'current'::text NOT NULL,
+    inventory_cursor text DEFAULT ''::text NOT NULL,
+    inventory_verified boolean DEFAULT false NOT NULL,
+    scanned_pages bigint DEFAULT 0 NOT NULL,
+    scanned_bytes bigint DEFAULT 0 NOT NULL,
+    scanned_versions bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_storage_capacity_reconciliations_after_bytes_check CHECK ((after_bytes >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_after_keys_check CHECK ((after_keys >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_before_bytes_check CHECK ((before_bytes >= 0)),
@@ -23008,10 +23016,16 @@ CREATE TABLE public.object_storage_capacity_reconciliations (
     CONSTRAINT object_storage_capacity_reconciliations_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_storage_capacity_reconciliations_check1 CHECK (((state = 'scanning'::text) = (lease_until IS NOT NULL))),
     CONSTRAINT object_storage_capacity_reconciliations_check2 CHECK (((state = ANY (ARRAY['completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT object_storage_capacity_reconciliations_check3 CHECK (((NOT inventory_verified) OR (inventory_scope = 'all_versions'::text))),
+    CONSTRAINT object_storage_capacity_reconciliations_inventory_cursor_check CHECK ((octet_length(inventory_cursor) <= 8192)),
+    CONSTRAINT object_storage_capacity_reconciliations_inventory_scope_check CHECK ((inventory_scope = ANY (ARRAY['current'::text, 'all_versions'::text]))),
     CONSTRAINT object_storage_capacity_reconciliations_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'untracked_writes'::text, 'unsettled_writes'::text, 'multipart_active'::text, 'deadline'::text, 'inventory_failed'::text, 'version_accounting_required'::text]))),
     CONSTRAINT object_storage_capacity_reconciliations_pending_writes_check CHECK ((pending_writes >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_reclaimed_bytes_check CHECK ((reclaimed_bytes >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_reclaimed_keys_check CHECK ((reclaimed_keys >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_scanned_bytes_check CHECK (((scanned_bytes >= 0) AND (scanned_bytes <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_capacity_reconciliations_scanned_pages_check CHECK (((scanned_pages >= 0) AND (scanned_pages <= 1000))),
+    CONSTRAINT object_storage_capacity_reconciliations_scanned_versions_check CHECK (((scanned_versions >= 0) AND (scanned_versions <= 1000000))),
     CONSTRAINT object_storage_capacity_reconciliations_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'scanning'::text, 'completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])))
 );
 
@@ -23030,10 +23044,14 @@ CREATE TABLE public.object_storage_write_admissions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     settled_at timestamp with time zone,
     route_receipt boolean DEFAULT false NOT NULL,
+    native_version boolean DEFAULT false NOT NULL,
+    native_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_storage_write_admissions_check CHECK (((kind = 'multipart'::text) = (multipart_upload_id IS NOT NULL))),
     CONSTRAINT object_storage_write_admissions_check1 CHECK (((state = 'settled'::text) = (settled_at IS NOT NULL))),
+    CONSTRAINT object_storage_write_admissions_check2 CHECK ((native_version OR (native_bytes = 0))),
     CONSTRAINT object_storage_write_admissions_key_hash_check CHECK ((length(key_hash) = 64)),
     CONSTRAINT object_storage_write_admissions_kind_check CHECK ((kind = ANY (ARRAY['proxy'::text, 'multipart'::text]))),
+    CONSTRAINT object_storage_write_admissions_native_bytes_check CHECK ((native_bytes >= 0)),
     CONSTRAINT object_storage_write_admissions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'settled'::text]))),
     CONSTRAINT object_write_route_proxy CHECK (((NOT route_receipt) OR (kind = 'proxy'::text)))
 );
@@ -23133,13 +23151,23 @@ CREATE INDEX object_upload_recovery_due_idx ON public.object_upload_completions 
 -- Historical provider proof recovery (ADR-397).
 CREATE INDEX object_upload_version_history_bucket_idx ON public.object_upload_completions(bucket_id) WHERE recovery_versions_observed;
 
-CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
+CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE versioned boolean;
 BEGIN
- IF EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed)
-  AND EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=NEW.bucket_id AND state='scanning') THEN
-  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_version_reclamation_fenced',MESSAGE='Retained versions require version-aware accounting';
+ versioned:=OLD.inventory_scope='all_versions' OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed);
+ IF OLD.inventory_scope='all_versions' AND NEW.inventory_scope<>'all_versions' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version accounting cannot revert to current-object inventory';
+ END IF;
+ IF versioned AND EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=NEW.bucket_id AND state='scanning')
+  AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=NEW.bucket_id AND state='scanning' AND inventory_scope='all_versions' AND inventory_verified AND lease_until>now()) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_version_reclamation_fenced',MESSAGE='Retained versions require verified version inventory';
+ END IF;
+ IF versioned AND (NEW.inventory_scope IS DISTINCT FROM OLD.inventory_scope
+  OR NEW.baseline_bytes IS DISTINCT FROM OLD.baseline_bytes OR NEW.baseline_keys IS DISTINCT FROM OLD.baseline_keys
+  OR NEW.observed_bytes IS DISTINCT FROM OLD.observed_bytes OR NEW.observed_keys IS DISTINCT FROM OLD.observed_keys
+  OR NEW.observed_at IS DISTINCT FROM OLD.observed_at)
+  AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=NEW.bucket_id AND state='scanning' AND inventory_scope='all_versions' AND inventory_verified AND lease_until>now()) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Retained versions require verified version observations';
  END IF;
  RETURN NEW;
 END $$;
@@ -23152,6 +23180,61 @@ BEGIN
  RETURN NEW;
 END $$;
 
-CREATE TRIGGER object_version_reclamation_fence BEFORE UPDATE OF baseline_bytes, baseline_keys, granted_bytes, granted_keys ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_reclamation();
+CREATE TRIGGER object_version_reclamation_fence BEFORE UPDATE OF baseline_bytes, baseline_keys, granted_bytes, granted_keys, observed_bytes, observed_keys, observed_at, inventory_scope ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_reclamation();
 
 CREATE TRIGGER object_version_history_latch BEFORE UPDATE OF recovery_versions_observed ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.retain_object_version_history_latch();
+
+CREATE TABLE public.object_storage_version_inventory_entries (
+    job_id uuid NOT NULL,
+    identity_hash text NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT object_storage_version_inventory_entries_bytes_check CHECK (((bytes >= 0) AND (bytes <= '5497558138880'::bigint))),
+    CONSTRAINT object_storage_version_inventory_entries_identity_hash_check CHECK ((identity_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+ALTER TABLE ONLY public.object_storage_version_inventory_entries
+    ADD CONSTRAINT object_storage_version_inventory_entries_pkey PRIMARY KEY (job_id, identity_hash);
+
+ALTER TABLE ONLY public.object_storage_version_inventory_entries
+    ADD CONSTRAINT object_storage_version_inventory_entries_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.object_storage_capacity_reconciliations(id) ON DELETE CASCADE;
+
+CREATE TABLE public.object_storage_version_inventory_cursors (
+    job_id uuid NOT NULL,
+    cursor_hash text NOT NULL,
+    CONSTRAINT object_storage_version_inventory_cursors_cursor_hash_check CHECK ((cursor_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+ALTER TABLE ONLY public.object_storage_version_inventory_cursors
+    ADD CONSTRAINT object_storage_version_inventory_cursors_pkey PRIMARY KEY (job_id, cursor_hash);
+
+ALTER TABLE ONLY public.object_storage_version_inventory_cursors
+    ADD CONSTRAINT object_storage_version_inventory_cursors_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.object_storage_capacity_reconciliations(id) ON DELETE CASCADE;
+
+CREATE FUNCTION public.fence_object_native_version_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE mode text; bid uuid;
+BEGIN
+ bid:=NEW.bucket_id;
+ IF EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=bid AND state IN ('waiting','scanning')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Capacity inventory fences new writes';
+ END IF;
+ SELECT inventory_scope INTO mode FROM object_storage_bucket_usage WHERE bucket_id=bid;
+ IF mode='all_versions' THEN
+  IF TG_TABLE_NAME='object_storage_key_grants' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Retained versions require per-attempt admission';
+  ELSIF NOT NEW.native_version THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Retained versions require per-attempt admission';
+  END IF;
+ ELSE
+  IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+   IF NEW.native_version THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before version admission'; END IF;
+  END IF;
+  IF EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before new writes';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();
+
+CREATE TRIGGER object_native_version_key_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();

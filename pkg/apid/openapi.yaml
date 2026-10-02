@@ -24382,12 +24382,16 @@ components:
 
     ObjectCapacityReconciliation:
       type: object
-      description: Durable fenced capacity inventory and quota rebase. Failed or blocked jobs retain reservations; billing is unaffected.
-      required: [id, bucket_id, state, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, created_at, updated_at]
+      description: Durable fenced capacity inventory and quota rebase. Native scans count retained versions and delete markers. Failed or blocked jobs retain reservations; billing is unaffected.
+      required: [id, bucket_id, state, inventory_scope, scanned_pages, scanned_bytes, scanned_versions, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         bucket_id: { type: string, format: uuid }
         state: { type: string, enum: [waiting, scanning, completed, blocked, failed, cancelled] }
+        inventory_scope: { type: string, enum: [current, all_versions] }
+        scanned_pages: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        scanned_bytes: { type: integer, format: int64, minimum: 0 }
+        scanned_versions: { type: integer, format: int64, minimum: 0, maximum: 1000000, description: Retained data versions and delete markers counted so far. }
         before_bytes: { type: integer, format: int64, minimum: 0 }
         before_keys: { type: integer, format: int64, minimum: 0 }
         after_bytes: { type: integer, format: int64, minimum: 0 }

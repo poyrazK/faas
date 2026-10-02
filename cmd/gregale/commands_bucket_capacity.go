@@ -43,6 +43,9 @@ func cmdBucketCapacity(args []string) int {
 		return jsonOut(writeJSON(job))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Reconciliation %s: %s\nReserved capacity: %d → %d bytes; %d → %d keys\nReclaimed: %d bytes, %d keys\n", job.ID, job.State, job.BeforeBytes, job.AfterBytes, job.BeforeKeys, job.AfterKeys, job.ReclaimedBytes, job.ReclaimedKeys)
+	if job.InventoryScope == "all_versions" {
+		_, _ = fmt.Fprintf(osStdout, "Version inventory: %d pages, %d retained entries, %d bytes\n", job.ScannedPages, job.ScannedVersions, job.ScannedBytes)
+	}
 	if job.LastErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "Reason: %s; pending writes: %d\n", job.LastErrorCode, job.PendingWrites)
 	}

@@ -39,7 +39,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	for _, r := range rows {
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
 			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
-			MultipartBytes: r.MultipartBytes, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
+			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 		})
 	}
@@ -92,6 +92,20 @@ func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key strin
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	all := versionAdmissionMode(snapshot, bucket)
+	if put {
+		mode, e := q.ObjectVersionAccountingStatus(ctx, tx, sqlc.ObjectVersionAccountingStatusParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+		if e != nil {
+			return mapErr(e)
+		}
+		if mode.VersionsObserved && !all || all && (token == "" || !route) {
+			return ErrConflict
+		}
+	}
+	if all {
+		old = 0
+		exists = false
+	}
 	delta, keys, err := checkObjectAdmission(snapshot, bucket, size, old, exists, put, p, now)
 	if err != nil {
 		return err
@@ -105,10 +119,12 @@ func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key strin
 			return ErrConflict
 		}
 		if token != "" {
-			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy", RouteReceipt: route}); err != nil {
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy", RouteReceipt: route, NativeVersion: all, NativeBytes: nativeGrantBytes(all, size)}); err != nil {
 				return mapErr(err)
 			}
-			err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: mustPgUUID(token)})
+			if !all {
+				err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: mustPgUUID(token)})
+			}
 		} else {
 			err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size})
 		}

@@ -36,6 +36,7 @@ type ObjectBucketUsage struct {
 	MultipartBytes                                         int64
 	ObservedAt, AttemptAt, LeaseUntil                      time.Time
 	Token                                                  string
+	InventoryScope                                         string
 }
 
 type ObjectUsageSnapshot struct {

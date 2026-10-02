@@ -146,6 +146,25 @@ type ObjectPage struct {
 	NextCursor     string   `json:"next_cursor,omitempty"`
 }
 
+// ObjectVersionInventoryProvider lists every retained data version and delete
+// marker for authoritative accounting. Native identities and cursors remain
+// private; each call performs one bounded provider request without SDK retries.
+type ObjectVersionInventoryProvider interface {
+	ListObjectVersions(context.Context, string, string, int32) (ObjectVersionsPage, error)
+}
+
+type ObjectVersionInventoryEntry struct {
+	Key               string
+	ProviderVersionID string `json:"-"`
+	SizeBytes         int64
+	DeleteMarker      bool
+}
+
+type ObjectVersionsPage struct {
+	Items      []ObjectVersionInventoryEntry
+	NextCursor string `json:"-"`
+}
+
 // DelimitedObjectLister is an optional provider capability for S3 directory
 // views. Keeping it separate preserves the small inventory/listing contract
 // used by accounting and older drivers.

@@ -2698,38 +2698,45 @@ type ObjectStorageBillingPeriod struct {
 }
 
 type ObjectStorageBucketUsage struct {
-	BucketID      pgtype.UUID
-	BaselineBytes int64
-	BaselineKeys  int64
-	GrantedBytes  int64
-	GrantedKeys   int64
-	ObservedBytes int64
-	ObservedKeys  int64
-	ObservedAt    pgtype.Timestamptz
-	AttemptAt     pgtype.Timestamptz
-	LeaseUntil    pgtype.Timestamptz
-	Token         string
+	BucketID       pgtype.UUID
+	BaselineBytes  int64
+	BaselineKeys   int64
+	GrantedBytes   int64
+	GrantedKeys    int64
+	ObservedBytes  int64
+	ObservedKeys   int64
+	ObservedAt     pgtype.Timestamptz
+	AttemptAt      pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+	Token          string
+	InventoryScope string
 }
 
 type ObjectStorageCapacityReconciliation struct {
-	ID             pgtype.UUID
-	BucketID       pgtype.UUID
-	State          string
-	LeaseToken     string
-	LeaseUntil     pgtype.Timestamptz
-	RetryAt        pgtype.Timestamptz
-	DeadlineAt     pgtype.Timestamptz
-	BeforeBytes    int64
-	BeforeKeys     int64
-	AfterBytes     int64
-	AfterKeys      int64
-	ReclaimedBytes int64
-	ReclaimedKeys  int64
-	PendingWrites  int64
-	LastErrorCode  string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	FinishedAt     pgtype.Timestamptz
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	BeforeBytes       int64
+	BeforeKeys        int64
+	AfterBytes        int64
+	AfterKeys         int64
+	ReclaimedBytes    int64
+	ReclaimedKeys     int64
+	PendingWrites     int64
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	InventoryScope    string
+	InventoryCursor   string
+	InventoryVerified bool
+	ScannedPages      int64
+	ScannedBytes      int64
+	ScannedVersions   int64
 }
 
 type ObjectStorageCustomerUsageReportsV2 struct {
@@ -2849,6 +2856,17 @@ type ObjectStorageUsageReport struct {
 	CostMillicents     int64
 }
 
+type ObjectStorageVersionInventoryCursor struct {
+	JobID      pgtype.UUID
+	CursorHash string
+}
+
+type ObjectStorageVersionInventoryEntry struct {
+	JobID        pgtype.UUID
+	IdentityHash string
+	Bytes        int64
+}
+
 type ObjectStorageWriteAdmission struct {
 	ID                pgtype.UUID
 	BucketID          pgtype.UUID
@@ -2859,6 +2877,8 @@ type ObjectStorageWriteAdmission struct {
 	CreatedAt         pgtype.Timestamptz
 	SettledAt         pgtype.Timestamptz
 	RouteReceipt      bool
+	NativeVersion     bool
+	NativeBytes       int64
 }
 
 type ObjectUploadCompletion struct {

@@ -34,6 +34,9 @@ func (m *MemStore) BeginObjectWrite(_ context.Context, account, bucket, token, k
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions {
+		return ErrConflict
+	}
 	if _, exists := m.objectWriteAdmissions[token]; exists {
 		return ErrConflict
 	}
@@ -61,6 +64,7 @@ func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe
 	for _, c := range m.objectUploadCompletions {
 		versions = versions || c.BucketID == bucket && c.RecoveryVersionsObserved
 	}
+	versions = versions || m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions
 	for hash := range m.objectGrants[bucket] {
 		if !m.objectTrackedGrants[bucket][hash] {
 			unsafe = true
@@ -102,7 +106,7 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 	}
 	now := time.Now().UTC()
 	bytes, keys := objectCapacityTotals(m.objectUsageLocked(account, now), bucket)
-	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: uuid.NewString(), BucketID: bucket, State: "waiting", BeforeBytes: bytes, BeforeKeys: keys, AfterBytes: bytes, AfterKeys: keys, CreatedAt: now, UpdatedAt: now}, AccountID: account, AppID: app, RetryAt: now, DeadlineAt: now.Add(api.ObjectCapacityReconciliationTimeout)}
+	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: uuid.NewString(), BucketID: bucket, State: "waiting", InventoryScope: ObjectInventoryCurrent, BeforeBytes: bytes, BeforeKeys: keys, AfterBytes: bytes, AfterKeys: keys, CreatedAt: now, UpdatedAt: now}, AccountID: account, AppID: app, RetryAt: now, DeadlineAt: now.Add(api.ObjectCapacityReconciliationTimeout)}
 	if m.objectCapacityJobs == nil {
 		m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
 	}
@@ -110,6 +114,9 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 	return cloneObjectCapacityJob(j), nil
 }
 func cloneObjectCapacityJob(j ObjectCapacityReconciliation) ObjectCapacityReconciliation {
+	// Progress indexes belong to the store; workers need only the page cursor.
+	j.InventoryEntries = nil
+	j.InventoryCursors = nil
 	if j.FinishedAt != nil {
 		t := *j.FinishedAt
 		j.FinishedAt = &t
@@ -134,6 +141,9 @@ func (m *MemStore) CancelObjectCapacityReconciliation(_ context.Context, account
 	}
 	if objectCapacityActive(j.State) {
 		now := time.Now().UTC()
+		j.InventoryCursor = ""
+		j.InventoryEntries = nil
+		j.InventoryCursors = nil
 		j.State = "cancelled"
 		j.Token = ""
 		j.LeaseUntil = time.Time{}
@@ -174,6 +184,11 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(m.objectUsageLocked(j.AccountID, now), j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
 	j = prepareObjectCapacityClaim(j, token, pending, unsafe, multipart, versions, now)
+	if !objectCapacityActive(j.State) {
+		j.InventoryCursor = ""
+		j.InventoryEntries = nil
+		j.InventoryCursors = nil
+	}
 	m.objectCapacityJobs[id] = j
 	return cloneObjectCapacityJob(j), nil
 }

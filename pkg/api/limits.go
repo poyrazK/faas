@@ -87,6 +87,13 @@ const (
 
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
+// Native inventory pages are durably staged between bounded worker sweeps.
+const (
+	ObjectVersionInventoryPageSize       = 1000
+	ObjectVersionInventoryCursorMaxBytes = 8192
+	ObjectVersionInventoryPagesPerSweep  = 10
+)
+
 const (
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
