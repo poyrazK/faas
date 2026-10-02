@@ -2774,8 +2774,17 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // for the vmmd side, distinct from the engine's Destroy-the-VM
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	capture, err := v.beginNativeSnapshot(ctx, l, spec)
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	if capture != nil {
+		ctx = capture.ctx
+		defer capture.finish()
+	}
 	defer func() {
 		if retErr != nil {
+			info = SnapshotInfo{}
 			v.cleanupFailedSnapshotCapture(ctx, spec)
 			return
 		}
@@ -2816,6 +2825,15 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}()
 	const memName, stateName = "mem", "vmstate"
+	if capture != nil {
+		// Release Firecracker's tmpfs outputs before restoring the ordinary
+		// memory fence, including partial snapshot/create and upload failures.
+		defer func() {
+			if err := removeNativeSnapshotOutputs(root); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("vmm: remove native snapshot outputs: %w", err))
+			}
+		}()
+	}
 	create := map[string]any{
 		"snapshot_type": "Full",
 		"snapshot_path": stateName,
@@ -2846,7 +2864,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if freezeErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
 		}
-		defer func() { _ = os.Remove(frozenDrivePath) }()
+		defer func() {
+			if err := os.Remove(frozenDrivePath); capture != nil && err != nil && !os.IsNotExist(err) {
+				retErr = errors.Join(retErr, fmt.Errorf("vmm: remove frozen snapshot drive: %w", err))
+			}
+		}()
+	}
+	if capture != nil {
+		return v.publishNativeSnapshot(l, spec, root, frozenDrivePath, capture)
 	}
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
@@ -2880,7 +2905,6 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	var memTmpPath string
 	var memPublishedPath string
 	var memBytes int64
-	var err error
 	memPublishedLocally := false
 	// In OCI mode, never rename into a cache path returned by LocalPath:
 	// the cache is only a read-through copy and must not become the sole
@@ -3203,6 +3227,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(_ context.Context, l Lease) (err error) {
 	defer func() { err = errors.Join(err, v.releaseRuntimeSources(l.Instance)) }()
+	v.cancelNativeSnapshot(l.Instance)
 	v.cancelStartupCPUBoostTail(l.Instance)
 	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()

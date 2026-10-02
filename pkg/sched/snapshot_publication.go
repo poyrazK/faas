@@ -29,7 +29,7 @@ func (e *Engine) captureInitOrReuse(ctx context.Context, ins state.Instance, vms
 func (e *Engine) snapshotStateLocators(nodeID string, snap state.Snapshot) (string, string) {
 	key := state.SnapshotVMStateKey(snap)
 	hostPath := filepath.Join(SnapDir(), strings.TrimPrefix(key, "snap/"))
-	if nodeID == e.defaultLocalNodeID {
+	if nodeID == e.defaultLocalNodeID && !state.IsSnapshotCaptureKey(snap.StorageKey) {
 		return hostPath, ""
 	}
 	return hostPath, key

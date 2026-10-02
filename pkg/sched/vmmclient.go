@@ -568,6 +568,7 @@ type SnapshotBytes struct {
 	MemBytes     int64
 	VMStateBytes int64
 	StoredBytes  int64
+	Capture      runtimeadmission.SnapshotCapture
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd
@@ -1025,7 +1026,7 @@ func (c *VMMClient) PauseAndSnapshot(ctx context.Context, instance, vmstatePath,
 	if beforeCheckpoint && !resp.GetBeforeCheckpointCompleted() {
 		return SnapshotBytes{}, fmt.Errorf("vmmd did not confirm before_checkpoint callback")
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) wraps the new
@@ -1042,7 +1043,15 @@ func (c *VMMClient) WarmSnapshot(ctx context.Context, instance, storageKey, vmst
 	if err != nil {
 		return SnapshotBytes{}, liftErr(err)
 	}
-	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, nil
+	return snapshotBytesFromProto(resp, instance, storageKey, vmstateStorageKey)
+}
+
+func snapshotBytesFromProto(resp *vmmdpb.SnapshotResponse, instance, storageKey, vmstateStorageKey string) (SnapshotBytes, error) {
+	capture, err := runtimeadmission.CheckSnapshotResponse(resp, instance, storageKey, vmstateStorageKey)
+	if err != nil {
+		return SnapshotBytes{}, fmt.Errorf("vmmd returned invalid native snapshot evidence: %w", err)
+	}
+	return SnapshotBytes{MemBytes: resp.MemBytes, VMStateBytes: resp.VmstateBytes, StoredBytes: resp.StoredBytes, Capture: capture}, nil
 }
 
 // ResumeWarmInstance wraps the additive vmmd RPC used when the scheduler

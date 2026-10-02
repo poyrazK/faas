@@ -879,6 +879,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		VmstateBytes:              info.VMStateBytes,
 		StoredBytes:               info.StoredBytes,
 		BeforeCheckpointCompleted: req.GetBeforeCheckpoint(),
+		Capture:                   info.Capture.ToProto(),
 	}, nil
 }
 
@@ -928,6 +929,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		Capture:      info.Capture.ToProto(),
 	}, nil
 }
 

@@ -5087,11 +5087,9 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("park %s: not live", instance)
+	inst, spec, err := m.snapshotInstance(instance, spec)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
@@ -5105,6 +5103,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.cancelFrameworkReadyLoop(instance)
 
 	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
+	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
 	// Release resources on both outcomes. A failed capture can leave a paused
 	// VM, which cannot exit on its own. DestroyWithExport waits for a builder
 	// to finish and must not delay cleanup of this failed app snapshot.
@@ -5154,17 +5153,19 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
 func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
+	inst, spec, err := m.snapshotInstance(instance, spec)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
 	spec.ResumeBeforePublish = true
+	restartProbes := m.pauseMeasuredSnapshotProbes(inst, spec)
+	resumed := false
+	defer func() { restartProbes(resumed) }()
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
+	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
 	if err != nil {
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.
@@ -5172,11 +5173,13 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}
+		resumed = true
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
 	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: resume: %w", instance, err)
 	}
+	resumed = true
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5224,11 +5227,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: not live", instance)
+	inst, spec, err := m.snapshotInstance(instance, spec)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
@@ -5241,6 +5242,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
+	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
 	if err == nil {
 		return info, nil
 	}

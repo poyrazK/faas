@@ -519,6 +519,41 @@ dedicated Linux ext4/KVM/leakcheck acceptance remain release gates. Public stand
 activation remains disabled. Portable stream and adapter tests establish only the
 boundaries described here.
 
+## Measured native snapshot capture
+
+Native snapshot capture evidence version 1 now retains the exact protocol-2
+boot receipt and full-stream identities for memory, VM state and the frozen
+private main drive. Manager supplies its owned receipt; snapshot RPC callers
+cannot submit a parent receipt. Capture checks the same registered native
+process and drive handles at the pause boundary, remeasures read-only drives,
+and compares the frozen main with the paused live main. The changed main digest
+is separate from the original approved producer and boot-injected digests.
+Storage must consume the complete pinned streams with matching hashes before
+the capture can return evidence. Cancellation, partial consumption, changed
+files and invalid parent facts return no evidence. Teardown cancels and joins
+the capture before closing retained drive handles. Temporary Firecracker
+outputs are removed before restoring the ordinary memory fence.
+Measured warm capture suspends native probes during capture/publication and
+restarts them after successful resume. Paused byte measurement must not itself
+trigger liveness teardown; pause and publication costs need native acceptance.
+
+Both warm and terminal snapshot responses carry these versioned facts through
+the private RPC. Fresh coupled captures use a keyed VM-state artifact on local
+nodes as well as remote nodes; legacy local captures retain their host-path
+carrier. Legacy protocol-1 receipts retain their original snapshot behavior
+and cannot become measured capture evidence.
+
+This evidence is historical lineage, not current scan/publisher approval,
+consumer convergence or restore authority. The parent boot grant can expire
+without erasing its historical facts. Native namespace preflight protects
+already published captures from retry overwrite and cleanup; it is not a
+distributed capture claim. A fenced durable capture grant/catalog, current
+review and a separately versioned measured restore/promotion protocol remain
+required. Capture facts are not yet persisted in ordinary snapshot rows or
+sent through `snapshot_written`; source-bearing managed wakes still use
+verified cold boot. Dedicated native capture correctness, pause cost and
+leakcheck evidence remain pending, and public activation stays disabled.
+
 ## Acceptance checklist
 
 - [x] PostgreSQL and MemStore versioning, tenancy, immutable hashes and parity.

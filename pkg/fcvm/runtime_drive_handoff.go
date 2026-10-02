@@ -48,6 +48,7 @@ type runtimeDriveHandoff struct {
 	drives      []pinnedRuntimeDrive
 	observation RuntimeDriveHandoffObservation
 	closed      bool
+	snapshot    *nativeSnapshotFlight
 }
 
 func (v *JailerVMM) registerRuntimeDriveHandoff(lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) error {
@@ -240,8 +241,17 @@ func (v *JailerVMM) releaseRuntimeDriveHandoff(instance string) error {
 		return nil
 	}
 	handoff.mu.Lock()
-	defer handoff.mu.Unlock()
 	handoff.closed = true
+	flight := handoff.snapshot
+	if flight != nil {
+		flight.cancel()
+	}
+	handoff.mu.Unlock()
+	if flight != nil {
+		<-flight.done
+	}
+	handoff.mu.Lock()
+	defer handoff.mu.Unlock()
 	var err error
 	for _, drive := range handoff.drives {
 		err = errors.Join(err, drive.file.Close())

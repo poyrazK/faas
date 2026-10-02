@@ -1,5 +1,7 @@
 package fcvm
 
+import "github.com/onebox-faas/faas/pkg/runtimeadmission"
+
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
 // Snapshot.FCVersion (ADR-005) but for the wire-protocol-capable
@@ -242,8 +244,11 @@ type WakePrepareTimings struct {
 // is left unused (logged as metadata only). When empty, the VMM keeps
 // the legacy moveOut(VMStatePath) behaviour bit-for-bit.
 type SnapshotSpec struct {
-	StageMemPath string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath  string // host location vmmd hands to the FC socket during pause
+	// Only Manager can populate the retained parent. Wire callers never supply
+	// an admission receipt as authority for a snapshot of another live VM.
+	admittedParent runtimeadmission.Receipt
+	StageMemPath   string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath    string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
@@ -272,4 +277,7 @@ type SnapshotInfo struct {
 	// memory, vmstate, and coupled private-drive artifacts. It intentionally
 	// differs from the logical lengths above for sparse filesystems.
 	StoredBytes int64
+	// Native byte evidence only; current approval and durable restore admission
+	// remain separate gates. Legacy captures leave this zero.
+	Capture runtimeadmission.SnapshotCapture
 }

@@ -1070,6 +1070,24 @@ message SnapshotResponse {
   // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
   // older vmmd that ignored before_checkpoint on the request.
   bool before_checkpoint_completed = 4;
+  // Versioned native byte evidence. This is neither current publisher/scan
+  // approval nor a restore grant. Legacy captures leave it absent.
+  RuntimeSnapshotCapture capture = 5;
+}
+
+message RuntimeCapturedArtifact {
+  string storage_key = 1;
+  string digest = 2;
+  int64 bytes = 3;
+}
+
+message RuntimeSnapshotCapture {
+  uint32 version = 1;
+  RuntimeBootReceipt parent = 2;
+  RuntimeCapturedArtifact memory = 3;
+  RuntimeCapturedArtifact vmstate = 4;
+  RuntimeCapturedArtifact private_drive = 5;
+  int64 captured_at_unix_nano = 6;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
