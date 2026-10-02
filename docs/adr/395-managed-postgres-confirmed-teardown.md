@@ -68,6 +68,9 @@ cutover policy. Some existing scheduler watchdog, liveness and OOM paths still
 release their ledger or publish terminal state around best-effort destruction.
 Those rows are not drain receipts; retaining scheduler RAM/concurrency accounting
 through failed teardown remains a follow-up prerequisite.
+[ADR-396](396-managed-postgres-scheduler-teardown-accounting.md) now covers that
+accounting follow-up for watchdog, liveness, OOM, operator restart and pressure
+recycling; remaining scheduler cleanup tails still require an ownership audit.
 
 Portable regressions cover concurrent stops and waiter deadlines, rejection of
 resumes/boots during teardown, failed live/boot/job/Park cleanup and retry,

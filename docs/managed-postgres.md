@@ -481,6 +481,12 @@ See [ADR-394](adr/394-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the
 original resources ([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)).
+Scheduler watchdog, liveness, OOM, operator restart and pressure-recycling paths
+also retain their resident state, admission and host-port ownership when Destroy
+fails; a schedd restart rebuilds those reservations. Read failures and state races
+cannot free another operation's resident capacity
+([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Remaining
+boot/migration cleanup paths and failure-report redelivery need further work.
 This proof is local to the running daemon. Crash recovery, all-node
 capability/ownership checks and durable drain receipts remain pending.
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still

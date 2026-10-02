@@ -33,8 +33,11 @@ historical.
 
 Managed PostgreSQL cutover safety update (2026-10-02): vmmd retains live and
 failed-boot ownership through confirmed teardown and serializes concurrent stops
-([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)). Admission fencing and
-local teardown do not yet provide durable all-node drain proof. Customer cutover
+([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)). Scheduler fault,
+operator restart and pressure-recycling paths now retain their admission and
+resident state through failed Destroy, including schedd restart reconstruction
+([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Admission
+fencing and local teardown do not yet provide durable all-node drain proof. Customer cutover
 activation remains disabled, and supported native lifecycle acceptance remains
 pending.
 
