@@ -1234,6 +1234,56 @@ checks also pass five runs with Go's race detector. A shared-disk compilation
 failure and the timeout fixture's initial readiness/shutdown-setting mix-up
 were corrected before these successful runs; neither is native acceptance.
 
+The next recovery substrate separates observing a native task from proving
+that no producer can launch one later. Process discovery keeps every managed
+PID, including duplicate instance IDs, and binds its UID, cgroup and kernel
+start time. Failed reads or a disappearing process root do not count as
+absence. Retirement pins the kernel task with a Linux pidfd, revalidates the
+incarnation before signaling and waits for exit. An observed-task stop by
+itself is explicitly not a qualification or absence receipt. The pidfd API's
+exit semantics are documented in the [Linux manual](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
+
+A private host-lifetime launch journal supplies the missing producer fence.
+Its stable file lock spans child creation, durable PID/start-time publication
+and opening an inherited pipe gate. Each record also binds the kernel boot UUID;
+an unknown or different boot refuses both launch and retirement authority.
+The boot UUID's scope is described in the [kernel documentation](https://www.kernel.org/doc/html/v6.1/admin-guide/sysctl/kernel.html#random).
+The release helper cannot exec jailer until that gate opens, and exec preserves
+the recorded incarnation (including a non-leader exec's original start time,
+as implemented in [Linux exec](https://github.com/torvalds/linux/blob/v6.1/fs/exec.c#L1041)). If vmmd
+dies before publication, its writer closes and the unrecorded child cannot
+start a VM. Recovery first irreversibly revokes the journal generation, then
+waits for the bound process and excludes unmatched duplicate tasks before
+recording exit confirmation. Missing, corrupt, incomplete, duplicate-key or
+untrusted records remain errors. Direct commands, daemonizing jailers and
+changed UID/cgroup/network identities cannot bypass the launch gate.
+
+The allocator can quarantine all recovered slots atomically, including
+several UIDs for one duplicated instance ID. Ordinary boot, prepared-network
+adoption and ordinary lease release cannot borrow or clear those holdings.
+This establishes cleanup ownership without installing a live row or guest CID
+join. Releasing a quarantine still requires confirmed exit and resource
+cleanup; it is not authorized by a scan error or generic terminal state.
+
+These primitives are not yet wired into JailerVMM launch/stop or Manager startup
+and recovery. The existing unknown-instance RPC behavior is therefore not a
+durable physical-retirement receipt. The next integration must establish the
+journal before any native boot, reseed every occupied slot before new boot or
+prepared-network admission, join recovery cleanup, and persist exact
+attempt-bound scheduler evidence. Journal retention and legacy launches also
+need explicit handling. The qualification consumer, serving proofs, graph
+activation and apid executor remain disabled/unwired, and native `test-metal`
+and `leakcheck` remain mandatory and unverified.
+
+The complete portable `fcvm`, `vmmdgrpc` and `jailsetup` suites pass with these
+primitives. Recovery discovery, pinned-handle retirement, producer crash/gate
+closure, cross-process file locking, immutable revocation, strict record and
+command validation, kernel-boot replay refusal, exit-identity binding and slot
+quarantine checks pass five repeated runs under Go's race detector. The Linux
+x86_64 test binary also cross-compiles; its Linux pidfd test has not been run
+here. The dedicated native acceptance host's cloud project remains suspended,
+so these results do not constitute native VM, snapshot or leak acceptance.
+
 ## Review and control workflow
 
 An environment can instead opt into reviewed merge approval at binding:
