@@ -929,6 +929,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	BuilderNodeID                pgtype.UUID
 }
 
 type BuildProvenance struct {
@@ -970,6 +971,7 @@ type BuilderVmCleanup struct {
 	LastError     pgtype.Text
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	BuilderNodeID pgtype.UUID
 }
 
 type CliAuthCode struct {

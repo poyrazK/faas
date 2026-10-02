@@ -1453,6 +1453,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
+		impl.WithBuilderClaimStore(store)
 	}
 	impl.Register(gsrv)
 	defer func() {

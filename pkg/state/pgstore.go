@@ -11439,7 +11439,7 @@ func (s *PgStore) CreateBuild(ctx context.Context, deploymentID string, kind Dep
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''), started_at, finished_at, enqueued_at,
 		           cancelled_at, cancelled_by_deployment_cascade,
-		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
+		           coalesce(cache_status,''), coalesce(cache_key_sha256,''), coalesce(builder_node_id::text,'')`,
 		deploymentID, string(kind), sourceBytes, nullString(logPath)))
 	if err != nil {
 		return Build{}, err
@@ -11479,7 +11479,7 @@ func (s *PgStore) createBuildWithID(ctx context.Context, id, deploymentID string
 	}
 	build, err := scanBuild(tx.QueryRow(ctx, `insert into builds(id,deployment_id,kind,source_bytes,status,log_path)
 	values($1,$2,$3,$4,'queued',$5)
-	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
+	returning id,deployment_id,kind,source_bytes,status,coalesce(failure_class,''),coalesce(log_path,''),started_at,finished_at,enqueued_at,cancelled_at,cancelled_by_deployment_cascade,coalesce(cache_status,''),coalesce(cache_key_sha256,''),coalesce(builder_node_id::text,'')`, id, deploymentID, kind, sourceBytes, nullString(logPath)))
 	if err != nil {
 		return Build{}, 0, err
 	}
@@ -11543,7 +11543,7 @@ func (s *PgStore) BuildByID(ctx context.Context, id string) (Build, error) {
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
 		        started_at, finished_at, enqueued_at,
 		        cancelled_at, cancelled_by_deployment_cascade,
-		        coalesce(cache_status,''), coalesce(cache_key_sha256,'')
+		        coalesce(cache_status,''), coalesce(cache_key_sha256,''), coalesce(builder_node_id::text,'')
 		 from builds where id = $1`, id)
 	return scanBuild(row)
 }
@@ -11553,7 +11553,7 @@ func (s *PgStore) BuildByDeployment(ctx context.Context, deploymentID string) (B
 		`select id, deployment_id, kind, source_bytes, status, coalesce(failure_class,''), coalesce(log_path,''),
 		        started_at, finished_at, enqueued_at,
 		        cancelled_at, cancelled_by_deployment_cascade,
-		        coalesce(cache_status,''), coalesce(cache_key_sha256,'')
+		        coalesce(cache_status,''), coalesce(cache_key_sha256,''), coalesce(builder_node_id::text,'')
 		 from builds where deployment_id = $1
 		 order by started_at desc nulls last limit 1`, deploymentID)
 	return scanBuild(row)
@@ -11834,212 +11834,65 @@ func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// ClaimQueuedBuild atomically transitions queued → running via a single
-// UPDATE … RETURNING and sets started_at = now(). Returns ErrNotFound
-// when the row is missing OR already in another status — that second
-// case is what lets builderd drop duplicate build_queued notifications
-// (apid write path + imaged reaper) without spawning two builder VMs.
-// Equivalent to a compare-and-swap at the row level.
+// ClaimQueuedBuild is the unidentified legacy claim surface. Regional rows
+// require a registered, active node in the selected region and remain queued.
 func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
-	row := s.pool.QueryRow(ctx,
-		`update builds
-		   set status = 'running', started_at = now()
-		 where id = $1 and status = 'queued'
-		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''),
-		           started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade,
-		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
-		id)
-	b, err := scanBuild(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Build{}, ErrNotFound
-		}
-		return Build{}, fmt.Errorf("state: claim queued build %s: %w", id, err)
-	}
-	return b, nil
+	return s.ClaimQueuedBuildWithNodeAffinity(ctx, id, "", 0)
 }
 
-// ClaimQueuedBuildWithNodeAffinity is the notification-path equivalent of
-// ClaimQueuedBuild. During affinityGrace it only lets the node that completed
-// the app's latest successful build win the CAS. Missing provenance means a
-// cold app and remains claimable by any node. Once the grace expires the age
-// predicate opens the claim fleet-wide.
-func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeID string, affinityGrace time.Duration) (Build, error) {
-	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
-		return s.ClaimQueuedBuild(ctx, id)
-	}
-	row := s.pool.QueryRow(ctx,
-		`update builds b
-		   set status = 'running', started_at = now()
-		  from deployments d
-		 where b.id = $1
-		   and b.status = 'queued'
-		   and d.id = b.deployment_id
-		   and (
-		     b.enqueued_at <= now() - $3::interval
-		     or coalesce((
-		       select nullif(bp.builder_node_id, '')
-		         from deployments prior_d
-		         join builds prior_b on prior_b.deployment_id = prior_d.id
-		         join build_provenance bp on bp.build_id = prior_b.id
-		        where prior_d.app_id = d.app_id
-		          and prior_b.status = 'succeeded'
-		          and prior_b.id <> b.id
-		          and nullif(bp.builder_node_id, '') is not null
-		        order by prior_b.finished_at desc nulls last, prior_b.id desc
-		        limit 1
-		     ), $2) = $2
-		   )
-		 returning b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
-		           coalesce(b.failure_class,''), coalesce(b.log_path,''),
-		           b.started_at, b.finished_at, b.enqueued_at,
-		           b.cancelled_at, b.cancelled_by_deployment_cascade,
-		           coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')`,
-		id, nodeID, fmt.Sprintf("%d milliseconds", affinityGrace.Milliseconds()))
-	b, err := scanBuild(row)
+// ClaimQueuedBuildWithNodeAffinity always enforces regional placement. A zero
+// affinity grace disables cache preference, never the hard region predicate.
+func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeName string, affinityGrace time.Duration) (Build, error) {
+	buildID, err := parsePgUUID(id)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Build{}, ErrNotFound
-		}
-		return Build{}, fmt.Errorf("state: claim queued build %s with node affinity: %w", id, err)
+		return Build{}, err
 	}
-	return b, nil
+	row, err := sqlc.New().ClaimQueuedBuildOnNode(ctx, s.pool, sqlc.ClaimQueuedBuildOnNodeParams{
+		BuildID: buildID, NodeName: nodeName, AffinityGraceMs: affinityGrace.Milliseconds(),
+	})
+	if err != nil {
+		return Build{}, fmt.Errorf("state: claim queued build on node: %w", mapErr(err))
+	}
+	return buildFromSQLC(row), nil
 }
 
-// ClaimNextQueuedBuild is the durable worker surface (PR-B). Single
-// statement so the lock + flip + RETURNING happens in one round-trip:
-// the SKIP LOCKED subquery picks the earliest queued row that no
-// concurrent claimer (pg_cron, a second builderd process) holds,
-// the outer UPDATE flips it to 'running' and stamps started_at = now().
-// Returns ErrNotFound when no queued row is available so the worker
-// can sleep without surfacing an error. The shape mirrors
-// ClaimQueuedBuild so ProcessOne's existing handling of ErrNotFound
-// (drop silently) Just Works.
 func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
-	row := s.pool.QueryRow(ctx,
-		`update builds
-		   set status = 'running', started_at = now()
-		 where id = (
-		   select id from builds
-		    where status = 'queued'
-		    order by enqueued_at asc
-		    limit 1
-		    for update skip locked
-		 )
-		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''),
-		           started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade,
-		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`)
-	b, err := scanBuild(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Build{}, ErrNotFound
-		}
-		return Build{}, fmt.Errorf("state: claim next queued build: %w", err)
-	}
-	return b, nil
+	return s.ClaimNextQueuedBuildWithNodeAffinity(ctx, "", 0, 0)
 }
 
-// ClaimNextQueuedBuildWithFairness prefers accounts without a recent claim,
-// then falls back to FIFO. Lock the build row itself before returning it so
-// polling workers and direct notification claims cannot execute one build
-// twice. Ranking rather than filtering also lets a worker skip a locked quiet
-// account's build and use another available row.
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
-	row := s.pool.QueryRow(ctx,
-		`update builds set status='running', started_at = now()
-    where status = 'queued' and id = (
-      select b.id
-        from builds b
-        join deployments d on d.id = b.deployment_id
-        join apps a on a.id = d.app_id
-       where b.status = 'queued'
-       order by exists (
-         select 1 from recent_build_claims r
-          where r.account_id = a.account_id
-            and r.claimed_at > now() - $1::interval
-       ), b.enqueued_at, b.id
-       limit 1
-       for update of b skip locked
-    )
-    returning id, deployment_id, kind, source_bytes, status,
-              coalesce(failure_class,''), coalesce(log_path,''),
-              started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade,
-		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
-		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
-	b, err := scanBuild(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Build{}, ErrNotFound
-		}
-		return Build{}, fmt.Errorf("state: claim next queued build (fairness): %w", err)
-	}
-	return b, nil
+	return s.ClaimNextQueuedBuildWithNodeAffinity(ctx, "", 0, fairnessWindow)
 }
 
-// ClaimNextQueuedBuildWithNodeAffinity combines cache locality with the
-// existing account-fairness ranking. Affinity is an eligibility filter for a
-// short grace period; fairness ranks the eligible rows. A zero fairness window
-// makes the EXISTS expression false and preserves FIFO ordering.
-func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeID string, affinityGrace, fairnessWindow time.Duration) (Build, error) {
-	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
-		if fairnessWindow > 0 {
-			return s.ClaimNextQueuedBuildWithFairness(ctx, fairnessWindow)
-		}
-		return s.ClaimNextQueuedBuild(ctx)
-	}
-	row := s.pool.QueryRow(ctx,
-		`update builds set status = 'running', started_at = now()
-		 where status = 'queued' and id = (
-		   select b.id
-		     from builds b
-		     join deployments d on d.id = b.deployment_id
-		     join apps a on a.id = d.app_id
-		    where b.status = 'queued'
-		      and (
-		        b.enqueued_at <= now() - $2::interval
-		        or coalesce((
-		          select nullif(bp.builder_node_id, '')
-		            from deployments prior_d
-		            join builds prior_b on prior_b.deployment_id = prior_d.id
-		            join build_provenance bp on bp.build_id = prior_b.id
-		           where prior_d.app_id = d.app_id
-		             and prior_b.status = 'succeeded'
-		             and prior_b.id <> b.id
-		             and nullif(bp.builder_node_id, '') is not null
-		           order by prior_b.finished_at desc nulls last, prior_b.id desc
-		           limit 1
-		        ), $1) = $1
-		      )
-		    order by exists (
-		      select 1 from recent_build_claims r
-		       where $3::interval > interval '0 milliseconds'
-		         and r.account_id = a.account_id
-		         and r.claimed_at > now() - $3::interval
-		    ), b.enqueued_at, b.id
-		    limit 1
-		    for update of b skip locked
-		 )
-		 returning id, deployment_id, kind, source_bytes, status,
-		           coalesce(failure_class,''), coalesce(log_path,''),
-		           started_at, finished_at, enqueued_at,
-		           cancelled_at, cancelled_by_deployment_cascade,
-		           coalesce(cache_status,''), coalesce(cache_key_sha256,'')`,
-		nodeID,
-		fmt.Sprintf("%d milliseconds", affinityGrace.Milliseconds()),
-		fmt.Sprintf("%d milliseconds", fairnessWindow.Milliseconds()))
-	b, err := scanBuild(row)
+// ClaimNextQueuedBuildWithNodeAffinity applies region and cleanup eligibility
+// before fairness and FIFO ranking, retaining FOR UPDATE SKIP LOCKED ownership.
+func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeName string, affinityGrace, fairnessWindow time.Duration) (Build, error) {
+	row, err := sqlc.New().ClaimNextQueuedBuildOnNode(ctx, s.pool, sqlc.ClaimNextQueuedBuildOnNodeParams{
+		NodeName: nodeName, AffinityGraceMs: affinityGrace.Milliseconds(), FairnessWindowMs: fairnessWindow.Milliseconds(),
+	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Build{}, ErrNotFound
-		}
-		return Build{}, fmt.Errorf("state: claim next queued build with node affinity: %w", err)
+		return Build{}, fmt.Errorf("state: claim next build on node: %w", mapErr(err))
 	}
-	return b, nil
+	return buildFromSQLC(row), nil
+}
+
+func buildFromSQLC(row sqlc.Build) Build {
+	b := Build{ID: uuidString(row.ID), DeploymentID: uuidString(row.DeploymentID), Kind: DeploymentKind(row.Kind),
+		SourceBytes: row.SourceBytes, Status: BuildStatus(row.Status), FailureClass: FailureClass(row.FailureClass.String),
+		LogPath: row.LogPath.String, EnqueuedAt: row.EnqueuedAt.Time, CacheStatus: row.CacheStatus.String,
+		CacheKeySHA256: row.CacheKeySha256.String, CancelledByDeploymentCascade: row.CancelledByDeploymentCascade,
+		BuilderNodeID: uuidString(row.BuilderNodeID)}
+	if row.StartedAt.Valid {
+		b.StartedAt = row.StartedAt.Time
+	}
+	if row.FinishedAt.Valid {
+		b.FinishedAt = row.FinishedAt.Time
+	}
+	if row.CancelledAt.Valid {
+		at := row.CancelledAt.Time
+		b.CancelledAt = &at
+	}
+	return b
 }
 
 // RecordRecentBuildClaim records a single claim into recent_build_claims
@@ -24854,7 +24707,7 @@ func scanBuild(row pgx.Row) (Build, error) {
 	// the trap by always being a value type with a `.Valid`
 	// flag.
 	var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
-	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
+	if err := row.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256, &b.BuilderNodeID); err != nil {
 		return Build{}, mapErr(err)
 	}
 	if startedAt.Valid {
@@ -26175,7 +26028,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 		        coalesce(b.failure_class,''), coalesce(b.log_path,''),
 		        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
-		        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
+		        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,''), coalesce(b.builder_node_id::text,'')
 		 from builds b
 		 join deployments d on d.id = b.deployment_id
 		 join apps a on a.id = d.app_id
@@ -26196,7 +26049,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 		// pointers) and pgx v5.10.0 rejects NULL into a fresh
 		// *time.Time under rows.Scan.
 		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
-		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
+		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes, &statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256, &b.BuilderNodeID); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {
@@ -26281,7 +26134,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
 			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
-			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,''), coalesce(b.builder_node_id::text,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -26300,7 +26153,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
 			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
-			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,''), coalesce(b.builder_node_id::text,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -26337,7 +26190,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 			`select b.id, b.deployment_id, b.kind, b.source_bytes, b.status,
 			        coalesce(b.failure_class,''), coalesce(b.log_path,''),
 			        b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade,
-			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,'')
+			        coalesce(b.cache_status,''), coalesce(b.cache_key_sha256,''), coalesce(b.builder_node_id::text,'')
 			 from builds b
 			 join deployments d on d.id = b.deployment_id
 			 join apps a on a.id = d.app_id
@@ -26370,7 +26223,7 @@ func (s *PgStore) ListBuildsForAccountPaged(
 		// timestamp.
 		var startedAt, finishedAt, cancelledAt pgtype.Timestamptz
 		if err := rows.Scan(&b.ID, &b.DeploymentID, &kind, &b.SourceBytes,
-			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256); err != nil {
+			&statusStr, &fc, &b.LogPath, &startedAt, &finishedAt, &b.EnqueuedAt, &cancelledAt, &b.CancelledByDeploymentCascade, &cacheStatus, &cacheKeySHA256, &b.BuilderNodeID); err != nil {
 			return nil, err
 		}
 		if startedAt.Valid {

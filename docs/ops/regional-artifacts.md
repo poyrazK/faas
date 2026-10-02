@@ -1,5 +1,13 @@
 # Regional runtime artifact routing
 
+Builder claims enforce an app's persisted region regardless of cache affinity
+settings (ADR-430). Configure regional builderd and vmmd with the same registered
+compute-node identity and drain outstanding builds before upgrading. Cancellation
+and timeout VM cleanup stays with the claim owner, including while that node is
+draining. Source uploads and build exports still use the legacy handoff and need
+the next implementation increment; these placement checks alone do not qualify
+source-build residency.
+
 Regional compute is internal and default-off. Configure artifact routes before
 enabling regional deployments; an unconfigured region fails publication and reads.
 

@@ -110,6 +110,38 @@ type retryReaperVM struct {
 	failFirst bool
 }
 
+func TestSweepStuckBuilds_CleanupStaysOnClaimOwner(t *testing.T) {
+	store, ms, buildID := newReaperFixture(t)
+	ctx := context.Background()
+	if err := store.RequeueBuild(ctx, buildID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.ClaimQueuedBuildWithNodeAffinity(ctx, buildID, state.DefaultLocalNodeName, 0); err != nil {
+		t.Fatal(err)
+	}
+	ms.SetBuildStartedAtForTest(buildID, time.Now().Add(-10*time.Minute))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	foreignVM := &retryReaperVM{}
+	if n, err := sweepStuckBuildsOnNode(ctx, store, foreignVM, "other-builder", time.Now().Add(-5*time.Minute), log); err != nil || n != 1 {
+		t.Fatalf("foreign sweep: %d %v", n, err)
+	}
+	if foreignVM.calls != 0 {
+		t.Fatal("foreign builder attempted VM teardown")
+	}
+	ownerVM := &retryReaperVM{failFirst: true}
+	for _, wantCalls := range []int{1, 2} {
+		if n, err := sweepStuckBuildsOnNode(ctx, store, ownerVM, state.DefaultLocalNodeName, time.Now(), log); err != nil || n != 0 {
+			t.Fatalf("owner retry: %d %v", n, err)
+		}
+		if ownerVM.calls != wantCalls {
+			t.Fatalf("owner cleanup calls: %d, want %d", ownerVM.calls, wantCalls)
+		}
+	}
+	if _, err := sweepStuckBuildsOnNode(ctx, store, ownerVM, state.DefaultLocalNodeName, time.Now(), log); err != nil || ownerVM.calls != 2 {
+		t.Fatalf("completed cleanup repeated: %d %v", ownerVM.calls, err)
+	}
+}
+
 func (retryReaperVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
 	return BuildHandle{}, ErrNotMetal
 }

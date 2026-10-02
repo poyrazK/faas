@@ -1009,6 +1009,7 @@ type builderUsageRow struct {
 }
 
 type builderVMCleanupRow struct {
+	builderNodeID string
 	nextAttemptAt time.Time
 	claimedAt     *time.Time
 	claimToken    string
@@ -10386,6 +10387,15 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 	if (status == BuildSucceeded || status == BuildFailed) && b.Status != BuildRunning {
 		return ErrNotFound
 	}
+	if status == BuildRunning {
+		nodeName := m.computeNodes[b.BuilderNodeID].Name
+		if !m.buildRegionEligibleLocked(b, nodeName) {
+			return fmt.Errorf("state: builder outside selected compute region")
+		}
+		if _, pending := m.builderVMCleanup[id]; pending && b.Status != BuildRunning {
+			return fmt.Errorf("state: builder VM cleanup pending")
+		}
+	}
 	b.Status = status
 	if fc != "" {
 		b.FailureClass = fc
@@ -10518,13 +10528,17 @@ func (m *MemStore) enqueueBuildVMCleanupLocked(buildID string, now time.Time) {
 	if _, exists := m.builderVMCleanup[buildID]; exists {
 		return
 	}
-	m.builderVMCleanup[buildID] = builderVMCleanupRow{nextAttemptAt: now}
+	m.builderVMCleanup[buildID] = builderVMCleanupRow{nextAttemptAt: now, builderNodeID: m.builds[buildID].BuilderNodeID}
 }
 
 // ClaimBuildVMCleanup claims due or abandoned builder-VM teardown rows. The
 // token prevents a late result from an expired claim from completing a newer
 // worker's attempt.
-func (m *MemStore) ClaimBuildVMCleanup(_ context.Context, limit int) ([]BuildVMCleanupClaim, error) {
+func (m *MemStore) ClaimBuildVMCleanup(ctx context.Context, limit int) ([]BuildVMCleanupClaim, error) {
+	return m.ClaimBuildVMCleanupOnNode(ctx, "", limit)
+}
+
+func (m *MemStore) ClaimBuildVMCleanupOnNode(_ context.Context, nodeName string, limit int) ([]BuildVMCleanupClaim, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -10534,6 +10548,13 @@ func (m *MemStore) ClaimBuildVMCleanup(_ context.Context, limit int) ([]BuildVMC
 	const claimLease = 5 * time.Minute
 	ids := make([]string, 0, len(m.builderVMCleanup))
 	for buildID, row := range m.builderVMCleanup {
+		if row.builderNodeID != "" {
+			if row.builderNodeID != m.builderNodeIDLocked(nodeName) {
+				continue
+			}
+		} else if build, ok := m.builds[buildID]; ok && !m.buildRegionEligibleLocked(build, "") {
+			continue
+		}
 		if row.claimedAt != nil {
 			if now.Sub(*row.claimedAt) < claimLease {
 				continue
@@ -10672,44 +10693,60 @@ func (m *MemStore) SetInstanceMigrationStartedAtForTest(instanceID string, at ti
 // review fix). Returns ErrNotFound if the row is missing or already
 // non-queued — the caller drops the build. Same contract as
 // PgStore.ClaimQueuedBuild.
-func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error) {
+func (m *MemStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
+	return m.ClaimQueuedBuildWithNodeAffinity(ctx, id, "", 0)
+}
+
+// Region placement is permanent; affinity is only a bounded preference.
+func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(_ context.Context, id, nodeName string, affinityGrace time.Duration) (Build, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued {
+	if !ok || b.Status != BuildQueued || !m.buildEligibleOnNodeLocked(b, nodeName, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
-	b.Status = BuildRunning
-	b.StartedAt = time.Now()
+	b.Status, b.StartedAt, b.BuilderNodeID = BuildRunning, time.Now(), m.builderNodeIDLocked(nodeName)
 	m.builds[id] = b
 	return b, nil
 }
 
-// ClaimQueuedBuildWithNodeAffinity mirrors the PostgreSQL notification-path
-// claim. A fresh rebuild prefers the app's latest successful builder; missing
-// provenance and rows older than affinityGrace remain fleet-wide claims.
-func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nodeID string, affinityGrace time.Duration) (Build, error) {
-	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
-		return m.ClaimQueuedBuild(ctx, id)
+func (m *MemStore) builderNodeIDLocked(name string) string {
+	for _, node := range m.computeNodes {
+		if node.Name == name {
+			return node.ID
+		}
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
-		return Build{}, ErrNotFound
-	}
-	b.Status = BuildRunning
-	b.StartedAt = time.Now()
-	m.builds[id] = b
-	return b, nil
+	return ""
 }
 
-func (m *MemStore) buildEligibleOnNodeLocked(build Build, nodeID string, affinityGrace time.Duration, now time.Time) bool {
-	if affinityGrace <= 0 || !build.EnqueuedAt.After(now.Add(-affinityGrace)) {
+func (m *MemStore) buildRegionEligibleLocked(build Build, nodeName string) bool {
+	dep, ok := m.deployments[build.DeploymentID]
+	if !ok {
+		return false
+	}
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return false
+	}
+	if app.ComputeRegion == "" {
+		return true
+	}
+	node, ok := m.computeNodes[m.builderNodeIDLocked(nodeName)]
+	return ok && node.Active && node.Region != nil && *node.Region == app.ComputeRegion
+}
+
+func (m *MemStore) buildEligibleOnNodeLocked(build Build, nodeName string, affinityGrace time.Duration, now time.Time) bool {
+	if !m.buildRegionEligibleLocked(build, nodeName) {
+		return false
+	}
+	if _, pending := m.builderVMCleanup[build.ID]; pending {
+		return false
+	}
+	if nodeName == "" || affinityGrace <= 0 || !build.EnqueuedAt.After(now.Add(-affinityGrace)) {
 		return true
 	}
 	preferred := m.preferredBuilderNodeLocked(build)
-	return preferred == "" || preferred == nodeID
+	return preferred == "" || preferred == nodeName
 }
 
 func (m *MemStore) preferredBuilderNodeLocked(candidate Build) string {
@@ -10749,131 +10786,18 @@ func (m *MemStore) preferredBuilderNodeLocked(candidate Build) string {
 // 1:1 so unit tests catch logic bugs without races. Picks the earliest
 // EnqueuedAt row whose status is BuildQueued, flips to BuildRunning,
 // sets StartedAt = now(). Returns ErrNotFound when the queue is empty.
-func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var (
-		pick     string
-		earliest time.Time
-		found    bool
-	)
-	for id, b := range m.builds {
-		if b.Status != BuildQueued {
-			continue
-		}
-		if !found || b.EnqueuedAt.Before(earliest) {
-			pick = id
-			earliest = b.EnqueuedAt
-			found = true
-		}
-	}
-	if !found {
-		return Build{}, ErrNotFound
-	}
-	b := m.builds[pick]
-	b.Status = BuildRunning
-	b.StartedAt = time.Now()
-	m.builds[pick] = b
-	return b, nil
+func (m *MemStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
+	return m.ClaimNextQueuedBuildWithNodeAffinity(ctx, "", 0, 0)
 }
 
-// ClaimNextQueuedBuildWithFairness mirrors PgStore (B2.2 issue #196).
-// Same selection shape as ClaimNextQueuedBuild but filters out
-// accounts whose last claim is more recent than fairnessWindow, with
-// the same starvation fallback when every queued account is recent.
-// Implementation note: MemStore's `builds` map does not carry
-// account_id directly, so we resolve it through deployments → apps
-// for each candidate (mirroring the SQL JOIN path). For small test
-// fixtures (≤ a few hundred queued builds) this is fine; the test
-// surface is what matters here.
-func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessWindow time.Duration) (Build, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := time.Now()
-	skip := map[string]struct{}{}
-	for acc, t := range m.recentClaims {
-		if now.Sub(t) <= fairnessWindow {
-			skip[acc] = struct{}{}
-		}
-	}
-	// Build (id, enqueuedAt, account) for queued rows. Skip lookup
-	// failures (deployment/app missing) — treat them as "no
-	// account known", which means the fallback "all queued" path
-	// applies (they're never in skip).
-	type candidate struct {
-		id         string
-		enqueuedAt time.Time
-		account    string
-	}
-	var queued []candidate
-	for id, b := range m.builds {
-		if b.Status != BuildQueued {
-			continue
-		}
-		dep, ok := m.deployments[b.DeploymentID]
-		if !ok {
-			continue
-		}
-		app, ok := m.apps[dep.AppID]
-		if !ok {
-			continue
-		}
-		queued = append(queued, candidate{id: id, enqueuedAt: b.EnqueuedAt, account: app.AccountID})
-	}
-	if len(queued) == 0 {
-		return Build{}, ErrNotFound
-	}
-	// First pass: pick from accounts NOT in skip.
-	hasFresh := false
-	for _, c := range queued {
-		if _, isRecent := skip[c.account]; !isRecent {
-			hasFresh = true
-			break
-		}
-	}
-	var pick string
-	if hasFresh {
-		var earliest time.Time
-		for _, c := range queued {
-			if _, isRecent := skip[c.account]; isRecent {
-				continue
-			}
-			if pick == "" || c.enqueuedAt.Before(earliest) {
-				pick = c.id
-				earliest = c.enqueuedAt
-			}
-		}
-	} else {
-		// Starvation fallback: every queued account is in skip;
-		// pick the earliest queued row, period.
-		var earliest time.Time
-		for _, c := range queued {
-			if pick == "" || c.enqueuedAt.Before(earliest) {
-				pick = c.id
-				earliest = c.enqueuedAt
-			}
-		}
-	}
-	if pick == "" {
-		return Build{}, ErrNotFound
-	}
-	b := m.builds[pick]
-	b.Status = BuildRunning
-	b.StartedAt = time.Now()
-	m.builds[pick] = b
-	return b, nil
+func (m *MemStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
+	return m.ClaimNextQueuedBuildWithNodeAffinity(ctx, "", 0, fairnessWindow)
 }
 
 // ClaimNextQueuedBuildWithNodeAffinity mirrors the PostgreSQL polling claim.
 // It filters the queue by bounded node affinity first, then applies the same
 // account-fairness preference among eligible rows.
 func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nodeID string, affinityGrace, fairnessWindow time.Duration) (Build, error) {
-	if strings.TrimSpace(nodeID) == "" || affinityGrace <= 0 {
-		if fairnessWindow > 0 {
-			return m.ClaimNextQueuedBuildWithFairness(ctx, fairnessWindow)
-		}
-		return m.ClaimNextQueuedBuild(ctx)
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -10934,6 +10858,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 	b := m.builds[pick]
 	b.Status = BuildRunning
 	b.StartedAt = time.Now()
+	b.BuilderNodeID = m.builderNodeIDLocked(nodeID)
 	m.builds[pick] = b
 	return b, nil
 }

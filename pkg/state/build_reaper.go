@@ -30,8 +30,10 @@ type BuildClaimRecoveryStore interface {
 // that completed the app's most recent successful build, because that node is
 // the best candidate to hold both the exact artifact and BuildKit dependency
 // caches. affinityGrace bounds the preference: after it expires, any healthy
-// builder may claim the row so cache locality can never strand a deployment.
+// builder in the selected region may claim the row so cache locality can never strand a deployment.
 //
+// Region eligibility is permanent and applies even when affinityGrace is zero.
+// Empty node identity can claim only legacy apps with no selected region.
 // Both the notification-driven claim and the durable polling claim belong in
 // this capability. Keeping only one affinity-aware would leave the two claim
 // paths racing with different placement rules.
@@ -66,4 +68,11 @@ type BuildVMCleanupClaim struct {
 type BuildVMCleanupStore interface {
 	ClaimBuildVMCleanup(ctx context.Context, limit int) ([]BuildVMCleanupClaim, error)
 	CompleteBuildVMCleanup(ctx context.Context, buildID, claimToken string, cleanupErr error) error
+}
+
+// BuildNodeVMCleanupStore scopes durable VM teardown to the builder that owns
+// the obligation. Production workers must use this surface with their node
+// name; the stored owner is a UUID so an inactive node can still clean up.
+type BuildNodeVMCleanupStore interface {
+	ClaimBuildVMCleanupOnNode(ctx context.Context, nodeName string, limit int) ([]BuildVMCleanupClaim, error)
 }

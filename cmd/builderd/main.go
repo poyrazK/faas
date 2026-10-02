@@ -337,7 +337,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	})
 	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
-		cancelBuild(workCtx, driver, ops, buildID, log)
+		cancelBuildOnNode(workCtx, store, cfg.BuilderNodeID, driver, ops, buildID, log)
 	})
 
 	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
@@ -368,7 +368,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if reapThreshold <= 0 {
 		reapThreshold = 15 * time.Minute
 	}
-	go builderdpkg.ReaperLoopWithVM(runCtx, store, driver, reapInterval, reapThreshold, log)
+	go builderdpkg.ReaperLoopWithVMOnNode(runCtx, store, driver, cfg.BuilderNodeID, reapInterval, reapThreshold, log)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
@@ -604,6 +604,41 @@ func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.Sto
 		return path, nil
 	}
 	return "", nil
+}
+
+// cancelBuildOnNode treats the notification as a hint. Missing identity or a
+// lookup failure leaves the durable obligation for the owning node's reaper.
+func cancelBuildOnNode(ctx context.Context, store state.Store, nodeName string, driver any, ops *wire.OpsMetrics, buildID string, log *slog.Logger) {
+	build, err := store.BuildByID(ctx, buildID)
+	if err != nil {
+		log.Warn("builderd: resolve cancellation owner", "build", buildID, "err", err)
+		return
+	}
+	if build.BuilderNodeID != "" {
+		node, err := store.ComputeNodeByName(ctx, nodeName)
+		if err != nil {
+			log.Warn("builderd: resolve cancellation node", "build", buildID, "err", err)
+			return
+		}
+		if node.ID != build.BuilderNodeID {
+			return
+		}
+	} else {
+		dep, err := store.DeploymentByID(ctx, build.DeploymentID)
+		if err != nil {
+			log.Warn("builderd: resolve legacy cancellation deployment", "build", buildID, "err", err)
+			return
+		}
+		app, err := store.AppByID(ctx, dep.AppID)
+		if err != nil {
+			log.Warn("builderd: resolve legacy cancellation app", "build", buildID, "err", err)
+			return
+		}
+		if app.ComputeRegion != "" {
+			return
+		}
+	}
+	cancelBuild(ctx, driver, ops, buildID, log)
 }
 
 // cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row

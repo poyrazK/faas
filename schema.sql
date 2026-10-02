@@ -583,6 +583,25 @@ $$;
 
 
 --
+-- Name: capture_builder_vm_cleanup_node(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_builder_vm_cleanup_node() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        SELECT builder_node_id INTO NEW.builder_node_id FROM builds WHERE id = NEW.build_id;
+    ELSIF NEW.builder_node_id IS DISTINCT FROM OLD.builder_node_id OR NEW.build_id IS DISTINCT FROM OLD.build_id THEN
+        RAISE EXCEPTION 'builder VM cleanup owner is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'builder_vm_cleanup_owner_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1104,6 +1123,39 @@ BEGIN
                 AND i.state IN ('waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm_paused'))
     ) THEN
         RAISE EXCEPTION 'node region is in use by region-bound apps' USING ERRCODE = '23514', CONSTRAINT = 'compute_nodes_region_in_use';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_build_compute_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_build_compute_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE required_region text; node_region text; node_active boolean;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.status <> 'queued' AND
+       (NEW.builder_node_id IS DISTINCT FROM OLD.builder_node_id OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id) THEN
+        RAISE EXCEPTION 'build claim placement is immutable until requeued'
+            USING ERRCODE = '23514', CONSTRAINT = 'builds_claim_placement_immutable';
+    END IF;
+    IF NEW.status = 'running' THEN
+        SELECT a.compute_region INTO required_region FROM deployments d JOIN apps a ON a.id = d.app_id WHERE d.id = NEW.deployment_id;
+        IF coalesce(required_region, '') <> '' THEN
+            SELECT region, active INTO node_region, node_active FROM compute_nodes WHERE id = NEW.builder_node_id FOR SHARE;
+            IF node_region IS DISTINCT FROM required_region OR node_active IS DISTINCT FROM true THEN
+                RAISE EXCEPTION 'builder is outside selected compute region or inactive'
+                    USING ERRCODE = '23514', CONSTRAINT = 'builds_compute_region';
+            END IF;
+        END IF;
+        IF (TG_OP = 'INSERT' OR OLD.status <> 'running') AND EXISTS (SELECT 1 FROM builder_vm_cleanup WHERE build_id = NEW.id) THEN
+            RAISE EXCEPTION 'previous builder VM cleanup is pending'
+                USING ERRCODE = '23514', CONSTRAINT = 'builds_vm_cleanup_pending';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -4925,6 +4977,7 @@ CREATE TABLE public.builder_vm_cleanup (
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    builder_node_id uuid,
     CONSTRAINT builder_vm_cleanup_attempts_check CHECK ((attempts >= 0))
 );
 
@@ -4948,6 +5001,7 @@ CREATE TABLE public.builds (
     cancelled_by_deployment_cascade boolean DEFAULT false NOT NULL,
     cache_status text,
     cache_key_sha256 text,
+    builder_node_id uuid,
     CONSTRAINT builds_cache_key_sha256_check CHECK (((cache_key_sha256 IS NULL) OR (cache_key_sha256 ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT builds_cache_status_check CHECK (((cache_status IS NULL) OR (cache_status = ANY (ARRAY['hit'::text, 'miss'::text, 'invalidated'::text])))),
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
@@ -15306,6 +15360,20 @@ CREATE INDEX builder_vm_cleanup_due_idx ON public.builder_vm_cleanup USING btree
 
 
 --
+-- Name: builder_vm_cleanup_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builder_vm_cleanup_node_idx ON public.builder_vm_cleanup USING btree (builder_node_id, next_attempt_at);
+
+
+--
+-- Name: builds_builder_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builds_builder_node_idx ON public.builds USING btree (builder_node_id) WHERE (builder_node_id IS NOT NULL);
+
+
+--
 -- Name: builds_cache_outcome_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19414,6 +19482,20 @@ CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.a
 
 
 --
+-- Name: builder_vm_cleanup builder_vm_cleanup_node_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER builder_vm_cleanup_node_guard BEFORE INSERT OR UPDATE OF build_id, builder_node_id ON public.builder_vm_cleanup FOR EACH ROW EXECUTE FUNCTION public.capture_builder_vm_cleanup_node();
+
+
+--
+-- Name: builds builds_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER builds_compute_region_guard BEFORE INSERT OR UPDATE OF status, deployment_id, builder_node_id ON public.builds FOR EACH ROW EXECUTE FUNCTION public.enforce_build_compute_region();
+
+
+--
 -- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20996,6 +21078,22 @@ ALTER TABLE ONLY public.builder_usage
 
 ALTER TABLE ONLY public.builder_vm_cleanup
     ADD CONSTRAINT builder_vm_cleanup_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: builder_vm_cleanup builder_vm_cleanup_builder_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builder_vm_cleanup
+    ADD CONSTRAINT builder_vm_cleanup_builder_node_id_fkey FOREIGN KEY (builder_node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: builds builds_builder_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.builds
+    ADD CONSTRAINT builds_builder_node_id_fkey FOREIGN KEY (builder_node_id) REFERENCES public.compute_nodes(id);
 
 
 --

@@ -798,6 +798,161 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const claimBuildVMCleanupOnNode = `-- name: ClaimBuildVMCleanupOnNode :many
+WITH claimable AS (
+    SELECT c.build_id FROM builder_vm_cleanup c
+    WHERE ((c.claimed_at IS NULL AND c.next_attempt_at <= now())
+        OR (c.claimed_at IS NOT NULL AND c.claimed_at < now() - interval '5 minutes'))
+      AND (c.builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = $1::text)
+          OR (c.builder_node_id IS NULL AND NOT EXISTS (
+              SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+              WHERE b.id = c.build_id AND a.compute_region <> '')))
+    ORDER BY c.next_attempt_at, c.build_id LIMIT $2::int FOR UPDATE OF c SKIP LOCKED
+)
+UPDATE builder_vm_cleanup c SET claimed_at = now(), claim_token = gen_random_uuid(), attempts = c.attempts + 1, updated_at = now()
+FROM claimable q WHERE c.build_id = q.build_id
+RETURNING c.build_id, c.claim_token
+`
+
+type ClaimBuildVMCleanupOnNodeParams struct {
+	NodeName  string
+	BatchSize int32
+}
+
+type ClaimBuildVMCleanupOnNodeRow struct {
+	BuildID    pgtype.UUID
+	ClaimToken pgtype.UUID
+}
+
+func (q *Queries) ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg ClaimBuildVMCleanupOnNodeParams) ([]ClaimBuildVMCleanupOnNodeRow, error) {
+	rows, err := db.Query(ctx, claimBuildVMCleanupOnNode, arg.NodeName, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimBuildVMCleanupOnNodeRow{}
+	for rows.Next() {
+		var i ClaimBuildVMCleanupOnNodeRow
+		if err := rows.Scan(&i.BuildID, &i.ClaimToken); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimNextQueuedBuildOnNode = `-- name: ClaimNextQueuedBuildOnNode :one
+UPDATE builds SET status = 'running', started_at = now(),
+    builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = $1::text)
+WHERE status = 'queued' AND id = (
+    SELECT b.id FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+    WHERE b.status = 'queued'
+      AND (a.compute_region = '' OR EXISTS (
+          SELECT 1 FROM compute_nodes n WHERE n.name = $1::text
+            AND n.active AND n.region = a.compute_region))
+      AND NOT EXISTS (SELECT 1 FROM builder_vm_cleanup c WHERE c.build_id = b.id)
+      AND ($1::text = '' OR $2::bigint <= 0
+          OR b.enqueued_at <= now() - $2::bigint * interval '1 millisecond'
+          OR coalesce((
+              SELECT nullif(bp.builder_node_id, '') FROM deployments pd
+              JOIN builds pb ON pb.deployment_id = pd.id JOIN build_provenance bp ON bp.build_id = pb.id
+              WHERE pd.app_id = d.app_id AND pb.status = 'succeeded' AND pb.id <> b.id
+                AND nullif(bp.builder_node_id, '') IS NOT NULL
+              ORDER BY pb.finished_at DESC NULLS LAST, pb.id DESC LIMIT 1
+          ), $1::text) = $1::text)
+    ORDER BY EXISTS (
+        SELECT 1 FROM recent_build_claims r WHERE $3::bigint > 0
+          AND r.account_id = a.account_id
+          AND r.claimed_at > now() - $3::bigint * interval '1 millisecond'
+    ), b.enqueued_at, b.id
+    LIMIT 1 FOR UPDATE OF b SKIP LOCKED
+)
+RETURNING builds.id, builds.deployment_id, builds.kind, builds.source_bytes, builds.status, builds.failure_class, builds.log_path, builds.started_at, builds.finished_at, builds.enqueued_at, builds.cancelled_at, builds.cancelled_by_deployment_cascade, builds.cache_status, builds.cache_key_sha256, builds.builder_node_id
+`
+
+type ClaimNextQueuedBuildOnNodeParams struct {
+	NodeName         string
+	AffinityGraceMs  int64
+	FairnessWindowMs int64
+}
+
+func (q *Queries) ClaimNextQueuedBuildOnNode(ctx context.Context, db DBTX, arg ClaimNextQueuedBuildOnNodeParams) (Build, error) {
+	row := db.QueryRow(ctx, claimNextQueuedBuildOnNode, arg.NodeName, arg.AffinityGraceMs, arg.FairnessWindowMs)
+	var i Build
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.Kind,
+		&i.SourceBytes,
+		&i.Status,
+		&i.FailureClass,
+		&i.LogPath,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.EnqueuedAt,
+		&i.CancelledAt,
+		&i.CancelledByDeploymentCascade,
+		&i.CacheStatus,
+		&i.CacheKeySha256,
+		&i.BuilderNodeID,
+	)
+	return i, err
+}
+
+const claimQueuedBuildOnNode = `-- name: ClaimQueuedBuildOnNode :one
+UPDATE builds b SET status = 'running', started_at = now(),
+    builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = $1::text)
+FROM deployments d, apps a
+WHERE b.id = $2::uuid AND b.status = 'queued'
+  AND d.id = b.deployment_id AND a.id = d.app_id
+  AND (a.compute_region = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n WHERE n.name = $1::text
+        AND n.active AND n.region = a.compute_region))
+  AND NOT EXISTS (SELECT 1 FROM builder_vm_cleanup c WHERE c.build_id = b.id)
+  AND ($1::text = '' OR $3::bigint <= 0
+      OR b.enqueued_at <= now() - $3::bigint * interval '1 millisecond'
+      OR coalesce((
+          SELECT nullif(bp.builder_node_id, '') FROM deployments pd
+          JOIN builds pb ON pb.deployment_id = pd.id JOIN build_provenance bp ON bp.build_id = pb.id
+          WHERE pd.app_id = d.app_id AND pb.status = 'succeeded' AND pb.id <> b.id
+            AND nullif(bp.builder_node_id, '') IS NOT NULL
+          ORDER BY pb.finished_at DESC NULLS LAST, pb.id DESC LIMIT 1
+      ), $1::text) = $1::text)
+RETURNING b.id, b.deployment_id, b.kind, b.source_bytes, b.status, b.failure_class, b.log_path, b.started_at, b.finished_at, b.enqueued_at, b.cancelled_at, b.cancelled_by_deployment_cascade, b.cache_status, b.cache_key_sha256, b.builder_node_id
+`
+
+type ClaimQueuedBuildOnNodeParams struct {
+	NodeName        string
+	BuildID         pgtype.UUID
+	AffinityGraceMs int64
+}
+
+func (q *Queries) ClaimQueuedBuildOnNode(ctx context.Context, db DBTX, arg ClaimQueuedBuildOnNodeParams) (Build, error) {
+	row := db.QueryRow(ctx, claimQueuedBuildOnNode, arg.NodeName, arg.BuildID, arg.AffinityGraceMs)
+	var i Build
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.Kind,
+		&i.SourceBytes,
+		&i.Status,
+		&i.FailureClass,
+		&i.LogPath,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.EnqueuedAt,
+		&i.CancelledAt,
+		&i.CancelledByDeploymentCascade,
+		&i.CacheStatus,
+		&i.CacheKeySha256,
+		&i.BuilderNodeID,
+	)
+	return i, err
+}
+
 const claimServiceRecovery = `-- name: ClaimServiceRecovery :one
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,

@@ -511,7 +511,7 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 
 	var build state.Build
 	var err error
-	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok && b.builderNodeID != "" && b.cfg.CacheAffinityGrace > 0 {
+	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok {
 		build, err = affinity.ClaimQueuedBuildWithNodeAffinity(ctx, buildID, b.builderNodeID, b.cfg.CacheAffinityGrace)
 	} else {
 		build, err = b.store.ClaimQueuedBuild(ctx, buildID)
@@ -552,7 +552,7 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 
 	var build state.Build
 	var err error
-	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok && b.builderNodeID != "" && b.cfg.CacheAffinityGrace > 0 {
+	if affinity, ok := b.store.(state.BuildAffinityClaimStore); ok {
 		build, err = affinity.ClaimNextQueuedBuildWithNodeAffinity(ctx, b.builderNodeID, b.cfg.CacheAffinityGrace, b.cfg.FairnessWindow)
 	} else if b.cfg.FairnessWindow > 0 {
 		build, err = b.store.ClaimNextQueuedBuildWithFairness(ctx, b.cfg.FairnessWindow)
@@ -621,6 +621,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
+	}
+	// Verify placement before reading customer source, cache lookup or VM
+	// dispatch. SQL claims enforce the same rule; this also fails closed for
+	// custom stores that only implement the older global claim surfaces.
+	if app.ComputeRegion != "" {
+		node, nodeErr := b.store.ComputeNodeByName(ctx, b.builderNodeID)
+		if nodeErr != nil || !node.Active || node.Region == nil || *node.Region != app.ComputeRegion || build.BuilderNodeID != node.ID {
+			placementErr := fmt.Errorf("builderd: build %s has no eligible owner in region %s", build.ID, app.ComputeRegion)
+			if err := b.requeueClaim(ctx, build); err != nil {
+				return BuildResult{}, errors.Join(placementErr, fmt.Errorf("requeue misplaced build: %w", err))
+			}
+			return BuildResult{}, placementErr
+		}
 	}
 	// Issue #197 B3.11: the cache key is partitioned by plan. A Hobby
 	// customer's cached layer must not serve a Pro build (the layer

@@ -297,7 +297,8 @@ type Server struct {
 	// here from a row already committed to a peer; without that
 	// distinction it could either strand a paused source or resume
 	// a VM after ownership moved away.
-	nodeID string
+	nodeID            string
+	builderClaimStore BuilderClaimStore
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.
@@ -564,6 +565,10 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 	const op = "CreateFromSnapshot"
 	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
+	if err := s.validateBuilderPlacement(ctx, req.GetInstance(), req.GetBuild() != nil); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	wr, err := toWakeRequest(ctx, req)
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
@@ -631,6 +636,10 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	const op = "CreateColdBoot"
 	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
+	if err := s.validateBuilderPlacement(ctx, req.GetInstance(), req.GetBuild() != nil); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	wr, err := toColdBootRequest(ctx, req)
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)

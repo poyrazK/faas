@@ -47,6 +47,12 @@ func ReaperLoop(ctx context.Context, store state.Store, interval, threshold time
 // transaction, then its cleanup obligation is claimed and sent to vmmd. A nil
 // VM keeps the row-only behavior for callers that do not own builder processes.
 func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, threshold time.Duration, log *slog.Logger) {
+	ReaperLoopWithVMOnNode(ctx, store, vm, "", interval, threshold, log)
+}
+
+// ReaperLoopWithVMOnNode keeps global timeout bookkeeping but routes durable
+// VM teardown only to the node that owns each obligation.
+func ReaperLoopWithVMOnNode(ctx context.Context, store state.Store, vm VM, nodeName string, interval, threshold time.Duration, log *slog.Logger) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -56,7 +62,7 @@ func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, t
 		case <-t.C:
 		}
 		cutoff := time.Now().Add(-threshold)
-		n, err := sweepStuckBuilds(ctx, store, vm, cutoff, log)
+		n, err := sweepStuckBuildsOnNode(ctx, store, vm, nodeName, cutoff, log)
 		if err != nil {
 			// Sweep failures are operator-visible but not fatal —
 			// the next tick retries. A persistent failure (e.g.,
@@ -83,6 +89,10 @@ func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, t
 // optional ID-returning seam remains a safe fallback for custom stores that
 // predate durable VM cleanup.
 func sweepStuckBuilds(ctx context.Context, store state.Store, vm VM, cutoff time.Time, log *slog.Logger) (int, error) {
+	return sweepStuckBuildsOnNode(ctx, store, vm, "", cutoff, log)
+}
+
+func sweepStuckBuildsOnNode(ctx context.Context, store state.Store, vm VM, nodeName string, cutoff time.Time, log *slog.Logger) (int, error) {
 	if vm == nil {
 		return store.SweepStuckRunningBuilds(ctx, cutoff)
 	}
@@ -91,10 +101,13 @@ func sweepStuckBuilds(ctx context.Context, store state.Store, vm VM, cutoff time
 		if err != nil {
 			return 0, err
 		}
-		if err := drainBuildVMCleanup(ctx, cleanupStore, vm, log); err != nil {
+		if err := drainBuildVMCleanupOnNode(ctx, cleanupStore, vm, nodeName, log); err != nil {
 			return n, err
 		}
 		return n, nil
+	}
+	if nodeName != "" {
+		return 0, errors.New("builderd: durable node-scoped VM cleanup is unavailable")
 	}
 	sweeper, ok := store.(state.StuckBuildSweepStore)
 	if !ok {
@@ -117,8 +130,16 @@ func sweepStuckBuilds(ctx context.Context, store state.Store, vm VM, cutoff time
 
 const builderVMCleanupBatchSize = 64
 
-func drainBuildVMCleanup(ctx context.Context, store state.BuildVMCleanupStore, vm VM, log *slog.Logger) error {
-	claims, err := store.ClaimBuildVMCleanup(ctx, builderVMCleanupBatchSize)
+func drainBuildVMCleanupOnNode(ctx context.Context, store state.BuildVMCleanupStore, vm VM, nodeName string, log *slog.Logger) error {
+	var claims []state.BuildVMCleanupClaim
+	var err error
+	if scoped, ok := store.(state.BuildNodeVMCleanupStore); ok {
+		claims, err = scoped.ClaimBuildVMCleanupOnNode(ctx, nodeName, builderVMCleanupBatchSize)
+	} else if nodeName != "" {
+		return errors.New("builderd: node-scoped VM cleanup is unavailable")
+	} else {
+		claims, err = store.ClaimBuildVMCleanup(ctx, builderVMCleanupBatchSize)
+	}
 	if err != nil {
 		return err
 	}

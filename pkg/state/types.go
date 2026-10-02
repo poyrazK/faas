@@ -2825,6 +2825,10 @@ type Build struct {
 	// a future direct build-cancel path lands. Disambiguates the
 	// audit trail.
 	CancelledByDeploymentCascade bool
+	// BuilderNodeID is the canonical compute-node UUID that owns this claim.
+	// Empty denotes an older or unidentified legacy claim. Provenance uses
+	// the node name separately; cleanup must retain the stable UUID.
+	BuilderNodeID string
 }
 
 // BuildProvenance is the post-mortem "what ran?" record for a Build

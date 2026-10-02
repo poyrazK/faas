@@ -5573,3 +5573,67 @@ WHERE (sqlc.arg(selection)::text = 'active' AND
 ORDER BY CASE WHEN sqlc.arg(selection)::text = 'active' THEN s.created_at END DESC,
          s.created_at ASC
 LIMIT 10000;
+
+-- name: ClaimQueuedBuildOnNode :one
+UPDATE builds b SET status = 'running', started_at = now(),
+    builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text)
+FROM deployments d, apps a
+WHERE b.id = sqlc.arg(build_id)::uuid AND b.status = 'queued'
+  AND d.id = b.deployment_id AND a.id = d.app_id
+  AND (a.compute_region = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text
+        AND n.active AND n.region = a.compute_region))
+  AND NOT EXISTS (SELECT 1 FROM builder_vm_cleanup c WHERE c.build_id = b.id)
+  AND (sqlc.arg(node_name)::text = '' OR sqlc.arg(affinity_grace_ms)::bigint <= 0
+      OR b.enqueued_at <= now() - sqlc.arg(affinity_grace_ms)::bigint * interval '1 millisecond'
+      OR coalesce((
+          SELECT nullif(bp.builder_node_id, '') FROM deployments pd
+          JOIN builds pb ON pb.deployment_id = pd.id JOIN build_provenance bp ON bp.build_id = pb.id
+          WHERE pd.app_id = d.app_id AND pb.status = 'succeeded' AND pb.id <> b.id
+            AND nullif(bp.builder_node_id, '') IS NOT NULL
+          ORDER BY pb.finished_at DESC NULLS LAST, pb.id DESC LIMIT 1
+      ), sqlc.arg(node_name)::text) = sqlc.arg(node_name)::text)
+RETURNING b.*;
+
+-- name: ClaimNextQueuedBuildOnNode :one
+UPDATE builds SET status = 'running', started_at = now(),
+    builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text)
+WHERE status = 'queued' AND id = (
+    SELECT b.id FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+    WHERE b.status = 'queued'
+      AND (a.compute_region = '' OR EXISTS (
+          SELECT 1 FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text
+            AND n.active AND n.region = a.compute_region))
+      AND NOT EXISTS (SELECT 1 FROM builder_vm_cleanup c WHERE c.build_id = b.id)
+      AND (sqlc.arg(node_name)::text = '' OR sqlc.arg(affinity_grace_ms)::bigint <= 0
+          OR b.enqueued_at <= now() - sqlc.arg(affinity_grace_ms)::bigint * interval '1 millisecond'
+          OR coalesce((
+              SELECT nullif(bp.builder_node_id, '') FROM deployments pd
+              JOIN builds pb ON pb.deployment_id = pd.id JOIN build_provenance bp ON bp.build_id = pb.id
+              WHERE pd.app_id = d.app_id AND pb.status = 'succeeded' AND pb.id <> b.id
+                AND nullif(bp.builder_node_id, '') IS NOT NULL
+              ORDER BY pb.finished_at DESC NULLS LAST, pb.id DESC LIMIT 1
+          ), sqlc.arg(node_name)::text) = sqlc.arg(node_name)::text)
+    ORDER BY EXISTS (
+        SELECT 1 FROM recent_build_claims r WHERE sqlc.arg(fairness_window_ms)::bigint > 0
+          AND r.account_id = a.account_id
+          AND r.claimed_at > now() - sqlc.arg(fairness_window_ms)::bigint * interval '1 millisecond'
+    ), b.enqueued_at, b.id
+    LIMIT 1 FOR UPDATE OF b SKIP LOCKED
+)
+RETURNING builds.*;
+
+-- name: ClaimBuildVMCleanupOnNode :many
+WITH claimable AS (
+    SELECT c.build_id FROM builder_vm_cleanup c
+    WHERE ((c.claimed_at IS NULL AND c.next_attempt_at <= now())
+        OR (c.claimed_at IS NOT NULL AND c.claimed_at < now() - interval '5 minutes'))
+      AND (c.builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text)
+          OR (c.builder_node_id IS NULL AND NOT EXISTS (
+              SELECT 1 FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+              WHERE b.id = c.build_id AND a.compute_region <> '')))
+    ORDER BY c.next_attempt_at, c.build_id LIMIT sqlc.arg(batch_size)::int FOR UPDATE OF c SKIP LOCKED
+)
+UPDATE builder_vm_cleanup c SET claimed_at = now(), claim_token = gen_random_uuid(), attempts = c.attempts + 1, updated_at = now()
+FROM claimable q WHERE c.build_id = q.build_id
+RETURNING c.build_id, c.claim_token;

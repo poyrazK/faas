@@ -3,50 +3,31 @@ package state
 import (
 	"context"
 	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-const builderVMCleanupClaimLease = "5 minutes"
-
-// ClaimBuildVMCleanup claims due or abandoned builder-VM teardown rows. The
-// row lock prevents two builderd processes from taking the same live row, and
-// the token prevents a late result from an expired claim from completing a
-// newer attempt.
+// ClaimBuildVMCleanup retains the unidentified legacy cleanup surface. It
+// cannot consume an obligation belonging to a named builder or regional app.
 func (s *PgStore) ClaimBuildVMCleanup(ctx context.Context, limit int) ([]BuildVMCleanupClaim, error) {
+	return s.ClaimBuildVMCleanupOnNode(ctx, "", limit)
+}
+
+// ClaimBuildVMCleanupOnNode matches the persisted canonical owner, including
+// after node inactivity or a region admission pause. Cleanup must still run.
+func (s *PgStore) ClaimBuildVMCleanupOnNode(ctx context.Context, nodeName string, limit int) ([]BuildVMCleanupClaim, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `
-		WITH claimable AS (
-			SELECT build_id
-			  FROM builder_vm_cleanup
-			 WHERE (claimed_at IS NULL AND next_attempt_at <= now())
-			    OR (claimed_at IS NOT NULL AND claimed_at < now() - $2::interval)
-			 ORDER BY next_attempt_at, build_id
-			 FOR UPDATE SKIP LOCKED
-			 LIMIT $1
-		)
-		UPDATE builder_vm_cleanup c
-		   SET claimed_at = now(),
-		       claim_token = gen_random_uuid(),
-		       attempts = c.attempts + 1,
-		       updated_at = now()
-		  FROM claimable q
-		 WHERE c.build_id = q.build_id
-		RETURNING c.build_id, c.claim_token`, limit, builderVMCleanupClaimLease)
+	rows, err := sqlc.New().ClaimBuildVMCleanupOnNode(ctx, s.pool, sqlc.ClaimBuildVMCleanupOnNodeParams{
+		NodeName: nodeName, BatchSize: int32(limit),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("ClaimBuildVMCleanup: query: %w", err)
+		return nil, fmt.Errorf("state: claim builder VM cleanup on node: %w", err)
 	}
-	defer rows.Close()
-	claims := make([]BuildVMCleanupClaim, 0, limit)
-	for rows.Next() {
-		var claim BuildVMCleanupClaim
-		if err := rows.Scan(&claim.BuildID, &claim.ClaimToken); err != nil {
-			return nil, fmt.Errorf("ClaimBuildVMCleanup: scan: %w", err)
-		}
-		claims = append(claims, claim)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ClaimBuildVMCleanup: rows: %w", err)
+	claims := make([]BuildVMCleanupClaim, 0, len(rows))
+	for _, row := range rows {
+		claims = append(claims, BuildVMCleanupClaim{BuildID: uuidString(row.BuildID), ClaimToken: uuidString(row.ClaimToken)})
 	}
 	return claims, nil
 }

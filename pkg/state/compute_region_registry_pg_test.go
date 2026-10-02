@@ -30,7 +30,7 @@ func TestComputeRegionRegistryPostgres(t *testing.T) {
 		if _, err := store.CreateComputeNode(fx.Ctx, node); err != nil {
 			t.Fatal(err)
 		}
-		sql, err := migrations.FS.ReadFile("20261001203000000_compute_region_registry.sql")
+		sql, err := migrations.FS.ReadFile("20261002002600383_compute_region_registry.sql")
 		if err != nil {
 			t.Fatal(err)
 		}
