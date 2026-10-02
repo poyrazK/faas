@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-437: these cases run through the same public boundary in both stores.
+// ADR-463: these cases run through the same public boundary in both stores.
 func regionalCapacityFleet(t *testing.T, fx *Fixture, eu, us int) map[string][]state.ComputeNode {
 	t.Helper()
 	nodes, err := fx.Store.NodeList(fx.Ctx, "")

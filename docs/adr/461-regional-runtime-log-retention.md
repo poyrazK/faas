@@ -1,8 +1,8 @@
-# ADR-435: Regional runtime log retention and failed-PUT orphan collection
+# ADR-461: Regional runtime log retention and failed-PUT orphan collection
 
 Status: Accepted; internal rollout pending native qualification
 Date: 2026-10-02
-Extends ADR-434. Local backlog policy is superseded by ADR-436.
+Extends ADR-434. Local backlog policy is superseded by ADR-462.
 
 ## Context
 

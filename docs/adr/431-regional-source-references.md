@@ -60,6 +60,6 @@ regional migration in this branch.
 
 Configure the routing file for both apid and builderd before starting regional
 source builds. Keep compute internal/default-off pending native Linux x86_64/KVM
-acceptance, affected `test-metal` coverage and `leakcheck`. ADR-432 supplies the
+acceptance, affected `test-metal` coverage and `leakcheck`. ADR-460 supplies the
 subsequent remote build-export handoff to imaged; logs, metadata, persistent
 services, regional ingress and control-plane independence remain subsequent work.

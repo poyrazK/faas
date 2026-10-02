@@ -1,6 +1,6 @@
 # Bare-metal service capacity protection
 
-ADR-422 and ADR-437 preserve compute capacity for recovery after one host fails. It uses
+ADR-422 and ADR-463 preserve compute capacity for recovery after one host fails. It uses
 desired service intent, including pending deployments and rollout overlap,
 rather than waiting for VMs to consume physical memory.
 
@@ -75,7 +75,7 @@ the VM warm and returns retryable capacity. Promotion into an existing declared
 slot on a healthy surviving host remains possible while degraded.
 
 Ordinary placement checks the prospective RAM, CPU and guest-vCPU cost against
-the certificate before applying affinity (ADR-438). Unrestricted wakes and jobs
+the certificate before applying affinity (ADR-464). Unrestricted wakes and jobs
 can use safe foreign capacity when a preferred region's spare slots are reserved.
 Pinned workloads remain local. Mirrors, warm fills and internal app tasks consume
 ordinary headroom; normal service wake and prime retain declared recovery slots.

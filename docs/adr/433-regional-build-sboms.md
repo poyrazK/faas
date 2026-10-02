@@ -6,7 +6,7 @@ Supersedes the unprefixed SBOM key for regional apps in ADR-038.
 
 ## Context
 
-ADR-432 lets a peer worker materialize a source build from regional storage.
+ADR-460 lets a peer worker materialize a source build from regional storage.
 Its CycloneDX SBOM still used the legacy global store, and the API accepted
 any relative provenance key. Placement therefore did not protect this build
 metadata. A failed rematerialization could also clear an existing SBOM reference.

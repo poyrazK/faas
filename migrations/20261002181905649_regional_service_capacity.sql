@@ -1,5 +1,5 @@
 -- filename: 20261002181905649_regional_service_capacity.sql
--- ADR-437: retain selected-region recovery room alongside fixed legacy survivors.
+-- ADR-463: retain selected-region recovery room alongside fixed legacy survivors.
 -- +goose Up
 -- +goose StatementBegin
 DO $$ BEGIN

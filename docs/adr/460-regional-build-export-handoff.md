@@ -1,4 +1,4 @@
-# ADR-432 — Durable regional build exports
+# ADR-460 — Durable regional build exports
 
 ## Status
 

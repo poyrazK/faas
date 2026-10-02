@@ -1,8 +1,8 @@
-# ADR-436: Local spool collection after confirmed remote log expiry
+# ADR-462: Local spool collection after confirmed remote log expiry
 
 Status: Accepted; internal rollout pending native qualification
 Date: 2026-10-02
-Extends ADR-435; replaces its deferred local backlog cleanup policy.
+Extends ADR-461; replaces its deferred local backlog cleanup policy.
 
 ## Context
 
@@ -55,7 +55,7 @@ permissions. Witnesses and collection receipts are retained fences, not uploads.
 ## Operations and verification
 
 Install migration `20261002164048463` before updated apid and vmmd publishers.
-Keep the ADR-435 remote collector and archive routes available. Local collection
+Keep the ADR-461 remote collector and archive routes available. Local collection
 runs through the normal shipper scan; it requires no shorter customer retention
 window or new setting. Observe `{apid,vmmd}_log_archive_local_collected_files_total`
 and `{apid,vmmd}_log_archive_local_collected_pending_bytes_total` alongside the

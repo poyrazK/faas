@@ -1,5 +1,5 @@
 -- filename: 20261002200131931_service_capacity_ordinary_placement.sql
--- ADR-438: private remaining resource budgets for ordinary placement hints.
+-- ADR-464: private remaining resource budgets for ordinary placement hints.
 -- +goose Up
 -- +goose StatementBegin
 DO $$ BEGIN

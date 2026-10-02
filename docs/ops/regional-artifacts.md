@@ -7,7 +7,7 @@ and timeout VM cleanup stays with the claim owner, including while that node is
 draining. Source uploads and retries persist regional object references
 (ADR-431). Builderd fetches the committed reference and verifies size and hash
 before VM dispatch. Build exports are published before claim-fenced completion
-and consumed by an active imaged worker in the same region (ADR-432), even after
+and consumed by an active imaged worker in the same region (ADR-460), even after
 the producer's local file is lost. The full source-to-runtime flow still needs
 native qualification.
 
@@ -121,7 +121,7 @@ further implementation or qualification.
 ## Runtime archive remote retention
 
 Apid now collects expired cataloged archives, including pending reservations whose
-PUT may have committed without publication metadata (ADR-435). The remote window
+PUT may have committed without publication metadata (ADR-461). The remote window
 uses the largest existing plan retention in `pkg/api/limits.go`, currently 90 days;
 `FAAS_LOG_ARCHIVE_RETENTION_DAYS` continues to control only the local spool. The
 inclusive UTC cutoff matches the gateway. Object-store lifecycle policies must
@@ -153,7 +153,7 @@ stays internal and default-off.
 
 ## Runtime archive local collection
 
-Install migration `20261002164048463` before updated apid and vmmd (ADR-436).
+Install migration `20261002164048463` before updated apid and vmmd (ADR-462).
 Remote collection records an immutable per-day receipt atomically with reservation
 removal. A shipper requires that receipt under the app publication lock before
 reclaiming expired partial/upload backlog, committed history, or compressed files.
@@ -180,7 +180,7 @@ internal and default-off.
 
 ## Regional service recovery capacity
 
-Apply migration `20261002181905649` before using the ADR-437 regional capacity
+Apply migration `20261002181905649` before using the ADR-463 regional capacity
 certificate. The existing service protection policy remains opt-in. Inspect
 `gregalectl obs capacity` for each region's pinned reservation and failover
 slots, plus the aggregate legacy reservation and stable placement capacity.

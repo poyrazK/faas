@@ -1,4 +1,4 @@
-# ADR-437: Regional service recovery capacity
+# ADR-463: Regional service recovery capacity
 
 - **Status:** accepted; fleet enable requires native qualification
 - **Date:** 2026-10-02
