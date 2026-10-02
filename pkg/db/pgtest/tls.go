@@ -55,11 +55,13 @@ func OpenTLSCluster(t *testing.T) *TLSCluster {
 		if err != nil {
 			t.Fatalf("PostgreSQL fixture user: %v", err)
 		}
-		uid, err := strconv.ParseUint(account.Uid, 10, 32)
+		// Chown accepts int on every supported test architecture. Restrict
+		// fixture identities to the signed 32-bit range before conversion.
+		uid, err := strconv.ParseUint(account.Uid, 10, 31)
 		if err != nil || uid == 0 {
 			t.Fatal("PostgreSQL fixture user must be unprivileged")
 		}
-		gid, err := strconv.ParseUint(account.Gid, 10, 32)
+		gid, err := strconv.ParseUint(account.Gid, 10, 31)
 		if err != nil {
 			t.Fatal(err)
 		}
