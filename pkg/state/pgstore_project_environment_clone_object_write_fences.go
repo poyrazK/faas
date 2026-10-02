@@ -9,7 +9,7 @@ import (
 
 var _ ProjectEnvironmentCloneObjectWriteFenceStore = (*PgStore)(nil)
 
-func cloneObjectWriteFenceLeaseTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneOperation, error) {
+func cloneWriteFenceLeaseTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneOperation, error) {
 	op, err := lockCloneWorkloadOperationTx(ctx, tx, lease.Operation.AccountID, lease.Operation.ProjectID, lease.Operation.ID)
 	if err != nil {
 		return op, err
@@ -32,7 +32,7 @@ func (s *PgStore) AcquireProjectEnvironmentCloneObjectWriteFence(ctx context.Con
 		return ObjectBucketWriteFence{}, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	op, err := cloneObjectWriteFenceLeaseTx(ctx, tx, lease)
+	op, err := cloneWriteFenceLeaseTx(ctx, tx, lease)
 	if err != nil {
 		return ObjectBucketWriteFence{}, err
 	}
@@ -106,7 +106,7 @@ func (s *PgStore) ProjectEnvironmentCloneObjectWriteFencesForLease(ctx context.C
 		return nil, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	op, err := cloneObjectWriteFenceLeaseTx(ctx, tx, lease)
+	op, err := cloneWriteFenceLeaseTx(ctx, tx, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (s *PgStore) AbandonProjectEnvironmentCloneObjectWriteFences(ctx context.Co
 		return mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	op, err := cloneObjectWriteFenceLeaseTx(ctx, tx, lease)
+	op, err := cloneWriteFenceLeaseTx(ctx, tx, lease)
 	if err != nil {
 		return err
 	}

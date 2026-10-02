@@ -513,6 +513,8 @@
     "columns": ["operation_id", "preparation", "preparation_hash", "reservation_hash", "source_binding_id", "target_binding_id"]},
   {"table": "project_environment_clone_postgres_snapshots", "kind": "operational",
     "columns": ["backend_fingerprint", "backend_id", "capture_point", "cleanup_observed_at", "created_at", "observed_at", "operation_id", "provider_snapshot_id", "request_started_at", "snapshot_created_at", "source_data_resource_id", "source_database_id", "source_provider_resource_id", "source_version", "state", "updated_at"]},
+  {"table": "project_environment_clone_postgres_write_fences", "kind": "operational",
+    "columns": ["backend_fingerprint", "backend_id", "created_at", "operation_id", "released_at", "remote_released_at", "remote_terminal_state", "source_data_resource_id", "source_database_id", "source_provider_resource_id", "source_version", "state", "updated_at"]},
   {"table": "project_environment_clone_workloads", "kind": "operational",
     "columns": ["app_id", "operation_id", "snapshot", "source_deployment_id", "source_hash", "target_deployment_id", "target_settings_hash"]},
   {"table": "project_environment_config_versions", "kind": "configuration",

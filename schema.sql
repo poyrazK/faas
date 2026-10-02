@@ -10531,6 +10531,35 @@ CREATE TABLE public.project_environment_clone_postgres_snapshots (
 
 
 --
+-- Name: project_environment_clone_postgres_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_write_fences (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'held'::text NOT NULL,
+    remote_terminal_state text,
+    remote_released_at timestamp with time zone,
+    released_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_source_provider_resource_id_check1 CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgr_source_data_resource_id_check1 CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres__remote_terminal_state_check CHECK (((remote_terminal_state IS NULL) OR (remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text])))),
+    CONSTRAINT project_environment_clone_postgres_wr_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_f_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_fence_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_check CHECK ((((state = 'released'::text) AND (remote_terminal_state IS NOT NULL) AND (remote_released_at IS NOT NULL) AND (released_at IS NOT NULL)) OR ((state <> 'released'::text) AND (remote_terminal_state IS NULL) AND (remote_released_at IS NULL) AND (released_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_state_check CHECK ((state = ANY (ARRAY['held'::text, 'abandoning'::text, 'released'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_workloads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15288,6 +15317,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
 
 
 --
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fences_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_workloads project_environment_clone_workloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19720,6 +19757,20 @@ CREATE INDEX project_environment_clone_operations_status_idx ON public.project_e
 --
 
 CREATE INDEX project_environment_clone_postgres_snapshot_source_hold ON public.project_environment_clone_postgres_snapshots USING btree (source_database_id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_dataset_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_dataset_owner ON public.project_environment_clone_postgres_write_fences USING btree (backend_id, backend_fingerprint, source_data_resource_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_source_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_source_owner ON public.project_environment_clone_postgres_write_fences USING btree (source_database_id) WHERE (state <> 'released'::text);
 
 
 --
@@ -25622,6 +25673,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
     ADD CONSTRAINT project_environment_clone_postgres_snapshots_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_writ_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_writ_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fenc_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fenc_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --

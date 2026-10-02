@@ -301,7 +301,8 @@ SET status = $1::text, revision = revision + 1,
 WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
   AND status = $7::text AND revision = $8::bigint
   AND ($1::text IN ('capturing', 'compensating')
-    OR NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id))
+    OR (NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
@@ -687,6 +688,47 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const beginClonePostgresWriteFenceAbandonment = `-- name: BeginClonePostgresWriteFenceAbandonment :one
+UPDATE project_environment_clone_postgres_write_fences f SET state='abandoning',updated_at=clock_timestamp()
+WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
+ AND f.state IN ('held','abandoning') AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
+  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+   AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
+`
+
+type BeginClonePostgresWriteFenceAbandonmentParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error) {
+	row := db.QueryRow(ctx, beginClonePostgresWriteFenceAbandonment,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresWriteFence
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.RemoteTerminalState,
+		&i.RemoteReleasedAt,
+		&i.ReleasedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const beginProjectEnvironmentClonePostgresSnapshotCleanup = `-- name: BeginProjectEnvironmentClonePostgresSnapshotCleanup :one
@@ -1895,6 +1937,7 @@ SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid,
     lease_token = NULL, lease_until = NULL
 WHERE id = $2::uuid AND status = 'publishing' AND revision = $3::bigint
   AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
@@ -6274,6 +6317,53 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
+ remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid
+ AND f.state='abandoning' AND $2::timestamptz<=clock_timestamp()
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
+  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$5::bigint
+   AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
+`
+
+type FinishClonePostgresWriteFenceAbandonmentParams struct {
+	RemoteTerminalState string
+	RemoteReleasedAt    pgtype.Timestamptz
+	OperationID         pgtype.UUID
+	SourceDatabaseID    pgtype.UUID
+	ExpectedRevision    int64
+	WorkerToken         string
+}
+
+func (q *Queries) FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error) {
+	row := db.QueryRow(ctx, finishClonePostgresWriteFenceAbandonment,
+		arg.RemoteTerminalState,
+		arg.RemoteReleasedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresWriteFence
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.RemoteTerminalState,
+		&i.RemoteReleasedAt,
+		&i.ReleasedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
 UPDATE dev_bridge_webhook_replays SET state=$1,http_status=$2,completed_at=now()
 WHERE id=$3 AND account_id=$4 AND state='dispatching'
@@ -7741,6 +7831,59 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.ImageDigest,
 	)
 	return err
+}
+
+const insertClonePostgresWriteFence = `-- name: InsertClonePostgresWriteFence :one
+INSERT INTO project_environment_clone_postgres_write_fences(operation_id,source_database_id,source_version,
+ backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
+SELECT o.id,$1::uuid,$2::text,$3::text,
+ $4::text,$5::text,$6::text
+FROM project_environment_clone_operations o WHERE o.id=$7::uuid AND o.status='capturing'
+ AND o.revision=$8::bigint AND o.lease_token::text=$9::text
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at
+`
+
+type InsertClonePostgresWriteFenceParams struct {
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	OperationID              pgtype.UUID
+	ExpectedRevision         int64
+	WorkerToken              string
+}
+
+func (q *Queries) InsertClonePostgresWriteFence(ctx context.Context, db DBTX, arg InsertClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error) {
+	row := db.QueryRow(ctx, insertClonePostgresWriteFence,
+		arg.SourceDatabaseID,
+		arg.SourceVersion,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.SourceProviderResourceID,
+		arg.SourceDataResourceID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresWriteFence
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.RemoteTerminalState,
+		&i.RemoteReleasedAt,
+		&i.ReleasedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertComputeNodeHeartbeat = `-- name: InsertComputeNodeHeartbeat :exec
@@ -11747,6 +11890,45 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 			return nil, err
 		}
 		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listClonePostgresWriteFences = `-- name: ListClonePostgresWriteFences :many
+SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
+WHERE operation_id=$1 ORDER BY source_database_id FOR UPDATE
+`
+
+func (q *Queries) ListClonePostgresWriteFences(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ProjectEnvironmentClonePostgresWriteFence, error) {
+	rows, err := db.Query(ctx, listClonePostgresWriteFences, operationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentClonePostgresWriteFence{}
+	for rows.Next() {
+		var i ProjectEnvironmentClonePostgresWriteFence
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.SourceDatabaseID,
+			&i.SourceVersion,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.SourceProviderResourceID,
+			&i.SourceDataResourceID,
+			&i.State,
+			&i.RemoteTerminalState,
+			&i.RemoteReleasedAt,
+			&i.ReleasedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -21331,6 +21513,38 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readClonePostgresWriteFence = `-- name: ReadClonePostgresWriteFence :one
+SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
+WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
+`
+
+type ReadClonePostgresWriteFenceParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+// ADR-375: source recovery holds precede any remote PostgreSQL closure.
+func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg ReadClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error) {
+	row := db.QueryRow(ctx, readClonePostgresWriteFence, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresWriteFence
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.RemoteTerminalState,
+		&i.RemoteReleasedAt,
+		&i.ReleasedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const readDeploymentLayerArtifactKeys = `-- name: ReadDeploymentLayerArtifactKeys :many
 SELECT key FROM (
     SELECT d.rootfs_key::text AS key FROM deployments d WHERE d.id = $1::uuid
@@ -21775,19 +21989,26 @@ func (q *Queries) ReadManagedPostgresCloneRestoreProof(ctx context.Context, db D
 const readManagedPostgresLifecycleDependants = `-- name: ReadManagedPostgresLifecycleDependants :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
-    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds,
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE source_database_id=$1 AND state<>'released') AS has_clone_write_fence_holds
 `
 
 type ReadManagedPostgresLifecycleDependantsRow struct {
-	HasBindings           bool
-	HasRestoreDescendants bool
-	HasCloneSnapshotHolds bool
+	HasBindings             bool
+	HasRestoreDescendants   bool
+	HasCloneSnapshotHolds   bool
+	HasCloneWriteFenceHolds bool
 }
 
 func (q *Queries) ReadManagedPostgresLifecycleDependants(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresLifecycleDependantsRow, error) {
 	row := db.QueryRow(ctx, readManagedPostgresLifecycleDependants, databaseID)
 	var i ReadManagedPostgresLifecycleDependantsRow
-	err := row.Scan(&i.HasBindings, &i.HasRestoreDescendants, &i.HasCloneSnapshotHolds)
+	err := row.Scan(
+		&i.HasBindings,
+		&i.HasRestoreDescendants,
+		&i.HasCloneSnapshotHolds,
+		&i.HasCloneWriteFenceHolds,
+	)
 	return i, err
 }
 

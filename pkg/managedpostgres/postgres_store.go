@@ -225,7 +225,7 @@ func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, 
 	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	if dependants.HasBindings || dependants.HasRestoreDescendants || dependants.HasCloneSnapshotHolds {
+	if dependants.HasBindings || dependants.HasRestoreDescendants || dependants.HasCloneSnapshotHolds || dependants.HasCloneWriteFenceHolds {
 		return Database{}, ErrConflict
 	}
 	row, err = q.ClaimManagedPostgresLifecycleDelete(ctx, tx, sqlc.ClaimManagedPostgresLifecycleDeleteParams{

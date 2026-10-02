@@ -3322,3 +3322,61 @@ a confirmed database-lock wait with server timeout and transactional rollback,
 abandonment before delayed dispatch, and recovery of a client-cancelled in-flight
 close. This does not establish Neon behavior, full repository acceptance or the
 complete coordinated checkpoint.
+
+### Control-plane ownership of PostgreSQL barriers (2026-10-02)
+
+The private PostgreSQL barrier store reserves source recovery authority before
+any maintenance resource or connection-closure IO. The reservation derives its
+configuration hash, backend placement, lifecycle resource identity and exact
+dataset identity from the authenticated frozen binding catalogue. It does not
+require or select a data point. `held` denotes durable recovery authority,
+not an acknowledgement that admission is closed or sessions have drained.
+One active owner is allowed for a source catalogue row and for an exact
+backend/fingerprint/dataset identity. A reservation cannot adopt another
+operation's hold or rebase itself to a different source placement.
+
+Lease handoff preserves the operation owner and all original pins. Reservation,
+active-hold reads and abandonment mutations lock the same source catalogue row
+as lifecycle deletion, recheck its ready placement, and reject stale worker
+tokens/revisions/statuses. Fresh SQL clock checks also reject lease expiry
+during source or receipt lock waits. `ClaimDelete` checks these recovery holds
+after acquiring its source lock, including when ordinary binding dependencies
+have been removed. The final clone advancement and release-set publication
+queries reject remaining active database holds, so copying, failure or terminal
+cleanup cannot discard their recovery authority.
+
+Abandonment has a committed `abandoning` intent before remote recovery. The
+source hold is released only after a trusted worker supplies an independently
+observed `released` or `abandoned` terminal record for the exact operation owner
+and dataset. Missing remote state, lease expiry, cancellation and arbitrary
+future timestamps are not evidence. The source placement is checked again
+before the control-plane write. A lost commit reply can be recovered using the
+same immutable terminal record even after source lifecycle legitimately
+advances; a replay cannot rewrite its terminal state or timestamp. These are
+private worker methods, not public endpoints or general-purpose hold-release
+operations. There is still no successful-capture release seam.
+
+The clone coordinator and Neon maintenance/bootstrap adapter do not yet dispatch
+these barriers or supply those terminal observations. The qualified adapter
+must authenticate the exact remote source and maintenance ownership before
+using this seam. Complete provider inventory, background/external writer
+coverage, application drainage, the common retained database/object checkpoint,
+successful-source release, and full compensation remain outstanding. Existing
+data capture and public complete-clone admission gates remain closed. All clone
+workers and managed PostgreSQL lifecycle workers must run the new ownership and
+deletion queries before remote barrier dispatch is activated.
+
+Verification: a focused run of 21 original state contracts passed (23.193 s),
+including PostgreSQL barrier ownership, source deletion protection, replacement
+worker authority, terminal-record substitution, placement substitution, four
+confirmed source-lock waits with lease expiry, direct publication rejection,
+existing memory/PostgreSQL object-barrier contracts, native PostgreSQL snapshot
+ownership/source holds, and migrated-schema inventory coverage. A follow-up run
+of all six new PostgreSQL barrier contracts passed (14.618 s), adding another
+operation's acquisition/abandonment rejection and explicit hold-state checks
+after expiry. Both runs used the opt-in migrated private-database harness and
+outside-repository overlays retaining all production files and original selected
+test declarations/helpers; neither run contained skips. Independent SQLC
+regeneration matches both generated packages. Full state/API/repository suites,
+deployed mixed-version behavior and live-provider/native acceptance remain
+unverified.

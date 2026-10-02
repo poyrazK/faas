@@ -5329,6 +5329,7 @@ SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(
     lease_token = NULL, lease_until = NULL
 WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint
   AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
@@ -5420,7 +5421,8 @@ SET status = sqlc.arg(next_status)::text, revision = revision + 1,
 WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND status = sqlc.arg(expected_status)::text AND revision = sqlc.arg(expected_revision)::bigint
   AND (sqlc.arg(next_status)::text IN ('capturing', 'compensating')
-    OR NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id))
+    OR (NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id = project_environment_clone_operations.id AND f.state<>'released')))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
@@ -7715,7 +7717,8 @@ SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDAT
 -- name: ReadManagedPostgresLifecycleDependants :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
-    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds;
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds,
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE source_database_id=$1 AND state<>'released') AS has_clone_write_fence_holds;
 
 -- name: ClaimManagedPostgresLifecycleDelete :one
 UPDATE managed_postgres_databases SET state='deleting',lease_token=sqlc.arg(lease_token)::text,
@@ -7911,3 +7914,37 @@ DELETE FROM object_storage_upload_grants g USING expired WHERE g.id=expired.id;
 
 -- name: ObjectUploadGrantClock :one
 SELECT clock_timestamp()::timestamptz AS at;
+
+-- ADR-375: source recovery holds precede any remote PostgreSQL closure.
+-- name: ReadClonePostgresWriteFence :one
+SELECT * FROM project_environment_clone_postgres_write_fences
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid FOR UPDATE;
+
+-- name: ListClonePostgresWriteFences :many
+SELECT * FROM project_environment_clone_postgres_write_fences
+WHERE operation_id=$1 ORDER BY source_database_id FOR UPDATE;
+
+-- name: InsertClonePostgresWriteFence :one
+INSERT INTO project_environment_clone_postgres_write_fences(operation_id,source_database_id,source_version,
+ backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
+SELECT o.id,sqlc.arg(source_database_id)::uuid,sqlc.arg(source_version)::text,sqlc.arg(backend_id)::text,
+ sqlc.arg(backend_fingerprint)::text,sqlc.arg(source_provider_resource_id)::text,sqlc.arg(source_data_resource_id)::text
+FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: BeginClonePostgresWriteFenceAbandonment :one
+UPDATE project_environment_clone_postgres_write_fences f SET state='abandoning',updated_at=clock_timestamp()
+WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.arg(source_database_id)::uuid
+ AND f.state IN ('held','abandoning') AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
+  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+   AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING f.*;
+
+-- name: FinishClonePostgresWriteFenceAbandonment :one
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=sqlc.arg(remote_terminal_state)::text,
+ remote_released_at=sqlc.arg(remote_released_at)::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.arg(source_database_id)::uuid
+ AND f.state='abandoning' AND sqlc.arg(remote_released_at)::timestamptz<=clock_timestamp()
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
+  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+   AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING f.*;
