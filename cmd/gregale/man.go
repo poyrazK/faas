@@ -64,8 +64,8 @@ func cmdMan(args []string) int {
 	case 1:
 		cmd, ok := lookupCliCommand(args[0])
 		if !ok {
-			_, _ = fmt.Fprintf(os.Stderr, "gregale man: unknown command %q\n", args[0])
-			if sug, has := suggestCommand(args[0]); has {
+			printCommandValidation(os.Stderr, "gregale man: unknown command %q\n", args[0])
+			if sug, has := suggestCommand(args[0]); has && !jsonOutput {
 				_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
 			}
 			return 1

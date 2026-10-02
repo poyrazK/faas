@@ -48,6 +48,8 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 			{"workflows", "cancel", "not-a-uuid"},
 			{"workflows", "events", "send", "not-a-uuid", "event"},
 			{"workflows", "events", "send", "00000000-0000-4000-8000-000000000001", "event", "--payload", "{"},
+			{"tenant-surfaces", "hsotname"},
+			{"man", "webhoks"},
 		} {
 			label := strings.Join(args, " ")
 			if useEnv {
