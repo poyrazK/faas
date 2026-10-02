@@ -5825,6 +5825,25 @@ SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.ar
 -- name: GetInstanceApplicationStandardBoot :one
 SELECT expected_state,binding,receipt,received_at FROM instance_application_standard_boots WHERE token=sqlc.arg(token)::uuid;
 
+-- name: GetCurrentApplicationStandardRuntimeReceipt :one
+SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting','migrating') AND i.kind='wake'
+ AND r.receipt->'binding'->>'instance_id'=i.id::text AND r.receipt->'binding'->>'app_id'=i.app_id::text
+ AND r.receipt->'binding'->>'deployment_id'=i.deployment_id::text
+ AND r.receipt->'binding'->>'account_id'=a.input_snapshot->>'account_id'
+ AND r.receipt->'binding'->>'node_id'=i.node_id::text
+ AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
+ AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
+ AND r.receipt->'binding'->>'captured_input_hash'=a.native_input_hash
+ AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
+ AND r.receipt->>'lease_uid'=i.guest_uid::text AND r.receipt->>'paused'='false'
+ AND (i.application_standard_promotion_token IS NULL OR p.parent_token=b.token),false)::boolean AS valid
+FROM instances i JOIN instance_application_standard_admissions a ON a.instance_id=i.id
+JOIN instance_application_standard_boots b ON b.token=i.application_standard_boot_token AND b.instance_id=i.id
+LEFT JOIN instance_application_standard_promotions p ON p.token=i.application_standard_promotion_token AND p.instance_id=i.id
+JOIN compute_nodes n ON n.id=i.node_id
+CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
+WHERE i.id=sqlc.arg(instance_id)::uuid;
+
 -- name: InsertInstanceApplicationStandardBoot :exec
 INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding)
 VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text,sqlc.arg(binding)::jsonb);

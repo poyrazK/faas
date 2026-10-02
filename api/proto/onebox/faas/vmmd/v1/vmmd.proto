@@ -21,6 +21,8 @@ service Vmmd {
   rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
   rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
   rpc PromoteAdmittedRuntime(PromoteAdmittedRuntimeRequest) returns (PromoteAdmittedRuntimeResponse);
+  // A distinct method refuses older nodes before they can pause a managed VM.
+  rpc CaptureAdmittedRuntime(CaptureAdmittedRuntimeRequest) returns (CaptureAdmittedRuntimeResponse);
   // CreateFromSnapshot wakes an instance by restoring a previously-parked
   // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
   // fails to load (ADR-005: cold boot always works).
@@ -1088,6 +1090,33 @@ message RuntimeSnapshotCapture {
   RuntimeCapturedArtifact vmstate = 4;
   RuntimeCapturedArtifact private_drive = 5;
   int64 captured_at_unix_nano = 6;
+}
+
+message RuntimeSnapshotGrant {
+  uint32 version = 1;
+  string token = 2;
+  RuntimeBootReceipt parent = 3;
+  string memory_key = 4;
+  string vmstate_key = 5;
+  string private_drive_key = 6;
+  string fc_version = 7;
+  string mode = 8;
+  bool before_checkpoint = 9;
+  int64 source_started_at_unix_nano = 10;
+  int64 issued_at_unix_nano = 11;
+  int64 expires_at_unix_nano = 12;
+}
+
+message RuntimeSnapshotAcknowledgment {
+  RuntimeSnapshotGrant grant = 1;
+  RuntimeSnapshotCapture capture = 2;
+  int64 completed_at_unix_nano = 3;
+}
+
+message CaptureAdmittedRuntimeRequest { RuntimeSnapshotGrant grant = 1; }
+message CaptureAdmittedRuntimeResponse {
+  SnapshotResponse snapshot = 1;
+  RuntimeSnapshotAcknowledgment acknowledgment = 2;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input

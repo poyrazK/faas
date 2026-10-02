@@ -7375,7 +7375,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	if allowReuse {
 		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
 	} else {
-		b, err = e.vmm.PauseAndSnapshot(snapCtx, ins.NodeID, ins.ID, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil)
+		b, err = e.captureSnapshotWithStandards(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, app.Manifest.BeforeCheckpoint != nil, "park")
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
@@ -7597,7 +7597,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	warmVMStateStorageKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: warmMemKey})
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
-	b, err := e.vmm.WarmSnapshot(warmCtx, ins.NodeID, ins.ID, warmMemKey, warmVMStateStorageKey)
+	b, err := e.captureSnapshotWithStandards(warmCtx, ins, "", warmMemKey, warmVMStateStorageKey, false, "warm")
 	warmCancel()
 	if err != nil {
 		// Warm capture failed. The VM may be in a wedged state
@@ -9249,6 +9249,9 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID strin
 		fields["warm_min_ms"] = promotion.MinMs
 		fields["request_count"] = promotion.RequestCount
 		fields["framework_ready_to_park_ms"] = promotion.ReadyToParkMs
+	}
+	if b.CaptureToken != "" {
+		fields["application_standard_capture_token"] = b.CaptureToken
 	}
 	payload, _ := json.Marshal(fields)
 	if err := e.notif.Notify(ctx, db.NotifySnapshotWritten, string(payload)); err != nil {

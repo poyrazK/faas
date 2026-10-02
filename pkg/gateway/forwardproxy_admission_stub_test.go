@@ -26,6 +26,10 @@ func (*stubVmmdClient) PromoteAdmittedRuntime(context.Context, *vmmdpb.PromoteAd
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not promote admitted runtimes")
 }
 
+func (*stubVmmdClient) CaptureAdmittedRuntime(context.Context, *vmmdpb.CaptureAdmittedRuntimeRequest, ...grpc.CallOption) (*vmmdpb.CaptureAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not capture admitted runtimes")
+}
+
 func (*stubVmmdClient) UpdateAppEgressPolicy(context.Context, *vmmdpb.UpdateAppEgressPolicyRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppEgressPolicyAck, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not install runtime egress policies")
 }

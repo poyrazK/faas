@@ -569,6 +569,7 @@ type SnapshotBytes struct {
 	VMStateBytes int64
 	StoredBytes  int64
 	Capture      runtimeadmission.SnapshotCapture
+	CaptureToken string
 }
 
 // WakeOutcome is the decoded result of a vmmd wake. Method reports what vmmd

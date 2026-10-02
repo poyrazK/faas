@@ -44,6 +44,9 @@ func (m *Manager) snapshotInstance(instance string, spec SnapshotSpec) (*Instanc
 	if parent.Binding.InstanceID != instance || parent.Binding.AppID != inst.AppID || parent.Binding.AccountID != inst.AccountID || parent.Binding.DeploymentID != inst.DeploymentID || parent.Netns != inst.Net.Netns || parent.HostIP != inst.Lease.HostIP.String() || parent.LeaseUID != int32(inst.Lease.UID) || inst.Paused {
 		return nil, SnapshotSpec{}, runtimeadmission.ErrStale
 	}
+	if err := m.checkAdmittedSnapshotSpecLocked(instance, spec, parent); err != nil {
+		return nil, SnapshotSpec{}, err
+	}
 	return inst, spec, nil
 }
 

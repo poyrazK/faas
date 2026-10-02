@@ -20,6 +20,12 @@ type ComputeNodeRuntimeIdentityStore interface {
 	RegisterComputeNodeRuntimeIdentity(context.Context, runtimeadmission.Identity) error
 }
 
+// Historical residency is read only to choose the versioned native capability.
+// This reader cannot issue or renew capture authority.
+type InstanceApplicationStandardRuntimeReceiptStore interface {
+	GetInstanceApplicationStandardRuntimeReceipt(context.Context, string) (runtimeadmission.Receipt, error)
+}
+
 type instanceStandardBoot struct {
 	Binding       runtimeadmission.Binding
 	ExpectedState string

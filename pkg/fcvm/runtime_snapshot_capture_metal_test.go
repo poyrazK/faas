@@ -10,17 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
-	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
-
-func nativeMetalSnapshotSpec(inst *Instance, tier string) SnapshotSpec {
-	key := state.SnapshotCaptureMemKey(inst.DeploymentID, tier, uuid.NewString())
-	return SnapshotSpec{StorageKey: key, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})}
-}
 
 func assertMetalSnapshotCapture(t *testing.T, ctx context.Context, backend storage.StorageBackend, info SnapshotInfo, parent runtimeadmission.Receipt) {
 	t.Helper()
@@ -47,21 +40,28 @@ func TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry(t *testi
 	defer cancel()
 	inst := f.boot(t, ctx)
 	parent := inst.runtimeAdmissionReceipt.Clone()
-	spec := nativeMetalSnapshotSpec(inst, state.SnapshotTierWarm)
-	warm, err := f.manager.WarmSnapshot(ctx, inst.Lease.Instance, spec)
+	grant := managedSnapshotGrant(f.manager, parent, true)
+	warm, ack, err := f.manager.CaptureAdmitted(ctx, grant)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertMetalSnapshotCapture(t, ctx, f.backend, warm, parent)
-	if _, err := f.manager.WarmSnapshot(ctx, inst.Lease.Instance, spec); !errors.Is(err, runtimeadmission.ErrReplay) {
+	if ack.Check(grant, time.Now()) != nil {
+		t.Fatal("native warm capture did not acknowledge the issued grant")
+	}
+	if _, _, err := f.manager.CaptureAdmitted(ctx, grant); !errors.Is(err, runtimeadmission.ErrReplay) {
 		t.Fatal("retry overwrote an already published native capture", err)
 	}
 	assertMetalSnapshotCapture(t, ctx, f.backend, warm, parent)
-	parked, err := f.manager.Park(ctx, inst.Lease.Instance, nativeMetalSnapshotSpec(inst, state.SnapshotTierInit))
+	parkGrant := managedSnapshotGrant(f.manager, parent, false)
+	parked, ack, err := f.manager.CaptureAdmitted(ctx, parkGrant)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertMetalSnapshotCapture(t, ctx, f.backend, parked, parent)
+	if ack.Check(parkGrant, time.Now()) != nil {
+		t.Fatal("native park did not acknowledge the issued grant")
+	}
 	if f.manager.LiveCount() != 0 || f.manager.LeasedCount() != 0 || len(f.vmm.runtimeDriveHandoffs) != 0 || f.vmm.runtimeSources().root != "" {
 		t.Fatal("native park retained process, drive or source ownership")
 	}
@@ -72,19 +72,18 @@ func TestMetalNativeSnapshotFailedPublicationRemovesFreshTriple(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	inst := f.boot(t, ctx)
-	spec := nativeMetalSnapshotSpec(inst, state.SnapshotTierWarm)
-	warm, err := f.manager.WarmSnapshot(ctx, inst.Lease.Instance, spec)
+	warm, _, err := f.manager.CaptureAdmitted(ctx, managedSnapshotGrant(f.manager, inst.runtimeAdmissionReceipt, true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed := nativeMetalSnapshotSpec(inst, state.SnapshotTierInit)
-	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: failed.StorageKey})
+	failed := managedSnapshotGrant(f.manager, inst.runtimeAdmissionReceipt, false)
+	driveKey := failed.PrivateDriveKey
 	f.vmm.storage = &failedMemoryPublication{StorageBackend: f.backend, failKey: driveKey}
-	info, err := f.manager.Park(ctx, inst.Lease.Instance, failed)
-	if !errors.Is(err, context.DeadlineExceeded) || !info.Capture.IsZero() {
+	info, ack, err := f.manager.CaptureAdmitted(ctx, failed)
+	if !errors.Is(err, context.DeadlineExceeded) || !info.Capture.IsZero() || ack.Grant.Token != "" {
 		t.Fatal("failed private-drive upload returned capture evidence", err)
 	}
-	for _, key := range []string{failed.StorageKey, failed.VMStateStorageKey, driveKey} {
+	for _, key := range []string{failed.MemoryKey, failed.VMStateKey, driveKey} {
 		reader, err := f.backend.Get(ctx, key)
 		if reader != nil {
 			_ = reader.Close()

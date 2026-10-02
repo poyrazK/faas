@@ -239,8 +239,12 @@ func (m *Manager) checkAdmittedEgressLocked(req WakeRequest) error {
 	if err := req.admission.Validate(time.Now()); err != nil {
 		return err
 	}
+	return m.checkOwnedRuntimeEgressLocked(req, req.admission.EgressRevision)
+}
+
+func (m *Manager) checkOwnedRuntimeEgressLocked(req WakeRequest, revision int64) error {
 	current, exists := m.appEgressPolicies[req.AppID]
-	if !exists || current.revision != req.admission.EgressRevision {
+	if !exists || current.revision != revision {
 		return runtimeadmission.ErrStale
 	}
 	if err := validateAppEgressPolicyPlan(req.Plan, current); err != nil {
@@ -254,7 +258,7 @@ func (m *Manager) checkAdmittedEgressLocked(req WakeRequest) error {
 		}
 		prefixes[i] = p
 	}
-	expected, err := normalizeAppEgressPolicy(req.admission.EgressRevision, prefixes, req.EgressPorts)
+	expected, err := normalizeAppEgressPolicy(revision, prefixes, req.EgressPorts)
 	if err != nil {
 		return runtimeadmission.ErrInvalid
 	}

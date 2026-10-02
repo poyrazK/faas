@@ -523,8 +523,8 @@ boundaries described here.
 
 Native snapshot capture evidence version 1 now retains the exact protocol-2
 boot receipt and full-stream identities for memory, VM state and the frozen
-private main drive. Manager supplies its owned receipt; snapshot RPC callers
-cannot submit a parent receipt. Capture checks the same registered native
+private main drive. Manager supplies its owned receipt and compares the fresh
+catalog grant's parent to that exact receipt. Capture checks the same registered native
 process and drive handles at the pause boundary, remeasures read-only drives,
 and compares the frozen main with the paused live main. The changed main digest
 is separate from the original approved producer and boot-injected digests.
@@ -571,12 +571,34 @@ owns all nested parent drive slices, with PostgreSQL parity tests for retries,
 stale intent, native process restart, renewed approval and raw-write refusal.
 These tests simulate native measurements and do not replace KVM acceptance.
 
-Grant consumption in vmmd, its typed private RPC acknowledgment, scheduler
-publication and imaged association remain required. Existing capture facts
-are not yet persisted in ordinary snapshot rows or
-sent through `snapshot_written`; source-bearing managed wakes still use
-verified cold boot. Dedicated native capture correctness, pause cost and
-leakcheck evidence remain pending, and public activation stays disabled.
+The distinct `CaptureAdmittedRuntime` RPC now requires the scheduler peer and
+the fresh typed catalog grant. Native consumption fences the exact retained
+parent, node incarnation, Firecracker version and installed outbound revision;
+the single-use token and per-instance flight are consumed before pause. The
+outbound read gate remains held through final acknowledgment. Cancellation or
+invalid completion joins the flight and destroys the source without returning
+capture evidence. Generic snapshot entry points refuse protocol-2 residency
+without this authority. Older nodes have no legacy fallback for this RPC.
+Warm and park are wired; measured migration still refuses before native work
+until its recovery and destination admission are implemented.
+
+The scheduler resolves the actually published source receipt, saves the capture
+grant before RPC and commits its matching acknowledgment before emitting
+`snapshot_written`. The notification carries only the catalog token; it cannot
+carry or invent authority. imaged resolves that token in account/app/deployment
+scope and checks source, start time, node, coupled keys, sizes, tier and
+Firecracker version before its ordinary snapshot publication. Omitting the
+reference for a known managed namespace is refused. Catalog history can expire
+without being renewed by delayed publication. The immutable memory key links
+the ordinary row to its unique catalog namespace; a database-enforced snapshot
+row association and current restore review are still required.
+
+Source-bearing managed wakes continue to use verified cold boot, and measured
+init-cache reuse remains disabled until a separately versioned restore and
+promotion protocol is implemented. Store/RPC/ordering tests simulate native
+consumers and do not establish physical-byte acceptance. Dedicated native
+capture correctness, pause cost and leakcheck evidence remain pending, and
+public activation stays disabled.
 
 ## Acceptance checklist
 

@@ -1,6 +1,10 @@
 package state
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/google/uuid"
+)
 
 // StorageBackend key shape for snapshot mem blobs (issue #96, ADR-025
 // axis 2). Lives in pkg/state because state owns the snapshots table's
@@ -128,6 +132,20 @@ func IsSnapshotCaptureKey(key string) bool {
 	parts := snapshotCaptureParts(key)
 	return (len(parts) == 5 && parts[4] == "mem") ||
 		(len(parts) == 6 && parts[4] == "v2" && parts[5] == "mem")
+}
+
+// SnapshotCaptureToken identifies a v2 UUID namespace. It grants no authority;
+// consumers must resolve the token in the scoped immutable capture catalog.
+func SnapshotCaptureToken(key string) (string, bool) {
+	parts := snapshotCaptureParts(key)
+	if len(parts) != 6 || parts[4] != "v2" || parts[5] != "mem" {
+		return "", false
+	}
+	u, err := uuid.Parse(parts[3])
+	if err != nil || u == uuid.Nil || u.String() != parts[3] {
+		return "", false
+	}
+	return u.String(), true
 }
 
 func snapshotCaptureParts(key string) []string {

@@ -1683,8 +1683,9 @@ func jobArtifactJobID(key string) (string, bool) {
 // after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
 // imaged is the sole writer to the snapshots table, so it records the row.
 type snapshotWrittenPayload struct {
-	DeploymentID     string `json:"deployment_id"`
-	SourceInstanceID string `json:"source_instance_id,omitempty"`
+	DeploymentID                    string `json:"deployment_id"`
+	SourceInstanceID                string `json:"source_instance_id,omitempty"`
+	ApplicationStandardCaptureToken string `json:"application_standard_capture_token,omitempty"`
 	// The source row's started_at can advance after this notification is
 	// emitted, so imaged must compare the captured value to the config stamp.
 	SourceStartedAt time.Time `json:"source_started_at,omitempty"`
@@ -3245,6 +3246,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 
 	if ready == nil {
+		if err := h.verifyStandardSnapshotWritten(ctx, app, dep, snapshot); err != nil {
+			return err
+		}
 		// The scheduler checks this before capture, but secrets may be
 		// reclassified while vmmd is writing or publishing the artifact. Keep
 		// imaged's sole snapshot-row writer as the final fail-closed fence.

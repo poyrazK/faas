@@ -14,8 +14,9 @@ import (
 
 type capturedRuntimeVMM struct {
 	*consumedRuntimeVMM
-	seen SnapshotSpec
-	edit func(*SnapshotInfo)
+	seen   SnapshotSpec
+	edit   func(*SnapshotInfo)
+	before func(context.Context) error
 }
 
 func (v *capturedRuntimeVMM) capture(spec SnapshotSpec) (SnapshotInfo, error) {
@@ -34,12 +35,34 @@ func (v *capturedRuntimeVMM) capture(spec SnapshotSpec) (SnapshotInfo, error) {
 	return info, nil
 }
 
-func (v *capturedRuntimeVMM) Snapshot(_ context.Context, _ Lease, spec SnapshotSpec) (SnapshotInfo, error) {
+func (v *capturedRuntimeVMM) Snapshot(ctx context.Context, _ Lease, spec SnapshotSpec) (SnapshotInfo, error) {
+	return v.captureWithContext(ctx, spec)
+}
+
+func (v *capturedRuntimeVMM) SnapshotKeepAlive(ctx context.Context, _ Lease, spec SnapshotSpec) (SnapshotInfo, error) {
+	return v.captureWithContext(ctx, spec)
+}
+
+func (v *capturedRuntimeVMM) captureWithContext(ctx context.Context, spec SnapshotSpec) (SnapshotInfo, error) {
+	if v.before != nil {
+		if err := v.before(ctx); err != nil {
+			return SnapshotInfo{}, err
+		}
+	}
 	return v.capture(spec)
 }
 
-func (v *capturedRuntimeVMM) SnapshotKeepAlive(_ context.Context, _ Lease, spec SnapshotSpec) (SnapshotInfo, error) {
-	return v.capture(spec)
+// Unit and metal fixtures simulate the scheduler's fresh catalog authority.
+// Physical capture evidence still comes from the selected native backend.
+func managedSnapshotGrant(m *Manager, parent runtimeadmission.Receipt, warm bool) runtimeadmission.SnapshotGrant {
+	tier, mode := state.SnapshotTierInit, "park"
+	if warm {
+		tier, mode = state.SnapshotTierWarm, "warm"
+	}
+	token := uuid.NewString()
+	key := state.SnapshotCaptureMemKey(parent.Binding.DeploymentID, tier, token)
+	now := time.Now()
+	return runtimeadmission.SnapshotGrant{Version: runtimeadmission.SnapshotGrantVersion, Token: token, Parent: parent.Clone(), MemoryKey: key, VMStateKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}), PrivateDriveKey: state.SnapshotDriveKey(state.Snapshot{StorageKey: key}), FCVersion: m.fcVersion, Mode: mode, SourceStartedAtUnixNano: parent.CompletedAtUnixNano, IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(time.Minute).UnixNano()}
 }
 
 func TestManagedSnapshotUsesOwnedParentAndChecksNativeCapture(t *testing.T) {
@@ -51,16 +74,9 @@ func TestManagedSnapshotUsesOwnedParentAndChecksNativeCapture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		key := state.SnapshotCaptureMemKey(receipt.Binding.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
-		spec := SnapshotSpec{StorageKey: key, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}), admittedParent: receipt.Clone()}
-		spec.admittedParent.Binding.InstanceID = uuid.NewString()
-		var info SnapshotInfo
-		if warm {
-			info, err = m.WarmSnapshot(t.Context(), inst.Lease.Instance, spec)
-		} else {
-			info, err = m.Park(t.Context(), inst.Lease.Instance, spec)
-		}
-		if err != nil || !info.Capture.Parent.Equal(receipt) || !v.seen.admittedParent.Equal(receipt) || info.Capture.Check(time.Now()) != nil {
+		grant := managedSnapshotGrant(m, receipt, warm)
+		info, ack, err := m.CaptureAdmitted(t.Context(), grant)
+		if err != nil || !info.Capture.Parent.Equal(receipt) || !v.seen.admittedParent.Equal(receipt) || info.Capture.Check(time.Now()) != nil || ack.Check(grant, time.Now()) != nil {
 			t.Fatal("caller parent replaced the retained native receipt", err)
 		}
 		if v.seen.ResumeBeforePublish != warm {
@@ -84,13 +100,12 @@ func TestManagedSnapshotRejectsMissingOrWrongCaptureAndParksWithoutLeak(t *testi
 		m, original, request := consumedRuntimeFixture(t)
 		v := &capturedRuntimeVMM{consumedRuntimeVMM: original, edit: edit}
 		m.vmm = v
-		inst, _, err := m.WakeAdmitted(t.Context(), request, nil)
+		_, receipt, err := m.WakeAdmitted(t.Context(), request, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		key := state.SnapshotCaptureMemKey(inst.DeploymentID, state.SnapshotTierInit, uuid.NewString())
-		info, err := m.Park(t.Context(), inst.Lease.Instance, SnapshotSpec{StorageKey: key, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})})
-		if err == nil || !info.Capture.IsZero() || m.LiveCount() != 0 || m.LeasedCount() != 0 {
+		info, ack, err := m.CaptureAdmitted(t.Context(), managedSnapshotGrant(m, receipt, false))
+		if err == nil || !info.Capture.IsZero() || ack.Grant.Token != "" || m.LiveCount() != 0 || m.LeasedCount() != 0 {
 			t.Fatal("invalid capture retained native resources or evidence", err)
 		}
 	}
@@ -116,13 +131,12 @@ func TestManagedSnapshotCanceledAfterNativeCompletionReturnsNoEvidence(t *testin
 	defer cancel()
 	v := &capturedRuntimeVMM{consumedRuntimeVMM: original, edit: func(*SnapshotInfo) { cancel() }}
 	m.vmm = v
-	inst, _, err := m.WakeAdmitted(t.Context(), request, nil)
+	_, receipt, err := m.WakeAdmitted(t.Context(), request, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := state.SnapshotCaptureMemKey(inst.DeploymentID, state.SnapshotTierInit, uuid.NewString())
-	info, err := m.Park(ctx, inst.Lease.Instance, SnapshotSpec{StorageKey: key, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})})
-	if !errors.Is(err, context.Canceled) || !info.Capture.IsZero() || m.LiveCount() != 0 || m.LeasedCount() != 0 {
+	info, ack, err := m.CaptureAdmitted(ctx, managedSnapshotGrant(m, receipt, false))
+	if !errors.Is(err, context.Canceled) || !info.Capture.IsZero() || ack.Grant.Token != "" || m.LiveCount() != 0 || m.LeasedCount() != 0 {
 		t.Fatal("canceled capture returned evidence or leaked its lease", err)
 	}
 }
@@ -136,7 +150,7 @@ func TestMeasuredWarmSnapshotSuspendsProbesUntilResume(t *testing.T) {
 	})
 	v := &capturedRuntimeVMM{consumedRuntimeVMM: original}
 	m.vmm = v
-	inst, _, err := m.WakeAdmitted(t.Context(), request, nil)
+	_, receipt, err := m.WakeAdmitted(t.Context(), request, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +162,7 @@ func TestMeasuredWarmSnapshotSuspendsProbesUntilResume(t *testing.T) {
 			t.Fatal("liveness remained active during measured pause")
 		}
 	}
-	key := state.SnapshotCaptureMemKey(inst.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
-	if _, err := m.WarmSnapshot(t.Context(), inst.Lease.Instance, SnapshotSpec{StorageKey: key, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})}); err != nil {
+	if _, _, err := m.CaptureAdmitted(t.Context(), managedSnapshotGrant(m, receipt, true)); err != nil {
 		t.Fatal(err)
 	}
 	if starts != 2 || stops != 1 {
