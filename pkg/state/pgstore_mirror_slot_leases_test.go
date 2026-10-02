@@ -96,7 +96,11 @@ INSERT INTO mirror_rules (
 	if err != nil || !acquired {
 		t.Fatalf("acquire lease to expire = (%q, %v, %v)", expired, acquired, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE mirror_slot_leases SET expires_at = clock_timestamp() - interval '1 second' WHERE lease_id = $1::uuid`, expired); err != nil {
+	if _, err := pool.Exec(ctx, `
+UPDATE mirror_slot_leases
+SET created_at = clock_timestamp() - interval '2 seconds',
+    expires_at = clock_timestamp() - interval '1 second'
+WHERE lease_id = $1::uuid`, expired); err != nil {
 		t.Fatalf("expire lease: %v", err)
 	}
 	replacement, acquired, err := secondStore.TryAcquireMirrorSlotLease(ctx, ruleID, 1, time.Minute)
