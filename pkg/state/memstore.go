@@ -442,8 +442,9 @@ type MemStore struct {
 	// ledger (mirror_invocation_results table) keyed by result ID;
 	// InsertMirrorResult is best-effort, the apid path doesn't
 	// observe it, only the gateway does.
-	mirrorRules   map[string]MirrorRule
-	mirrorResults map[string]MirrorInvocationResult
+	mirrorRules      map[string]MirrorRule
+	mirrorResults    map[string]MirrorInvocationResult
+	mirrorSlotLeases map[string]MirrorSlotLease
 	// corsPresets mirrors cors_presets (issue #975 item #4 /
 	// Mega-Foundation #979-b). Keyed by presetID. PR-A exposes
 	// only the read path; the write surface lives in PR-B
@@ -1088,6 +1089,7 @@ func NewMemStore() *MemStore {
 		// the table below) so the diff against `gofmt -s` stays clean.
 		mirrorRules:           map[string]MirrorRule{},
 		mirrorResults:         map[string]MirrorInvocationResult{},
+		mirrorSlotLeases:      map[string]MirrorSlotLease{},
 		domains:               map[string]CustomDomain{},
 		defaultDomains:        map[string]string{},
 		doctorObs:             map[string]DomainDoctorObservation{},
@@ -24661,10 +24663,8 @@ func (m *MemStore) UpdateMirrorRule(_ context.Context, id string, patch MirrorRu
 	return r, nil
 }
 
-// DeleteMirrorRule removes a rule. MemStore does not cascade to
-// mirror_invocation_results (the in-process map keeps rows around
-// until the next test teardown); the pgstore's ON DELETE CASCADE
-// handles production cleanup.
+// DeleteMirrorRule removes a rule and its in-memory reservations.
+// PostgreSQL applies the same reservation cleanup through ON DELETE CASCADE.
 func (m *MemStore) DeleteMirrorRule(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -24672,6 +24672,11 @@ func (m *MemStore) DeleteMirrorRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.mirrorRules, id)
+	for leaseID, lease := range m.mirrorSlotLeases {
+		if lease.RuleID == id {
+			delete(m.mirrorSlotLeases, leaseID)
+		}
+	}
 	return nil
 }
 

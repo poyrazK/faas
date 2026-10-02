@@ -45,11 +45,47 @@ type Config struct {
 }
 
 type AuthConfig struct {
-	Mode     string   `json:"mode"`
-	Issuer   string   `json:"issuer,omitempty"`
-	JWKSURL  string   `json:"jwks_url,omitempty"`
-	Resource string   `json:"resource,omitempty"`
-	Scopes   []string `json:"scopes,omitempty"`
+	Mode       string          `json:"mode"`
+	Issuer     string          `json:"issuer,omitempty"`
+	JWKSURL    string          `json:"jwks_url,omitempty"`
+	Resource   string          `json:"resource,omitempty"`
+	Scopes     []string        `json:"scopes,omitempty"`
+	ToolScopes ToolScopePolicy `json:"tool_scopes,omitzero"`
+}
+
+// ToolScopePolicy is optional for existing servers. A configured map denies
+// unlisted tools; an explicit empty scope array permits the endpoint's callers.
+type ToolScopePolicy map[string][]string
+
+func (p *ToolScopePolicy) UnmarshalJSON(body []byte) error {
+	type policy ToolScopePolicy
+	var decoded policy
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return fmt.Errorf("decode tool_scopes: %w", err)
+	}
+	if decoded == nil {
+		return fmt.Errorf("tool_scopes must be an object; omit it for endpoint-only authorization")
+	}
+	*p = ToolScopePolicy(decoded)
+	return nil
+}
+
+func (p ToolScopePolicy) validate(mode string) error {
+	for name, scopes := range p {
+		if name == "" || strings.IndexFunc(name, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0 {
+			return fmt.Errorf("tool_scopes keys must be nonempty tool names without ASCII whitespace or controls")
+		}
+		if scopes == nil {
+			return fmt.Errorf("tool_scopes values must be explicit scope arrays")
+		}
+		if mode == "open" && len(scopes) > 0 {
+			return fmt.Errorf("scoped tools require external-oauth")
+		}
+		if err := validateScopes(scopes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func Load(dir string) (Config, error) {
@@ -116,6 +152,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("allowed_origins must contain exact HTTP origins")
 		}
 	}
+	if err := c.Auth.ToolScopes.validate(c.Auth.Mode); err != nil {
+		return err
+	}
 	if c.Auth.Mode == "open" {
 		if c.Auth.Issuer != "" || c.Auth.JWKSURL != "" || c.Auth.Resource != "" || len(c.Auth.Scopes) > 0 {
 			return fmt.Errorf("open auth must not contain OAuth settings")
@@ -139,7 +178,11 @@ func (c Config) Validate() error {
 	if len(c.Auth.Scopes) == 0 {
 		return fmt.Errorf("external-oauth requires at least one scope")
 	}
-	for _, scope := range c.Auth.Scopes {
+	return validateScopes(c.Auth.Scopes)
+}
+
+func validateScopes(scopes []string) error {
+	for _, scope := range scopes {
 		if scope == "" || strings.ContainsAny(scope, " \t\r\n\"\\") {
 			return fmt.Errorf("OAuth scopes must be nonempty tokens")
 		}

@@ -373,6 +373,36 @@ ON CONFLICT (rule_id, hour_bucket) DO UPDATE SET
 DELETE FROM mirror_invocation_results
 WHERE completed_at < sqlc.arg(cutoff)::timestamptz AND rollup_counted;
 
+-- name: LockMirrorRuleForSlotLease :one
+-- Serializes reservation attempts for one rule across every gateway replica.
+SELECT id::text FROM mirror_rules
+WHERE id = sqlc.arg(rule_id)::uuid
+FOR UPDATE;
+
+-- name: DeleteExpiredMirrorSlotLeases :execrows
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND expires_at <= clock_timestamp();
+
+-- name: CountActiveMirrorSlotLeases :one
+SELECT count(*)::bigint FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND expires_at > clock_timestamp();
+
+-- name: CreateMirrorSlotLease :one
+INSERT INTO mirror_slot_leases (lease_id, mirror_rule_id, expires_at)
+VALUES (
+    sqlc.arg(lease_id)::uuid,
+    sqlc.arg(rule_id)::uuid,
+    clock_timestamp() + sqlc.arg(ttl_millis)::bigint * interval '1 millisecond'
+)
+RETURNING lease_id::text;
+
+-- name: ReleaseMirrorSlotLease :exec
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND lease_id = sqlc.arg(lease_id)::uuid;
+
 -- name: CreateAccount :one
 insert into accounts (id, email, plan, status, provider_customer_id)
 values (gen_random_uuid(), $1, $2, $3, null)

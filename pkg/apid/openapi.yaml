@@ -26148,7 +26148,7 @@ components:
     # ─── Account ──────────────────────────────────────────────────────────
 
     CapabilityStatus:
-      description: Customer-visible capability with the account plan gate resolved.
+      description: Customer-visible capability with account entitlement and existing runtime availability gates resolved. Internal capabilities are omitted.
       type: object
       required: [key, name, category, description, maturity, plans, docs_url, acceptance, enabled]
       properties:
@@ -26162,10 +26162,17 @@ components:
           items: { type: string, enum: [free, hobby, pro, scale] }
         docs_url: { type: string, format: uri-reference }
         acceptance: { type: string, description: Stable acceptance-test handle for this capability. }
-        enabled: { type: boolean, description: Whether the calling account may use the capability under its current plan. }
+        enabled: { type: boolean, description: Whether the calling account is entitled and the capability passes its existing runtime availability gate. This is not a fleet health guarantee. }
+        unavailable_reason:
+          type: string
+          enum: [plan_not_entitled, runtime_unavailable]
+          description: Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted when enabled; older servers may omit it.
+        unavailable_detail:
+          type: string
+          description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
 
     CapabilitiesResponse:
-      description: Account-scoped capability registry and resolved plan entitlements.
+      description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
       type: object
       required: [registry_version, plan, capabilities]
       properties:

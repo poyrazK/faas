@@ -777,7 +777,8 @@ type Metrics struct {
 	// per-mirror-invocation counter, labelled by
 	// {app_id, rule_id, result}. `result` is the closed set
 	// {ok, mirror_5xx, status_diff, body_diff, cap_at_max,
-	// sched_error, mirror_roundtrip_error, build_request_error} —
+	// sched_error, slot_store_error, mirror_roundtrip_error,
+	// build_request_error} —
 	// the dispatch goroutine (pkg/gateway/mirror_dispatch.go) is
 	// the only incrementer. `app_id` is unbounded but addressable
 	// via PromQL; `rule_id` is bounded by Limits.MirrorTargetsPerApp
@@ -1078,12 +1079,12 @@ func NewMetrics() *Metrics {
 		// (≤ 3 per app) so the (app_id, rule_id) pair is closed;
 		// the `result` label is the closed vocabulary the dispatch
 		// goroutine writes (ok, mirror_5xx, status_diff, body_diff,
-		// cap_at_max, sched_error, mirror_roundtrip_error,
-		// build_request_error). See pkg/gateway/mirror_dispatch.go
+		// cap_at_max, sched_error, slot_store_error,
+		// mirror_roundtrip_error, build_request_error). See pkg/gateway/mirror_dispatch.go
 		// for the call sites.
 		mirrorDispatched: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_mirror_dispatched_total",
-			Help: "Per-mirror-invocation outcome counter. Closed `result` vocabulary: ok | mirror_5xx | status_diff | body_diff | cap_at_max | sched_error | mirror_roundtrip_error | build_request_error. ADR-124 / issue #72 PR-A3.",
+			Help: "Per-mirror-invocation outcome counter. Closed `result` vocabulary: ok | mirror_5xx | status_diff | body_diff | cap_at_max | sched_error | slot_store_error | mirror_roundtrip_error | build_request_error. ADR-124 / issue #72 PR-A3.",
 		}, []string{"app_id", "rule_id", "result"}),
 		mirrorLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "gateway_mirror_latency_seconds",
@@ -2954,7 +2955,8 @@ func (m *Metrics) ObserveAppMaintenance(plan string) {
 // `result` vocabulary:
 //
 //	ok | mirror_5xx | status_diff | body_diff | cap_at_max |
-//	sched_error | mirror_roundtrip_error | build_request_error.
+//	sched_error | slot_store_error | mirror_roundtrip_error |
+//	build_request_error.
 //
 // Dashboard readers and alerts MUST treat unknown result values as
 // a bug — see the metric's doc-comment for the closed set.

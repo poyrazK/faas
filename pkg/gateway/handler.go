@@ -986,22 +986,13 @@ type Handler struct {
 	// gateway unit tests and development backends can omit Postgres; production
 	// wires the shared PgStore.
 	mirrorResultStore mirrorResultStore
-	// mirrorSlots (issue #72 / ADR-133 / ADR-125 PR-A3
-	// code-review fix #3) is the per-rule concurrent mirror-VM
-	// cost circuit. Keyed on the mirror-rule UUID (NOT the
-	// deployment — multiple rules can target the same mirror
-	// deployment). Each value is an *atomic.Int64 the dispatch
-	// goroutine increments via tryAcquireMirrorSlot and
-	// decrements via releaseMirrorSlot when the goroutine
-	// completes (the slot reflects "VMs in flight" through
-	// round-trip complete, NOT "admit attempts"). sync.Map's
-	// LoadOrStore handles the first-write-under-contention race —
-	// whichever goroutine lands first allocates the *atomic.Int64;
-	// concurrent callers reuse the winner's pointer. The slot
-	// lives on the gateway (not schedd) so the cap covers the
-	// full lifecycle from admit to round-trip complete; the
-	// schedd's AdmitMirrorInstance just stamps mode='mirror'
-	// on the new row.
+	// mirrorSlotLeaseStore coordinates this rule's shadow-VM cap across all
+	// gateway replicas. The process-local counter remains the test/development
+	// fallback when no shared store is wired.
+	mirrorSlotLeaseStore mirrorSlotLeaseStore
+	// mirrorSlots preserves the process-local per-rule cap for handlers without
+	// a shared mirrorSlotLeaseStore (tests and single-process development). The
+	// production path uses expiring Postgres leases across gateway replicas.
 	mirrorSlots sync.Map
 	// MirrorMaxConcurrentPerRule (issue #72 / ADR-133 / ADR-125
 	// PR-A3) is the per-rule concurrent-mirror-VM cap. Loaded
@@ -1969,6 +1960,14 @@ func (h *Handler) WithMirrorRoundTripper(rt MirrorRoundTripper) *Handler {
 // slow or unavailable store never delays the customer response.
 func (h *Handler) WithMirrorResultStore(store mirrorResultStore) *Handler {
 	h.mirrorResultStore = store
+	return h
+}
+
+// WithMirrorSlotLeaseStore wires fleet-wide mirror concurrency admission.
+// Production uses the shared PostgreSQL store; a nil value preserves the
+// in-process cap for tests and single-process development.
+func (h *Handler) WithMirrorSlotLeaseStore(store mirrorSlotLeaseStore) *Handler {
+	h.mirrorSlotLeaseStore = store
 	return h
 }
 

@@ -2808,6 +2808,13 @@ type MirrorRule struct {
 	AllowUnsafeMethods bool
 }
 
+type MirrorSlotLease struct {
+	LeaseID      pgtype.UUID
+	MirrorRuleID pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
 type NodeJoinJob struct {
 	ID             pgtype.UUID
 	NodeName       string
