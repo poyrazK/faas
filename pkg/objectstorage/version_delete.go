@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,41 +35,25 @@ func ValidateObjectDeleteRequest(r *http.Request) error {
 	return nil
 }
 
-// DeleteOwnedObjectVersion never accepts a native ID from the customer. Keep
-// the durable public reference after deletion so retries across process
-// restarts address the same immutable version. Quota is reclaimed separately
-// by verified inventory, never by a DELETE acknowledgment.
+// DeleteOwnedObjectVersion uses the same durable fence as ordinary deletion.
+// The stable public reference selects the immutable native version; completion
+// never refunds quota. Ingresses expose caller-owned receipt IDs separately.
 func DeleteOwnedObjectVersion(ctx context.Context, st state.ObjectVersionReferenceStore, provider Provider, b state.ObjectBucket, key, id string, before func(context.Context) error) (api.ObjectVersionDeleteResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, api.ObjectVersionDeleteOperationTimeout)
-	defer cancel()
-	result := api.ObjectVersionDeleteResult{}
 	if !ValidKey(key) || !state.ValidObjectVersionID(id) {
-		return result, ErrInvalid
+		return api.ObjectVersionDeleteResult{}, ErrInvalid
 	}
 	if id == "null" {
-		return result, ErrUnsupported
+		return api.ObjectVersionDeleteResult{}, ErrUnsupported
 	}
-	p, ok := provider.(ObjectVersionDeleter)
-	if !ok || st == nil {
-		return result, ErrUnsupported
+	journal, ok := st.(state.ObjectDeletionStore)
+	if !ok {
+		return api.ObjectVersionDeleteResult{}, ErrUnsupported
 	}
-	native, err := st.ResolveObjectVersion(ctx, b.AccountID, b.ID, key, id)
-	if err != nil {
-		return result, err
+	j, err := (DeletionService{Store: journal, Provider: provider, BeforeRequest: before}).Start(ctx, b, key, id, uuid.NewString(), api.ObjectStoragePolicy{})
+	if err == nil && j.State != "completed" {
+		err = ErrUnavailable
 	}
-	if !validNativeVersionID(native) || native == "null" {
-		return result, ErrUnavailable
-	}
-	if before != nil {
-		if err = before(ctx); err != nil {
-			return result, err
-		}
-	}
-	out, err := p.DeleteObjectVersion(ctx, b.PhysicalName, key, native)
-	if err != nil {
-		return result, err
-	}
-	return api.ObjectVersionDeleteResult{VersionID: id, DeleteMarker: out.DeleteMarker}, nil
+	return api.ObjectVersionDeleteResult{VersionID: j.VersionID, DeleteMarker: j.DeleteMarker}, err
 }
 
 // CheckCurrentObjectDelete applies the same accounting guard to the control

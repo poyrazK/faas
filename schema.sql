@@ -7844,6 +7844,8 @@ CREATE TABLE public.object_deletions (
     last_error_code text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    target_provider_version_id text DEFAULT ''::text NOT NULL,
+    recovery_claimed boolean DEFAULT false NOT NULL,
     CONSTRAINT object_deletions_baseline_check CHECK (((jsonb_typeof(baseline) = 'array'::text) AND (jsonb_array_length(baseline) <= 4096) AND (octet_length((baseline)::text) <= 278530))),
     CONSTRAINT object_deletions_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_deletions_check1 CHECK (((state = ANY (ARRAY['prepared'::text, 'dispatched'::text])) OR (lease_token = ''::text))),
@@ -7859,8 +7861,11 @@ CREATE TABLE public.object_deletions (
     CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
     CONSTRAINT object_deletions_provider_version_id_check CHECK ((octet_length(provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_reserved_bytes_check CHECK (((reserved_bytes >= 0) AND (reserved_bytes <= 1024))),
-    CONSTRAINT object_deletions_selector_check CHECK ((selector = ANY (ARRAY[''::text, 'null'::text]))),
+    CONSTRAINT object_deletions_selector_check CHECK (((selector = ANY (ARRAY[''::text, 'null'::text])) OR (selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT object_deletions_state_check CHECK ((state = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'completed'::text, 'failed'::text]))),
+    CONSTRAINT object_deletions_target_completion CHECK (((state <> 'completed'::text) OR (selector = ANY (ARRAY[''::text, 'null'::text])) OR ((version_id = selector) AND (provider_version_id = target_provider_version_id)))),
+    CONSTRAINT object_deletions_target_identity CHECK ((((selector = ANY (ARRAY[''::text, 'null'::text])) AND (target_provider_version_id = ''::text)) OR ((selector <> ALL (ARRAY[''::text, 'null'::text])) AND (target_provider_version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_status = ''::text) AND (baseline = '[]'::jsonb) AND (reserved_bytes = 0)))),
+    CONSTRAINT object_deletions_target_provider_version_id_check CHECK ((octet_length(target_provider_version_id) <= 1024)),
     CONSTRAINT object_deletions_version_id_check CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)))
 );
 
@@ -23413,8 +23418,10 @@ CREATE FUNCTION public.protect_object_deletion() RETURNS trigger
 BEGIN
  IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.object_key<>OLD.object_key OR NEW.selector<>OLD.selector
   OR NEW.created_at<>OLD.created_at OR NEW.provider_status<>OLD.provider_status OR NEW.reserved_bytes<>OLD.reserved_bytes
+  OR NEW.target_provider_version_id<>OLD.target_provider_version_id
+  OR (OLD.recovery_claimed AND NOT NEW.recovery_claimed)
   OR (OLD.state<>'prepared' AND NEW.baseline<>OLD.baseline)
-  OR (OLD.state='dispatched' AND NEW.state NOT IN ('dispatched','completed') AND NOT (NEW.state='failed' AND NEW.last_error_code='provider_rejected'))
+  OR (OLD.state='dispatched' AND NEW.state NOT IN ('dispatched','completed') AND NOT (NEW.state='failed' AND NEW.last_error_code='provider_rejected' AND NOT OLD.recovery_claimed))
   OR OLD.state IN ('completed','failed') THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Deletion identity and dispatched attempt are immutable';
  END IF;
@@ -23589,3 +23596,31 @@ BEGIN
 END $$;
 CREATE TRIGGER object_versioning_scan_fence BEFORE UPDATE ON object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION fence_object_versioning_inventory();
 CREATE TRIGGER object_versioning_rebase_fence BEFORE UPDATE OF baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,inventory_scope ON object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION fence_object_versioning_inventory();
+
+--
+-- Name: fence_immutable_object_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_immutable_object_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.selector IN ('','null') THEN RETURN NEW; END IF;
+ -- Match the service's bucket-before-account admission order. The durable
+ -- capacity intent owns this lock before any provider page is requested.
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id AND state='ready' FOR NO KEY UPDATE;
+ IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM object_version_references v WHERE v.id::text=NEW.selector AND v.bucket_id=NEW.bucket_id AND v.object_key=NEW.object_key AND v.native_version_id=NEW.target_provider_version_id AND v.native_version_id<>'null') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Immutable deletion requires the exact owned version reference';
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=NEW.bucket_id AND c.state IN ('waiting','scanning'))
+  OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=NEW.bucket_id AND v.state<>'ready') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Inventory and configuration exclude immutable deletion';
+ END IF;
+ RETURN NEW;
+END $$;
+
+--
+-- Name: object_deletions object_immutable_deletion_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_immutable_object_deletion();

@@ -5333,11 +5333,11 @@ SELECT d.*,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b O
 SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active;
 
 -- name: ObjectDeletionInsert :exec
-INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at)
-VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9);
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,sqlc.arg(target_provider_version_id));
 
 -- name: ObjectDeletionSave :exec
-UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11 WHERE id=$1;
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=sqlc.arg(recovery_claimed) WHERE id=$1;
 
 -- name: ObjectDeletionDue :many
 SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;

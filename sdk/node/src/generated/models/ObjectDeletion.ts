@@ -9,10 +9,13 @@ export type ObjectDeletion = {
   id: string;
   bucket_id: string;
   key: string;
-  selector: '' | 'null';
+  /**
+   * Empty for ordinary deletion; null or the selected owned public version UUID otherwise.
+   */
+  selector: string;
   state: 'prepared' | 'dispatched' | 'completed' | 'failed';
   /**
-   * Public marker UUID or null when acknowledged; private provider IDs are never exposed.
+   * Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed.
    */
   version_id?: string;
   delete_marker: boolean;

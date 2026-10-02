@@ -12035,29 +12035,31 @@ func (q *Queries) ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) (
 }
 
 const objectDeletionGet = `-- name: ObjectDeletionGet :one
-SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
+SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at, d.target_provider_version_id, d.recovery_claimed,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
 `
 
 type ObjectDeletionGetRow struct {
-	ID                pgtype.UUID
-	BucketID          pgtype.UUID
-	ObjectKey         string
-	Selector          string
-	State             string
-	ProviderStatus    string
-	Baseline          []byte
-	ProviderVersionID string
-	VersionID         string
-	DeleteMarker      bool
-	ReservedBytes     int64
-	LeaseToken        string
-	LeaseUntil        pgtype.Timestamptz
-	RetryAt           pgtype.Timestamptz
-	LastErrorCode     string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	State                   string
+	ProviderStatus          string
+	Baseline                []byte
+	ProviderVersionID       string
+	VersionID               string
+	DeleteMarker            bool
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	LastErrorCode           string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	TargetProviderVersionID string
+	RecoveryClaimed         bool
+	AccountID               pgtype.UUID
+	AppID                   pgtype.UUID
 }
 
 func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error) {
@@ -12081,6 +12083,8 @@ func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID
 		&i.LastErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TargetProviderVersionID,
+		&i.RecoveryClaimed,
 		&i.AccountID,
 		&i.AppID,
 	)
@@ -12088,20 +12092,21 @@ func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID
 }
 
 const objectDeletionInsert = `-- name: ObjectDeletionInsert :exec
-INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at)
-VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9)
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9,$10)
 `
 
 type ObjectDeletionInsertParams struct {
-	ID             pgtype.UUID
-	BucketID       pgtype.UUID
-	ObjectKey      string
-	Selector       string
-	ProviderStatus string
-	ReservedBytes  int64
-	LeaseToken     string
-	LeaseUntil     pgtype.Timestamptz
-	RetryAt        pgtype.Timestamptz
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	ProviderStatus          string
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	TargetProviderVersionID string
 }
 
 func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error {
@@ -12115,12 +12120,13 @@ func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectD
 		arg.LeaseToken,
 		arg.LeaseUntil,
 		arg.RetryAt,
+		arg.TargetProviderVersionID,
 	)
 	return err
 }
 
 const objectDeletionSave = `-- name: ObjectDeletionSave :exec
-UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11 WHERE id=$1
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12 WHERE id=$1
 `
 
 type ObjectDeletionSaveParams struct {
@@ -12135,6 +12141,7 @@ type ObjectDeletionSaveParams struct {
 	RetryAt           pgtype.Timestamptz
 	LastErrorCode     string
 	UpdatedAt         pgtype.Timestamptz
+	RecoveryClaimed   bool
 }
 
 func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error {
@@ -12150,6 +12157,7 @@ func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDel
 		arg.RetryAt,
 		arg.LastErrorCode,
 		arg.UpdatedAt,
+		arg.RecoveryClaimed,
 	)
 	return err
 }

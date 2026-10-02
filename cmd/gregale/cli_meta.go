@@ -331,7 +331,7 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
 			}},
 		}}, {Name: "deletions", Short: "Create or inspect durable object deletions", Subcommands: []cliSub{
-			{Name: "start", Short: "Delete current data or a null version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[null]"}},
+			{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
 			{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},
 		}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
 			{Name: "versioning", Short: "Inspect or configure bucket versioning", Subcommands: []cliSub{

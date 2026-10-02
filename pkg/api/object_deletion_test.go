@@ -8,12 +8,13 @@ import (
 )
 
 func TestObjectDeletionClient(t *testing.T) {
+	selector := "null"
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.Method == http.MethodPost {
 			var in ObjectDeletionRequest
-			if json.NewDecoder(r.Body).Decode(&in) != nil || in.ID != "id" || in.Key != "目录 /+%.txt" || in.VersionID != "null" {
+			if json.NewDecoder(r.Body).Decode(&in) != nil || in.ID != "id" || in.Key != "目录 /+%.txt" || in.VersionID != selector {
 				t.Error(in)
 			}
 			w.WriteHeader(202)
@@ -31,5 +32,9 @@ func TestObjectDeletionClient(t *testing.T) {
 	j, e = c.GetObjectDeletion(t.Context(), "demo", "bucket", "id")
 	if e != nil || j.Selector != "null" || calls != 2 {
 		t.Fatal(j, e, calls)
+	}
+	selector = "12345678-1234-4234-8234-123456789abc"
+	if _, e = c.CreateObjectDeletion(t.Context(), "demo", "bucket", ObjectDeletionRequest{ID: "id", Key: "目录 /+%.txt", VersionID: selector}); e != nil || calls != 3 {
+		t.Fatal(e, calls)
 	}
 }

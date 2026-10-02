@@ -1599,8 +1599,8 @@ paths:
       - { name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: { type: string, format: uuid } }
     post:
       operationId: createObjectDeletion
-      summary: Delete the current object or mutable null version with a durable receipt
-      description: Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Each intent dispatches at most once. Enabled buckets create an accounted delete marker. Pending attempts fence bucket writes and configuration until positive proof; elapsed time and absence never settle a dispatched mutation.
+      summary: Delete the current object or an owned version with a durable receipt
+      description: Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Mutable intents dispatch at most once; recovery may retry only the exact owned immutable version. Ordinary deletes in Enabled buckets create an accounted marker. Pending attempts fence writes, configuration and inventories until positive acknowledgment or unique completion proof; elapsed time and absence never settle a dispatched mutation.
       tags: [storage]
       requestBody:
         required: true
@@ -23301,7 +23301,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         key: { type: string, minLength: 1, maxLength: 1024 }
-        version_id: { type: string, enum: ['null'], description: Omit for ordinary deletion; null permanently removes the mutable null version. }
+        version_id: { type: string, pattern: '^(null|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$', description: Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion. }
     ObjectDeletion:
       type: object
       description: Durable deletion receipt; uncertain attempts retain their bucket fence.
@@ -23310,9 +23310,9 @@ components:
         id: { type: string, format: uuid }
         bucket_id: { type: string, format: uuid }
         key: { type: string }
-        selector: { type: string, enum: ['', 'null'] }
+        selector: { type: string, description: Empty for ordinary deletion; null or the selected owned public version UUID otherwise. }
         state: { type: string, enum: [prepared, dispatched, completed, failed] }
-        version_id: { type: string, description: Public marker UUID or null when acknowledged; private provider IDs are never exposed. }
+        version_id: { type: string, description: Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed. }
         delete_marker: { type: boolean }
         last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
         created_at: { type: string, format: date-time }

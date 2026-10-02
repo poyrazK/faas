@@ -35,7 +35,7 @@ func (s DeletionService) before(ctx context.Context) error {
 	return nil
 }
 func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, selector, id string, p api.ObjectStoragePolicy) (state.ObjectDeletion, error) {
-	if !ValidKey(key) || selector != "" && selector != "null" {
+	if !ValidKey(key) || selector != "" && !state.ValidObjectVersionID(selector) {
 		return state.ObjectDeletion{}, ErrInvalid
 	}
 	if v, e := uuid.Parse(id); e != nil || v.String() != id {
@@ -46,6 +46,11 @@ func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, s
 	}
 	if selector == "null" {
 		if _, ok := s.Provider.(MutableObjectDeleter); !ok {
+			return state.ObjectDeletion{}, ErrUnsupported
+		}
+	}
+	if selector != "" && selector != "null" {
+		if _, ok := s.Provider.(ObjectVersionDeleter); !ok {
 			return state.ObjectDeletion{}, ErrUnsupported
 		}
 	}
@@ -67,17 +72,32 @@ func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, s
 	if e != nil {
 		return j, e
 	}
+	return s.execute(ctx, b, j, false)
+}
+
+func (s DeletionService) execute(ctx context.Context, b state.ObjectBucket, j state.ObjectDeletion, recovery bool) (state.ObjectDeletion, error) {
 	var receipt MutableDeleteResult
-	if provider, ok := s.Provider.(MutableObjectDeleter); ok {
-		receipt, e = provider.DeleteMutableObject(ctx, b.PhysicalName, key, selector)
+	var e error
+	if j.TargetProviderVersionID != "" {
+		provider, ok := s.Provider.(ObjectVersionDeleter)
+		if !ok || !validNativeVersionID(j.TargetProviderVersionID) || j.TargetProviderVersionID == "null" {
+			return s.deferAttempt(ctx, j, ErrUnsupported)
+		}
+		var out VersionDeleteResult
+		out, e = provider.DeleteObjectVersion(ctx, b.PhysicalName, j.Key, j.TargetProviderVersionID)
+		receipt = MutableDeleteResult{ProviderVersionID: j.TargetProviderVersionID, DeleteMarker: out.DeleteMarker}
+	} else if provider, ok := s.Provider.(MutableObjectDeleter); ok {
+		receipt, e = provider.DeleteMutableObject(ctx, b.PhysicalName, j.Key, j.Selector)
 	} else {
-		e = s.Provider.DeleteObject(ctx, b.PhysicalName, key)
+		e = s.Provider.DeleteObject(ctx, b.PhysicalName, j.Key)
 	}
 	if e == nil && !validMutableDeleteReceipt(j, receipt) {
 		e = ErrUnavailable
 	}
 	if e != nil {
-		if errors.Is(e, ErrDeletionRejected) {
+		// Rejection of a recovery request says nothing about the original
+		// dispatched attempt, which could still be executing at the provider.
+		if errors.Is(e, ErrDeletionRejected) && !recovery {
 			return s.fail(ctx, j, "provider_rejected", e)
 		}
 		return s.deferAttempt(ctx, j, e)
@@ -86,6 +106,9 @@ func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, s
 }
 
 func validMutableDeleteReceipt(j state.ObjectDeletion, r MutableDeleteResult) bool {
+	if j.TargetProviderVersionID != "" {
+		return r.ProviderVersionID == j.TargetProviderVersionID
+	}
 	if j.Selector == "null" {
 		return r.ProviderVersionID == "null"
 	}
@@ -101,6 +124,12 @@ func validMutableDeleteReceipt(j state.ObjectDeletion, r MutableDeleteResult) bo
 	}
 }
 func (s DeletionService) prepare(ctx context.Context, b state.ObjectBucket, j state.ObjectDeletion) ([]string, string, error) {
+	if j.Selector != "" && j.Selector != "null" {
+		if !validNativeVersionID(j.TargetProviderVersionID) || j.TargetProviderVersionID == "null" {
+			return nil, "", ErrUnavailable
+		}
+		return []string{}, "", nil
+	}
 	status := j.ProviderStatus
 	if p, ok := s.Provider.(BucketVersioningProvider); ok {
 		if e := s.before(ctx); e != nil {
@@ -125,9 +154,9 @@ func (s DeletionService) prepare(ctx context.Context, b state.ObjectBucket, j st
 	if status != "Enabled" || j.Selector != "" {
 		return []string{}, status, nil
 	}
-	// Permanent version deletion can invalidate a continuation cursor. A
-	// complete first response binds every pre-existing identity before dispatch.
-	entries, e := s.history(ctx, b, j.Key, api.ObjectDeletionBaselinePages)
+	// Every owned deletion is fenced by this intent, so continuation identities
+	// cannot disappear while preparation binds the complete prior history.
+	entries, e := s.history(ctx, b, j.Key, api.ObjectDeletionHistoryPages)
 	if e != nil {
 		return nil, status, e
 	}
@@ -198,8 +227,8 @@ func (s DeletionService) finish(ctx context.Context, j state.ObjectDeletion, r M
 	j.LastErrorCode = ""
 	j.ProviderVersionID = r.ProviderVersionID
 	j.DeleteMarker = r.DeleteMarker
-	if j.Selector == "null" {
-		j.VersionID = "null"
+	if j.Selector != "" {
+		j.VersionID = j.Selector
 	}
 	return s.Store.FinishObjectDeletion(finish, j)
 }
@@ -234,8 +263,8 @@ func (s DeletionService) deferAttempt(ctx context.Context, j state.ObjectDeletio
 	return out, cause
 }
 
-// Recovery never dispatches a DELETE. Absence, mutable null identities, elapsed
-// time and a newer pre-existing marker cannot prove completion.
+// Recovery may re-dispatch only an immutable selected version. Mutable
+// deletion requires a unique marker proof; absence and expiry are insufficient.
 func (s DeletionService) Recover(ctx context.Context, b state.ObjectBucket, id string) (state.ObjectDeletion, error) {
 	if s.Store == nil {
 		return state.ObjectDeletion{}, ErrUnsupported
@@ -256,6 +285,12 @@ func (s DeletionService) Recover(ctx context.Context, b state.ObjectBucket, id s
 	}
 	if s.Provider == nil {
 		return s.deferAttempt(ctx, j, ErrConfiguration)
+	}
+	if j.TargetProviderVersionID != "" {
+		if e = s.before(ctx); e != nil {
+			return s.deferAttempt(ctx, j, e)
+		}
+		return s.execute(ctx, b, j, true)
 	}
 	if j.Selector != "" || j.ProviderStatus != "Enabled" {
 		return s.deferAttempt(ctx, j, ErrUnavailable)

@@ -35,7 +35,7 @@ func bulkDeletionRequestID(id string, index int) string {
 	// id has passed deletionRequestID's canonical UUID validation.
 	return uuid.NewSHA1(uuid.MustParse(id), []byte("bulk-entry:"+strconv.Itoa(index))).String()
 }
-func (h *Handler) deleteMutable(ctx context.Context, req requestContext, key, selector, id string) (state.ObjectDeletion, error) {
+func (h *Handler) deleteObjectIntent(ctx context.Context, req requestContext, key, selector, id string) (state.ObjectDeletion, error) {
 	st, _ := h.store.(state.ObjectDeletionStore)
 	before := func(ctx context.Context) error {
 		if h.requestMetrics != nil {
@@ -63,7 +63,7 @@ func (h *Handler) deleteCurrentObject(w http.ResponseWriter, r *http.Request, re
 		h.providerError(w, r, req, e, key)
 		return
 	}
-	j, e := h.deleteMutable(r.Context(), req, key, "", id)
+	j, e := h.deleteObjectIntent(r.Context(), req, key, "", id)
 	w.Header().Set("X-Gregale-Delete-Id", id)
 	if e != nil {
 		h.providerError(w, r, req, e, key)
@@ -80,11 +80,11 @@ func writeDeletionHeaders(w http.ResponseWriter, j state.ObjectDeletion) {
 		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 }
-func (h *Handler) deleteNullVersion(ctx context.Context, r *http.Request, req requestContext, key string) (api.ObjectVersionDeleteResult, string, error) {
+func (h *Handler) deleteSelectedVersion(ctx context.Context, r *http.Request, req requestContext, key, selector string) (api.ObjectVersionDeleteResult, string, error) {
 	id, e := deletionRequestID(r, req)
 	if e != nil {
 		return api.ObjectVersionDeleteResult{}, "", e
 	}
-	j, e := h.deleteMutable(ctx, req, key, "null", id)
+	j, e := h.deleteObjectIntent(ctx, req, key, selector, id)
 	return api.ObjectVersionDeleteResult{VersionID: j.VersionID, DeleteMarker: j.DeleteMarker}, id, e
 }

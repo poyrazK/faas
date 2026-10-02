@@ -11,15 +11,7 @@ import (
 
 func (h *Handler) deleteBulkTarget(ctx context.Context, req requestContext, target deleteObjectTarget, id string) (deletedObjectResult, error) {
 	result := deletedObjectResult{Key: target.Key, VersionID: target.VersionID}
-	if target.VersionID != "" && target.VersionID != "null" {
-		out, err := h.deleteOwnedVersion(ctx, req, target.Key, target.VersionID)
-		result.DeleteMarker = out.DeleteMarker
-		if out.DeleteMarker {
-			result.DeleteMarkerVersionID = out.VersionID
-		}
-		return result, err
-	}
-	j, err := h.deleteMutable(ctx, req, target.Key, target.VersionID, id)
+	j, err := h.deleteObjectIntent(ctx, req, target.Key, target.VersionID, id)
 	result.DeleteMarker = j.DeleteMarker
 	if j.DeleteMarker {
 		result.DeleteMarkerVersionID = j.VersionID

@@ -2,6 +2,8 @@
 
 Status: Accepted (2026-10-03)
 
+ADR-406 extends this journal to immutable deletion and permits bounded paginated baselines.
+
 ## Context
 
 An ordinary delete creates a new marker in an Enabled bucket and replaces the

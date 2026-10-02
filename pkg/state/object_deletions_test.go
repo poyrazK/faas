@@ -121,6 +121,12 @@ func objectDeletionSuite(t *testing.T, st accountingStore, advance func()) {
 	if e != nil {
 		t.Fatal(j, e)
 	}
+	failed = j
+	failed.State = "failed"
+	failed.LastErrorCode = "provider_rejected"
+	if _, e = d.FinishObjectDeletion(ctx, failed); !errors.Is(e, state.ErrConflict) {
+		t.Fatal("recovery rejection erased earlier uncertain dispatch", e)
+	}
 	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "new", 1, accountingPolicy()); !errors.Is(e, state.ErrConflict) {
 		t.Fatal("expiry released fence", e)
 	}

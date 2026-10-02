@@ -27,6 +27,8 @@ type versionDeleteHTTPFixture struct {
 	gone           map[string]bool
 	calls, deletes int
 	lose           bool
+	denied         bool
+	paginated      bool
 }
 
 func (p *versionDeleteHTTPFixture) count() int { p.mu.Lock(); defer p.mu.Unlock(); return p.deletes }
@@ -41,11 +43,38 @@ func (p *versionDeleteHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r 
 	}
 	if q.Has("versions") {
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated>`)
+		ids := []string{}
 		for _, id := range []string{publicVersionNativeNew, publicVersionNativeOld, "private-marker"} {
-			if p.gone[id] {
-				continue
+			if !p.gone[id] {
+				ids = append(ids, id)
 			}
+		}
+		start := 0
+		if marker := q.Get("version-id-marker"); marker != "" {
+			found := false
+			for i, id := range ids {
+				if marker == id {
+					start = i + 1
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Error("deleted inventory continuation", marker)
+				w.WriteHeader(500)
+				return
+			}
+		}
+		end := len(ids)
+		if p.paginated {
+			end = min(end, start+1)
+		}
+		next := end < len(ids)
+		_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>`, next)
+		if next {
+			_, _ = fmt.Fprintf(w, `<NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>%s</NextVersionIdMarker>`, url.PathEscape(publicVersionTestKey), ids[end-1])
+		}
+		for _, id := range ids[start:end] {
 			latest := id == "private-marker" || p.gone["private-marker"] && id == publicVersionNativeNew || p.gone["private-marker"] && p.gone[publicVersionNativeNew] && id == publicVersionNativeOld
 			if id == "private-marker" {
 				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><LastModified>2026-10-02T10:00:00Z</LastModified></DeleteMarker>`, url.PathEscape(publicVersionTestKey), id, latest)
@@ -59,6 +88,11 @@ func (p *versionDeleteHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r 
 	id := q.Get("versionId")
 	if r.Method == http.MethodDelete {
 		p.deletes++
+		if p.denied {
+			w.WriteHeader(403)
+			_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
+			return
+		}
 		if id == "" || id == "null" || strings.TrimPrefix(r.URL.Path, "/physical/") != publicVersionTestKey {
 			t.Error("unsafe deletion selector", r.URL)
 			w.WriteHeader(500)
@@ -117,13 +151,20 @@ func (p *versionDeleteHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r 
 
 // adr: 404
 func TestVersionDeletionEndToEndMem(t *testing.T) {
-	versionDeletionEndToEnd(t, state.NewMemStore(), nil)
+	m := state.NewMemStore()
+	now := time.Now().UTC()
+	m.SetClockForTest(func() time.Time { return now })
+	versionDeletionEndToEnd(t, m, nil, func() { now = now.Add(api.ObjectDeletionRetry + time.Second) })
 }
 func TestVersionDeletionEndToEndPG(t *testing.T) {
 	st, pool := multipartCopyPGStore(t)
-	versionDeletionEndToEnd(t, st, func() multipartCopyIntegrationStore { return state.NewPgStore(pool) })
+	versionDeletionEndToEnd(t, st, func() multipartCopyIntegrationStore { return state.NewPgStore(pool) }, func() {
+		if _, e := pool.Exec(t.Context(), `UPDATE object_deletions SET lease_until=CASE WHEN lease_token='' THEN NULL ELSE now()-interval '1 second' END,retry_at=now() WHERE state IN ('prepared','dispatched')`); e != nil {
+			t.Fatal(e)
+		}
+	})
 }
-func versionDeletionEndToEnd(t *testing.T, st multipartCopyIntegrationStore, restart func() multipartCopyIntegrationStore) {
+func versionDeletionEndToEnd(t *testing.T, st multipartCopyIntegrationStore, restart func() multipartCopyIntegrationStore, advance func()) {
 	p := &versionDeleteHTTPFixture{gone: map[string]bool{}}
 	f := newMultipartCopyIntegrationWithProvider(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) }))
 	ctx := t.Context()
@@ -182,8 +223,21 @@ func versionDeletionEndToEnd(t *testing.T, st multipartCopyIntegrationStore, res
 		f.handler.store = st
 		f.handler.requestMetrics = st
 	}
+	advance()
+	rows, e := st.(state.ObjectDeletionStore).DueObjectDeletions(ctx, api.ObjectDeletionBatch)
+	if e != nil || len(rows) != 1 {
+		t.Fatal(rows, e)
+	}
+	providerForRecovery, e := f.handler.registry.Resolve(f.bucket.BackendID, f.bucket.BackendFingerprint)
+	if e != nil {
+		t.Fatal(e)
+	}
+	recovered, e := (objectstorage.DeletionService{Store: st.(state.ObjectDeletionStore), Provider: providerForRecovery.Provider, BeforeRequest: objectstorage.VersioningRequestRecorder(st, f.bucket.ID)}).Recover(ctx, f.bucket, rows[0].ID)
+	if e != nil || recovered.State != "completed" || recovered.VersionID != newID || p.count() != 5 {
+		t.Fatal("immutable restart recovery", recovered, e, p.count())
+	}
 	out, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(publicVersionTestKey), VersionId: aws.String(newID)})
-	if err != nil || aws.ToString(out.VersionId) != newID || p.count() != 5 {
+	if err != nil || aws.ToString(out.VersionId) != newID || p.count() != 6 {
 		t.Fatal("immutable restart retry", out, err, p.count())
 	}
 	refs := st.(state.ObjectVersionReferenceStore)
@@ -193,7 +247,7 @@ func versionDeletionEndToEnd(t *testing.T, st multipartCopyIntegrationStore, res
 	wrongOwner := f.bucket
 	wrongOwner.AccountID = uuid.NewString()
 	provider, _ := f.handler.registry.Resolve(f.bucket.BackendID, f.bucket.BackendFingerprint)
-	if _, err = objectstorage.DeleteOwnedObjectVersion(ctx, refs, provider.Provider, wrongOwner, publicVersionTestKey, newID, nil); err == nil || p.count() != 5 {
+	if _, err = objectstorage.DeleteOwnedObjectVersion(ctx, refs, provider.Provider, wrongOwner, publicVersionTestKey, newID, nil); err == nil || p.count() != 6 {
 		t.Fatal("tenant selector dispatched", err, p.count())
 	}
 	after, err := st.ObjectUsage(ctx, f.bucket.AccountID, time.Now())

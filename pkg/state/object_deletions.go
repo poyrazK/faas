@@ -13,7 +13,9 @@ import (
 
 type ObjectDeletion struct {
 	api.ObjectDeletion
+	RecoveryClaimed                                            bool      `json:"-"`
 	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string    `json:"-"`
+	TargetProviderVersionID                                    string    `json:"-"`
 	Baseline                                                   []string  `json:"-"`
 	LeaseUntil, RetryAt                                        time.Time `json:"-"`
 	ReservedBytes                                              int64     `json:"-"`
@@ -33,7 +35,8 @@ func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
 	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token}
 }
 
-func deletionActive(j ObjectDeletion) bool { return j.State == "prepared" || j.State == "dispatched" }
+func deletionActive(j ObjectDeletion) bool    { return j.State == "prepared" || j.State == "dispatched" }
+func immutableDeletion(j ObjectDeletion) bool { return j.Selector != "" && j.Selector != "null" }
 func cloneDeletion(j ObjectDeletion) ObjectDeletion {
 	j.Baseline = append([]string{}, j.Baseline...)
 	return j
@@ -45,7 +48,7 @@ func validDeletionIdentity(j ObjectDeletion) bool {
 			return false
 		}
 	}
-	return j.Key != "" && len(j.Key) <= api.MaxObjectS3ListTextBytes && utf8.ValidString(j.Key) && !strings.ContainsRune(j.Key, 0) && (j.Selector == "" || j.Selector == "null") && j.Token != "" && len(j.Token) <= 128
+	return j.Key != "" && len(j.Key) <= api.MaxObjectS3ListTextBytes && utf8.ValidString(j.Key) && !strings.ContainsRune(j.Key, 0) && (j.Selector == "" || ValidObjectVersionID(j.Selector)) && j.Token != "" && len(j.Token) <= 128
 }
 func validDeletionLease(j ObjectDeletion, token string, now time.Time) bool {
 	return deletionActive(j) && token != "" && j.Token == token && j.LeaseUntil.After(now)
@@ -81,13 +84,19 @@ func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, er
 	switch result.State {
 	case "failed":
 		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired")
-		rejected := j.State == "dispatched" && result.LastErrorCode == "provider_rejected"
+		rejected := j.State == "dispatched" && !j.RecoveryClaimed && result.LastErrorCode == "provider_rejected"
 		if !prepared && !rejected || result.ProviderVersionID != "" || result.VersionID != "" || result.DeleteMarker {
 			return j, ErrConflict
 		}
 	case "completed":
 		if j.State != "dispatched" || result.LastErrorCode != "" || result.VersionID != "" && !ValidObjectVersionID(result.VersionID) {
 			return j, ErrConflict
+		}
+		if immutableDeletion(j) {
+			if result.VersionID != j.Selector || result.ProviderVersionID != j.TargetProviderVersionID {
+				return j, ErrConflict
+			}
+			break
 		}
 		if j.Selector == "null" && (result.VersionID != "null" || result.ProviderVersionID != "null") || j.ProviderStatus == "Enabled" && j.Selector == "" && (!result.DeleteMarker || result.VersionID == "" || result.VersionID == "null" || result.ProviderVersionID == "") {
 			return j, ErrConflict

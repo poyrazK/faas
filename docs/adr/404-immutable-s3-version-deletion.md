@@ -2,6 +2,8 @@
 
 Status: Accepted (2026-10-02)
 
+ADR-406 adds durable dispatch and inventory coordination for immutable deletion.
+
 ## Context
 
 ADRs 398–403 provide retained-version accounting, public version identities,

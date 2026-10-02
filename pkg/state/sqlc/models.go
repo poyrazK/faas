@@ -2670,23 +2670,25 @@ type ObjectBucketVersioning struct {
 }
 
 type ObjectDeletion struct {
-	ID                pgtype.UUID
-	BucketID          pgtype.UUID
-	ObjectKey         string
-	Selector          string
-	State             string
-	ProviderStatus    string
-	Baseline          []byte
-	ProviderVersionID string
-	VersionID         string
-	DeleteMarker      bool
-	ReservedBytes     int64
-	LeaseToken        string
-	LeaseUntil        pgtype.Timestamptz
-	RetryAt           pgtype.Timestamptz
-	LastErrorCode     string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	ID                      pgtype.UUID
+	BucketID                pgtype.UUID
+	ObjectKey               string
+	Selector                string
+	State                   string
+	ProviderStatus          string
+	Baseline                []byte
+	ProviderVersionID       string
+	VersionID               string
+	DeleteMarker            bool
+	ReservedBytes           int64
+	LeaseToken              string
+	LeaseUntil              pgtype.Timestamptz
+	RetryAt                 pgtype.Timestamptz
+	LastErrorCode           string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	TargetProviderVersionID string
+	RecoveryClaimed         bool
 }
 
 type ObjectStorageAccessGrant struct {

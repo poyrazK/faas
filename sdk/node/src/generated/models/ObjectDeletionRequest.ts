@@ -9,8 +9,8 @@ export type ObjectDeletionRequest = {
   id: string;
   key: string;
   /**
-   * Omit for ordinary deletion; null permanently removes the mutable null version.
+   * Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion.
    */
-  version_id?: 'null';
+  version_id?: string;
 };
 

@@ -77,7 +77,7 @@ func (p *mutableDeleteFixture) serve(t *testing.T, w http.ResponseWriter, r *htt
 			return
 		}
 		end := len(ids)
-		// Preparation gets a complete baseline. Recovery deliberately paginates.
+		// Force continuation pages to exercise preparation and restart recovery.
 		if p.deletes > 0 || p.truncatedBaseline {
 			end = index + 1
 		}
@@ -134,7 +134,7 @@ func (p *mutableDeleteFixture) serve(t *testing.T, w http.ResponseWriter, r *htt
 }
 
 // adr: 405
-func TestMutableDeletionTruncatedBaselineE2E(t *testing.T) {
+func TestMutableDeletionHistoryLimitE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint("postgres=", pg), func(t *testing.T) {
 			var st multipartCopyIntegrationStore
@@ -147,7 +147,7 @@ func TestMutableDeletionTruncatedBaselineE2E(t *testing.T) {
 				m.SetClockForTest(func() time.Time { return now })
 				st = m
 			}
-			p := &mutableDeleteFixture{status: "Enabled", markers: []string{"marker-old"}, truncatedBaseline: true}
+			p := &mutableDeleteFixture{status: "Enabled", markers: []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}, truncatedBaseline: true}
 			f := newMultipartCopyIntegrationWithProvider(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) }))
 			prepareDeletionVersioning(t, st, f.bucket, "Enabled", func(duration time.Duration) {
 				if pool == nil {
@@ -328,7 +328,7 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 					}
 				}
 			}
-			p := &mutableDeleteFixture{status: "Enabled", markers: []string{"marker-old"}, lost: true}
+			p := &mutableDeleteFixture{status: "Enabled", markers: []string{"marker-old"}, lost: true, truncatedBaseline: true}
 			f := newMultipartCopyIntegrationWithProvider(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) }))
 			prepareDeletionVersioning(t, st, f.bucket, "Enabled", advance)
 			_, e := f.client.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(mutableDeleteKey)})

@@ -19,36 +19,21 @@ func (s *server) deleteBucketObjectVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	q := r.URL.Query()
-	if len(q) != 2 || len(q["key"]) != 1 || len(q["version_id"]) != 1 {
+	if len(q) != 2 || len(q["key"]) != 1 || len(q["version_id"]) != 1 || !state.ValidObjectVersionID(q.Get("version_id")) {
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	if q.Get("version_id") == "null" {
-		s.deleteNullBucketObjectVersion(w, r, b, provider, q.Get("key"))
-		return
-	}
-	st, _ := s.store.(state.ObjectVersionReferenceStore)
-	metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
-	if !ok {
-		bucketProblem(w, objectstorage.ErrConfiguration)
-		return
-	}
-	result, err := objectstorage.DeleteOwnedObjectVersion(r.Context(), st, provider, b, q.Get("key"), q.Get("version_id"), objectstorage.VersioningRequestRecorder(metrics, b.ID))
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
+	s.deleteSelectedBucketObjectVersion(w, r, b, provider, q.Get("key"), q.Get("version_id"))
 }
 
-func (s *server) deleteNullBucketObjectVersion(w http.ResponseWriter, r *http.Request, b state.ObjectBucket, p objectstorage.Provider, key string) {
+func (s *server) deleteSelectedBucketObjectVersion(w http.ResponseWriter, r *http.Request, b state.ObjectBucket, p objectstorage.Provider, key, selector string) {
 	id, e := controlDeletionID(r)
 	if e != nil {
 		bucketProblem(w, e)
 		return
 	}
 	w.Header().Set("X-Gregale-Delete-Id", id)
-	j, e := s.deleteMutableBucketObject(r.Context(), b, p, key, "null", id)
+	j, e := s.deleteMutableBucketObject(r.Context(), b, p, key, selector, id)
 	if e != nil {
 		bucketProblem(w, e)
 		return

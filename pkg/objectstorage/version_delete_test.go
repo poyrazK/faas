@@ -13,19 +13,6 @@ import (
 	"testing"
 )
 
-type versionDeleteReferenceStub struct {
-	state.ObjectVersionReferenceStore
-	native string
-	err    error
-}
-
-func (s versionDeleteReferenceStub) ResolveObjectVersion(_ context.Context, account, bucket, key, id string) (string, error) {
-	if account != "account" || bucket != "bucket" || key != "key" || !state.ValidObjectVersionID(id) {
-		return "", state.ErrNotFound
-	}
-	return s.native, s.err
-}
-
 type versionDeleteBaseOnly struct{ Provider }
 
 func TestOwnedVersionDeletionAdmissionFailures(t *testing.T) {
@@ -35,8 +22,8 @@ func TestOwnedVersionDeletionAdmissionFailures(t *testing.T) {
 		unsupported                 bool
 	}{
 		{name: "unowned selector", native: "native", resolveErr: state.ErrNotFound, want: state.ErrNotFound},
-		{name: "corrupt mutable reference", native: "null", want: ErrUnavailable},
-		{name: "empty reference", want: ErrUnavailable},
+		{name: "mutable selector", native: "null", want: ErrUnsupported},
+		{name: "empty reference", want: state.ErrNotFound},
 		{name: "metric persistence failed", native: "native", beforeErr: state.ErrConflict, want: state.ErrConflict},
 		{name: "unsupported provider", native: "native", want: ErrUnsupported, unsupported: true},
 		{name: "owned immutable", native: "native"},
@@ -47,8 +34,19 @@ func TestOwnedVersionDeletionAdmissionFailures(t *testing.T) {
 			if tc.unsupported {
 				p = versionDeleteBaseOnly{p}
 			}
+			f := newUploadFixture(t)
+			bucket, e := f.store.GetObjectBucket(t.Context(), f.account.ID, f.app.ID, f.route.BucketID)
+			if e != nil {
+				t.Fatal(e)
+			}
 			id := uuid.NewString()
-			out, err := DeleteOwnedObjectVersion(t.Context(), versionDeleteReferenceStub{native: tc.native, err: tc.resolveErr}, p, state.ObjectBucket{ID: "bucket", AccountID: "account", PhysicalName: "physical"}, "key", id, func(context.Context) error { return tc.beforeErr })
+			if tc.resolveErr == nil {
+				refs, err := f.store.RecordObjectVersions(t.Context(), bucket.AccountID, bucket.ID, []state.ObjectVersionIdentity{{Key: "key", ProviderVersionID: tc.native}})
+				if err == nil {
+					id = refs[0].ID
+				}
+			}
+			out, err := DeleteOwnedObjectVersion(t.Context(), f.store, p, bucket, "key", id, func(context.Context) error { return tc.beforeErr })
 			if !errors.Is(err, tc.want) || err != nil && calls.Load() != 0 || err == nil && (calls.Load() != 1 || out.VersionID != id) {
 				t.Fatal(out, err, calls.Load())
 			}

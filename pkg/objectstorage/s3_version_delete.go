@@ -25,7 +25,7 @@ func (p *S3) DeleteObjectVersion(ctx context.Context, bucket, key, version strin
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchVersion" {
 			return result, nil
 		}
-		return result, normalizeVersionHistoryError(err)
+		return result, normalizeDeletionError(err)
 	}
 	if out == nil || aws.ToString(out.VersionId) != "" && aws.ToString(out.VersionId) != version {
 		return result, ErrUnavailable

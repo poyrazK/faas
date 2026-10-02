@@ -1082,6 +1082,10 @@ from .object_bucket_versioning_state import ObjectBucketVersioningState
 from .object_capacity_reconciliation import ObjectCapacityReconciliation
 from .object_capacity_reconciliation_inventory_scope import ObjectCapacityReconciliationInventoryScope
 from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
+from .object_deletion import ObjectDeletion
+from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
+from .object_deletion_request import ObjectDeletionRequest
+from .object_deletion_state import ObjectDeletionState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
 from .object_multipart_part_list import ObjectMultipartPartList
@@ -1961,19 +1965,10 @@ from .workload_dependency_condition import WorkloadDependencyCondition
 from .workload_port import WorkloadPort
 from .workload_port_protocol import WorkloadPortProtocol
 
-from .object_deletion import ObjectDeletion
-from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
-from .object_deletion_request import ObjectDeletionRequest
-from .object_deletion_request_version_id import ObjectDeletionRequestVersionId
-from .object_deletion_selector import ObjectDeletionSelector
-from .object_deletion_state import ObjectDeletionState
-
 __all__ = (
     "ObjectDeletion",
     "ObjectDeletionLastErrorCode",
     "ObjectDeletionRequest",
-    "ObjectDeletionRequestVersionId",
-    "ObjectDeletionSelector",
     "ObjectDeletionState",
     "AccountAbuseHold",
     "AccountAbuseHoldAction",

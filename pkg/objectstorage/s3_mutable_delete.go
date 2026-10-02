@@ -21,15 +21,7 @@ func (p *S3) DeleteMutableObject(ctx context.Context, bucket, key, selector stri
 	}
 	out, e := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), VersionId: stringPtrOrNil(selector)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if e != nil {
-		cause := normalizeVersionHistoryError(e)
-		var response *smithyhttp.ResponseError
-		var service smithy.APIError
-		// A parsed permission rejection proves this one attempt did not mutate.
-		// Status alone, transport failures and timeouts are not such proof.
-		if errors.As(e, &response) && response.HTTPStatusCode() == http.StatusForbidden && errors.As(e, &service) && service.ErrorCode() == "AccessDenied" {
-			cause = errors.Join(ErrDeletionRejected, cause)
-		}
-		return result, cause
+		return result, normalizeDeletionError(e)
 	}
 	if out == nil {
 		return result, ErrUnavailable
@@ -47,4 +39,15 @@ func (p *S3) DeleteMutableObject(ctx context.Context, bucket, key, selector stri
 		id = "null"
 	}
 	return MutableDeleteResult{ProviderVersionID: id, DeleteMarker: aws.ToBool(out.DeleteMarker)}, nil
+}
+
+func normalizeDeletionError(e error) error {
+	cause := normalizeVersionHistoryError(e)
+	var response *smithyhttp.ResponseError
+	var service smithy.APIError
+	// Only a parsed permission rejection proves this attempt did not mutate.
+	if errors.As(e, &response) && response.HTTPStatusCode() == http.StatusForbidden && errors.As(e, &service) && service.ErrorCode() == "AccessDenied" {
+		cause = errors.Join(ErrDeletionRejected, cause)
+	}
+	return cause
 }

@@ -41,7 +41,7 @@ func (s *server) createObjectDeletion(w http.ResponseWriter, r *http.Request, ac
 	if !decodeObjectDeletion(w, r, &input) {
 		return
 	}
-	if input.VersionID != "" && input.VersionID != "null" {
+	if input.VersionID != "" && !state.ValidObjectVersionID(input.VersionID) {
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}

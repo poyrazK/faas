@@ -7,10 +7,6 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.object_deletion_request_version_id import (
-    ObjectDeletionRequestVersionId,
-    check_object_deletion_request_version_id,
-)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ObjectDeletionRequest")
@@ -22,8 +18,8 @@ class ObjectDeletionRequest:
 
     id: UUID
     key: str
-    version_id: ObjectDeletionRequestVersionId | Unset = UNSET
-    """Omit for ordinary deletion; null permanently removes the mutable null version."""
+    version_id: str | Unset = UNSET
+    """Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,9 +27,7 @@ class ObjectDeletionRequest:
 
         key = self.key
 
-        version_id: str | Unset = UNSET
-        if not isinstance(self.version_id, Unset):
-            version_id = self.version_id
+        version_id = self.version_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -55,12 +49,7 @@ class ObjectDeletionRequest:
 
         key = d.pop("key")
 
-        _version_id = d.pop("version_id", UNSET)
-        version_id: ObjectDeletionRequestVersionId | Unset
-        if isinstance(_version_id, Unset):
-            version_id = UNSET
-        else:
-            version_id = check_object_deletion_request_version_id(_version_id)
+        version_id = d.pop("version_id", UNSET)
 
         object_deletion_request = cls(
             id=id,

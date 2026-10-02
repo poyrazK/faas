@@ -9,7 +9,7 @@ import (
 )
 
 func cmdBucketDeletions(args []string) int {
-	usage := "usage: gregale bucket deletions start <app> <bucket-id> <key> <request-id> [null] | status <app> <bucket-id> <request-id>"
+	usage := "usage: gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null] | status <app> <bucket-id> <request-id>"
 	if len(args) < 4 || !api.ValidAppSlug(args[1]) {
 		PrintUsage(osStderr, usage, "bucket")
 		return 1
@@ -27,7 +27,7 @@ func cmdBucketDeletions(args []string) int {
 		id = args[4]
 		if len(args) == 6 {
 			selector = args[5]
-			if selector != "null" {
+			if !validDeletionVersionSelector(selector) {
 				PrintUsage(osStderr, usage, "bucket")
 				return 1
 			}
@@ -62,4 +62,12 @@ func cmdBucketDeletions(args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout)
 	return 0
+}
+
+func validDeletionVersionSelector(selector string) bool {
+	if selector == "null" {
+		return true
+	}
+	id, err := uuid.Parse(selector)
+	return err == nil && id.String() == selector && id.Version() == 4 && id.Variant() == uuid.RFC4122
 }

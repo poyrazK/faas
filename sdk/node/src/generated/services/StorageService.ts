@@ -677,8 +677,8 @@ export class StorageService {
     });
   }
   /**
-   * Delete the current object or mutable null version with a durable receipt
-   * Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Each intent dispatches at most once. Enabled buckets create an accounted delete marker. Pending attempts fence bucket writes and configuration until positive proof; elapsed time and absence never settle a dispatched mutation.
+   * Delete the current object or an owned version with a durable receipt
+   * Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Mutable intents dispatch at most once; recovery may retry only the exact owned immutable version. Ordinary deletes in Enabled buckets create an accounted marker. Pending attempts fence writes, configuration and inventories until positive acknowledgment or unique completion proof; elapsed time and absence never settle a dispatched mutation.
    * @returns ObjectDeletion Completed or failed receipt replay
    * @returns Problem Invalid request, access denied, unavailable accounting or conflicting mutation
    * @throws ApiError

@@ -15,7 +15,8 @@ type ObjectDeletionRequest struct {
 	VersionID string `json:"version_id,omitempty"`
 }
 
-// ObjectDeletion retains an uncertain attempt without redispatch or expiry.
+// ObjectDeletion retains uncertain attempts without expiry. Recovery can retry
+// exact immutable versions; mutable mutations require unique completion proof.
 type ObjectDeletion struct {
 	ID            string    `json:"id"`
 	BucketID      string    `json:"bucket_id"`

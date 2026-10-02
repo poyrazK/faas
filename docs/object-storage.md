@@ -1273,26 +1273,27 @@ grant are required. Cleanup remains available with object data ingress disabled.
 This permanently removes the selected immutable data version or marker.
 Removing a marker can reveal an older data version. The public selector survives
 deletion, so retrying after a lost acknowledgment or restart addresses the same
-version. A retry after removal can return a false marker flag. Missing or unowned
+version. Repeating the same receipt ID preserves its marker flag; a distinct request after removal can return false. Missing or unowned
 public selectors fail before provider contact. Private provider IDs are never
 accepted or returned.
 
 DeleteObjects supports these selectors with per-entry success/error results;
-quiet mode suppresses successes and retains errors. Pending mutable entries
-do not prevent valid immutable entries from being deleted. Conditional
+quiet mode suppresses successes and retains errors. An unsettled entry fences later entries for that bucket, including immutable
+versions, until completion is proven. Conditional
 DELETE, MFA and retention-bypass directives fail explicitly. Mutable `null`
 deletion and ordinary DELETE creating a marker use the durable
 admission/recovery implementation, including coordination with versioning changes.
 
 Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
 start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
-See [ADR-404](adr/404-immutable-s3-version-deletion.md).
+See [ADR-404](adr/404-immutable-s3-version-deletion.md) and
+[ADR-406](adr/406-immutable-deletion-inventory-coordination.md).
 
-Durable ordinary and null deletion uses `POST
+Durable ordinary, null and immutable deletion uses `POST
 /v1/apps/{slug}/buckets/{bucket}/objects/deletions` with an `id` UUID, `key`, and
-optional `version_id: "null"`. Reuse the same ID and payload for retries; read
+optional `version_id` set to `"null"` or an owned public version UUID. Reuse the same ID and payload for retries; read
 progress with `GET .../objects/deletions/{id}`. The CLI exposes
-`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [null]`
+`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null]`
 and `gregale bucket deletions status <app> <bucket-id> <request-id>`.
 S3 provider credentials must allow versioning discovery and deletion, plus
 version listing for Enabled marker preparation and recovery. See the
@@ -1302,12 +1303,17 @@ and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/AP
 S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
 invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
 Enabled deletion returns an owned marker version ID. A dispatched uncertain
-intent fences bucket writes, versioning and inventories. Recovery never resends
-DELETE. Enabled marker creation can recover from its persisted version baseline;
-preparation requires the exact key's history to fit in one complete provider
-response (at most 1000 versions/markers). A truncated history fails before
-mutation and releases the marker reservation. Reduce history with permanent
-immutable version deletion, then retry with a new request ID.
+intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
+immutable deletes use the same journal. Recovery can safely resend their exact
+owned private selector and settle only a valid acknowledgment; a rejection of a
+recovery attempt cannot prove that the earlier request finished. An initial
+known rejection releases the fence. Read the receipt rather than submitting a
+new identity while the bucket is fenced.
+Enabled marker creation can recover from its persisted complete version baseline.
+Preparation and recovery scan at most eight pages and 4096 versions/markers;
+all owned permanent deletes are excluded throughout the baseline scan. An
+incomplete or oversized history fails before mutation and releases the marker
+reservation. Reduce history with permanent deletion, then use a new request ID.
 Uncertain null/Suspended/unversioned deletion remains pending until a stronger
 completion-proof mechanism is available. A pending receipt never expires into
 success or a quota refund. Each ordinary versioned delete reserves one entry and
@@ -1316,7 +1322,7 @@ A parsed provider AccessDenied response with HTTP 403 records a failed
 `provider_rejected` receipt and releases its fence/reservation. Unidentified
 errors and timeouts retain the uncertain intent. A failed receipt cannot resend
 the mutation; use a new ID after correcting provider permissions.
-For bulk deletion, the response header identifies the batch. Mutable-entry
+For bulk deletion, the response header identifies the batch. Per-entry
 receipt IDs are UUIDv5 values using that UUID as namespace and `bulk-entry:N`
 as name, where N is the zero-based entry position. Retry the unchanged batch
 with the signed batch ID; the identity binds each position to its key/selector.

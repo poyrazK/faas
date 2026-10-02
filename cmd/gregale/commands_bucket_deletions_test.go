@@ -13,12 +13,13 @@ import (
 
 func TestBucketDeletionsCLI(t *testing.T) {
 	id, bucket := uuid.NewString(), uuid.NewString()
+	selector := "null"
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.Method == "POST" {
 			var in api.ObjectDeletionRequest
-			if json.NewDecoder(r.Body).Decode(&in) != nil || in.ID != id || in.Key != "key" || in.VersionID != "null" {
+			if json.NewDecoder(r.Body).Decode(&in) != nil || in.ID != id || in.Key != "key" || in.VersionID != selector {
 				t.Error(in)
 			}
 			w.WriteHeader(202)
@@ -38,7 +39,11 @@ func TestBucketDeletionsCLI(t *testing.T) {
 	if code := cmdBucket([]string{"deletions", "status", "demo", bucket, id}); code != 0 || calls != 2 {
 		t.Fatal(code, calls)
 	}
-	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "native"}); code != 1 || calls != 2 {
+	selector = uuid.NewString()
+	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, selector}); code != 0 || calls != 3 {
+		t.Fatal(code, calls)
+	}
+	if code := cmdBucket([]string{"deletions", "start", "demo", bucket, "key", id, "native"}); code != 1 || calls != 3 {
 		t.Fatal(code, calls)
 	}
 }

@@ -24,6 +24,8 @@ func readDeletion(ctx context.Context, db sqlc.DBTX, id string) (ObjectDeletion,
 		return ObjectDeletion{}, mapErr(e)
 	}
 	j := ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: pgUUIDString(r.BucketID), Key: r.ObjectKey, Selector: r.Selector, State: r.State, VersionID: r.VersionID, DeleteMarker: r.DeleteMarker, LastErrorCode: r.LastErrorCode, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time, ProviderStatus: r.ProviderStatus, ProviderVersionID: r.ProviderVersionID, ReservedBytes: r.ReservedBytes}
+	j.TargetProviderVersionID = r.TargetProviderVersionID
+	j.RecoveryClaimed = r.RecoveryClaimed
 	if e = json.Unmarshal(r.Baseline, &j.Baseline); e != nil || !validDeletionBaseline(j.Baseline) {
 		return ObjectDeletion{}, ErrConflict
 	}
@@ -38,7 +40,7 @@ func saveDeletion(ctx context.Context, db sqlc.DBTX, j ObjectDeletion) error {
 	if !j.LeaseUntil.IsZero() {
 		lease = objectUsageTime(j.LeaseUntil)
 	}
-	return mapErr(sqlc.New().ObjectDeletionSave(ctx, db, sqlc.ObjectDeletionSaveParams{ID: mustPgUUID(j.ID), State: j.State, Baseline: baseline, ProviderVersionID: j.ProviderVersionID, VersionID: j.VersionID, DeleteMarker: j.DeleteMarker, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt)}))
+	return mapErr(sqlc.New().ObjectDeletionSave(ctx, db, sqlc.ObjectDeletionSaveParams{ID: mustPgUUID(j.ID), State: j.State, Baseline: baseline, ProviderVersionID: j.ProviderVersionID, VersionID: j.VersionID, DeleteMarker: j.DeleteMarker, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), LastErrorCode: j.LastErrorCode, UpdatedAt: objectUsageTime(j.UpdatedAt), RecoveryClaimed: j.RecoveryClaimed}))
 }
 func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, policy api.ObjectStoragePolicy) (ObjectDeletion, bool, error) {
 	if !validDeletionIdentity(j) {
@@ -70,6 +72,12 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if !errors.Is(e, ErrNotFound) {
 		return old, false, e
 	}
+	if immutableDeletion(j) {
+		j.TargetProviderVersionID, e = q.ObjectVersionReferenceResolve(ctx, tx, sqlc.ObjectVersionReferenceResolveParams{ID: mustPgUUID(j.Selector), AccountID: mustPgUUID(j.AccountID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key})
+		if e != nil {
+			return j, false, mapErr(e)
+		}
+	}
 	fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(j.BucketID))
 	if e != nil {
 		return j, false, e
@@ -82,8 +90,10 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if e != nil && !errors.Is(e, ErrNotFound) {
 		return j, false, e
 	}
-	j.ProviderStatus = v.ObservedStatus
-	if fenced || ready.Pending > 0 || ready.Multipart || ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
+	if !immutableDeletion(j) {
+		j.ProviderStatus = v.ObservedStatus
+	}
+	if fenced || ready.Pending > 0 || ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	now, e := q.ObjectVersioningNow(ctx, tx)
@@ -94,7 +104,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if e != nil {
 		return j, false, e
 	}
-	if ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
+	if !immutableDeletion(j) && ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if j.Selector == "" && j.ProviderStatus != "" {
@@ -116,7 +126,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	j.UpdatedAt = now.Time
 	j.RetryAt = now.Time
 	j.LeaseUntil = now.Time.Add(api.ObjectDeletionLease)
-	e = q.ObjectDeletionInsert(ctx, tx, sqlc.ObjectDeletionInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, Selector: j.Selector, ProviderStatus: j.ProviderStatus, ReservedBytes: j.ReservedBytes, LeaseToken: j.Token, LeaseUntil: objectUsageTime(j.LeaseUntil), RetryAt: objectUsageTime(now.Time)})
+	e = q.ObjectDeletionInsert(ctx, tx, sqlc.ObjectDeletionInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, Selector: j.Selector, TargetProviderVersionID: j.TargetProviderVersionID, ProviderStatus: j.ProviderStatus, ReservedBytes: j.ReservedBytes, LeaseToken: j.Token, LeaseUntil: objectUsageTime(j.LeaseUntil), RetryAt: objectUsageTime(now.Time)})
 	if e != nil {
 		return j, false, mapErr(e)
 	}
@@ -221,6 +231,7 @@ func (s *PgStore) ClaimObjectDeletion(ctx context.Context, id, token string) (Ob
 			return j, ErrConflict
 		}
 		j.Token = token
+		j.RecoveryClaimed = j.RecoveryClaimed || j.State == "dispatched"
 		j.LeaseUntil = now.Add(api.ObjectDeletionLease)
 		j.UpdatedAt = now
 		return j, nil

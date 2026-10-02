@@ -39,15 +39,25 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 		}
 		return cloneDeletion(old), false, nil
 	}
+	if immutableDeletion(j) {
+		identity, exists := m.objectVersionReferenceIDs[j.Selector]
+		v := m.objectVersionReferences[identity]
+		if !exists || v.Key != j.Key || v.ProviderVersionID == "null" || identity != versionReferenceIdentity(b.ID, v) {
+			return ObjectDeletion{}, false, ErrNotFound
+		}
+		j.TargetProviderVersionID = v.ProviderVersionID
+	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
 	v := m.objectBucketVersioning[b.ID]
-	if b.State != "ready" || m.objectCapacityFencedLocked(b.ID) || pending > 0 || multipart || unsafe && (versions || v.ObservedStatus != "") {
+	if b.State != "ready" || m.objectCapacityFencedLocked(b.ID) || pending > 0 || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
-	if versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {
+	if !immutableDeletion(j) && versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
-	j.ProviderStatus = v.ObservedStatus
+	if !immutableDeletion(j) {
+		j.ProviderStatus = v.ObservedStatus
+	}
 	if j.Selector == "" && j.ProviderStatus != "" {
 		j.ReservedBytes = int64(len(j.Key))
 		if _, _, err := checkObjectAdmission(m.objectUsageLocked(j.AccountID, m.clock()), b.ID, j.ReservedBytes, 0, false, true, policy, m.clock()); err != nil {
@@ -104,7 +114,9 @@ func (m *MemStore) FinishObjectDeletion(_ context.Context, result ObjectDeletion
 		return cloneDeletion(j), ErrConflict
 	}
 	if result.ProviderVersionID != "" {
-		if result.ProviderVersionID == "null" {
+		if immutableDeletion(j) {
+			result.VersionID = j.Selector
+		} else if result.ProviderVersionID == "null" {
 			result.VersionID = "null"
 		} else {
 			result.VersionID = uuid.NewString()
@@ -160,6 +172,7 @@ func (m *MemStore) ClaimObjectDeletion(_ context.Context, id, token string) (Obj
 		return cloneDeletion(j), ErrConflict
 	}
 	j.Token = token
+	j.RecoveryClaimed = j.RecoveryClaimed || j.State == "dispatched"
 	j.LeaseUntil = now.Add(api.ObjectDeletionLease)
 	j.UpdatedAt = now
 	m.objectDeletions[id] = cloneDeletion(j)

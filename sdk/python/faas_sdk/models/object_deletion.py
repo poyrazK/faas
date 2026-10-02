@@ -9,7 +9,6 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.object_deletion_last_error_code import ObjectDeletionLastErrorCode, check_object_deletion_last_error_code
-from ..models.object_deletion_selector import ObjectDeletionSelector, check_object_deletion_selector
 from ..models.object_deletion_state import ObjectDeletionState, check_object_deletion_state
 from ..types import UNSET, Unset
 
@@ -23,13 +22,15 @@ class ObjectDeletion:
     id: UUID
     bucket_id: UUID
     key: str
-    selector: ObjectDeletionSelector
+    selector: str
+    """Empty for ordinary deletion; null or the selected owned public version UUID otherwise."""
     state: ObjectDeletionState
     delete_marker: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
     version_id: str | Unset = UNSET
-    """Public marker UUID or null when acknowledged; private provider IDs are never exposed."""
+    """Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are
+    never exposed."""
     last_error_code: ObjectDeletionLastErrorCode | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -40,7 +41,7 @@ class ObjectDeletion:
 
         key = self.key
 
-        selector: str = self.selector
+        selector = self.selector
 
         state: str = self.state
 
@@ -86,7 +87,7 @@ class ObjectDeletion:
 
         key = d.pop("key")
 
-        selector = check_object_deletion_selector(d.pop("selector"))
+        selector = d.pop("selector")
 
         state = check_object_deletion_state(d.pop("state"))
 
