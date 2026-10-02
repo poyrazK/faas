@@ -71,6 +71,12 @@ const (
 const (
 	KafkaSASLPasswordMaxBytes = 4 * 1024
 	KafkaTLSClientKeyMaxBytes = 64 * 1024
+	RedisPasswordMaxBytes     = 4 * 1024
+	NATSPasswordMaxBytes      = 4 * 1024
+	NATSTokenMaxBytes         = 4 * 1024
+	NATSCredentialsMaxBytes   = 64 * 1024
+	NATSNKeyMaxBytes          = 4 * 1024
+	TLSClientKeyMaxBytes      = 64 * 1024
 )
 
 // BrokerPoisonStrategy is the closed-vocabulary carrier for the

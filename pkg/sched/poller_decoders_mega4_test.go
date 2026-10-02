@@ -221,10 +221,28 @@ func TestDecodeNATSConfig_Mega4(t *testing.T) {
 
 func TestDecodeNATSConfig_Happy_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := decodeNATSConfig(triggerWithConfig_Mega4(
+	cfg, err := decodeNATSConfig(triggerWithConfig_Mega4(
 		`{"url":"nats://x","stream":"s","subject":"sub"}`))
 	if err != nil {
 		t.Errorf("happy: %v", err)
+	}
+	if cfg.URL != "nats://x" || cfg.Stream != "s" || cfg.Subject != "sub" {
+		t.Errorf("unexpected cfg: %+v", cfg)
+	}
+}
+
+func TestDecodeNATSConfig_AuthAndTLS_Mega4(t *testing.T) {
+	t.Parallel()
+	cfg, err := decodeNATSConfig(triggerWithConfig_Mega4(
+		`{"url":"tls://nats.prod:4222","stream":"s","subject":"sub","token":"tok-123","username":"usr","password":"pwd","nkey":"SUA...","credentials":"jwt","tls":{"skip_verify":true,"ca_cert":"pem"}}`))
+	if err != nil {
+		t.Fatalf("auth and tls decode: %v", err)
+	}
+	if cfg.Token != "tok-123" || cfg.Username != "usr" || cfg.Password != "pwd" || cfg.NKey != "SUA..." || cfg.Credentials != "jwt" {
+		t.Errorf("credentials mismatch: %+v", cfg)
+	}
+	if cfg.TLS == nil || !cfg.TLS.SkipVerify || cfg.TLS.CACert != "pem" {
+		t.Errorf("tls mismatch: %+v", cfg.TLS)
 	}
 }
 
@@ -239,7 +257,7 @@ func TestDecodeRedisConfig_Mega4(t *testing.T) {
 	}{
 		{"empty", "", "trigger missing config"},
 		{"malformed", "{bad", "decode config"},
-		{"missing addr", `{"stream":"s","group":"g"}`, "missing addr"},
+		{"missing addr", `{"stream":"s","group":"g"}`, "missing addr or url"},
 		{"missing stream", `{"addr":"a","group":"g"}`, "missing stream"},
 		{"missing group", `{"addr":"a","stream":"s"}`, "missing group"},
 	} {
@@ -259,10 +277,39 @@ func TestDecodeRedisConfig_Mega4(t *testing.T) {
 
 func TestDecodeRedisConfig_Happy_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := decodeRedisConfig(triggerWithConfig_Mega4(
+	cfg, err := decodeRedisConfig(triggerWithConfig_Mega4(
 		`{"addr":"a","stream":"s","group":"g"}`))
 	if err != nil {
 		t.Errorf("happy: %v", err)
+	}
+	if cfg.Addr != "a" || cfg.Stream != "s" || cfg.Group != "g" {
+		t.Errorf("unexpected cfg: %+v", cfg)
+	}
+}
+
+func TestDecodeRedisConfig_URLAndTLS_Mega4(t *testing.T) {
+	t.Parallel()
+	// Test rediss:// URL with DB and rich TLS
+	cfg, err := decodeRedisConfig(triggerWithConfig_Mega4(
+		`{"url":"rediss://default:pwd@redis.io:6379/2","stream":"s","group":"g","db":2,"tls":{"skip_verify":true,"ca_cert":"pem"}}`))
+	if err != nil {
+		t.Fatalf("url and tls decode: %v", err)
+	}
+	if cfg.URL != "rediss://default:pwd@redis.io:6379/2" || cfg.DB != 2 {
+		t.Errorf("url/db mismatch: %+v", cfg)
+	}
+	if cfg.TLS == nil || !cfg.TLS.Enabled || cfg.TLS.Config == nil || !cfg.TLS.Config.SkipVerify {
+		t.Errorf("tls mismatch: %+v", cfg.TLS)
+	}
+
+	// Test boolean tls: true
+	cfgBool, err := decodeRedisConfig(triggerWithConfig_Mega4(
+		`{"addr":"localhost:6379","stream":"s","group":"g","tls":true}`))
+	if err != nil {
+		t.Fatalf("boolean tls decode: %v", err)
+	}
+	if cfgBool.TLS == nil || !cfgBool.TLS.Enabled || cfgBool.TLS.Config != nil {
+		t.Errorf("boolean tls mismatch: %+v", cfgBool.TLS)
 	}
 }
 
