@@ -9,13 +9,14 @@ on:
         required: true
         type: string
       operation:
-        description: Read-only inspection or component activation
+        description: Read-only inspection, component activation, or exact owned rollback
         required: true
         type: choice
         default: inspect
         options:
           - inspect
           - apply
+          - rollback
 
 concurrency:
   group: production-us-platform-rollout

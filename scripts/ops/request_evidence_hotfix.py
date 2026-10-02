@@ -136,7 +136,7 @@ def deploy(remote, upload, public_gate, record):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cosign', required=True)
-    parser.add_argument('--operation', choices=['inspect', 'apply'], default='inspect')
+    parser.add_argument('--operation', choices=['inspect', 'apply', 'rollback'], default='inspect')
     args = parser.parse_args()
     def cancelled(signum, frame):
         raise RuntimeError('Component hotfix interrupted')
@@ -196,10 +196,21 @@ def main():
                 for target, _ in TARGETS:
                     record(target, remote(target, 'inspect'))
                 record('public_ingress', {'status': 'public_ingress_passed', 'gates': public_health()})
+            elif args.operation == 'rollback':
+                failures = []
+                for target, _ in reversed(TARGETS):
+                    try:
+                        record(target, remote(target, 'rollback'))
+                    except Exception as error:
+                        failures.append({'target': target, 'error_type': type(error).__name__})
+                if failures:
+                    record('rollback_failures', failures)
+                    raise RuntimeError('Component rollback failed')
+                record('public_ingress', {'status': 'public_ingress_passed', 'gates': public_health()})
             else:
                 record('before_activation', {'status': 'public_ingress_passed', 'gates': public_health()})
                 deploy(remote, upload, public_health, record)
-        receipt['status'] = 'inspected' if args.operation == 'inspect' else 'applied'
+        receipt['status'] = {'inspect': 'inspected', 'apply': 'applied', 'rollback': 'rolled_back'}[args.operation]
         record('complete', {'operation': args.operation, 'activation_performed': args.operation == 'apply',
                             'live_scenario_acceptance_pending': True})
     except BaseException as error:

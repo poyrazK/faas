@@ -95,6 +95,7 @@ def require_owned_dropin():
 
 
 def rollback():
+    assert str(Path('/opt/faas/current').resolve()) == '/opt/faas/releases/' + BASE, 'A later release is active; refusing this old rollback'
     if DROP.exists():
         require_owned_dropin()
         DROP.unlink()

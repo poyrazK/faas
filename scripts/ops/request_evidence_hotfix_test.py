@@ -18,6 +18,14 @@ import urllib.error
 
 
 class HotfixContracts(unittest.TestCase):
+    def test_rollback_cannot_restart_a_later_full_release(self):
+        with patch.object(Path, 'resolve', return_value=Path('/opt/faas/releases/later-source')), \
+             patch.object(host, 'command') as unit, patch.object(Path, 'unlink') as remove:
+            with self.assertRaises(AssertionError):
+                host.rollback()
+            unit.assert_not_called()
+            remove.assert_not_called()
+
     def test_signed_storage_download_does_not_receive_the_github_token(self):
         headers = Message()
         headers['Location'] = 'https://storage.example.test/artifact?signature=public-test'
