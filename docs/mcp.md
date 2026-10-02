@@ -52,6 +52,47 @@ Tools with invalid parameter-header annotations are excluded from discovery;
 Other valid tools remain available. A malformed response or duplicate tool name
 still fails discovery.
 
+## Tool contract snapshots
+
+Capture a caller-visible tool interface before changing a server:
+
+```sh
+gregale mcp lock --app my-mcp --out baseline.json
+gregale mcp lock --url https://candidate.example.com/mcp --out candidate.json
+gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+`lock` discovers tools without executing them. Its default destination is
+`gregale-mcp.lock.json`; `--legacy` captures the stateless 2025-11-25 interface.
+Snapshots contain the protocol version, tool names, descriptions, input/output
+schemas and annotations. They omit endpoint URLs, timestamps and client credentials.
+Tool names and JSON object keys are sorted, and schema numbers keep their precision.
+Discovery that rejects any tool cannot produce a complete snapshot and fails
+without writing a file. Existing snapshots require a new `--out` or explicit
+`--force`; writes are atomic with private file permissions and reject symlinks.
+
+Use the same authorization context for both captures: a caller's scopes can change
+which tools are visible. Review tool metadata before committing it; it is supplied
+by the server and may contain private information. Snapshots do not record the
+identity or permissions used to capture them.
+
+`diff` reads two local files without making network requests. It reports removed
+tools/properties, new required inputs, narrowed input types/enums, weakened output
+guarantees, metadata changes and changes needing review. Required-field, type-set
+and enum ordering is ignored. Protocol and annotation changes need review;
+annotations never grant execution permission. Other changed schema keywords,
+including constraints, references and combinators, need review. References are
+preserved without fetching them. Changed subtrees beyond 64 property/item levels
+also need review; snapshots retain their full contents. The comparison does not prove arbitrary
+JSON Schema compatibility or unchanged tool behavior. Property removal is treated
+conservatively as breaking even where JSON Schema would still permit that key.
+
+Without `--check`, a successful comparison exits zero and prints its findings.
+With `--check`, breaking changes **or** changes needing review exit one; unchanged
+contracts and informational changes exit zero. Invalid snapshots fail either mode.
+This is an explicit local CI check; it does not switch traffic, enforce platform
+promotion policy or invoke tools.
+
 ## External OAuth
 
 Before adding sensitive tools, change `auth` in `gregale-mcp.json`:

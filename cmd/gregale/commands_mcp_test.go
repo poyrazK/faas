@@ -115,7 +115,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "--token-env", "--stream-tool", "--arguments-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--force", "--token-env", "--stream-tool", "--arguments-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}

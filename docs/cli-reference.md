@@ -236,6 +236,43 @@ Examples:
 gregale mcp config --app my-mcp --name my-mcp
 ```
 
+### mcp lock
+
+Capture a complete tool contract without invoking tools
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing a client token |  |
+| `--legacy` | use protocol 2025-11-25 |  |
+| `--out <PATH>` | snapshot destination (default gregale-mcp.lock.json) |  |
+| `--force` | replace an existing regular snapshot file |  |
+| `--timeout <DURATION>` | total discovery timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp lock --app my-mcp --out baseline.json
+```
+
+### mcp diff
+
+Compare local tool contracts and report changes needing review
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | baseline MCP contract snapshot | required |
+| `--after <PATH>` | candidate MCP contract snapshot | required |
+| `--check` | fail on breaking changes or changes needing review |  |
+
+Examples:
+
+```sh
+gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
 
 ## account
 

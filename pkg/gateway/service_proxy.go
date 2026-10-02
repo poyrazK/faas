@@ -261,6 +261,9 @@ type ServiceProxyConfig struct {
 	// fails closed when the override header is present.
 	ValidateDeployment ServiceProxyDeploymentValidator
 	ResolveChaos       ServiceProxyChaosResolver
+	// ObserveRequest receives only an actual vmmd response from the selected
+	// target, never a platform rejection or synthetic chaos response (ADR-429).
+	ObserveRequest func(*http.Request, ServiceRequestObservation)
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -311,6 +314,7 @@ type ServiceProxy struct {
 	wakeDeployment        ServiceProxyDeploymentWaker
 	validateDeployment    ServiceProxyDeploymentValidator
 	resolveChaos          ServiceProxyChaosResolver
+	observeRequest        func(*http.Request, ServiceRequestObservation)
 	metrics               *Metrics
 	endpointTTL           time.Duration
 	now                   func() time.Time
@@ -410,6 +414,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		wakeDeployment:        cfg.WakeDeployment,
 		validateDeployment:    cfg.ValidateDeployment,
 		resolveChaos:          cfg.ResolveChaos,
+		observeRequest:        cfg.ObserveRequest,
 		metrics:               cfg.Metrics,
 		endpointTTL:           ttl,
 		now:                   now,
@@ -938,11 +943,11 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 			return
 		}
 		p.countForward(woken)
-		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints)
+		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
 	p.countForward(woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints)
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold
@@ -1338,7 +1343,7 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 // bridge. There is no retry and no response buffering: the response is a
 // hijacked connection, so the first endpoint chosen is the only one, and a
 // stale-target signal cannot be acted on after bytes have flowed.
-func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	endpoint, ok := p.pick(target.AppID, endpoints)
 	if !ok {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
@@ -1353,9 +1358,11 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
 	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
 	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
+	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
 	probeWriter := &serviceProxyUpgradeProbeWriter{
 		ResponseWriter: w,
 		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
+		onResponse:     observe,
 	}
 	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
 	if signal.stale.Load() || probeWriter.handshake {
@@ -1378,6 +1385,7 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 type serviceProxyUpgradeProbeWriter struct {
 	http.ResponseWriter
 	onHandshake func()
+	onResponse  func(int)
 	status      int
 	handshake   bool
 }
@@ -1385,6 +1393,9 @@ type serviceProxyUpgradeProbeWriter struct {
 func (w *serviceProxyUpgradeProbeWriter) WriteHeader(status int) {
 	if w.status == 0 {
 		w.status = status
+		if w.onResponse != nil {
+			w.onResponse(status)
+		}
 		if status == http.StatusSwitchingProtocols {
 			w.handshake = true
 			w.onHandshake()
@@ -1408,7 +1419,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1467,6 +1478,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
+		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
 		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
@@ -1780,11 +1792,12 @@ func serviceProxyGRPCStatus(header http.Header) (string, bool) {
 }
 
 type serviceProxyResponseWriter struct {
-	dst       http.ResponseWriter
-	header    http.Header
-	status    int
-	committed bool
-	buffer    bytes.Buffer
+	onResponse func(int)
+	dst        http.ResponseWriter
+	header     http.Header
+	status     int
+	committed  bool
+	buffer     bytes.Buffer
 }
 
 func newServiceProxyResponseWriter(dst http.ResponseWriter) *serviceProxyResponseWriter {
@@ -1798,6 +1811,9 @@ func (w *serviceProxyResponseWriter) WriteHeader(status int) {
 		return
 	}
 	w.status = status
+	if w.onResponse != nil {
+		w.onResponse(status)
+	}
 	if status < http.StatusInternalServerError {
 		w.commit()
 	}

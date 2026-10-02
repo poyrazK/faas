@@ -20,7 +20,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|call|config [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|call|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -28,6 +28,10 @@ func cmdMCP(args []string) int {
 		return cmdMCPInit(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "lock":
+		return cmdMCPLock(args[1:])
+	case "diff":
+		return cmdMCPDiff(args[1:])
 	case "doctor", "tools", "call", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:

@@ -55,6 +55,17 @@ that journey and the production scanner upgrade still required for an untouched
 dependency-lockfile deployment.
 
 Follow-on work includes gateway-owned OAuth and per-tool policy/metrics, contract
-diffs and rollout checks, durable Tasks backed by Jobs, and customer-isolated
+promotion checks, durable Tasks backed by Jobs, and customer-isolated
 execution. These require separate acceptance and must not be advertised as shipped
 by this implementation.
+
+## Local tool contract checks
+
+`mcp lock` captures a deterministic caller-visible tool catalog without execution,
+endpoint identity or credentials. Partial discovery cannot publish a snapshot.
+`mcp diff` compares local snapshots with conservative input/output directionality;
+unknown changed schema keywords and annotations require review. `--check` fails
+for both structural breaks and review requirements. References are never fetched.
+These commands extend the diagnostic profile without changing deployment ownership
+or creating automatic traffic-promotion gates. Compare catalogs captured with the
+same permissions; tool behavior and arbitrary schema compatibility remain unproven.
