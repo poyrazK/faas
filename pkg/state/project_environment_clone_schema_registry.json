@@ -513,6 +513,8 @@
     "columns": ["account_id", "attempt_count", "configuration_capture_version", "created_at", "error_code", "id", "idempotency_key", "lease_token", "lease_until", "next_attempt_at", "project_id", "resources", "revision", "source_environment", "source_release_set_id", "source_revision_hash", "status", "target_environment", "target_release_set_id", "updated_at"]},
   {"table": "project_environment_clone_postgres_bindings", "kind": "operational",
     "columns": ["operation_id", "preparation", "preparation_hash", "reservation_hash", "source_binding_id", "target_binding_id"]},
+  {"table": "project_environment_clone_postgres_snapshot_restores", "kind": "operational",
+    "columns": ["account_id", "backend_fingerprint", "backend_id", "created_at", "observed_at", "operation_id", "request_started_at", "restored_at", "source_database_id", "state", "target_created_at", "target_owner_id", "target_provider_resource_id", "updated_at"]},
   {"table": "project_environment_clone_postgres_snapshots", "kind": "operational",
     "columns": ["backend_fingerprint", "backend_id", "capture_point", "cleanup_observed_at", "created_at", "observed_at", "operation_id", "provider_snapshot_id", "request_started_at", "snapshot_created_at", "source_data_resource_id", "source_database_id", "source_provider_resource_id", "source_version", "state", "updated_at"]},
   {"table": "project_environment_clone_postgres_write_fences", "kind": "operational",

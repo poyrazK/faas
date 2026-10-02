@@ -51,11 +51,17 @@ func (s *cloneSnapshotFailureStore) FinishProjectEnvironmentClonePostgresSnapsho
 
 type cloneSnapshotProvider struct {
 	environmentClonePostgresProvider
-	actual                      managedpostgres.DatabaseSnapshot
-	request                     managedpostgres.SnapshotCaptureRequest
-	creates, finds, deletes     int
-	loseCreation, pendingDelete bool
-	deadlineMissing             bool
+	actual                                  managedpostgres.DatabaseSnapshot
+	request                                 managedpostgres.SnapshotCaptureRequest
+	creates, finds, deletes                 int
+	loseCreation, pendingDelete             bool
+	deadlineMissing                         bool
+	forkActual                              managedpostgres.SnapshotRestoreObservation
+	forkRequest                             managedpostgres.SnapshotRestoreRequest
+	forkDefinition                          managedpostgres.RestoreSourceDefinition
+	forkCreates, forkFinds                  int
+	loseForkCreation, hideFork, forkPending bool
+	beforeForkCreate                        func(context.Context, managedpostgres.SnapshotRestoreRequest) error
 }
 
 func (p *cloneSnapshotProvider) CaptureSnapshot(ctx context.Context, r managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {

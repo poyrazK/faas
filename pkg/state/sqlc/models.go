@@ -3819,6 +3819,23 @@ type ProjectEnvironmentClonePostgresSnapshot struct {
 	RequestStartedAt         pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresSnapshotRestore struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	AccountID                pgtype.UUID
+	TargetOwnerID            pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	State                    string
+	TargetProviderResourceID pgtype.Text
+	TargetCreatedAt          pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+	ObservedAt               pgtype.Timestamptz
+	RestoredAt               pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresWriteFence struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

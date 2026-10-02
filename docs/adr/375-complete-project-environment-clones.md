@@ -3390,7 +3390,8 @@ frozen. Recovery discovers the original name until its opaque identity is
 persisted, then reads only that identity. Discovery cannot create a replacement;
 a missing pinned target cannot authorize another POST. Creation requires the
 caller's already committed target ownership and first-dispatch receipt. The
-control-plane dispatch registry and worker integration are still required.
+control-plane dispatch receipt is supplied by the private durable fork worker
+described below; public clone dispatch remains separately gated.
 
 The [Neon snapshot restore API](https://api-docs.neon.tech/reference/restoresnapshot)
 is explicitly called with `finalize_restore: false` and the captured source
@@ -3611,3 +3612,70 @@ exhaustion interrupted an intermediate final check; the existing test server
 recovered, unused verified test templates were removed, and the final worker
 rerun passed. Full repository, live-provider and native acceptance remain
 unverified.
+
+### Durable native snapshot fork dispatch and worker recovery (2026-10-02)
+
+`project_environment_clone_postgres_snapshot_restores` now reserves one private
+target owner per operation and captured database. Its foreign key retains the
+original snapshot receipt. Account, backend fingerprint and target owner cannot
+be selected by the caller; they derive from the authenticated capture. New
+reservation checks the live source placement under its lifecycle row lock and
+requires an independently retained snapshot. It does not consult a finite PITR
+window after retention. A capturing resource must still have its original
+captured state and no catalogue target.
+
+Reserved targets count against the existing managed database account quota.
+The same account row lock and combined count protect ordinary customer database
+creation, older clone reservations and these private native forks. Recovery
+reuses an existing reservation when limits or new provisioning admission change.
+The future adoption/retirement lifecycle must transfer or release that quota
+without double counting; it is not implemented by this increment.
+
+The private receipt advances from reserved to requested before provider IO,
+then to restoring or restored through exact independent observations. Its
+snapshot, source dataset, capture point, snapshot creation time and first target
+identity/creation time are immutable. Ready observations cannot regress, and
+replays preserve the first completion time. SQL-clock authority is rechecked
+after account/source/snapshot/receipt row waits. Future target creation times
+and times that cannot be represented exactly at PostgreSQL microsecond precision
+are rejected.
+
+The capture worker renews its lease and bounds native calls by that lease.
+Only a worker receiving the first committed dispatch may call restore. An
+unknown commit, lost provider reply, delayed visibility or lost observation
+acknowledgement recovers through discovery, using the reserved owner and then
+the exact persisted native identity. An unknown dispatch that never becomes
+visible retains its recovery intent; this seam cannot authorize another POST
+or prove remote retirement from absence alone.
+
+Native storage completion cannot publish a target or advance to copying.
+Operations with these receipts retain capture/compensation authority until a
+qualified adoption or retirement lifecycle exists. Snapshot cleanup likewise
+refuses to discard a snapshot with an unresolved fork. No public capture path
+invokes the new worker yet, and the existing data-bearing admission gate remains
+closed. Required next work includes native fork cleanup and catalogue adoption,
+copied SQL auxiliary/credential/admission isolation, endpoint configuration,
+complete writer coverage and coordinated database/object capture, all remaining
+configuration strategies, promotion/rollback, and provider/native acceptance.
+No live provider resource was changed.
+
+Verification: the final state run passes all 13 selected original contracts
+against the private migrated PostgreSQL harness (27.500 s, no skips), including
+the four new fork contracts, existing snapshot lifecycle contracts and the
+migrated schema inventory. They cover durable dispatch, quota interoperability,
+source placement changes, immutable observations, worker takeover, cleanup and
+phase guards, and four independently confirmed row-lock waits with expired
+leases. The final coordinator run passes 14 selected original contracts
+(24.637 s, no skips), including the three new native fork worker recovery
+contracts and existing configuration/capture/snapshot regressions. State and
+coordinator runs retain all 523 and 442 production files respectively through
+external test-only AST overlays. Native observations in these runs are metadata
+fixtures; the preceding service/Neon HTTP contracts provide separate adapter
+evidence. SQLC independently regenerates both packages byte-for-byte, `go vet`
+and `git diff --check` pass. Local disk exhaustion interrupted an intermediate
+state run; only reconstructible task cache objects and inactive verified
+task-owned test templates were removed before the final passing rerun. The
+original snapshot expiry tests now set explicit short fixture deadlines,
+preserving their independently observed row-lock waits; ordinary lease renewal
+only extends a lease and had kept their minute-long initial deadlines.
+Full repository, live-provider and native acceptance remain unverified.

@@ -231,8 +231,9 @@ func TestPgClonePostgresSnapshotReservationRejectsSourceChanges(t *testing.T) {
 
 func TestPgClonePostgresSnapshotRejectsExpiredLeaseAfterSourceLock(t *testing.T) {
 	s, ctx, pool, lease, sourceID := clonePostgresSnapshotFixture(t)
-	lease, err := s.RenewProjectEnvironmentCloneLease(ctx, lease, 300*time.Millisecond)
-	if err != nil {
+	// Renewal extends an existing minute lease; it cannot shorten it. Set an
+	// explicit test deadline before confirming the blocked worker's lock wait.
+	if err := pool.QueryRow(ctx, "update project_environment_clone_operations set lease_until=clock_timestamp()+interval '400 milliseconds' where id=$1 returning lease_until", lease.Operation.ID).Scan(&lease.ExpiresAt); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := pool.Begin(ctx)
@@ -290,8 +291,7 @@ func TestPgClonePostgresSnapshotMutationsExpireWhileWaitingOnReceipt(t *testing.
 					}
 				}
 			}
-			lease, err = s.RenewProjectEnvironmentCloneLease(ctx, lease, 300*time.Millisecond)
-			if err != nil {
+			if err := pool.QueryRow(ctx, "update project_environment_clone_operations set lease_until=clock_timestamp()+interval '400 milliseconds' where id=$1 returning lease_until", lease.Operation.ID).Scan(&lease.ExpiresAt); err != nil {
 				t.Fatal(err)
 			}
 			lock, err := pool.Begin(ctx)

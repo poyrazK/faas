@@ -10527,6 +10527,35 @@ CREATE TABLE public.project_environment_clone_postgres_bindings (
 
 
 --
+-- Name: project_environment_clone_postgres_snapshot_restores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshot_restores (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    target_owner_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    target_provider_resource_id text,
+    target_created_at timestamp with time zone,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    restored_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_pos_target_provider_resource_id_check CHECK (((target_provider_resource_id IS NULL) OR ((target_provider_resource_id <> ''::text) AND (length(target_provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_s_backend_fingerprint_check1 CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_re_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restore_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'restoring'::text, 'restored'::text]))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check CHECK ((target_owner_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check1 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL)) OR ((state = 'restoring'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NULL)) OR ((state = 'restored'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check2 CHECK (((target_created_at IS NULL) OR (target_created_at <= observed_at)))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshots; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15341,6 +15370,14 @@ ALTER TABLE ONLY public.project_environment_clone_operations
 
 
 --
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_backend_id_backend_fingerpri_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerpri_key1 UNIQUE (backend_id, backend_fingerprint, target_provider_resource_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshots project_environment_clone_pos_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15362,6 +15399,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_pkey PRIMARY KEY (operation_id, source_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_restores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_target_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_target_owner_id_key UNIQUE (target_owner_id);
 
 
 --
@@ -25716,6 +25769,14 @@ ALTER TABLE ONLY public.project_environment_clone_operations
 
 
 --
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_fkey FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshots(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
 -- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindi_target_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25737,6 +25798,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
     ADD CONSTRAINT project_environment_clone_postgres_snap_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_res_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_res_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
 
 
 --
