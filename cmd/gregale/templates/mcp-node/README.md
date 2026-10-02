@@ -28,7 +28,12 @@ The starter explicitly uses public access. Before adding sensitive tools, set:
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
   "resource": "https://my-mcp.gregale.dev/mcp",
-  "scopes": ["mcp:tools"]
+  "scopes": ["mcp:tools"],
+  "tool_scopes": {
+    "greet": [],
+    "add": ["math:read"],
+    "stream_demo": ["mcp:stream"]
+  }
 }
 ```
 
@@ -37,9 +42,26 @@ canonical MCP resource audience. The resource server verifies RS256/ES256 JWT
 access tokens with an expiry and subject, issuer, audience and all required
 scopes. Opaque tokens need a provider-specific introspection adapter. The provider
 owns registration, login and consent; this starter does not implement those flows.
-Scopes cover the endpoint; add tool-specific policy before serving different tool
-permissions to different clients. Use a client token via `--token-env MCP_TOKEN`;
-Gregale CLI account credentials are never forwarded to this server.
+`auth.scopes` cover the endpoint. `auth.tool_scopes` adds scopes required for each
+tool: all listed scopes must be present in the verified JWT. `[]` permits every
+endpoint caller; an omitted tool is denied when the map is configured. An empty
+map denies all tools. Open mode accepts only empty scope arrays, and the generated
+starter explicitly allows its three harmless tools. Null policies/arrays fail
+validation. Omitting the entire map retains endpoint-only compatibility.
+
+Add tools through the `registerTool` helper in `app.js` and add their policy to
+`gregale-mcp.json`. Each request gets a fresh catalog filtered by verified scopes.
+Calls to hidden tools fail before execution; insufficient scopes produce a 403
+bearer challenge with the additional required scopes. The callback guard also
+checks the SDK's verified request context. Client headers, arguments and tool
+annotations cannot grant permission. Check ownership of any tenant/object inside
+the tool using verified identity (`ctx.http.authInfo.extra.subject`), never an
+unverified tenant ID from arguments. This is application policy, so custom servers
+must implement their own enforcement.
+
+Use a client token via `--token-env MCP_TOKEN`; Gregale CLI account credentials are
+never forwarded to this server. Capture `mcp lock` baselines with the same identity
+and scopes when comparing a candidate server.
 
 Keep durable state outside the VM. Avoid fetching customer credentials before
 checkpointing; fetch short-lived credentials during a verified tool request.
