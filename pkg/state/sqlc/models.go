@@ -3834,6 +3834,9 @@ type ProjectEnvironmentClonePostgresSnapshotRestore struct {
 	RestoredAt               pgtype.Timestamptz
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
+	DeletionStartedAt        pgtype.Timestamptz
+	DeletedAt                pgtype.Timestamptz
+	DeleteOperationIds       []byte
 }
 
 type ProjectEnvironmentClonePostgresWriteFence struct {

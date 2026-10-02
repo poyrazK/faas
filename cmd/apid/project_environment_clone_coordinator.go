@@ -127,6 +127,14 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 		if err != nil {
 			return lease, err
 		}
+		var forksRetired bool
+		lease, forksRetired, err = s.cleanupProjectEnvironmentClonePostgresSnapshotRestores(ctx, lease)
+		if err != nil {
+			return lease, err
+		}
+		if !forksRetired {
+			return lease, errCloneCompensationUnavailable
+		}
 		lease, _, err = s.cleanupProjectEnvironmentClonePostgresSnapshots(ctx, lease)
 		if err != nil {
 			return lease, err

@@ -3679,3 +3679,79 @@ original snapshot expiry tests now set explicit short fixture deadlines,
 preserving their independently observed row-lock waits; ordinary lease renewal
 only extends a lease and had kept their minute-long initial deadlines.
 Full repository, live-provider and native acceptance remain unverified.
+
+### Owned native snapshot fork retirement (2026-10-03)
+
+The private fork receipt now preserves deletion intent, exact provider target,
+target creation time and a canonical immutable set of provider operation IDs.
+Only a live compensation lease can begin cleanup. An undispatched reservation
+can retire locally; a requested restore with an unknown outcome must first
+recover its native identity through the existing authenticated discovery path.
+An absent name cannot retire that intent or release its quota.
+
+The managed PostgreSQL deletion seam authenticates the frozen backend, source
+dataset, snapshot and fork times and known physical target before provider IO.
+Owned recovery remains available while new provisioning is disabled. The Neon
+adapter rechecks project organization, region and PostgreSQL major, and verifies
+the exact branch's generated owner name, snapshot lineage, creation time and
+unfinalized, nondefault state before DELETE. It never substitutes a branch found
+by display name for a missing pinned identity.
+
+A DELETE acknowledgement cannot finish retirement. The adapter requires an
+authenticated `delete_timeline` event for the exact project and branch, finished
+status for every pinned operation, and a separate exact branch read confirming
+absence. Operation IDs returned by DELETE are persisted before independent
+observation. A lost or empty reply can recover references through paginated
+operation history; the worker persists those references and repeats observation
+using the pinned set before terminal mutation. Missing operations, failed or
+unfinished statuses and changed identities retain recovery authority. These
+requirements follow the [Neon branch deletion API](https://api-docs.neon.tech/reference/deleteprojectbranch)
+and [operation API](https://api-docs.neon.tech/reference/getprojectoperation).
+
+The adapter can attempt the same exact branch DELETE again only after fresh
+ownership/lineage/time checks and a complete current operation listing showing
+no deletion event. This is scoped to the persisted physical identity; Neon
+does not promise generic DELETE retry safety. Provider qualification remains
+required. Root/default branches and branches with children can be undeletable,
+and old operation history can expire. Such refusals or missing evidence keep
+the receipt; no project deletion, unprotection or absence-only fallback is
+authorized by this protocol.
+
+Only verified retirement releases the private fork's managed database quota.
+Snapshot cleanup continues to hold a source snapshot while any native fork
+remains unresolved. Compensation runs source abandonment, fork retirement and
+then snapshot cleanup. Failed/compensated operation transitions also refuse to
+discard lease authority while source snapshots remain unretired. A replacement
+worker reuses committed identities and operations, and skips provider IO after
+a lost committed terminal reply. Deleted fork receipts remain readable after
+their source snapshot is retired. All mutations recheck SQL-clock authority
+after owned row-lock waits. The migration refuses downgrade when retirement
+rows cannot be represented in the old protocol.
+
+This increment does not adopt the fork into the target database catalogue or
+publish a stage. Native fork adoption, copied SQL auxiliary/credential/admission
+isolation, successful snapshot disposal, complete writer coverage, coordinated
+database/object capture, all remaining configuration strategies, promotion and
+rollback, and live-provider/native acceptance remain required. The public
+data-bearing capture gate remains closed. No live provider resource was changed.
+
+Verification: all 11 selected service/Neon HTTP contracts pass without skips
+(0.846 s and 0.779 s). All 16 selected state contracts pass against the private
+PostgreSQL harness (33.363 s, no skips), including quota release, source snapshot
+holds, immutable identity/operation recovery, worker takeover and four confirmed
+fork-row lock waits with expired leases. All 19 selected original coordinator
+contracts pass (24.934 s, no skips), including native fork cleanup, lost replies,
+pending deletion, independent pinned terminal reads and source abandonment
+regressions. State and coordinator runs preserve all 524 and 443 production
+files through external test-only AST overlays. Their native observations are
+metadata fixtures; service/Neon contracts separately exercise HTTP authentication
+and asynchronous operation/absence proof. SQLC independently regenerates both
+packages byte-for-byte (nine files), `go vet` passes for state, API and the two
+managed PostgreSQL packages, and `git diff --check` passes. A private schema
+Down/Up round trip with no retirement rows also passes and is rolled back.
+An intermediate state fixture incorrectly discarded its resource inventory;
+the corrected test proves the snapshot terminal guard using valid compensated
+resources. Local disk exhaustion interrupted the first API build and an
+inactive task-template cleanup; the private test server recovered and the final
+API run passed. Full repository, live-provider and native acceptance remain
+unverified.

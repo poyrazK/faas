@@ -62,6 +62,11 @@ type cloneSnapshotProvider struct {
 	forkCreates, forkFinds                  int
 	loseForkCreation, hideFork, forkPending bool
 	beforeForkCreate                        func(context.Context, managedpostgres.SnapshotRestoreRequest) error
+	forkDeleteRequest                       managedpostgres.SnapshotRestoreDeletionRequest
+	forkDeleteIssued, forkDeleteReady       bool
+	loseForkDelete, emptyForkDeleteReply    bool
+	forkDeletes, forkDeleteObservations     int
+	beforeForkDelete                        func(context.Context, managedpostgres.SnapshotRestoreDeletionRequest) error
 }
 
 func (p *cloneSnapshotProvider) CaptureSnapshot(ctx context.Context, r managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {

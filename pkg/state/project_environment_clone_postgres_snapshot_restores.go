@@ -11,6 +11,22 @@ type ProjectEnvironmentClonePostgresSnapshotRestore struct {
 	OperationID, SourceDatabaseID, AccountID, TargetOwnerID        string
 	BackendID, BackendFingerprint, State, TargetProviderResourceID string
 	TargetCreatedAt, RequestStartedAt, ObservedAt, RestoredAt      time.Time
+	DeletionStartedAt, DeletedAt                                   time.Time
+	DeletionOperations                                             string
+}
+
+type ProjectEnvironmentClonePostgresSnapshotRestoreDeletion struct {
+	TargetProviderResourceID string
+	OperationIDs             []string
+	Done                     bool
+}
+
+type ProjectEnvironmentClonePostgresSnapshotRestoreCleanupStore interface {
+	ProjectEnvironmentClonePostgresSnapshotRestoreStore
+	BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentClonePostgresSnapshotRestoreObservation) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentClonePostgresSnapshotRestoreDeletion) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentClonePostgresSnapshotRestoreDeletion) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 }
 
 type ProjectEnvironmentClonePostgresSnapshotRestoreObservation struct {
@@ -42,3 +58,4 @@ func validateCloneSnapshotRestoreObservation(snapshot ProjectEnvironmentClonePos
 }
 
 var _ ProjectEnvironmentClonePostgresSnapshotRestoreStore = (*PgStore)(nil)
+var _ ProjectEnvironmentClonePostgresSnapshotRestoreCleanupStore = (*PgStore)(nil)

@@ -13,7 +13,8 @@ func clonePostgresSnapshotRestoreFromSQL(r sqlc.ProjectEnvironmentClonePostgresS
 	return ProjectEnvironmentClonePostgresSnapshotRestore{OperationID: pgUUIDString(r.OperationID), SourceDatabaseID: pgUUIDString(r.SourceDatabaseID),
 		AccountID: pgUUIDString(r.AccountID), TargetOwnerID: pgUUIDString(r.TargetOwnerID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint,
 		State: r.State, TargetProviderResourceID: r.TargetProviderResourceID.String, TargetCreatedAt: r.TargetCreatedAt.Time,
-		RequestStartedAt: r.RequestStartedAt.Time, ObservedAt: r.ObservedAt.Time, RestoredAt: r.RestoredAt.Time}
+		RequestStartedAt: r.RequestStartedAt.Time, ObservedAt: r.ObservedAt.Time, RestoredAt: r.RestoredAt.Time,
+		DeletionStartedAt: r.DeletionStartedAt.Time, DeletedAt: r.DeletedAt.Time, DeletionOperations: string(r.DeleteOperationIds)}
 }
 
 func cloneSnapshotRestoreContextTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease, sourceID string, reservation bool) (ProjectEnvironmentCloneOperation, ProjectEnvironmentClonePostgresSnapshot, error) {
@@ -62,7 +63,7 @@ func cloneSnapshotRestoreContextTx(ctx context.Context, tx pgx.Tx, lease Project
 	if err := validateClonePostgresSnapshotSource(snapshot, op, source, resource, point); err != nil {
 		return op, snapshot, err
 	}
-	if snapshot.State != "retained" || snapshot.ProviderSnapshotID == "" {
+	if op.Status != CloneOperationCompensating && (snapshot.State != "retained" || snapshot.ProviderSnapshotID == "") {
 		return op, snapshot, ErrConflict
 	}
 	return op, snapshot, nil

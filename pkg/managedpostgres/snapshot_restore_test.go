@@ -10,11 +10,13 @@ import (
 
 type serviceSnapshotRestoreProvider struct {
 	fakeProvider
-	creates, finds int
-	definition     RestoreSourceDefinition
-	request        SnapshotRestoreRequest
-	deadline       bool
-	fault          string
+	creates, finds         int
+	definition             RestoreSourceDefinition
+	request                SnapshotRestoreRequest
+	deadline               bool
+	fault                  string
+	deletes, deletionReads int
+	deletionRequest        SnapshotRestoreDeletionRequest
 }
 
 func (p *serviceSnapshotRestoreProvider) restoreResult(ctx context.Context, d RestoreSourceDefinition, r SnapshotRestoreRequest) (SnapshotRestoreObservation, error) {
