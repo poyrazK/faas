@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained Commit acceptance and execution facts after managed Operation cleanup.
+ */
 export type CommitOperationResponse = {
   id: string;
   receipt_id: string;

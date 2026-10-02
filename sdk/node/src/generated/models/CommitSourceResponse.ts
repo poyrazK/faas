@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Commit source destination, enabled state and latest bounded relay health observation.
+ */
 export type CommitSourceResponse = {
   id: string;
   app_id: string;

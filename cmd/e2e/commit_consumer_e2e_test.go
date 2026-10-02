@@ -224,8 +224,11 @@ func startCommitHTTPConsumer(ctx context.Context, databaseURL, databaseName, add
 func awaitCommitConsumerCrash(process *commitHTTPConsumerProcess, code int) error {
 	err := <-process.exit
 	var exit *exec.ExitError
+	if err == nil {
+		return fmt.Errorf("consumer crash: wanted exit %d, process completed successfully", code)
+	}
 	if !errors.As(err, &exit) || exit.ExitCode() != code {
-		return fmt.Errorf("consumer crash: wanted exit %d, got %v", code, err)
+		return fmt.Errorf("consumer crash: wanted exit %d: %w", code, err)
 	}
 	return nil
 }
@@ -286,7 +289,11 @@ func commitHTTPConsumerHandler(pool *pgxpool.Pool, mode, barrier string) http.Ha
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		defer tx.Rollback(context.Background())
+		defer func(parent context.Context) {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+			defer cancel()
+			_ = tx.Rollback(cleanupCtx)
+		}(r.Context())
 		inserted, err := tx.Exec(r.Context(), `INSERT INTO processed_events(consumer,source,event_id) VALUES('order-accounting',$1,$2::uuid) ON CONFLICT DO NOTHING`, event.Source, event.ID)
 		if err == nil && inserted.RowsAffected() == 1 {
 			_, err = tx.Exec(r.Context(), `UPDATE business_effects SET total=total+1 WHERE id=1`)

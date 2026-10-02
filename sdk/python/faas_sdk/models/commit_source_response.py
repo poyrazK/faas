@@ -15,6 +15,8 @@ T = TypeVar("T", bound="CommitSourceResponse")
 
 @_attrs_define
 class CommitSourceResponse:
+    """Commit source destination, enabled state and latest bounded relay health observation."""
+
     id: UUID
     app_id: UUID
     name: str

@@ -47,6 +47,37 @@ func commitManagedFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, state.Co
 	return store, pool, source, inv
 }
 
+func TestPgCommitMigrationReplayPreservesManagedIdentity(t *testing.T) {
+	store, pool, source, inv := commitManagedFixture(t)
+	ctx := t.Context()
+	event := uuid.NewString()
+	original, err := store.AcceptCommitOperation(ctx, source.AccountID, source.ID, event, "order.created", inv.Payload, inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id IN (20261001224800001,20261002004531001)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("replay migrations with an accepted managed event: %v", err)
+	}
+	repeated, err := store.AcceptCommitOperation(ctx, source.AccountID, source.ID, event, "order.created", inv.Payload, inv)
+	if err != nil || repeated.ID != original.ID || repeated.OperationID != original.OperationID || repeated.InvocationID != "" {
+		t.Fatalf("migration replay reopened work: original=%+v repeated=%+v err=%v", original, repeated, err)
+	}
+	var owners int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM exclusive_work_operations WHERE account_id=$1::uuid`, source.AccountID).Scan(&owners); err != nil || owners != 1 {
+		t.Fatalf("operation owners=%d err=%v", owners, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE exclusive_work_operations SET state='completed', completed_at=now() WHERE id=$1::uuid`, original.OperationID); err != nil {
+		t.Fatal(err)
+	}
+	history, err := store.CommitOperationByID(ctx, source.AccountID, original.OperationID)
+	if err != nil || history.State != "completed" || history.CompletedAt == nil {
+		t.Fatalf("migration replay lost completion tracking: history=%+v err=%v", history, err)
+	}
+}
+
 func TestPgCommitManagedOperationAtomicReplayAndCompletion(t *testing.T) {
 	store, pool, source, inv := commitManagedFixture(t)
 	ctx := t.Context()

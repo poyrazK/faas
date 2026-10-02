@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE commit_sources (
+CREATE TABLE IF NOT EXISTS commit_sources (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -22,7 +22,7 @@ CREATE TABLE commit_sources (
 );
 -- Receipt identities intentionally have no expiry and no invocation FK:
 -- invocation retention must never reopen an already accepted source identity.
-CREATE TABLE commit_receipts (
+CREATE TABLE IF NOT EXISTS commit_receipts (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
  source_id uuid NOT NULL,
@@ -37,13 +37,13 @@ CREATE TABLE commit_receipts (
  FOREIGN KEY(account_id,source_id) REFERENCES commit_sources(account_id,id) ON DELETE CASCADE,
  UNIQUE(account_id,source_id,event_id)
 );
-CREATE INDEX commit_receipts_source_history ON commit_receipts(account_id,source_id,accepted_at,id);
-CREATE UNIQUE INDEX commit_receipts_operation_identity ON commit_receipts(invocation_id);
+CREATE INDEX IF NOT EXISTS commit_receipts_source_history ON commit_receipts(account_id,source_id,accepted_at,id);
+CREATE UNIQUE INDEX IF NOT EXISTS commit_receipts_operation_identity ON commit_receipts(invocation_id);
 
 -- Completion facts follow the existing invocation ledger atomically. Minimal
 -- operation history survives invocation payload/result retention.
 -- +goose StatementBegin
-CREATE FUNCTION record_commit_operation_state() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION record_commit_operation_state() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  UPDATE commit_receipts SET operation_state=CASE NEW.state
  WHEN 'pending' THEN 'accepted' WHEN 'dispatching' THEN 'running'
@@ -55,10 +55,11 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS commit_operation_state ON invocations;
 CREATE TRIGGER commit_operation_state AFTER UPDATE OF state,completed_at ON invocations
  FOR EACH ROW EXECUTE FUNCTION record_commit_operation_state();
 
-CREATE TABLE commit_blocked_events (
+CREATE TABLE IF NOT EXISTS commit_blocked_events (
  account_id uuid NOT NULL,
  source_id uuid NOT NULL,
  event_id uuid NOT NULL,
@@ -69,7 +70,7 @@ CREATE TABLE commit_blocked_events (
  PRIMARY KEY(source_id,event_id),
  FOREIGN KEY(account_id,source_id) REFERENCES commit_sources(account_id,id) ON DELETE CASCADE
 );
-CREATE TABLE commit_replay_requests (
+CREATE TABLE IF NOT EXISTS commit_replay_requests (
  account_id uuid NOT NULL,
  source_id uuid NOT NULL,
  event_id uuid NOT NULL,

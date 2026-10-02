@@ -89,6 +89,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMMIT_RELAY_ENABLED` | schedd | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMMIT_TLS_PG_BIN_DIR` | shared | `dev-only` |  |  | `` | PostgreSQL server binaries for the private TLS acceptance fixture |
+| `FAAS_COMMIT_TLS_PG_TMPDIR` | shared | `dev-only` |  |  | `` | short traversable parent directory for private PostgreSQL TLS fixture sockets |
 | `FAAS_COMMIT_TLS_PG_USER` | shared | `dev-only` |  |  | `` | unprivileged PostgreSQL fixture user when acceptance runs as root |
 | `FAAS_COMPLETION_CACHE_PATH` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_COMPUTE_ADMISSION_CEILING_MB` | vmmd | `dropin` |  |  | `` | host-fact-derived RAM admission ceiling installed by node_join |

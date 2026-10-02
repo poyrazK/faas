@@ -45,7 +45,7 @@ func (a *HTTPAcceptor) Accept(ctx context.Context, e Event) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, errors.New("commit: acceptance endpoint unavailable")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusAccepted {
 		switch response.StatusCode {
 		case http.StatusBadRequest:

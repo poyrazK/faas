@@ -168,6 +168,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMMIT_RELAY_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "opt-in Gregale Commit qualification gate; disabled unless explicitly set to true"},
 	{Name: "FAAS_COMMIT_SHA", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_COMMIT_TLS_PG_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "PostgreSQL server binaries for the private TLS acceptance fixture"},
+	{Name: "FAAS_COMMIT_TLS_PG_TMPDIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "short traversable parent directory for private PostgreSQL TLS fixture sockets"},
 	{Name: "FAAS_COMMIT_TLS_PG_USER", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "unprivileged PostgreSQL fixture user when acceptance runs as root"},
 	{Name: "FAAS_COMPLETION_CACHE_PATH", Owners: []string{"shared"}, Source: EnvSourceClient, Note: "read by the CLI/SDK on the operator's machine, never by a daemon"},
 	{Name: "FAAS_COMPUTE_ADMISSION_CEILING_MB", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "host-fact-derived RAM admission ceiling installed by node_join"},

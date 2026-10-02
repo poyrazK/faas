@@ -85,11 +85,11 @@ func cmdCommit(args []string) int {
 	case "receipt":
 		result, err = client.GetCommitReceipt(ctx, positional[0], positional[1])
 	case "connection":
-		connectionFile, readErr := os.Open(*file)
+		connectionFile, readErr := openCustomerFile(*file)
 		if readErr != nil {
 			return printErr("Cannot read connection file", readErr)
 		}
-		defer connectionFile.Close()
+		defer func() { _ = connectionFile.Close() }()
 		contents, readErr := io.ReadAll(io.LimitReader(connectionFile, 8193))
 		if readErr != nil {
 			return printErr("Cannot read connection file", readErr)

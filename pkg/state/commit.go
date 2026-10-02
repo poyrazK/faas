@@ -299,7 +299,7 @@ func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event,
 		receipt.OperationURL = "/v1/operations/" + receipt.InvocationID
 		return receipt, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return CommitReceipt{}, err
 	}
 	if !enabled || tenantRequired || app != inv.AppID || account != inv.AccountID || maxPending < 1 {

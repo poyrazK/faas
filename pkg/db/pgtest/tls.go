@@ -96,7 +96,9 @@ func OpenTLSCluster(t *testing.T) *TLSCluster {
 		t.Fatal(err)
 	}
 	c.port = listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 	config := fmt.Sprintf("\nlisten_addresses='127.0.0.1'\nport=%d\nunix_socket_directories=%s\nssl=on\nssl_cert_file=%s\nssl_key_file=%s\n", c.port, quote(dir), quote(c.CAPath), quote(cKey))
 	file, err := os.OpenFile(filepath.Join(data, "postgresql.conf"), os.O_APPEND|os.O_WRONLY, 0600)

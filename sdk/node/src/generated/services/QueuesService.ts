@@ -234,7 +234,7 @@ export class QueuesService {
   }
   /**
    * Bind an internal PostgreSQL outbox source to managed Operations.
-   * @returns CommitSourceResponse Successful Commit request.
+   * @returns CommitSourceResponse Commit source created with its immutable application and policy binding.
    * @throws ApiError
    */
   public static createCommitSource({
@@ -285,6 +285,9 @@ export class QueuesService {
   public static getCommitSource({
     source,
   }: {
+    /**
+     * Commit source to inspect within the authenticated account.
+     */
     source: string,
   }): CancelablePromise<CommitSourceResponse> {
     return __request(OpenAPI, {
@@ -305,13 +308,16 @@ export class QueuesService {
   }
   /**
    * Pause or resume new source acceptance; existing receipts remain recoverable.
-   * @returns CommitSourceResponse Successful Commit request.
+   * @returns CommitSourceResponse Source acceptance state updated; previously accepted receipts remain readable.
    * @throws ApiError
    */
   public static setCommitSourceEnabled({
     source,
     requestBody,
   }: {
+    /**
+     * Commit source whose acceptance state is being changed.
+     */
     source: string,
     requestBody: {
       enabled: boolean;
@@ -350,6 +356,9 @@ export class QueuesService {
     source,
     requestBody,
   }: {
+    /**
+     * Commit source receiving the sealed database connection.
+     */
     source: string,
     requestBody: {
       connection_url: string;
@@ -381,13 +390,16 @@ export class QueuesService {
   }
   /**
    * Durably accept committed work; source/event identity has no expiry.
-   * @returns CommitReceiptResponse Successful Commit request.
+   * @returns CommitReceiptResponse Event durably accepted with its original or newly created work receipt.
    * @throws ApiError
    */
   public static acceptCommitEvent({
     source,
     requestBody,
   }: {
+    /**
+     * Commit source defining the immutable event delivery destination.
+     */
     source: string,
     requestBody: CommitEventRequest,
   }): CancelablePromise<CommitReceiptResponse> {
@@ -423,6 +435,9 @@ export class QueuesService {
   public static listCommitBlockedEvents({
     source,
   }: {
+    /**
+     * Commit source whose blocked-event observation is being read.
+     */
     source: string,
   }): CancelablePromise<CommitBlockedEventsResponse> {
     return __request(OpenAPI, {
@@ -451,7 +466,13 @@ export class QueuesService {
     event,
     idempotencyKey,
   }: {
+    /**
+     * Commit source containing the corrected blocked event.
+     */
     source: string,
+    /**
+     * Customer outbox event UUID to request for replay.
+     */
     event: string,
     /**
      * Idempotency key for the POST. Stored for 24h. On replay the server
@@ -482,14 +503,20 @@ export class QueuesService {
   }
   /**
    * Recover acceptance independently of execution completion.
-   * @returns CommitReceiptResponse Successful Commit request.
+   * @returns CommitReceiptResponse Retained acceptance receipt for the requested source and event.
    * @throws ApiError
    */
   public static getCommitReceipt({
     source,
     event,
   }: {
+    /**
+     * Commit source that owns the retained acceptance receipt.
+     */
     source: string,
+    /**
+     * Customer outbox event UUID whose receipt is being recovered.
+     */
     event: string,
   }): CancelablePromise<CommitReceiptResponse> {
     return __request(OpenAPI, {

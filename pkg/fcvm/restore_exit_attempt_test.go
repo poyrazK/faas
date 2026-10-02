@@ -1,3 +1,4 @@
+// spec: §6.2
 package fcvm
 
 import (
@@ -18,6 +19,7 @@ type restoreExitAttemptVMM struct {
 func (v *restoreExitAttemptVMM) Restore(ctx context.Context, lease Lease, spec RestoreSpec) error {
 	v.restoreGeneration = lease.processGeneration
 	err := v.fakeVMM.Restore(ctx, lease, spec)
+	//nolint:contextcheck // Process exit callbacks deliberately detach from the boot RPC context.
 	v.manager.ProcessExitedAttempt(lease.Instance, lease.processGeneration, 1)
 	return err
 }
@@ -28,8 +30,10 @@ func (v *restoreExitAttemptVMM) BootColdBoot(ctx context.Context, lease Lease, s
 		return err
 	}
 	// The retired restore's watchdog can deliver after replacement startup.
+	//nolint:contextcheck // A retired process notification has no caller context to propagate.
 	v.manager.ProcessExitedAttempt(lease.Instance, v.restoreGeneration, 1)
 	if v.currentDies {
+		//nolint:contextcheck // The liveness callback owns its bounded cleanup context.
 		v.manager.ProcessExitedAttempt(lease.Instance, lease.processGeneration, 137)
 	}
 	return nil

@@ -16,6 +16,8 @@ T = TypeVar("T", bound="CommitOperationResponse")
 
 @_attrs_define
 class CommitOperationResponse:
+    """Retained Commit acceptance and execution facts after managed Operation cleanup."""
+
     id: UUID
     receipt_id: UUID
     source_id: UUID

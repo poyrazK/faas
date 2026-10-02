@@ -1,21 +1,45 @@
 -- +goose Up
-ALTER TABLE commit_sources ADD COLUMN operation_policy text;
-ALTER TABLE commit_sources ADD CONSTRAINT commit_source_operation_policy_name
+ALTER TABLE commit_sources ADD COLUMN IF NOT EXISTS operation_policy text;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='commit_sources'::regclass AND conname='commit_source_operation_policy_name') THEN
+  ALTER TABLE commit_sources ADD CONSTRAINT commit_source_operation_policy_name
  CHECK (operation_policy IS NULL OR operation_policy ~ '^[a-z][a-z0-9-]{0,62}$');
-ALTER TABLE commit_sources ADD CONSTRAINT commit_source_operation_policy_owner
+ END IF;
+END;
+$$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='commit_sources'::regclass AND conname='commit_source_operation_policy_owner') THEN
+  ALTER TABLE commit_sources ADD CONSTRAINT commit_source_operation_policy_owner
  FOREIGN KEY(account_id,operation_policy) REFERENCES exclusive_work_policies(account_id,name);
+ END IF;
+END;
+$$;
+-- +goose StatementEnd
 
 ALTER TABLE commit_receipts ALTER COLUMN invocation_id DROP NOT NULL;
-ALTER TABLE commit_receipts ADD COLUMN operation_id uuid;
-ALTER TABLE commit_receipts ADD CONSTRAINT commit_receipt_one_operation
+ALTER TABLE commit_receipts ADD COLUMN IF NOT EXISTS operation_id uuid;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='commit_receipts'::regclass AND conname='commit_receipt_one_operation') THEN
+  ALTER TABLE commit_receipts ADD CONSTRAINT commit_receipt_one_operation
  CHECK ((invocation_id IS NOT NULL)::integer + (operation_id IS NOT NULL)::integer = 1);
-CREATE UNIQUE INDEX commit_receipts_managed_operation_identity ON commit_receipts(operation_id)
+ END IF;
+END;
+$$;
+-- +goose StatementEnd
+CREATE UNIQUE INDEX IF NOT EXISTS commit_receipts_managed_operation_identity ON commit_receipts(operation_id)
  WHERE operation_id IS NOT NULL;
 
 -- Minimal retained facts survive operation/result retention. This trigger runs
 -- in the same transaction as the managed Operations owner transition.
 -- +goose StatementBegin
-CREATE FUNCTION record_commit_managed_operation_state() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION record_commit_managed_operation_state() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  UPDATE commit_receipts SET operation_state=CASE NEW.state
  WHEN 'pending' THEN 'accepted' WHEN 'running' THEN 'running'
@@ -27,6 +51,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS commit_managed_operation_state ON exclusive_work_operations;
 CREATE TRIGGER commit_managed_operation_state AFTER UPDATE OF state,completed_at
  ON exclusive_work_operations FOR EACH ROW EXECUTE FUNCTION record_commit_managed_operation_state();
 

@@ -19098,7 +19098,7 @@ paths:
                 operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active account-scoped queue policy containing this application. The source application and policy are immutable. }
       responses:
         '201':
-          description: Successful Commit request.
+          description: Commit source created with its immutable application and policy binding.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitSourceResponse' }
@@ -19116,6 +19116,7 @@ paths:
       summary: Inspect source health and its last observed pending/blocked backlog.
       parameters:
         - name: source
+          description: Commit source to inspect within the authenticated account.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19134,6 +19135,7 @@ paths:
       summary: Pause or resume new source acceptance; existing receipts remain recoverable.
       parameters:
         - name: source
+          description: Commit source whose acceptance state is being changed.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19148,7 +19150,7 @@ paths:
                 enabled: { type: boolean }
       responses:
         '200':
-          description: Successful Commit request.
+          description: Source acceptance state updated; previously accepted receipts remain readable.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitSourceResponse' }
@@ -19166,6 +19168,7 @@ paths:
       summary: Seal a verified-TLS database connection; credentials are never returned.
       parameters:
         - name: source
+          description: Commit source receiving the sealed database connection.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19180,7 +19183,7 @@ paths:
                 connection_url: { type: string, maxLength: 8192, writeOnly: true }
       responses:
         '204':
-          description: Successful Commit request.
+          description: Verified database connection sealed without returning credential material.
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -19195,6 +19198,7 @@ paths:
       summary: Durably accept committed work; source/event identity has no expiry.
       parameters:
         - name: source
+          description: Commit source defining the immutable event delivery destination.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19206,7 +19210,7 @@ paths:
               $ref: '#/components/schemas/CommitEventRequest'
       responses:
         '202':
-          description: Successful Commit request.
+          description: Event durably accepted with its original or newly created work receipt.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitReceiptResponse' }
@@ -19224,6 +19228,7 @@ paths:
       summary: Read the latest bounded blocked-event snapshot without payloads.
       parameters:
         - name: source
+          description: Commit source whose blocked-event observation is being read.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19245,10 +19250,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - name: source
+          description: Commit source containing the corrected blocked event.
           in: path
           required: true
           schema: { type: string, format: uuid }
         - name: event
+          description: Customer outbox event UUID to request for replay.
           in: path
           required: true
           schema: { type: string, format: uuid }
@@ -19266,16 +19273,18 @@ paths:
       summary: Recover acceptance independently of execution completion.
       parameters:
         - name: source
+          description: Commit source that owns the retained acceptance receipt.
           in: path
           required: true
           schema: { type: string, format: uuid }
         - name: event
+          description: Customer outbox event UUID whose receipt is being recovered.
           in: path
           required: true
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Successful Commit request.
+          description: Retained acceptance receipt for the requested source and event.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitReceiptResponse' }
@@ -24625,6 +24634,7 @@ components:
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
     CommitSourceResponse:
       type: object
+      description: Commit source destination, enabled state and latest bounded relay health observation.
       required: [id, app_id, name, enabled]
       properties:
         id: { type: string, format: uuid }
@@ -24639,6 +24649,7 @@ components:
         oldest_pending_at: { type: string, format: date-time }
     CommitBlockedEventsResponse:
       type: object
+      description: Bounded snapshot of blocked source events, with the observation time and snapshot limit.
       required: [items, limit, observation]
       properties:
         items:
@@ -24649,6 +24660,7 @@ components:
         observation: { type: string }
     CommitBlockedEventResponse:
       type: object
+      description: Blocked event identity and diagnostic code without customer event payloads.
       required: [event_id, type, blocked_code, created_at, observed_at]
       properties:
         event_id: { type: string, format: uuid }
@@ -24678,6 +24690,7 @@ components:
         operation_url: { type: string }
     CommitOperationResponse:
       type: object
+      description: Retained Commit acceptance and execution facts after managed Operation cleanup.
       required: [id, receipt_id, source_id, event_id, state, accepted_at]
       properties:
         id: { type: string, format: uuid }

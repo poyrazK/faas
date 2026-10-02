@@ -15,6 +15,8 @@ T = TypeVar("T", bound="CommitBlockedEventsResponse")
 
 @_attrs_define
 class CommitBlockedEventsResponse:
+    """Bounded snapshot of blocked source events, with the observation time and snapshot limit."""
+
     items: list[CommitBlockedEventResponse]
     limit: int
     observation: str

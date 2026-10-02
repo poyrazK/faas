@@ -124,6 +124,10 @@ Before publication, main commit
 contracts. The Commit decision was renumbered to ADR-430 because main had
 allocated ADR-428. PR checks cover the integrated revision; the archived
 native/process evidence continues to describe its original source manifest.
+Publication checks also added migration replay guards, the CLI's existing
+regular-file credential guard, explicit cleanup/error handling, and the missing
+API parity and fixture environment declarations. PostgreSQL replay validation
+covers an accepted managed receipt and its completion trigger after ledger loss.
 Customer promotion remains gated by the production qualification work above.
 
 ## Scheduler configuration

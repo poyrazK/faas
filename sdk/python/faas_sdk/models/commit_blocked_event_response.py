@@ -13,6 +13,8 @@ T = TypeVar("T", bound="CommitBlockedEventResponse")
 
 @_attrs_define
 class CommitBlockedEventResponse:
+    """Blocked event identity and diagnostic code without customer event payloads."""
+
     event_id: UUID
     type_: str
     blocked_code: str
