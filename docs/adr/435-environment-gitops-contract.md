@@ -1273,6 +1273,11 @@ authority. A process-lifetime lock prevents a second daemon from opening an
 independent allocator for the same root. Disabling the mode while its journal
 exists refuses admission instead of passing ownership to legacy reapers.
 Legacy jail and layer-clone reaping is skipped while the mode is enabled.
+Managed namespaces and host/peer interfaces must match a held launch or
+observed-task lease; unowned remnants refuse admission. Native mode currently
+requires `prepared_networks = 0`: claiming a cache entry can rename its namespace
+before the full lease is journaled. Enabling that cache is refused before host
+effects until its claim and helper producers are durably fenced.
 
 App and job admission persist a full lease before host setup. Jailer starts
 through the release-matched pipe gate; every fork gets a watchdog even if
@@ -1300,12 +1305,14 @@ remain necessary. The qualification consumer, serving proofs, graph activation
 and apid executor remain disabled/unwired. Native `test-metal` and `leakcheck`
 remain mandatory and unverified.
 
-The complete portable `fcvm`, `vmmdgrpc` and `jailsetup` suites pass with these
-primitives. Recovery discovery, pinned-handle retirement, producer crash/gate
-closure, cross-process file locking, immutable revocation, strict record and
-command validation, kernel-boot replay refusal, exit-identity binding and slot
-quarantine checks pass five repeated runs under Go's race detector. The Linux
-x86_64 test binary also cross-compiles; its Linux pidfd test has not been run
+The complete portable `fcvm`, `vmmd`, `vmmdgrpc`, `jailsetup`, `state`, `sched`,
+`apid`, `imaged` and CLI suites pass across the integrated-tree checks. Native
+recovery, launch-gate and startup checks pass five repeated runs under Go's race
+detector, including unknown-network refusal and prepared-cache admission. The
+PostgreSQL qualification contract and hosting-failure checks pass against a
+fully migrated private database. SQLC regeneration matches the canonical
+schema, and the merged Prometheus rules validate. The Linux x86_64 test binary
+and release helper cross-compile; Linux pidfd tests have not been executed
 here. The dedicated native acceptance host's cloud project remains suspended,
 so these results do not constitute native VM, snapshot or leak acceptance.
 

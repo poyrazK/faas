@@ -114,6 +114,7 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	r.mounts = func(string) ([]string, error) { return nil, nil }
 	// Portable tests do not claim Linux network/mount acceptance.
 	r.resources = func(Lease, netns.Config) error { return nil }
+	r.inventory = func([]Lease) error { return nil }
 	t.Cleanup(func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -290,6 +291,16 @@ func TestNativeManagerRecoveryFailureBlocksAllAdmissionAndRetries(t *testing.T) 
 	v.nativeRecovery.support = func() error { return nil }
 	if err := m.RecoverNativeProcesses(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeRecoveryPreparedCacheCannotCreateUnjournaledOwnership(t *testing.T) {
+	m, _, _ := nativeManagerFixture(t)
+	if err := m.EnablePreparedNetworks(t.Context(), 1); err == nil || !strings.Contains(err.Error(), "journaled cache claim") {
+		t.Fatalf("cache enable=%v", err)
+	}
+	if m.alloc.InUse() != 0 || m.preparedNetworks != nil || len(m.run.(*fakeRunner).commands) != 0 {
+		t.Fatal("unsupported cache created host effects")
 	}
 }
 

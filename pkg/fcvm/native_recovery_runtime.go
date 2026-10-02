@@ -20,6 +20,7 @@ type nativeProcessRecoveryRuntime struct {
 	startTime func(int) (uint64, error)
 	mounts    func(string) ([]string, error)
 	unmount   func(context.Context, string) error
+	inventory func([]Lease) error
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -34,10 +35,11 @@ type nativeProcessRecoveryRuntime struct {
 // It remains opt-in until the dedicated native VM/leak acceptance gates pass.
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:  &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes")},
-		retirer:  nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
-		owned:    make(map[string]string),
-		lockWait: v.readyTimeout,
+		journal:   &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes")},
+		retirer:   nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
+		owned:     make(map[string]string),
+		lockWait:  v.readyTimeout,
+		inventory: nativeNetworkInventory,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -112,6 +114,9 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 			return nil, errors.New("native recovery: retired journal still has a kernel task")
 		}
 		leases = append(leases, process.lease())
+	}
+	if err := r.inventory(leases); err != nil {
+		return nil, err
 	}
 	// A legacy fork before exec may have no recognizable command line yet.
 	// Its already-created chroot cannot be treated as an absent launch.

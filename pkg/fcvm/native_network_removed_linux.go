@@ -24,7 +24,7 @@ func nativeNetworkRemoved(nc netns.Config) error {
 		return err
 	}
 	for _, link := range links {
-		if link.Name == nc.VethHost || nc.PrivateVethHost != "" && link.Name == nc.PrivateVethHost {
+		if link.Name == nc.VethHost || link.Name == nc.VethPeer || nc.PrivateVethHost != "" && link.Name == nc.PrivateVethHost || nc.PrivateVethPeer != "" && link.Name == nc.PrivateVethPeer {
 			return fmt.Errorf("native recovery: host interface %s survived cleanup", link.Name)
 		}
 	}

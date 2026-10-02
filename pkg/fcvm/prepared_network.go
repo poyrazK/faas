@@ -74,6 +74,9 @@ func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) erro
 	if capacity == 0 {
 		return nil
 	}
+	if m.nativeVMM() != nil {
+		return fmt.Errorf("prepared networks: native recovery requires a journaled cache claim; set prepared_networks = 0")
+	}
 	if m.preparedNetworks != nil {
 		return fmt.Errorf("prepared networks: already enabled")
 	}
