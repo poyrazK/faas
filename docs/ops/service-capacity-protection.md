@@ -157,7 +157,13 @@ and stripped debug metadata. These results do not replace native execution.
 Internal Linux follow-up on 2026-10-02 (UTC): `gregale-internal-test-1` in
 `gregale-prod` ran Go 1.25.13 on Linux amd64 with private Postgres 16. The 151
 selected state/scheduler tests and subtests and 60 API/CLI tests and subtests pass
-under the race detector without skips. They include the ADR-459 forced-JIT
+under the race detector without skips. The full migration package also passes
+with 375 passing tests/subtests and three legacy skips (the removed snapshot
+path tripwire and two static-egress tests lacking account fixtures). Fresh
+apply-and-walk and the added-migration replay gate pass under race. These
+migration checks use disposable private databases with synchronous commit and
+disk fsync disabled; they do not establish crash durability. The regional
+checks include the ADR-459 forced-JIT
 regression, caller-setting restoration, enabled replay/down/up, concurrent
 regional admission and protected recovery. The first diagnostic run exposed
 Postgres JIT compilation in the projection; on a fixed fixture, the function
