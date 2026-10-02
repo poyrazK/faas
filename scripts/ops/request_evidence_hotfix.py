@@ -88,6 +88,21 @@ def public_health():
                   '--output', '/dev/null', '--write-out', '%{http_code}',
                   'https://api.gregale.dev/healthz'])
     assert status == '200'
+    results = {'api': 200}
+    for name, url, payload in [
+        ('app', 'https://audit-1001-deep.gregale.dev/info', None),
+        ('function', 'https://audit-1001-py-current.gregale.dev/', {'marker': 'rc232-gateway-hotfix'}),
+    ]:
+        args = ['curl', '--fail', '--silent', '--show-error', '--max-time', '45',
+                '--write-out', '\n%{http_code}']
+        if payload is not None:
+            args += ['--header', 'Content-Type: application/json', '--data', json.dumps(payload)]
+        body, status = run(args + [url]).rsplit('\n', 1)
+        value = json.loads(body)
+        assert status == '200' and value.get('ok') is True
+        assert value.get('boot') if name == 'app' else value.get('invocation_id')
+        results[name] = {'status': 200, 'response': value}
+    return results
 
 
 def deploy(remote, upload, public_gate, record):
@@ -99,7 +114,7 @@ def deploy(remote, upload, public_gate, record):
             record(target, remote(target, 'stage'))
             attempted.append(target)
             record(target, remote(target, 'apply'))
-            public_gate()
+            record(target, {'status': 'public_ingress_passed', 'gates': public_gate()})
     except BaseException:
         failures = []
         for target in reversed(attempted):
@@ -163,7 +178,7 @@ def main():
                 return json.loads(run(['ssh', *options, 'root@' + target, 'python3 -'], input=script))
             def upload(target):
                 run(['scp', *options, str(root / 'gatewayd-internal'), 'root@' + target + ':' + str(host.ROOT / 'gatewayd-internal.incoming')])
-            public_health()
+            record('before_activation', {'status': 'public_ingress_passed', 'gates': public_health()})
             deploy(remote, upload, public_health, record)
         receipt['status'] = 'applied'
         record('complete', {'both_compute_gateways_verified': True, 'live_scenario_acceptance_pending': True})
