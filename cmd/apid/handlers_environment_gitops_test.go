@@ -205,6 +205,10 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 	if err != nil || current.Manifest.Port != 8079 {
 		t.Fatalf("API reconciliation changed shared app settings: %+v %v", current.Manifest, err)
 	}
+	deployments, err := store.ListDeploymentsForApp(t.Context(), app.ID, 10, 0)
+	if err != nil || len(deployments) != 1 || !deployments[0].EnvironmentWorkloadHeld() || deployments[0].Scope != "production" || deployments[0].ImageDigest != image {
+		t.Fatalf("real apid backend did not prepare a held scoped candidate: %+v %v", deployments, err)
+	}
 	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "status", nil, srv.getEnvironmentGitOps)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"partial"`) || !strings.Contains(rec.Body.String(), "environment_runtime_unacknowledged") {
 		t.Fatalf("API claimed an unprepared serving graph: %d %s", rec.Code, rec.Body.String())

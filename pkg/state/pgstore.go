@@ -6734,6 +6734,9 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if d.EnvironmentWorkloadHeld() {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6801,6 +6804,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		  where app_id = $1
 		    and scope = $2
 		    and status = 'pending'
+		    and environment_workload_runtime is null
 		  order by created_at desc
 		  limit 1
 		  for update`,
@@ -10284,6 +10288,7 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	err = tx.QueryRow(ctx, `
 		 select id from deployments
 		 where app_id = $1 and scope = $3 and id <> $2
+		   and environment_workload_runtime is null
 		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0
 		     and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
 		 order by created_at desc
@@ -10370,6 +10375,9 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 			return Deployment{}, ErrNoRollbackTarget
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
+	}
+	if target.EnvironmentWorkloadHeld() {
+		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
@@ -24575,7 +24583,8 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
-		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on`
+		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
+	coalesce(environment_workload_runtime::text,'')`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24633,7 +24642,8 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
-		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on`
+		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
+	coalesce(d.environment_workload_runtime::text,'')`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24751,6 +24761,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
+		&d.EnvironmentWorkloadRuntime,
 	); err != nil {
 		return mapErr(err)
 	}

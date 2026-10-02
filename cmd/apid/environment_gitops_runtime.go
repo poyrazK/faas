@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
@@ -53,6 +55,9 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if err := store.EnsureEnvironmentGitOpsRuntime(ctx, lease, plan); err != nil {
 			return false, err
 		}
+		if err := b.prepareWorkloadCandidates(ctx, lease, plan); err != nil {
+			return false, err
+		}
 		if err := b.recoverRuntime(ctx, lease); err != nil {
 			return false, err
 		}
@@ -68,4 +73,37 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	}
 	pending, err := store.PendingEnvironmentGitOpsRuntime(ctx, lease)
 	return len(pending) == 0, err
+}
+
+func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) error {
+	managed := false
+	for _, change := range plan.Changes {
+		managed = managed || change.Action != "retain_unmanaged" && (change.Path == "source" || strings.HasPrefix(change.Path, "runtime/"))
+	}
+	if !managed {
+		return nil
+	}
+	preparer, ok := b.intent.(state.EnvironmentGitOpsPreparationStore)
+	if !ok {
+		return nil // the runtime verifier continues reporting the graph unqualified
+	}
+	candidates, err := preparer.PrepareEnvironmentGitOpsImageCandidates(ctx, lease, plan)
+	if errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) {
+		return nil // unsupported adapters retain partial status; never serving proof
+	}
+	if err != nil {
+		return err
+	}
+	// PgStore also commits the durable handoff with candidate creation. A
+	// repeated pending hint is safe: imaging deduplicates on deployment status.
+	for _, candidate := range candidates {
+		if candidate.Status != state.DeployPending {
+			continue
+		}
+		payload, _ := json.Marshal(map[string]string{"app_id": candidate.AppID, "to": candidate.DeploymentID, "deployment_id": candidate.DeploymentID, "kind": "image"})
+		if err := b.server.notif.Notify(ctx, db.NotifyEnvironmentWorkloadImage, string(payload)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

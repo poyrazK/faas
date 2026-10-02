@@ -672,6 +672,10 @@ const (
 	// fabric teardown can converge after the network row is gone.
 	NotifyPrivateNetworkChanged = "private_network_changed"
 	NotifyDeploymentChanged     = "deployment_changed"
+	// NotifyEnvironmentWorkloadImage is a durable apid-to-imaged handoff
+	// for a held GitOps candidate. The deployment row carries its authority;
+	// receiving this event never authorizes priming or live activation.
+	NotifyEnvironmentWorkloadImage = "environment_workload_image"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from
 	// deployment_changed: account SSE subscribers must never receive the token.

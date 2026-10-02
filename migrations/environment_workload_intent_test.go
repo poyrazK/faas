@@ -76,6 +76,23 @@ func TestEnvironmentWorkloadIntentPopulatedReplay(t *testing.T) {
 	if _, err := store.ApplyEnvironmentGitOps(ctx, lease, plan); err != nil {
 		t.Fatal(err)
 	}
+	observed, err = store.ObserveEnvironmentGitOps(ctx, lease, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err = environmentsync.BuildPlan(desired, observed.State, observed.Owners, environmentsync.PlanOptions{
+		Manager: source.ID, Revision: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, Generation: source.Generation, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.PrepareEnvironmentGitOpsImageCandidates(ctx, lease, plan)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("prepare candidate before replay: %+v %v", candidates, err)
+	}
+	prepared, err := store.DeploymentByID(ctx, candidates[0].DeploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before, err := store.EnvironmentWorkloadIntent(ctx, account.ID, app.ID, source.EnvironmentID)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +109,13 @@ func TestEnvironmentWorkloadIntentPopulatedReplay(t *testing.T) {
 	}
 	if err := store.RenewEnvironmentGitOps(ctx, lease, time.Now(), time.Minute); err != nil {
 		t.Fatalf("replay fenced an issued lease: %v", err)
+	}
+	replayed, err := store.DeploymentByID(ctx, prepared.ID)
+	if err != nil || replayed.EnvironmentWorkloadRuntime != prepared.EnvironmentWorkloadRuntime || replayed.Status != prepared.Status {
+		t.Fatalf("replay changed immutable candidate inputs: %+v %v", replayed, err)
+	}
+	if err := store.MarkDeploymentLive(ctx, prepared.ID); err == nil {
+		t.Fatal("replay released an unqualified candidate")
 	}
 	after.Runtime["port"] = json.RawMessage(`9999`)
 	if _, err := store.PutEnvironmentWorkloadIntent(ctx, after); !errors.Is(err, state.ErrEnvironmentGitManaged) {

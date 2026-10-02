@@ -114,6 +114,8 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		}
 		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Type: app.Type, WorkloadClass: app.WorkloadClass, Variables: map[string]string{}}
 		row.Manifest = app.Manifest
+		row.StartCommand = app.StartCommand
+		row.RuntimeBase = app.Runtime
 		if intent, exists := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{app.ID, source.EnvironmentID}]; exists {
 			clone := cloneWorkloadIntent(intent)
 			row.WorkloadIntent = &clone

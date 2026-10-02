@@ -6947,6 +6947,9 @@ func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment,
 }
 
 func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if d.EnvironmentWorkloadHeld() {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -7018,7 +7021,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	)
 	var maxCreated time.Time
 	for id, existing := range m.deployments {
-		if existing.AppID != d.AppID || normalizedDeploymentScope(existing.Scope) != normalizedDeploymentScope(d.Scope) {
+		if existing.EnvironmentWorkloadHeld() || existing.AppID != d.AppID || normalizedDeploymentScope(existing.Scope) != normalizedDeploymentScope(d.Scope) {
 			continue
 		}
 		// Same narrow set as PgStore: only replace an older pending
@@ -9148,7 +9151,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		}
 		pinExpiry, pinned := m.revisionPins[d.ID]
 		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
-		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
+		if d.EnvironmentWorkloadHeld() || d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
 		if latestCreated.IsZero() || d.CreatedAt.After(latestCreated) {
@@ -9220,6 +9223,9 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	target, ok := m.deployments[targetDeploymentID]
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
+	}
+	if target.EnvironmentWorkloadHeld() {
+		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
@@ -13537,6 +13543,9 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deployments[deploymentID].EnvironmentWorkloadHeld() {
+		return Instance{}, ErrInvalidArgument
+	}
 	// Stamp started_at on creation for every state (commit 3, mirrors
 	// the Postgres trigger in migration 00015). The MemStore previously
 	// only stamped it on "running" rows, which left watchdog tests
@@ -13613,6 +13622,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deployments[deploymentID].EnvironmentWorkloadHeld() {
+		return Instance{}, ErrInvalidArgument
+	}
 	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
 	// across check and insert, which is what the advisory lock buys PgStore.
 	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {

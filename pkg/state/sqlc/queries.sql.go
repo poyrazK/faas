@@ -2027,6 +2027,35 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const createEnvironmentGitOpsImageCandidate = `-- name: CreateEnvironmentGitOpsImageCandidate :one
+INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
+ revision,environment_workload_runtime)
+VALUES($1::uuid,$2::text,'image',$3::text,$4::text,'pending',0,true,
+ (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$5::jsonb)
+RETURNING id
+`
+
+type CreateEnvironmentGitOpsImageCandidateParams struct {
+	AppID     pgtype.UUID
+	Scope     string
+	Image     string
+	CommitSha string
+	Runtime   []byte
+}
+
+func (q *Queries) CreateEnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsImageCandidateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createEnvironmentGitOpsImageCandidate,
+		arg.AppID,
+		arg.Scope,
+		arg.Image,
+		arg.CommitSha,
+		arg.Runtime,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
@@ -3447,6 +3476,58 @@ type EnsureExclusiveWorkQuotaParams struct {
 func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error {
 	_, err := db.Exec(ctx, ensureExclusiveWorkQuota, arg.AccountID, arg.MaxInflight)
 	return err
+}
+
+const environmentGitOpsCandidateByInput = `-- name: EnvironmentGitOpsCandidateByInput :one
+SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=$1::text
+ AND environment_workload_runtime->>'generation'=$2::text
+ AND environment_workload_runtime->>'resource'=$3::text
+ AND environment_workload_runtime->>'plan_hash'=$4::text
+`
+
+type EnvironmentGitOpsCandidateByInputParams struct {
+	SourceID   string
+	Generation string
+	Resource   string
+	PlanHash   string
+}
+
+func (q *Queries) EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX, arg EnvironmentGitOpsCandidateByInputParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, environmentGitOpsCandidateByInput,
+		arg.SourceID,
+		arg.Generation,
+		arg.Resource,
+		arg.PlanHash,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const environmentGitOpsImageCandidate = `-- name: EnvironmentGitOpsImageCandidate :one
+SELECT id,app_id,status,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
+FROM deployments WHERE id=$1::uuid AND environment_workload_runtime IS NOT NULL
+`
+
+type EnvironmentGitOpsImageCandidateRow struct {
+	ID         pgtype.UUID
+	AppID      pgtype.UUID
+	Status     string
+	RootfsPath string
+	RootfsKey  string
+}
+
+func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentGitOpsImageCandidateRow, error) {
+	row := db.QueryRow(ctx, environmentGitOpsImageCandidate, deploymentID)
+	var i EnvironmentGitOpsImageCandidateRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Status,
+		&i.RootfsPath,
+		&i.RootfsKey,
+	)
+	return i, err
 }
 
 const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
@@ -12301,7 +12382,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -12413,6 +12494,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.SecretReloadSignal,
 			&i.GithubSourceRef,
 			&i.GithubInstallationID,
+			&i.EnvironmentWorkloadRuntime,
 		); err != nil {
 			return nil, err
 		}
@@ -13741,6 +13823,33 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockEnvironmentGitOpsCandidateApps = `-- name: LockEnvironmentGitOpsCandidateApps :many
+SELECT a.id FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
+JOIN environment_git_sources s ON s.id=r.source_id
+WHERE s.id=$1::uuid AND a.account_id=s.account_id AND a.project_id=s.project_id AND a.status IN ('active','evicted_cold')
+ORDER BY a.id FOR UPDATE OF a
+`
+
+func (q *Queries) LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockEnvironmentGitOpsCandidateApps, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockEnvironmentGitOpsIntentApps = `-- name: LockEnvironmentGitOpsIntentApps :many
@@ -17664,7 +17773,7 @@ SELECT jsonb_build_object(
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
-        'manifest',a.manifest,
+        'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
         'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),

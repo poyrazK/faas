@@ -2883,6 +2883,72 @@ $$;
 
 
 --
+-- Name: guard_environment_workload_candidate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_candidate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE frozen jsonb; src environment_git_sources%ROWTYPE; allowed boolean;
+BEGIN
+ frozen:=NEW.environment_workload_runtime;
+ IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL THEN
+  IF NEW.environment_workload_runtime IS DISTINCT FROM OLD.environment_workload_runtime OR
+   ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
+       NEW.override_entrypoint,NEW.override_cmd,NEW.override_env,NEW.override_env_secrets,NEW.override_port,NEW.override_healthcheck,
+       NEW.override_liveness_probe,NEW.override_readiness_probe,NEW.override_main_depends_on,NEW.sidecars,NEW.release_command,NEW.release_command_shell)
+   IS DISTINCT FROM
+   ROW(OLD.app_id,OLD.scope,OLD.kind,OLD.image_digest,OLD.commit_sha,OLD.source_path,OLD.source_root,OLD.source_sha256,OLD.handler,
+       OLD.override_entrypoint,OLD.override_cmd,OLD.override_env,OLD.override_env_secrets,OLD.override_port,OLD.override_healthcheck,
+       OLD.override_liveness_probe,OLD.override_readiness_probe,OLD.override_main_depends_on,OLD.sidecars,OLD.release_command,OLD.release_command_shell) THEN
+   RAISE EXCEPTION 'frozen environment workload inputs are immutable' USING ERRCODE='23514';
+  END IF;
+ ELSIF frozen IS NOT NULL THEN
+  IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'environment workload inputs must be created atomically' USING ERRCODE='23514'; END IF;
+  SELECT * INTO src FROM environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
+  allowed:=src.id IS NOT NULL AND src.mode='enforce' AND NOT src.suspended AND src.generation=(frozen->>'generation')::bigint
+   AND src.intent_version=(frozen->>'intent_version')::bigint AND src.environment_id=(frozen->>'environment_id')::uuid
+   AND src.approved_revision_id=(frozen->>'revision_id')::uuid AND EXISTS(SELECT 1 FROM environment_gitops_jobs j
+    WHERE j.source_id=src.id AND j.desired_generation=src.generation AND j.claimed_generation=src.generation
+     AND j.lease_until>clock_timestamp() AND j.lease_token<>'' AND j.lease_token=current_setting('gregale.gitops_lease',true));
+  IF NOT allowed OR NOT EXISTS(SELECT 1 FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
+   JOIN project_environments e ON e.id=src.environment_id JOIN app_environment_workload_intents w ON w.app_id=a.id AND w.environment_id=e.id
+   JOIN environment_desired_revisions rev ON rev.id=src.approved_revision_id AND rev.source_id=src.id
+   WHERE r.source_id=src.id AND r.logical_name=frozen->>'resource' AND r.app_id=NEW.app_id AND a.status IN ('active','evicted_cold') AND a.type='app'
+    AND a.account_id=src.account_id AND a.project_id=src.project_id AND e.account_id=src.account_id AND e.project_id=src.project_id
+    AND NEW.app_id=(frozen->>'app_id')::uuid AND NEW.scope=frozen->>'scope' AND NEW.scope=e.slug AND NEW.kind='image' AND NEW.status='pending'
+    AND NEW.image_digest=w.source->>'image' AND w.source->>'kind'='image' AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=w.runtime
+    AND jsonb_strip_nulls(frozen->'baseline')=jsonb_strip_nulls(a.manifest)
+    AND frozen->>'start_command'=coalesce(a.start_command,'')
+    AND frozen->>'app_type'=a.type AND frozen->>'runtime_base'=coalesce(a.runtime,'') AND frozen->>'workload_class'=a.workload_class
+    AND coalesce(a.manifest->'env','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb) AND coalesce(a.manifest->'service_bindings','[]'::jsonb) IN ('[]'::jsonb,'null'::jsonb)
+    AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')))) THEN
+   RAISE EXCEPTION 'environment workload preparation lost its reviewed authority' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF frozen IS NOT NULL AND NEW.status='live' THEN
+  RAISE EXCEPTION 'environment workload graph is not qualified for activation' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_workload_instance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_instance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM deployments d WHERE d.id=NEW.deployment_id AND d.environment_workload_runtime IS NOT NULL) THEN
+  RAISE EXCEPTION 'environment workload execution requires graph qualification' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7404,6 +7470,7 @@ CREATE TABLE public.deployments (
     secret_reload_signal text,
     github_source_ref text,
     github_installation_id bigint,
+    environment_workload_runtime jsonb,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -7412,6 +7479,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
     CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
     CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
     CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
     CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
     CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
@@ -18201,6 +18269,13 @@ CREATE INDEX deployments_canary_step_started_at_idx ON public.deployments USING 
 
 
 --
+-- Name: deployments_environment_workload_candidate_input; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_environment_workload_candidate_input ON public.deployments USING btree (((environment_workload_runtime ->> 'source_id'::text)), ((environment_workload_runtime ->> 'generation'::text)), ((environment_workload_runtime ->> 'resource'::text)), ((environment_workload_runtime ->> 'plan_hash'::text))) WHERE (environment_workload_runtime IS NOT NULL);
+
+
+--
 -- Name: deployments_failed_error_code_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22328,6 +22403,20 @@ CREATE TRIGGER github_deployment_status_changed_trg AFTER INSERT OR UPDATE OF st
 --
 
 CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON public.github_webhook_secrets FOR EACH ROW EXECUTE FUNCTION public.github_webhook_secrets_notify();
+
+
+--
+-- Name: deployments guard_environment_workload_candidate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_candidate BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_candidate();
+
+
+--
+-- Name: instances guard_environment_workload_instance; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_instance BEFORE INSERT OR UPDATE OF deployment_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_instance();
 
 
 --

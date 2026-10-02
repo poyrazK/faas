@@ -91,9 +91,13 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	// Bind the full inherited baseline and every original serving source identity,
 	// including settings that remain unmanaged. No sealed values enter this hash.
 	baseline, _ := json.Marshal(struct {
-		Runtime map[string]json.RawMessage
-		Sources []gitOpsSourceBaseline
-	}{runtimeManifestValues(app.Manifest), app.Sources})
+		Runtime       map[string]json.RawMessage
+		Sources       []gitOpsSourceBaseline
+		StartCommand  string
+		RuntimeBase   string
+		AppType       AppType
+		WorkloadClass WorkloadClass
+	}{runtimeManifestValues(app.Manifest), app.Sources, app.StartCommand, app.RuntimeBase, app.Type, app.WorkloadClass})
 	sum := sha256.Sum256(baseline)
 	out.State.ResourceIDs[resource+"/workload-baseline"] = hex.EncodeToString(sum[:])
 	for key, value := range row.Runtime {

@@ -18,6 +18,8 @@ import (
 var _ EnvironmentGitOpsIntentStore = (*PgStore)(nil)
 
 type gitOpsIntentApp struct {
+	RuntimeBase      string                        `json:"runtime_base"`
+	StartCommand     string                        `json:"start_command"`
 	Manifest         AppManifest                   `json:"manifest"`
 	WorkloadIntent   *EnvironmentWorkloadIntent    `json:"workload_intent"`
 	Sources          []gitOpsSourceBaseline        `json:"sources"`

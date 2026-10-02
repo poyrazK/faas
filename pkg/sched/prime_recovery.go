@@ -64,7 +64,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
-	if dep.Status != state.DeploySnapshotting || dep.RootfsKey == "" || len(dep.StageState) == 0 {
+	if dep.EnvironmentWorkloadHeld() || dep.Status != state.DeploySnapshotting || dep.RootfsKey == "" || len(dep.StageState) == 0 {
 		return nil
 	}
 	var stage state.StageState

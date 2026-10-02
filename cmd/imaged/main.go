@@ -794,6 +794,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// grace, so ordinary notifications are not processed twice.
 	go func() {
 		err := db.RunNotificationOutbox(ctx, pool, "imaged", []string{
+			db.NotifyEnvironmentWorkloadImage,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,

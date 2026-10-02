@@ -5783,6 +5783,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
+	if dep.EnvironmentWorkloadHeld() {
+		return nil
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}

@@ -5359,7 +5359,7 @@ SELECT jsonb_build_object(
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
-        'manifest',a.manifest,
+        'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
         'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
@@ -6693,3 +6693,26 @@ WHERE s.account_id=a.id AND a.id=sqlc.arg(account_id)::uuid AND a.status='delete
 
 -- name: AccountPendingDeletionEmail :one
 SELECT coalesce(email::text,'')::text AS email FROM accounts WHERE id=sqlc.arg(account_id)::uuid AND status='deleted_pending' FOR UPDATE;
+
+-- name: LockEnvironmentGitOpsCandidateApps :many
+SELECT a.id FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
+JOIN environment_git_sources s ON s.id=r.source_id
+WHERE s.id=sqlc.arg(source_id)::uuid AND a.account_id=s.account_id AND a.project_id=s.project_id AND a.status IN ('active','evicted_cold')
+ORDER BY a.id FOR UPDATE OF a;
+
+-- name: EnvironmentGitOpsCandidateByInput :one
+SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=sqlc.arg(source_id)::text
+ AND environment_workload_runtime->>'generation'=sqlc.arg(generation)::text
+ AND environment_workload_runtime->>'resource'=sqlc.arg(resource)::text
+ AND environment_workload_runtime->>'plan_hash'=sqlc.arg(plan_hash)::text;
+
+-- name: EnvironmentGitOpsImageCandidate :one
+SELECT id,app_id,status,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
+FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid AND environment_workload_runtime IS NOT NULL;
+
+-- name: CreateEnvironmentGitOpsImageCandidate :one
+INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
+ revision,environment_workload_runtime)
+VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,'image',sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
+ (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid),sqlc.arg(runtime)::jsonb)
+RETURNING id;

@@ -66,16 +66,22 @@
 
 ## Remaining implementation sequence
 
-1. Connect deployment preparation to the persisted source/runtime specification
+1. Complete deployment preparation against the persisted source/runtime specification
    against the original environment UUID, logical workload and mapped app ID,
    rather than update the shared `apps.manifest`. Adopted
    apps keep their IDs; creation must be idempotent under the current approved
    generation. Existing build owners and scheduler admission remain authoritative.
+   Immutable image candidates now capture scoped inputs and commit a durable
+   imaging handoff. Source/archive builders, new workload creation and runtime-only
+   ownership inheriting an unmanaged source still need their preparation adapters.
 2. Prepare the dependency graph using immutable source artifacts and durable
    deployment/effect identities. Qualify API and worker candidates before release
    activation. Retry and crash recovery resume the journaled operation; an older
    generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
+   Host lifecycle consumers must use the same frozen contract as the guest.
+   Ordinary console deployment, retry and rollback paths must respect the current
+   manager's serving authority, as well as the candidate's immutable input hold.
 3. Add scoped service-binding adapters that publish the qualified target identity
    and authorization policy. A missing dependency blocks the graph; it must not
    fall back to another environment or mutate an application-wide binding.
@@ -127,6 +133,30 @@ refresh of the old deployment. Both the real apid backend and the store's final
 convergence fence preserve this distinction. The executor remains disabled
 until scoped workload preparation, qualification, graph activation and native
 serving acceptance are implemented and verified.
+
+An apid-owned image preparation adapter now creates durable candidates from an
+intent-equal reviewed plan under the current source lease. Each candidate freezes
+the original environment UUID, mapped app, logical workload, approved revision,
+generation, intent version, plan hash, immutable image and inherited build/runtime
+inputs. Candidate identity is unique per reviewed input; a lost response or retry
+reuses the same row and artifact. PostgreSQL commits the imaging outbox event with
+creation and rolls the candidate back if the handoff cannot be recorded. The real
+apid backend requests this preparation while retaining partial serving status.
+Imaging consumes frozen settings, preserves exact guest duration values and applies
+explicit scoped fields after image inference and deployment overrides. Changes to
+the shared app after review invalidate a new preparation but cannot alter an
+existing candidate's build inputs.
+
+These candidates are held artifacts, not qualified deployments. The current
+implementation deliberately supplies no path to lift the hold. Ordinary imaging
+handoff, release commands, scheduler priming/recovery, instance insertion and live
+promotion cannot execute or activate them. Raw SQL cannot clear or replace the
+frozen inputs. Ordinary retry cannot copy a held candidate into an unheld row.
+Artifact-complete held candidates survive the stale snapshot-handoff sweep;
+future graph coordination must own supersession, cancellation and retention.
+Source/dockerfile builds, function/new workload preparation, scoped bindings,
+host runtime consumers, qualification, activation and native acceptance remain
+required before the complete environment executor is enabled.
 
 The versioned definition, pure ownership planner, durable approval/lease/run
 store, and worker coordinator are implemented. PostgreSQL and memory adapters

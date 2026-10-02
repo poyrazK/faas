@@ -30,7 +30,7 @@ func newProjectLifecycleFixture(t *testing.T) (*server, *state.MemStore, state.A
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "shop-api", WorkloadName: "api", Status: state.AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "shop-api", WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
