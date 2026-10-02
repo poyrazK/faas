@@ -1204,6 +1204,36 @@ for Unix sockets; the `fcvm` rerun with a short path passes. Native `test-metal`
 and `leakcheck` remain unverified; the dedicated host's project is still
 suspended.
 
+Process retirement also requires the native watchdog's exit acknowledgement.
+A missing or timed-out watchdog leaves the process record and chroot owned for
+recovery and returns an error. Explicit stops suppress unexpected-exit relays;
+they do not erase the process registration before that acknowledgement. Signal
+escalation preserves the same uncertain outcome. The Manager keeps the instance,
+network and allocator lease after an unconfirmed stop or failed boot cleanup,
+while dropping the guest CID join used for readiness and broker authority. A
+later stop can finish the cleanup. A failed restore cannot proceed to cold-boot
+fallback until its prior process has been confirmed stopped.
+
+This remains separate from durable attempt-bound retirement evidence. Network
+and cgroup removal still require native leak acceptance before the full feature
+can be enabled.
+
+Restart recovery must also handle VMs that survive vmmd while its in-memory
+records disappear. The startup orphan sweep intentionally preserves instances
+still live in durable state. An unknown-instance response after that restart
+therefore cannot alone prove physical retirement; qualification recovery needs
+to locate and stop that exact surviving incarnation before releasing its
+reservation or publishing a retirement receipt.
+
+Portable checks cover timeout/missing-watchdog refusal, recovery after the exit
+acknowledgement, lease retention across destroy/signal/park/process-exit and
+failed boot/restore, CID revocation, and refusal to overlap a failed restore
+with cold boot. The complete `fcvm` and `vmmdgrpc` suites pass using isolated
+temporary storage. The boot/teardown, uncertainty and builder interruption
+checks also pass five runs with Go's race detector. A shared-disk compilation
+failure and the timeout fixture's initial readiness/shutdown-setting mix-up
+were corrected before these successful runs; neither is native acceptance.
+
 ## Review and control workflow
 
 An environment can instead opt into reviewed merge approval at binding:

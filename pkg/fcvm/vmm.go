@@ -294,6 +294,7 @@ type instanceRecord struct {
 	cmd         *exec.Cmd
 	consolePath string        // serial console file used to detect a guest halt
 	isBuilder   bool          // builderd owns the expected process exit/export path
+	stopping    bool          // explicit stop owns the exit; guarded by JailerVMM.mu
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
@@ -3195,8 +3196,8 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	v.mu.Lock()
 	cmd, hasCmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
-	if hasCmd {
-		delete(v.proc, l.Instance)
+	if rec != nil {
+		rec.stopping = true
 	}
 	v.mu.Unlock()
 	// Move 4 (issue #254): close the per-instance ring so subscribers
@@ -3208,16 +3209,25 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	if hasCmd && cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-	if hasRec && rec.done != nil {
+	if hasCmd && cmd != nil && cmd.Process != nil && (!hasRec || rec == nil || rec.done == nil) {
+		return fmt.Errorf("vmm: %s process retirement has no watchdog", l.Instance)
+	}
+	if hasRec && rec != nil && rec.done != nil {
 		// Wait for the watchdog to finish (it always does, since cmd.Process.Wait
 		// is observed by Go's runtime even on signal-induced exit). Bound by the
 		// same destroyWait so a wedged firecracker can't pin us.
 		select {
 		case <-rec.done:
 		case <-time.After(v.destroyWait):
+			return fmt.Errorf("vmm: %s process did not exit within %s", l.Instance, v.destroyWait)
 		}
 		v.mu.Lock()
-		delete(v.recs, l.Instance)
+		if v.recs[l.Instance] == rec {
+			delete(v.recs, l.Instance)
+		}
+		if v.proc[l.Instance] == cmd {
+			delete(v.proc, l.Instance)
+		}
 		v.mu.Unlock()
 	}
 	v.preBoot.forget(l.Instance)
@@ -3294,6 +3304,9 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	v.mu.Lock()
 	cmd, hasCmd := v.proc[l.Instance]
 	rec, hasRec := v.recs[l.Instance]
+	if rec != nil {
+		rec.stopping = true
+	}
 	v.mu.Unlock()
 
 	// Default signal: SIGTERM. The schedd's Engine.StopInstance (commit 6)
@@ -3314,7 +3327,7 @@ func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.S
 	}
 	killSignalSent, exitCode, err = signalAndKillRace(cmd, doneCh, signal, grace, v.destroyWait)
 	if err != nil {
-		return false, 0, err
+		return killSignalSent, exitCode, err
 	}
 
 	// Always run the destruction tail (chroot wipe, cgroup scope
@@ -3390,6 +3403,7 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 				select {
 				case <-doneCh:
 				case <-time.After(destroyWait):
+					return true, 0, fmt.Errorf("vmm: process did not exit after SIGKILL within %s", destroyWait)
 				}
 			}
 			return true, 0, nil
@@ -3403,6 +3417,7 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 		select {
 		case <-doneCh:
 		case <-time.After(destroyWait):
+			return true, 0, fmt.Errorf("vmm: process did not exit after SIGKILL within %s", destroyWait)
 		}
 	}
 	return true, 0, nil
@@ -3422,6 +3437,12 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	rec, ok := v.recs[l.Instance]
 	v.mu.Unlock()
 	if !ok {
+		v.mu.Lock()
+		_, processTracked := v.proc[l.Instance]
+		v.mu.Unlock()
+		if processTracked {
+			return 0, v.Kill(ctx, l)
+		}
 		// Unknown / already-torn-down instance: idempotent, no exit code to report.
 		v.closeGuestVsockListeners(l.Instance)
 		v.closeClient(l.Instance)
@@ -4669,7 +4690,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		// for record/chroot cleanup.
 		if current, ok := v.proc[l.Instance]; ok && current == cmd {
 			delete(v.proc, l.Instance)
-			if !rec.isBuilder {
+			if !rec.isBuilder && !rec.stopping {
 				sink = v.processExitSink
 				attemptSink = v.processExitAttemptSink
 			}

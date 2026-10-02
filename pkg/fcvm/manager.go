@@ -40,7 +40,7 @@ import (
 
 // Manager is vmmd's core: it owns the whole per-instance resource lifecycle —
 // lease → network → jailed firecracker → teardown. Its central guarantee is that
-// EVERY failure path fully unwinds (network torn down, VM killed, lease released),
+// failure paths unwind or retain an uncertain process and lease for recovery,
 // so the box never leaks netns/TAPs/uids/cgroups (invariant §6.2-4/5,
 // `make leakcheck`). The side effects are injected so this guarantee is proven by
 // unit tests without KVM; the metal implementations live behind //go:build metal.
@@ -1774,7 +1774,8 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 	if err != nil || !owner {
 		return
 	}
-	defer m.finishInstanceTeardown(instance, flight, exitCode, false, false, nil)
+	var cleanupErr error
+	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, cleanupErr) }()
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
@@ -1791,7 +1792,11 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 	if !ok {
 		return
 	}
-	m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupErr = m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
+	if cleanupErr != nil {
+		m.retainUncertainInstance(inst)
+		m.log.Warn("process exit cleanup uncertain", "instance", instance, "err", cleanupErr)
+	}
 	m.log.Warn("firecracker process exited without schedd relay",
 		"instance", instance, "exit_code", exitCode)
 }
@@ -3723,9 +3728,13 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		if err != nil {
 			// Drain whatever partial state we accumulated so a
 			// rejected job boot doesn't leak a netns / cgroup.
-			m.cleanup(context.WithoutCancel(ctx), lease, netns.NewConfig(
+			cleanupNet := netns.NewConfig(
 				lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP,
-			), nil)
+			)
+			if cleanupErr := m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil); cleanupErr != nil {
+				m.retainUncertainInstance(&Instance{Lease: lease, Net: cleanupNet, IsJob: true})
+				err = errors.Join(err, cleanupErr)
+			}
 		}
 	}()
 
@@ -3860,9 +3869,8 @@ type JobBootRequest struct {
 	LeaseToken     string
 }
 
-// Wake brings an instance up, preferring snapshot restore and falling back to
-// cold boot. On any terminal error it unwinds every resource it acquired — the
-// caller sees no half-built instance and the box leaks nothing (§6.2-4/5).
+// Wake prefers snapshot restore with cold-boot fallback. Failed attempts unwind;
+// an unconfirmed process retirement keeps its reservation for a later stop.
 func (m *Manager) Wake(ctx context.Context, req WakeRequest) (_ *Instance, err error) {
 	return m.wake(ctx, req, nil)
 }
@@ -3977,7 +3985,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if req.ExecutionOnly {
 				cleanupNet = netns.Config{Instance: lease.Instance}
 			}
-			m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil)
+			if cleanupErr := m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil); cleanupErr != nil {
+				m.retainUncertainInstance(&Instance{Lease: lease, Net: cleanupNet, AppID: req.AppID, DeploymentID: req.DeploymentID,
+					ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly})
+				err = errors.Join(err, cleanupErr)
+			}
 		}
 	}()
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
@@ -4797,7 +4809,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				reason := ClassifyWakeError(rErr, WakeContext{Snapshot: req.Snapshot, FCVersion: m.fcVersion})
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, reason).Inc()
 			}
-			_ = m.vmm.Kill(ctx, lease)
+			if killErr := m.vmm.Kill(context.WithoutCancel(ctx), lease); killErr != nil {
+				return WakeRestore, errors.Join(rErr, fmt.Errorf("retire failed restore before fallback: %w", killErr))
+			}
 			lease = m.beginProcessAttempt(lease)
 		}
 	}
@@ -5109,7 +5123,10 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 		m.diskMetrics.Delete(instance)
 	}
 	// An upload deadline must not cancel the cleanup owed by Park.
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames); cleanupErr != nil {
+		m.retainUncertainInstance(inst)
+		err = errors.Join(err, cleanupErr)
+	}
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
 	}
@@ -5394,10 +5411,17 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	} else {
 		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
 	}
+	if err != nil {
+		m.retainUncertainInstance(inst)
+		return killSignalSent, exitCode, err
+	}
 	// Cleanup uses a context detached from the caller's (same
 	// rationale as DestroyWithExport above — a cancelled caller's
 	// ctx must not leak netns / cgroup).
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if err = m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames); err != nil {
+		m.retainUncertainInstance(inst)
+		return killSignalSent, exitCode, err
+	}
 	m.mu.Lock()
 	delete(m.exportDirs, instance)
 	m.mu.Unlock()
@@ -5470,13 +5494,20 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		return code, err
 	}
 	code, err := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	if err != nil {
+		m.retainUncertainInstance(inst)
+		return code, err
+	}
 	// Teardown uses a context detached from the caller's: if the caller's ctx
 	// has already expired (test deadline, caller gave up), we still owe the
 	// invariant §6.2-4/5 cleanup. Without this, a 30s test deadline firing
 	// mid-Destroy leaves the netns + cgroup on disk; observed on the Lima
 	// arm64 metal path where nested-KVM cold boot can take >25s. The vmm wait
 	// above used the original ctx and is allowed to be cancelled by it.
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if err := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames); err != nil {
+		m.retainUncertainInstance(inst)
+		return code, err
+	}
 	m.mu.Lock()
 	delete(m.exportDirs, instance)
 	m.mu.Unlock()
@@ -7243,10 +7274,10 @@ func listPrivateNetworkHandle(ctx context.Context, cap CaptureRunner, netnsName,
 	return 0, nil
 }
 
-// cleanup is the unwind path: best-effort kill the VM, best-effort tear down the
-// network, and always release the lease. Errors are logged, never returned — a
-// cleanup that gives up would leak.
-func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) {
+// Cleanup requires confirmed process retirement before removing networking or
+// releasing the lease. A failed kill retains those resources for a later stop.
+// Network teardown remains best-effort and is audited by native leak checks.
+func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) error {
 	// A child can report its exit after an explicit Destroy/failed Wake
 	// removed the live entry but before Kill has finished. Do not let that
 	// expected exit poison a later Wake using the same instance id.
@@ -7273,6 +7304,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	}
 	if err := m.vmm.Kill(ctx, lease); err != nil {
 		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
+		return fmt.Errorf("cleanup: process retirement uncertain: %w", err)
 	}
 	if !lease.Networkless {
 		for _, argv := range nc.TeardownCommands() {
@@ -7318,6 +7350,18 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	if err := m.alloc.Release(lease.Instance); err != nil {
 		m.log.Warn("cleanup: release lease", "instance", lease.Instance, "err", err)
 	}
+	return nil
+}
+
+// Keep the identity, network and lease discoverable for a subsequent stop.
+// An error must not turn an unconfirmed process into an idempotent absence ACK.
+func (m *Manager) retainUncertainInstance(inst *Instance) {
+	m.mu.Lock()
+	m.live[inst.Lease.Instance] = inst
+	// Retaining ownership for cleanup cannot grant new guest readiness or
+	// broker authority after an explicit stop or rejected boot.
+	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	m.mu.Unlock()
 }
 
 // discard is an io.Writer sink for the nil-logger fallback.

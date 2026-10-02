@@ -1788,10 +1788,8 @@ func TestLiveCountAndLeasedCountEmptyManager(t *testing.T) {
 	}
 }
 
-// TestCleanupKillErrorIsLogged — covers the `m.log.Warn` branch of cleanup's
-// first call when vmm.Kill returns an error. The error must be swallowed
-// (cleanup is best-effort), not propagated.
-func TestCleanupKillErrorIsLogged(t *testing.T) {
+// An unconfirmed kill must retain the identity and lease for recovery.
+func TestCleanupKillErrorRetainsReservation(t *testing.T) {
 	run := &fakeRunner{}
 	vmm := &fakeVMM{killErr: fmt.Errorf("process already gone")}
 	m := newTestManager(run, vmm)
@@ -1804,12 +1802,15 @@ func TestCleanupKillErrorIsLogged(t *testing.T) {
 		t.Fatalf("ColdBoot: %v", err)
 	}
 	_ = inst
-	if err := m.Destroy(context.Background(), "kill-err"); err != nil {
-		t.Fatalf("Destroy should swallow cleanup errors: %v", err)
+	if err := m.Destroy(context.Background(), "kill-err"); !errors.Is(err, vmm.killErr) {
+		t.Fatalf("Destroy acknowledged uncertain kill: %v", err)
 	}
-	// Lease must still be released despite the Kill error.
-	if m.LeasedCount() != 0 {
-		t.Errorf("lease leaked after Kill error: leased=%d", m.LeasedCount())
+	if m.LeasedCount() != 1 || m.LiveCount() != 1 {
+		t.Fatalf("uncertain kill lost reservation: live=%d leased=%d", m.LiveCount(), m.LeasedCount())
+	}
+	vmm.killErr = nil
+	if err := m.Destroy(context.Background(), "kill-err"); err != nil || m.LeasedCount() != 0 || m.LiveCount() != 0 {
+		t.Fatalf("kill recovery: %v live=%d leased=%d", err, m.LiveCount(), m.LeasedCount())
 	}
 }
 

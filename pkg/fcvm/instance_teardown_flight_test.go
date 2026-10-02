@@ -46,16 +46,26 @@ func (c *observedTeardownWaitContext) Done() <-chan struct{} {
 
 type instanceRetirementVMM struct {
 	*fakeVMM
-	failure error
+	failure          error
+	entered, release chan struct{}
+}
+
+func (v *instanceRetirementVMM) awaitFailure() {
+	if v.failure != nil && v.entered != nil {
+		close(v.entered)
+		<-v.release
+	}
 }
 
 func (v *instanceRetirementVMM) DestroyWithExport(ctx context.Context, lease Lease, exportDir string) (int, error) {
 	_, _ = v.fakeVMM.DestroyWithExport(ctx, lease, exportDir)
+	v.awaitFailure()
 	return 23, v.failure
 }
 
 func (v *instanceRetirementVMM) SignalAndKill(ctx context.Context, lease Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
 	_, _, _ = v.fakeVMM.SignalAndKill(ctx, lease, signal, grace)
+	v.awaitFailure()
 	return true, 23, v.failure
 }
 
@@ -70,15 +80,22 @@ func TestInstanceTeardownJoinsCleanupAndPreservesOwnerOutcome(t *testing.T) {
 				runner := &blockedInstanceCleanupRunner{fakeRunner: &fakeRunner{}, entered: make(chan struct{}), release: make(chan struct{})}
 				t.Cleanup(runner.unblock)
 				vmm := &instanceRetirementVMM{fakeVMM: &fakeVMM{}}
+				unblockNative := func() {}
 				if failed {
 					vmm.failure = errors.New("native retirement uncertain")
+					vmm.entered, vmm.release = make(chan struct{}), make(chan struct{})
+					var releaseOnce sync.Once
+					unblockNative = func() { releaseOnce.Do(func() { close(vmm.release) }) }
+					t.Cleanup(unblockNative)
+					// The owner must fail before Manager cleanup can release
+					// networking or its lease. Block the native operation instead.
 				}
 				m := newTestManager(runner, vmm)
 				id := "qualification-retirement-" + stop
 				if _, err := m.ColdBoot(t.Context(), req(id)); err != nil {
 					t.Fatal(err)
 				}
-				runner.armed.Store(true)
+				runner.armed.Store(!failed)
 				ownerResult := make(chan error, 1)
 				go func() {
 					if stop == "signal" {
@@ -88,8 +105,12 @@ func TestInstanceTeardownJoinsCleanupAndPreservesOwnerOutcome(t *testing.T) {
 						ownerResult <- m.Destroy(t.Context(), id)
 					}
 				}()
+				entered := runner.entered
+				if failed {
+					entered = vmm.entered
+				}
 				select {
-				case <-runner.entered:
+				case <-entered:
 				case <-time.After(5 * time.Second):
 					t.Fatal("retirement never reached cleanup")
 				}
@@ -116,7 +137,11 @@ func TestInstanceTeardownJoinsCleanupAndPreservesOwnerOutcome(t *testing.T) {
 					t.Fatalf("cancelled follower interrupted owner cleanup: %v", err)
 				default:
 				}
-				runner.unblock()
+				if failed {
+					unblockNative()
+				} else {
+					runner.unblock()
+				}
 				for _, result := range []chan error{ownerResult, followerResult} {
 					select {
 					case err := <-result:
@@ -130,8 +155,18 @@ func TestInstanceTeardownJoinsCleanupAndPreservesOwnerOutcome(t *testing.T) {
 				vmm.mu.Lock()
 				stops := len(vmm.destroyedWithExport) + len(vmm.signalAndKillCalls)
 				vmm.mu.Unlock()
-				if stops != 1 || m.LiveCount() != 0 || m.LeasedCount() != 0 {
+				retained := 0
+				if failed {
+					retained = 1
+				}
+				if stops != 1 || m.LiveCount() != retained || m.LeasedCount() != retained {
 					t.Fatalf("retirement stops=%d live=%d leases=%d", stops, m.LiveCount(), m.LeasedCount())
+				}
+				if failed {
+					vmm.failure = nil
+					if err := m.Destroy(t.Context(), id); err != nil || m.LiveCount() != 0 || m.LeasedCount() != 0 {
+						t.Fatalf("uncertain retirement recovery: %v live=%d leases=%d", err, m.LiveCount(), m.LeasedCount())
+					}
 				}
 			})
 		}
