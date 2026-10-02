@@ -67,6 +67,9 @@ func (h *Handler) performLegacyGatewayCopy(w http.ResponseWriter, r *http.Reques
 		h.providerError(w, r, req, err, c.SourceKey)
 		return
 	}
+	if !h.publicVersionHeader(w, r, req, c.DestinationKey, result.ProviderVersionID, false) {
+		return
+	}
 	writeGatewayCopyResult(w, req.requestID, result)
 }
 

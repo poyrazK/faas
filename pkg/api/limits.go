@@ -97,6 +97,9 @@ const (
 // Bound a single HTTP date in a signed S3 copy-source condition.
 const MaxObjectCopyDateHeaderBytes = 128
 
+// A version page plus its private paired continuation identity.
+const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
+
 const (
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
@@ -7795,6 +7798,7 @@ const (
 	ObjectS3CORSMaxAgeSeconds    = 3600
 	MaxObjectS3ListItems         = 1000
 	MaxObjectS3ListTextBytes     = 1024
+	MaxObjectS3DelimiterBytes    = 4
 	MaxObjectS3ListCursorBytes   = 8192
 	MaxObjectS3UploadMarkerBytes = 128
 )

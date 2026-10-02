@@ -2923,6 +2923,15 @@ type ObjectUploadRoute struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type ObjectVersionReference struct {
+	ID               pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	NativeVersionID  string
+	VersionsObserved bool
+	CreatedAt        pgtype.Timestamptz
+}
+
 type OidcExchangedToken struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

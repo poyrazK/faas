@@ -342,7 +342,8 @@ HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
 listing, `start-after`, URL encoding, ETags, and zero-key pages, GetObject/HeadObject/PutObject/DeleteObject, multi-object
 `DeleteObjects` (up to 1,000 keys), and the standard multipart
 initiate/list-parts/upload-part/part-copy/complete/abort operations, plus CopyObject with
-COPY/REPLACE metadata and tagging directives. It validates AWS
+COPY/REPLACE metadata and tagging directives. S3 backends also support
+ListObjectVersions and GET/HEAD with a customer versionId (see below). It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
 remain subject to credential revocation when a request arrives. Uploads
@@ -376,9 +377,13 @@ exclusive; If-Match is limited to 256 bytes and rejects control characters.
 GCS conditional PUTs/completion and source-conditional copies return 501 explicitly.
 S3 copies support `x-amz-copy-source-if-match` and
 `x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
-range and condition headers must be signed. Date-based copy conditions remain
-unsupported; they return 501 rather than silently changing S3 condition
-precedence when applying the internal source ETag fence.
+range and condition headers must be signed. S3 copies also support signed
+If-Modified-Since and If-Unmodified-Since predicates when the measured source
+has an immutable native version and the bucket has an all-version accounting
+baseline. A customer If-Match combined only with If-Unmodified-Since can use
+a mutable source because S3 gives that ETag predicate precedence. Other
+independently restrictive dates on mutable/null sources return 501. See
+[ADR-399](adr/399-immutable-s3-copy-sources-and-date-conditions.md).
 Multipart listing uses standard key/upload
 markers and excludes completed history. Unsupported listing options return 501.
 
@@ -430,9 +435,37 @@ Rollback requires conditional completion or cleanup to be terminal. See
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication, bucket lifecycle APIs,
-versioning, ACLs, and bucket create/delete through the S3 protocol remain
+bucket versioning configuration, version deletion/restore, ACLs, and bucket
+create/delete through the S3 protocol remain
 explicit `NotImplemented` gaps. Bucket lifecycle remains on the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
+
+## Reading retained S3 versions
+
+S3-backed buckets expose ListObjectVersions through `GET /{bucket}?versions`.
+It supports prefix, one-character delimiter, key-marker, version-id-marker,
+encoding-type=url and max-keys=0..1000. Use both next markers to resume a page.
+Versions and delete markers carry durable Gregale UUIDs, scoped to the logical
+bucket and object key. The special S3 `null` ID remains mutable. Native provider
+version IDs are private and are not accepted as customer IDs.
+
+Use those IDs with standard SDK GetObject/HeadObject `VersionId` parameters,
+or AWS CLI `s3api get-object --bucket assets --key hello.txt --version-id ID
+output.txt`. Read permissions and credential revocation still apply on every
+request. Exact-version reads preserve ranges, conditions, metadata and available
+checksums. A current delete marker returns 404; requesting that marker by ID
+returns 405 with `x-amz-delete-marker: true` and Last-Modified. Successful ordinary
+PUT, CopyObject and current GET/HEAD also return customer x-amz-version-id when
+the provider supplies a native ID. Multipart completion headers and versioned
+copy sources/tagging remain open.
+
+Observing a non-null native version or any delete marker activates the retained
+version accounting fence. Reads and listings continue under ordinary read
+accounting. New writes wait for capacity reconciliation to establish an inventory
+of all retained data versions and delete markers. A current-only inventory cannot
+refund this history. This does not enable provider versioning or create markers;
+configuration, version deletion and restore remain explicit NotImplemented gaps.
+See [ADR-400](adr/400-customer-s3-version-identities-and-reads.md).
 
 ## Recovery and operator attention
 

@@ -64,7 +64,7 @@ func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe
 	for _, c := range m.objectUploadCompletions {
 		versions = versions || c.BucketID == bucket && c.RecoveryVersionsObserved
 	}
-	versions = versions || m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions
+	versions = versions || m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions || m.versionAccountingStatusLocked(bucket).VersionsObserved
 	for hash := range m.objectGrants[bucket] {
 		if !m.objectTrackedGrants[bucket][hash] {
 			unsafe = true

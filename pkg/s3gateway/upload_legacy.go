@@ -51,5 +51,8 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 	}
 	settle(r.Context())
 	w.Header().Set("ETag", etag)
+	if !h.publicVersionHeader(w, r, req, key, response.Header.Get("X-Amz-Version-Id"), false) {
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }

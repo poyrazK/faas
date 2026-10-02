@@ -93,5 +93,8 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
+	if !h.publicVersionHeader(w, r, req, c.Key, result.ProviderVersionID, false) {
+		return
+	}
 	writeGatewayCopyResult(w, req.requestID, result)
 }

@@ -38,7 +38,8 @@ func isCleanupRequest(r *http.Request, q url.Values, hasBucket, hasKey bool) boo
 }
 func (h *Handler) validateRequestSemantics(w http.ResponseWriter, r *http.Request, req requestContext, hasKey bool, q url.Values) bool {
 	mode := headerOrQueryValue(r, "x-amz-checksum-mode")
-	if mode != "" && (mode != "ENABLED" || !hasKey || (r.Method != http.MethodGet && r.Method != http.MethodHead) || len(q) != 0) {
+	readQuery := len(q) == 0 || q.Has("versionId") && queryKeysOnly(q, "versionId")
+	if mode != "" && (mode != "ENABLED" || !hasKey || (r.Method != http.MethodGet && r.Method != http.MethodHead) || !readQuery) {
 		h.unsupported(w, r, req.requestID)
 		return false
 	}

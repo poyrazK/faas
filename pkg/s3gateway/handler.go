@@ -376,6 +376,10 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		h.listMultipartUploads(w, r, req)
 		return
 	}
+	if r.Method == http.MethodGet && query.Has("versions") {
+		h.listObjectVersions(w, r, req, query)
+		return
+	}
 	if r.Method == http.MethodPost && query.Has("delete") {
 		if !queryKeysOnly(query, "delete") {
 			h.unsupported(w, r, req.requestID)
@@ -396,7 +400,7 @@ func validDelimiter(delimiter string) bool {
 	if delimiter == "" {
 		return true
 	}
-	if !utf8.ValidString(delimiter) || len(delimiter) > 4 {
+	if !utf8.ValidString(delimiter) || len(delimiter) > api.MaxObjectS3DelimiterBytes {
 		return false
 	}
 	count := 0
@@ -412,6 +416,21 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("versionId") {
+		if (r.Method != http.MethodGet && r.Method != http.MethodHead) || !queryKeysOnly(query, "versionId") {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		if query.Get("versionId") == "" {
+			writeS3Error(w, 400, "InvalidArgument", "The version ID is invalid.", r.URL.Path, req.requestID)
+			return
+		}
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+			return
+		}
+		h.download(w, r, req, key)
+		return
+	}
 	if uploadID := query.Get("uploadId"); uploadID != "" {
 		switch r.Method {
 		case http.MethodPut:
@@ -750,23 +769,17 @@ func objectMetadataFromHeaders(r *http.Request) (objectstorage.ObjectMetadata, e
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	signed, err := presignChecksumRead(r.Context(), req.provider, req.bucket.PhysicalName, r.Method, key, headerOrQueryValue(r, "x-amz-checksum-mode"))
+	native, ok := h.resolveReadVersion(w, r, req, key)
+	if !ok {
+		return
+	}
+	if native != "" && !h.admit(w, r, req, key, 0, false) {
+		return
+	}
+	upstream, err := h.prepareGatewayRead(r, req, key, native)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
-	}
-	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, signed.URL, nil)
-	if err != nil {
-		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
-		return
-	}
-	for name, value := range signed.Headers {
-		upstream.Header.Set(name, value)
-	}
-	for _, name := range []string{"Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
-		if value := r.Header.Get(name); value != "" {
-			upstream.Header.Set(name, value)
-		}
 	}
 	if !h.recordProviderRequest(w, r, req) {
 		return
@@ -777,6 +790,9 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 		return
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
+	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
+		return
+	}
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		w.Header().Del("Content-Length")

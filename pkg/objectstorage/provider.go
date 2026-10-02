@@ -56,6 +56,37 @@ type ObjectReadPresigner interface {
 	PresignObjectRead(context.Context, string, string, string, int64) (SignedRequest, error)
 }
 
+// VersionReadPresigner keeps the native selector on Gregale's private URL.
+// Successful version reads must return the selected native version header.
+type VersionReadPresigner interface {
+	PresignVersionRead(context.Context, string, string, string, string, bool, int64) (SignedRequest, error)
+}
+
+type ObjectVersionListRequest struct {
+	Prefix, Delimiter, KeyMarker string
+	ProviderVersionMarker        string `json:"-"`
+	Limit                        int32
+}
+
+type ListedObjectVersion struct {
+	Object
+	ProviderVersionID string `json:"-"`
+	IsLatest          bool
+	DeleteMarker      bool
+	StorageClass      string
+}
+
+type ObjectVersionListPage struct {
+	Items                     []ListedObjectVersion
+	CommonPrefixes            []string
+	NextKeyMarker             string
+	NextProviderVersionMarker string `json:"-"`
+}
+
+type ObjectVersionLister interface {
+	ListObjectVersionPage(context.Context, string, ObjectVersionListRequest) (ObjectVersionListPage, error)
+}
+
 // PresignObjectRead keeps existing third-party providers source-compatible
 // while allowing built-in providers to distinguish transparent proxy reads
 // from customer-facing forced-download URLs.

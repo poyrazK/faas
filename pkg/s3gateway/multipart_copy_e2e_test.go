@@ -233,9 +233,16 @@ type multipartCopyIntegration struct {
 }
 
 func newMultipartCopyIntegration(t *testing.T, st multipartCopyIntegrationStore, permissions ...string) *multipartCopyIntegration {
+	return newMultipartCopyIntegrationWithProvider(t, st, nil, permissions...)
+}
+
+func newMultipartCopyIntegrationWithProvider(t *testing.T, st multipartCopyIntegrationStore, handler http.Handler, permissions ...string) *multipartCopyIntegration {
 	t.Helper()
 	p := &multipartCopyHTTPProvider{uploads: map[string]map[string]int{}}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) }))
+	if handler == nil {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.serve(t, w, r) })
+	}
+	upstream := httptest.NewServer(handler)
 	t.Cleanup(upstream.Close)
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: api.MaxObjectSinglePutBytes + 21, MaxBucketBytes: api.MaxObjectSinglePutBytes + 21, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: upstream.URL, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})

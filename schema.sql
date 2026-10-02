@@ -6349,7 +6349,7 @@ CREATE TABLE public.github_deploy_branches (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT github_deploy_branches_branch_check CHECK (((length(branch) >= 1) AND (length(branch) <= 255))),
-    CONSTRAINT github_deploy_branches_branch_check1 CHECK ((branch !~ '[[:cntrl:]]'::text)),
+    CONSTRAINT github_deploy_branches_branch_check1 CHECK ((branch !~ '[\x01-\x1f\x7f]'::text)),
     CONSTRAINT github_deploy_branches_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
 );
 
@@ -6372,7 +6372,7 @@ CREATE TABLE public.github_deploy_policies (
     CONSTRAINT github_deploy_policies_preview_service_policy_chk CHECK ((preview_service_policy = ANY (ARRAY['deny'::text, 'allow_marked'::text]))),
     CONSTRAINT github_deploy_policies_preview_ttl_chk CHECK (((preview_ttl_hours >= 1) AND (preview_ttl_hours <= 720))),
     CONSTRAINT github_deploy_policies_production_trigger_chk CHECK ((production_trigger = ANY (ARRAY['webhook'::text, 'actions'::text]))),
-    CONSTRAINT github_deploy_policies_root_dir_chk CHECK (((length(root_dir) <= 255) AND (root_dir !~ '[[:cntrl:]]'::text)))
+    CONSTRAINT github_deploy_policies_root_dir_chk CHECK (((length(root_dir) <= 255) AND (root_dir !~ '[\x01-\x1f\x7f]'::text)))
 );
 
 
@@ -8009,7 +8009,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     completion_if_match text DEFAULT ''::text NOT NULL,
     completion_if_none_match text DEFAULT ''::text NOT NULL,
     completion_error_code text DEFAULT ''::text NOT NULL,
-    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[\x01-\x1f\x7f]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -9370,7 +9370,7 @@ CREATE TABLE public.request_id_journal (
     received_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT request_id_journal_expiry_chk CHECK ((expires_at > received_at)),
-    CONSTRAINT request_id_journal_request_id_control_chk CHECK ((request_id !~ '[[:cntrl:]]'::text)),
+    CONSTRAINT request_id_journal_request_id_control_chk CHECK ((request_id !~ '[\x01-\x1f\x7f]'::text)),
     CONSTRAINT request_id_journal_request_id_size_chk CHECK (((octet_length(request_id) >= 1) AND (octet_length(request_id) <= 128))),
     CONSTRAINT request_id_journal_trace_id_format_chk CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
 );
@@ -23151,10 +23151,12 @@ CREATE INDEX object_upload_recovery_due_idx ON public.object_upload_completions 
 -- Historical provider proof recovery (ADR-397).
 CREATE INDEX object_upload_version_history_bucket_idx ON public.object_upload_completions(bucket_id) WHERE recovery_versions_observed;
 
-CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
 DECLARE versioned boolean;
 BEGIN
- versioned:=OLD.inventory_scope='all_versions' OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed);
+ versioned:=OLD.inventory_scope='all_versions' OR (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=NEW.bucket_id AND versions_observed));
  IF OLD.inventory_scope='all_versions' AND NEW.inventory_scope<>'all_versions' THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version accounting cannot revert to current-object inventory';
  END IF;
@@ -23210,7 +23212,9 @@ ALTER TABLE ONLY public.object_storage_version_inventory_cursors
 ALTER TABLE ONLY public.object_storage_version_inventory_cursors
     ADD CONSTRAINT object_storage_version_inventory_cursors_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.object_storage_capacity_reconciliations(id) ON DELETE CASCADE;
 
-CREATE FUNCTION public.fence_object_native_version_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION public.fence_object_native_version_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
 DECLARE mode text; bid uuid;
 BEGIN
  bid:=NEW.bucket_id;
@@ -23228,7 +23232,7 @@ BEGIN
   IF TG_TABLE_NAME='object_storage_write_admissions' THEN
    IF NEW.native_version THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before version admission'; END IF;
   END IF;
-  IF EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) THEN
+  IF (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=bid AND versions_observed)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before new writes';
   END IF;
  END IF;
@@ -23238,3 +23242,81 @@ END $$;
 CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();
 
 CREATE TRIGGER object_native_version_key_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();
+
+
+
+--
+-- Name: protect_object_version_reference(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_version_reference() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM object_buckets WHERE id=OLD.bucket_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version references remain until bucket deletion';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.id IS DISTINCT FROM OLD.id OR NEW.bucket_id IS DISTINCT FROM OLD.bucket_id OR NEW.object_key IS DISTINCT FROM OLD.object_key OR NEW.native_version_id IS DISTINCT FROM OLD.native_version_id THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version reference identity is immutable';
+ END IF;
+ NEW.versions_observed:=OLD.versions_observed OR NEW.versions_observed;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_version_references; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_version_references (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    bucket_id uuid NOT NULL,
+    object_key text NOT NULL,
+    native_version_id text NOT NULL,
+    versions_observed boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_version_references_check CHECK (((native_version_id = 'null'::text) OR versions_observed)),
+    CONSTRAINT object_version_references_native_version_id_check CHECK ((((octet_length(native_version_id) >= 1) AND (octet_length(native_version_id) <= 1024)) AND (native_version_id !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_references_object_key_check CHECK ((((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024)) AND (object_key !~ '[\x01-\x1f\x7f]'::text)))
+);
+
+
+--
+-- Name: object_version_references object_version_references_bucket_id_object_key_native_versi_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_references
+    ADD CONSTRAINT object_version_references_bucket_id_object_key_native_versi_key UNIQUE (bucket_id, object_key, native_version_id);
+
+
+--
+-- Name: object_version_references object_version_references_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_references
+    ADD CONSTRAINT object_version_references_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_version_references_observed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_version_references_observed_idx ON public.object_version_references USING btree (bucket_id) WHERE versions_observed;
+
+
+--
+-- Name: object_version_references object_version_reference_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_version_reference_identity BEFORE DELETE OR UPDATE ON public.object_version_references FOR EACH ROW EXECUTE FUNCTION public.protect_object_version_reference();
+
+
+--
+-- Name: object_version_references object_version_references_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_references
+    ADD CONSTRAINT object_version_references_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;

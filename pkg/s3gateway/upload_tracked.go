@@ -82,6 +82,9 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	w.Header().Set("ETag", done.ETag)
+	if !h.publicVersionHeader(w, r, req, c.Key, version, false) {
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 

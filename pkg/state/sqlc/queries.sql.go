@@ -11899,7 +11899,7 @@ SELECT
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
- (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions
 `
 
 type ObjectCapacityReadinessRow struct {
@@ -12144,6 +12144,7 @@ WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
 AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
 AND u.inventory_scope='current'
 AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
 AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 `
 
@@ -14739,7 +14740,7 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 
 const objectVersionAccountingStatus = `-- name: ObjectVersionAccountingStatus :one
 SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
- EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed UNION ALL SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed) AS versions_observed,
  EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2
 `
@@ -14760,6 +14761,22 @@ func (q *Queries) ObjectVersionAccountingStatus(ctx context.Context, db DBTX, ar
 	var i ObjectVersionAccountingStatusRow
 	err := row.Scan(&i.InventoryScope, &i.VersionsObserved, &i.NativeScanActive)
 	return i, err
+}
+
+const objectVersionBucketOwned = `-- name: ObjectVersionBucketOwned :one
+SELECT id FROM object_buckets WHERE id=$1 AND account_id=$2 AND state='ready' FOR SHARE
+`
+
+type ObjectVersionBucketOwnedParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectVersionBucketOwned(ctx context.Context, db DBTX, arg ObjectVersionBucketOwnedParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectVersionBucketOwned, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const objectVersionCapacityRebase = `-- name: ObjectVersionCapacityRebase :execrows
@@ -14830,6 +14847,69 @@ func (q *Queries) ObjectVersionInventoryEntriesInsert(ctx context.Context, db DB
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectVersionReferenceResolve = `-- name: ObjectVersionReferenceResolve :one
+SELECT v.native_version_id FROM object_version_references v JOIN object_buckets b ON b.id=v.bucket_id
+WHERE v.id=$1 AND b.account_id=$2 AND v.bucket_id=$3 AND v.object_key=$4 AND v.native_version_id<>'null' AND b.state='ready'
+`
+
+type ObjectVersionReferenceResolveParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+	ObjectKey string
+}
+
+func (q *Queries) ObjectVersionReferenceResolve(ctx context.Context, db DBTX, arg ObjectVersionReferenceResolveParams) (string, error) {
+	row := db.QueryRow(ctx, objectVersionReferenceResolve,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ObjectKey,
+	)
+	var native_version_id string
+	err := row.Scan(&native_version_id)
+	return native_version_id, err
+}
+
+const objectVersionReferencesRecord = `-- name: ObjectVersionReferencesRecord :many
+INSERT INTO object_version_references(bucket_id,object_key,native_version_id,versions_observed)
+SELECT $1,x.object_key,x.native_version_id,x.versions_observed
+FROM jsonb_to_recordset($2::jsonb) AS x(object_key text,native_version_id text,versions_observed boolean)
+ON CONFLICT(bucket_id,object_key,native_version_id) DO UPDATE SET versions_observed=object_version_references.versions_observed OR EXCLUDED.versions_observed
+RETURNING id,object_key,native_version_id
+`
+
+type ObjectVersionReferencesRecordParams struct {
+	BucketID pgtype.UUID
+	Items    []byte
+}
+
+type ObjectVersionReferencesRecordRow struct {
+	ID              pgtype.UUID
+	ObjectKey       string
+	NativeVersionID string
+}
+
+func (q *Queries) ObjectVersionReferencesRecord(ctx context.Context, db DBTX, arg ObjectVersionReferencesRecordParams) ([]ObjectVersionReferencesRecordRow, error) {
+	rows, err := db.Query(ctx, objectVersionReferencesRecord, arg.BucketID, arg.Items)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectVersionReferencesRecordRow{}
+	for rows.Next() {
+		var i ObjectVersionReferencesRecordRow
+		if err := rows.Scan(&i.ID, &i.ObjectKey, &i.NativeVersionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
