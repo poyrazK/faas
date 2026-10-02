@@ -6,14 +6,39 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from email.message import Message
 from unittest.mock import patch
 from types import SimpleNamespace
+import urllib.request
 
 import request_evidence_hotfix as controller
 import request_evidence_hotfix_host as host
 
 
 class HotfixContracts(unittest.TestCase):
+    def test_github_api_helper_does_not_depend_on_gh_cli(self):
+        with patch.object(controller, 'github_get', return_value=b'{"workflow_runs":[]}') as get:
+            self.assertEqual(controller.api('actions/runs?per_page=100'), {'workflow_runs': []})
+        get.assert_called_once_with('repos/' + controller.REPO + '/actions/runs?per_page=100')
+
+    def test_github_token_is_removed_before_redirect_to_asset_storage(self):
+        request = urllib.request.Request('https://api.github.com/repos/example/release', headers={
+            'Authorization': 'Bearer secret', 'X-GitHub-Api-Version': '2022-11-28',
+        })
+        redirected = controller.GithubRedirectHandler().redirect_request(
+            request, None, 302, 'Found', Message(), 'https://objects.githubusercontent.com/release'
+        )
+        self.assertIsNone(redirected.get_header('Authorization'))
+        self.assertIsNone(redirected.get_header('X-github-api-version'))
+
+    def test_release_asset_download_streams_to_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / 'release.tar.gz'
+            with patch.object(controller, 'github_open', return_value=io.BytesIO(b'large asset')) as open_asset:
+                controller.github_download('repos/example/assets/1', destination)
+            self.assertEqual(destination.read_bytes(), b'large asset')
+        open_asset.assert_called_once_with('repos/example/assets/1', 'application/octet-stream')
+
     def test_inspection_never_opens_a_writable_file_or_changes_a_unit(self):
         state = {'gateway': {'sha256': host.OLD_HASH, 'pid': 123}}
         with patch.object(host, 'snapshot', return_value=state), patch.object(host, 'health'), \
