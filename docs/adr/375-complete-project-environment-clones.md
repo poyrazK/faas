@@ -2965,3 +2965,37 @@ the selected tests are scoped evidence, not the full package/repository suites.
 SQLC 1.31.1 output matches an independent regeneration. The final API run used a
 fresh PostgreSQL 16 cluster on a temporary RAM volume after the shared host disk
 filled during fixture creation; its fixtures ran the complete migration set.
+
+### Owned PostgreSQL snapshot capture and dispatch recovery (2026-10-02)
+
+Managed PostgreSQL providers can now implement an optional snapshot interface.
+The Neon adapter captures the exact pinned project/branch and the capture owner's
+supplied timestamp through the native
+[create snapshot API](https://api-docs.neon.tech/reference/createsnapshot).
+It authenticates the observed manual snapshot's owner, source, timestamp and
+creation identity. Automatic expiry is cleared only on that owned copy through
+the native [update API](https://api-docs.neon.tech/reference/updatesnapshot), and
+an independent observation must report explicit null expiry. Missing retention
+evidence, duplicate owner names, changed identities and different points fail.
+Neither snapshot creation metadata nor a running-operation acknowledgement is
+reported as completed creation, restorability or stage readiness.
+
+Discovery and retention are separate operations. Discovery cannot create a
+snapshot or change its retention. Retention accepts an existing exact snapshot
+ID and cannot replace a disappeared copy. Cleanup authenticates the same owned
+identity and observes absence after the native asynchronous
+[delete API](https://api-docs.neon.tech/reference/deletesnapshot); HTTP 202 alone
+cannot complete cleanup. A missing name match cannot establish absence of a
+known snapshot ID. Provider resolution uses the frozen backend fingerprint,
+without falling back to current defaults, and provider contexts inherit the
+worker deadline. Cleanup remains available when provisioning is disabled.
+
+Provider methods alone do not establish a shared database/object/config
+checkpoint, snapshot completion, target restoration or full stage readiness.
+Public admission and native/provider acceptance remain closed.
+
+Verification: the complete managed PostgreSQL suite passed (128.334 s), and the
+complete Neon adapter suite passed (3.803 s). The native API fixtures exercise
+identity and retention mismatches, missing evidence, lost acknowledgements,
+query/body contracts, read-only discovery and owned asynchronous cleanup. No
+live provider resources were mutated.
