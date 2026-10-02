@@ -55,6 +55,38 @@ that journey and the production scanner upgrade still required for an untouched
 dependency-lockfile deployment.
 
 Follow-on work includes gateway-owned OAuth and per-tool policy/metrics, contract
-diffs and rollout checks, durable Tasks backed by Jobs, and customer-isolated
+promotion checks, durable Tasks backed by Jobs, and customer-isolated
 execution. These require separate acceptance and must not be advertised as shipped
 by this implementation.
+
+## Local tool contract checks
+
+`mcp lock` captures a deterministic caller-visible tool catalog without execution,
+endpoint identity or credentials. Partial discovery cannot publish a snapshot.
+`mcp diff` compares local snapshots with conservative input/output directionality;
+unknown changed schema keywords and annotations require review. `--check` fails
+for both structural breaks and review requirements. References are never fetched.
+These commands extend the diagnostic profile without changing deployment ownership
+or creating automatic traffic-promotion gates. Compare catalogs captured with the
+same permissions; tool behavior and arbitrary schema compatibility remain unproven.
+
+## Application-owned tool authorization
+
+The Node starter accepts an optional `auth.tool_scopes` map alongside endpoint
+scopes. A configured map denies unlisted tools, including future registrations;
+an explicit empty scope array permits the endpoint's callers. An empty map denies
+all tools. Null maps/arrays fail validation, and public mode cannot grant scoped
+tools. Omission retains the endpoint-only policy of existing servers.
+
+Verified JWT claims populate request-local SDK auth context. A fresh server
+instance disables unauthorized registrations for discovery; actual JSON-RPC calls
+are checked before dispatch and tool callbacks have an independent guard. Scope
+denials challenge with endpoint plus tool scopes. Caller-supplied headers,
+arguments and annotations grant no permissions. Object ownership is checked by
+the application inside each callback. The platform does not enforce arbitrary
+customer servers' policy merely because they supply this manifest.
+
+Portable acceptance covers both modern and stateless legacy discovery/execution,
+alternating/concurrent callers, guessed tool names, forged headers, missing
+identity, all-required scopes, empty policies, and redacted logs. This extends the
+resource-server contract without a new gateway or deployment policy owner.

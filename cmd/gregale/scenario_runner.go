@@ -836,8 +836,20 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		phases.advance(name, status)
 	}
+	beginCleanup := func() {
+		if phases.name != "cleanup" {
+			advancePhase("cleanup")
+		}
+	}
 	defer func() {
-		receipt.Phases = phases.finish(receipt.Status)
+		status := receipt.Status
+		if phases.name == "cleanup" {
+			status = "passed"
+			if receipt.CleanupError != "" {
+				status = "failed"
+			}
+		}
+		receipt.Phases = phases.finish(status)
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
@@ -887,6 +899,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
 	registered := false
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cleanupCancel()
 		allDestroyed := true
@@ -978,6 +991,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	consumerIDs := make([]string, 0, len(scenario.Consumers))
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, id := range consumerIDs {
@@ -1142,6 +1156,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	defer func() {
+		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
 		for _, command := range scenario.Cleanup {

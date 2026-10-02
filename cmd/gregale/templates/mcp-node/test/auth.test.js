@@ -16,7 +16,9 @@ async function token({ audience = config.auth.resource, issuer = config.auth.iss
 async function invoke(value, scheme = 'Bearer') {
   const result = { status: 200, accepted: false, headers: {} };
   const res = { setHeader: (k,v) => { result.headers[k] = v; }, status: n => { result.status = n; return res; }, json: body => { result.body = body; return res; } };
-  await auth.middleware({ headers: value ? { authorization: `${scheme} ${value}` } : {} }, res, () => { result.accepted = true; });
+  const req = { headers: value ? { authorization: `${scheme} ${value}` } : {}, auth: { scopes: ['forged'] } };
+  await auth.middleware(req, res, () => { result.accepted = true; });
+  result.authInfo = req.auth;
   return result;
 }
 test('protected resource metadata and bearer challenge identify the canonical endpoint', async () => {
@@ -27,6 +29,12 @@ test('protected resource metadata and bearer challenge identify the canonical en
   assert.match(result.headers['WWW-Authenticate'], /resource_metadata="https:\/\/mcp.example\/\.well-known\/oauth-protected-resource\/mcp"/);
 });
 test('valid scoped, signed token authorizes a request', async () => assert.equal((await invoke(await token())).accepted, true));
+test('only verified claims populate the SDK request context', async () => {
+  const result = await invoke(await token({ scope: 'mcp:tools files:read' }));
+  assert.deepEqual(result.authInfo.scopes, ['mcp:tools', 'files:read']);
+  assert.equal(result.authInfo.extra.subject, 'customer');
+  assert.equal((await invoke('malformed')).authInfo, undefined);
+});
 test('bearer scheme is case insensitive', async () => assert.equal((await invoke(await token(), 'bearer')).accepted, true));
 for (const [name, options, status] of [
   ['wrong audience', { audience: 'https://other.example/mcp' }, 401],

@@ -33,6 +33,9 @@ func TestMCPCLIJourney(t *testing.T) {
 	if err != nil || cfg.Auth.Mode != "open" {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
+	if len(cfg.Auth.ToolScopes) != 3 {
+		t.Fatalf("starter must explicitly allow its three harmless tools: %+v", cfg.Auth.ToolScopes)
+	}
 	lock, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +118,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "--token-env", "--stream-tool", "--arguments-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--force", "--token-env", "--stream-tool", "--arguments-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}

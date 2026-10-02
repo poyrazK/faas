@@ -52,6 +52,47 @@ Tools with invalid parameter-header annotations are excluded from discovery;
 Other valid tools remain available. A malformed response or duplicate tool name
 still fails discovery.
 
+## Tool contract snapshots
+
+Capture a caller-visible tool interface before changing a server:
+
+```sh
+gregale mcp lock --app my-mcp --out baseline.json
+gregale mcp lock --url https://candidate.example.com/mcp --out candidate.json
+gregale mcp diff --before baseline.json --after candidate.json --check --json
+```
+
+`lock` discovers tools without executing them. Its default destination is
+`gregale-mcp.lock.json`; `--legacy` captures the stateless 2025-11-25 interface.
+Snapshots contain the protocol version, tool names, descriptions, input/output
+schemas and annotations. They omit endpoint URLs, timestamps and client credentials.
+Tool names and JSON object keys are sorted, and schema numbers keep their precision.
+Discovery that rejects any tool cannot produce a complete snapshot and fails
+without writing a file. Existing snapshots require a new `--out` or explicit
+`--force`; writes are atomic with private file permissions and reject symlinks.
+
+Use the same authorization context for both captures: a caller's scopes can change
+which tools are visible. Review tool metadata before committing it; it is supplied
+by the server and may contain private information. Snapshots do not record the
+identity or permissions used to capture them.
+
+`diff` reads two local files without making network requests. It reports removed
+tools/properties, new required inputs, narrowed input types/enums, weakened output
+guarantees, metadata changes and changes needing review. Required-field, type-set
+and enum ordering is ignored. Protocol and annotation changes need review;
+annotations never grant execution permission. Other changed schema keywords,
+including constraints, references and combinators, need review. References are
+preserved without fetching them. Changed subtrees beyond 64 property/item levels
+also need review; snapshots retain their full contents. The comparison does not prove arbitrary
+JSON Schema compatibility or unchanged tool behavior. Property removal is treated
+conservatively as breaking even where JSON Schema would still permit that key.
+
+Without `--check`, a successful comparison exits zero and prints its findings.
+With `--check`, breaking changes **or** changes needing review exit one; unchanged
+contracts and informational changes exit zero. Invalid snapshots fail either mode.
+This is an explicit local CI check; it does not switch traffic, enforce platform
+promotion policy or invoke tools.
+
 ## External OAuth
 
 Before adding sensitive tools, change `auth` in `gregale-mcp.json`:
@@ -62,7 +103,12 @@ Before adding sensitive tools, change `auth` in `gregale-mcp.json`:
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
   "resource": "https://my-mcp.gregale.dev/mcp",
-  "scopes": ["mcp:tools"]
+  "scopes": ["mcp:tools"],
+  "tool_scopes": {
+    "greet": [],
+    "add": ["math:read"],
+    "stream_demo": ["mcp:stream"]
+  }
 }
 ```
 
@@ -71,8 +117,29 @@ audience. The starter serves RFC 9728 protected-resource metadata and a bearer
 challenge. It verifies signed RS256/ES256 JWT access tokens with issuer, audience,
 expiry, subject and all configured scopes. The provider owns login, consent,
 client registration and token issuance. Opaque tokens require an introspection
-adapter. Endpoint scopes do not provide different tool permissions to different
-clients; implement that policy before exposing such tools.
+adapter. `auth.scopes` are required for every request. In the Node starter,
+`auth.tool_scopes` adds application-owned permissions: every listed scope is
+required in addition to the endpoint scopes. `[]` permits any authenticated
+endpoint caller to use that tool. A configured map denies tools missing from it;
+`{}` denies every tool. Null maps or scope arrays fail configuration validation.
+Open mode allows only empty scope arrays; the generated public starter explicitly
+allows its three harmless tools.
+
+The starter filters `tools/list` using verified JWT scopes on each request and
+checks `tools/call` before execution, including calls to hidden tools. Missing
+tool scopes return HTTP 403 with an `insufficient_scope` bearer challenge naming
+the endpoint and tool scopes; an unlisted tool returns `tool_access_denied`.
+Headers, arguments and tool annotations cannot grant permissions. Register new
+tools through the starter's `registerTool` helper to retain discovery filtering
+and the callback guard. The JSON-RPC tool name controls authorization; an
+`Mcp-Name` header does not.
+
+Omitting `auth.tool_scopes` preserves endpoint-only authorization for existing
+servers. This manifest describes application policy: deploying an arbitrary
+server with this field does not install a gateway enforcement layer. Such servers
+must implement the policy themselves. Object/tenant ownership checks inside each
+tool remain the application's responsibility. Compare contract snapshots under
+the same identity and scopes, including separate baselines for different roles.
 
 Pass an MCP client access token with `--token-env MCP_TOKEN` for authenticated
 deploy verification, doctor or calls. Keep secrets out of shell history and use
