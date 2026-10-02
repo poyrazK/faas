@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -230,8 +231,56 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
+	var autoAssigned *api.IssueOwnershipRule
+	if created {
+		rules, listErr := q.IssueListOwnershipRules(ctx, tx, owner.ID)
+		if listErr != nil {
+			return api.IssueEventResponse{}, listErr
+		}
+		for _, stored := range rules {
+			rule := api.IssueOwnershipRule{
+				ExceptionType:     stored.ExceptionType.String,
+				SourceKind:        stored.SourceKind.String,
+				RoutePrefix:       stored.RoutePrefix.String,
+				AssigneeAccountID: issueID(stored.AssigneeAccountID),
+			}
+			if !issueOwnershipRuleMatches(rule, in.Event) {
+				continue
+			}
+			allowed, allowedErr := q.IssueAssigneeAllowed(ctx, tx, sqlc.IssueAssigneeAllowedParams{AppID: owner.ID, Assignee: stored.AssigneeAccountID})
+			if allowedErr != nil {
+				return api.IssueEventResponse{}, allowedErr
+			}
+			if allowed {
+				row, err = q.IssueSetNewIssueAssignee(ctx, tx, sqlc.IssueSetNewIssueAssigneeParams{ID: row.ID, AssigneeAccountID: stored.AssigneeAccountID})
+				if err != nil {
+					return api.IssueEventResponse{}, err
+				}
+				autoAssigned = &rule
+			}
+			// The first matching rule is authoritative. A target whose org
+			// membership was revoked since configuration leaves the issue open
+			// and unassigned; later rules do not silently take its place.
+			break
+		}
+	}
 	if err = q.IssueObserveRelease(ctx, tx, sqlc.IssueObserveReleaseParams{IssueID: row.ID, DeploymentID: dep.ID, CommitSha: dep.CommitSha.String, ImageDigest: dep.ImageDigest, OccurredAt: issueTime(in.Event.OccurredAt)}); err != nil {
 		return api.IssueEventResponse{}, err
+	}
+	if autoAssigned != nil {
+		details := map[string]string{"assignee_account_id": autoAssigned.AssigneeAccountID, "assignment_source": "ownership_rule"}
+		if autoAssigned.ExceptionType != "" {
+			details["exception_type"] = autoAssigned.ExceptionType
+		}
+		if autoAssigned.SourceKind != "" {
+			details["source_kind"] = autoAssigned.SourceKind
+		}
+		if autoAssigned.RoutePrefix != "" {
+			details["route_prefix"] = autoAssigned.RoutePrefix
+		}
+		if err = issueActivity(ctx, q, tx, row, "assigned", "", details, in.Now); err != nil {
+			return api.IssueEventResponse{}, err
+		}
 	}
 	if minimumCustomers > 0 {
 		customersAfter, countErr := q.IssueImpactCustomerCount(ctx, tx, sqlc.IssueImpactCustomerCountParams{
@@ -338,6 +387,86 @@ func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, 
 		"window_end":           now.UTC().Format(time.RFC3339),
 	}
 	return issueActivity(ctx, q, tx, row, "impact_threshold_reached", "", details, now)
+}
+
+func issueOwnershipRuleMatches(rule api.IssueOwnershipRule, event api.IssueEvent) bool {
+	if rule.ExceptionType != "" && rule.ExceptionType != event.ExceptionType {
+		return false
+	}
+	if rule.SourceKind != "" && rule.SourceKind != event.SourceKind {
+		return false
+	}
+	if rule.RoutePrefix != "" {
+		if !strings.HasPrefix(event.Route, rule.RoutePrefix) {
+			return false
+		}
+		if len(event.Route) > len(rule.RoutePrefix) && !strings.HasSuffix(rule.RoutePrefix, "/") && event.Route[len(rule.RoutePrefix)] != '/' {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *PgStore) GetIssueOwnershipRules(ctx context.Context, app string) (api.IssueOwnershipRules, error) {
+	rows, err := sqlc.New().IssueListOwnershipRules(ctx, s.pool, issueUUID(app))
+	if err != nil {
+		return api.IssueOwnershipRules{}, err
+	}
+	out := api.IssueOwnershipRules{Rules: make([]api.IssueOwnershipRule, 0, len(rows))}
+	for _, row := range rows {
+		out.Rules = append(out.Rules, api.IssueOwnershipRule{
+			ExceptionType: row.ExceptionType.String, SourceKind: row.SourceKind.String,
+			RoutePrefix: row.RoutePrefix.String, AssigneeAccountID: issueID(row.AssigneeAccountID),
+		})
+	}
+	return out, nil
+}
+
+func (s *PgStore) SetIssueOwnershipRules(ctx context.Context, app, account string, rules []api.IssueOwnershipRule) (api.IssueOwnershipRules, error) {
+	rules, err := api.NormalizeIssueOwnershipRules(rules)
+	if err != nil {
+		return api.IssueOwnershipRules{}, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return api.IssueOwnershipRules{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	owner, err := q.IssueLockApp(ctx, tx, issueUUID(app))
+	if err != nil {
+		return api.IssueOwnershipRules{}, mapErr(err)
+	}
+	if issueID(owner.AccountID) != account {
+		return api.IssueOwnershipRules{}, ErrNotFound
+	}
+	for _, rule := range rules {
+		allowed, checkErr := q.IssueAssigneeAllowed(ctx, tx, sqlc.IssueAssigneeAllowedParams{AppID: owner.ID, Assignee: issueUUID(rule.AssigneeAccountID)})
+		if checkErr != nil {
+			return api.IssueOwnershipRules{}, checkErr
+		}
+		if !allowed {
+			return api.IssueOwnershipRules{}, ErrInvalidArgument
+		}
+	}
+	if err = q.IssueDeleteOwnershipRules(ctx, tx, owner.ID); err != nil {
+		return api.IssueOwnershipRules{}, err
+	}
+	for i, rule := range rules {
+		if err = q.IssueInsertOwnershipRule(ctx, tx, sqlc.IssueInsertOwnershipRuleParams{
+			AppID: owner.ID, RuleOrder: int32(i),
+			ExceptionType:     pgtype.Text{String: rule.ExceptionType, Valid: rule.ExceptionType != ""},
+			SourceKind:        pgtype.Text{String: rule.SourceKind, Valid: rule.SourceKind != ""},
+			RoutePrefix:       pgtype.Text{String: rule.RoutePrefix, Valid: rule.RoutePrefix != ""},
+			AssigneeAccountID: issueUUID(rule.AssigneeAccountID),
+		}); err != nil {
+			return api.IssueOwnershipRules{}, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return api.IssueOwnershipRules{}, err
+	}
+	return api.IssueOwnershipRules{Rules: rules}, nil
 }
 
 func (s *PgStore) GetIssueImpactAlertPolicy(ctx context.Context, app string) (api.IssueImpactAlertPolicy, error) {

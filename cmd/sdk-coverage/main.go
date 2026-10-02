@@ -285,6 +285,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/issues":                            "ListIssues",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":         "GetIssueImpactAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":         "SetIssueImpactAlertPolicy",
+	"GET /v1/apps/{slug}/issue-ownership-rules":             "GetIssueOwnershipRules",
+	"PUT /v1/apps/{slug}/issue-ownership-rules":             "SetIssueOwnershipRules",
 	"GET /v1/apps/{slug}/issues/{issue_id}":                 "GetIssue",
 	"POST /v1/apps/{slug}/issues/{issue_id}/actions":        "ActOnIssue",
 	"POST /v1/apps/{slug}/issue-ingest-tokens":              "CreateIssueIngestToken",

@@ -21,6 +21,8 @@ type IssueStore interface {
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
 	GetIssueImpactAlertPolicy(context.Context, string) (api.IssueImpactAlertPolicy, error)
 	SetIssueImpactAlertPolicy(context.Context, string, string, int64, time.Time) (api.IssueImpactAlertPolicy, error)
+	GetIssueOwnershipRules(context.Context, string) (api.IssueOwnershipRules, error)
+	SetIssueOwnershipRules(context.Context, string, string, []api.IssueOwnershipRule) (api.IssueOwnershipRules, error)
 }
 
 type IssueCredential struct {

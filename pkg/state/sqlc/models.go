@@ -500,6 +500,15 @@ type AppIssueImpactAlertPolicy struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AppIssueOwnershipRule struct {
+	AppID             pgtype.UUID
+	RuleOrder         int32
+	ExceptionType     pgtype.Text
+	SourceKind        pgtype.Text
+	RoutePrefix       pgtype.Text
+	AssigneeAccountID pgtype.UUID
+}
+
 type AppLogDrain struct {
 	ID               pgtype.UUID
 	AppID            pgtype.UUID

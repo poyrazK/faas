@@ -495,6 +495,8 @@ export type { IssueImpactAlertPolicy } from './IssueImpactAlertPolicy.js';
 export type { IssueImpactSummary } from './IssueImpactSummary.js';
 export type { IssueIngestToken } from './IssueIngestToken.js';
 export type { IssueOccurrence } from './IssueOccurrence.js';
+export type { IssueOwnershipRule } from './IssueOwnershipRule.js';
+export type { IssueOwnershipRules } from './IssueOwnershipRules.js';
 export type { IssueRelease } from './IssueRelease.js';
 export type { JobArtifactDownloadResponse } from './JobArtifactDownloadResponse.js';
 export type { JobDeletedResponse } from './JobDeletedResponse.js';

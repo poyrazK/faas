@@ -4291,6 +4291,22 @@ CREATE TABLE public.app_issue_impact_alert_policies (
 
 
 --
+-- Name: app_issue_ownership_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_ownership_rules (
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    rule_order integer NOT NULL CHECK ((rule_order >= 0) AND (rule_order <= 49)),
+    exception_type text,
+    source_kind text CHECK ((source_kind IS NULL) OR (source_kind = ANY (ARRAY['exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))),
+    route_prefix text CHECK ((route_prefix IS NULL) OR ((length(route_prefix) <= 256) AND (left(route_prefix, 1) = '/'::text) AND (position(('?'::text) in route_prefix) = 0) AND (position(('#'::text) in route_prefix) = 0))),
+    assignee_account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    CONSTRAINT app_issue_ownership_rules_matcher_check CHECK (((exception_type IS NOT NULL) AND (length(exception_type) >= 1) AND (length(exception_type) <= 256)) OR (source_kind IS NOT NULL) OR (route_prefix IS NOT NULL)),
+    CONSTRAINT app_issue_ownership_rules_pkey PRIMARY KEY (app_id, rule_order)
+);
+
+
+--
 -- Name: app_issues; Type: TABLE; Schema: public; Owner: -
 --
 

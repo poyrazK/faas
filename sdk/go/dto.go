@@ -337,6 +337,8 @@ type (
 	IssueImpact                         = api.IssueImpact
 	IssueImpactAlertPolicy              = api.IssueImpactAlertPolicy
 	UpdateIssueImpactAlertPolicyRequest = api.UpdateIssueImpactAlertPolicyRequest
+	IssueOwnershipRule                  = api.IssueOwnershipRule
+	IssueOwnershipRules                 = api.IssueOwnershipRules
 	IssueDetail                         = api.IssueDetail
 	ListIssuesResponse                  = api.ListIssuesResponse
 	IssueEventResponse                  = api.IssueEventResponse
