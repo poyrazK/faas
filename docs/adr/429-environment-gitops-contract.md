@@ -178,6 +178,12 @@ candidate inputs while permitting OCI-derived reload metadata. Imaging projectio
 and populated migration replay pass. Routed API/CLI and main's clone/JSON receipt
 checks pass on the integrated tree. These are local unit and PostgreSQL checks;
 graph qualification, activation and native serving acceptance remain outstanding.
+The inherited-input checkpoint is integrated with main through `fdd9f1c0b`,
+including mirror admission outcomes and MCP discovery annotation handling.
+Combined-tree candidate, populated replay, scheduler hold/mirror cleanup, store,
+gateway, MCP, routed API and CLI checks pass. Schema and SQLC regeneration match;
+the main and embedded OpenAPI documents match. This integration leaves the full
+graph and native acceptance gates above outstanding.
 
 These candidates are held artifacts, not qualified deployments. The current
 implementation deliberately supplies no path to lift the hold. Ordinary imaging
