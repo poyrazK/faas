@@ -185,6 +185,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				_, _ = fmt.Fprintln(w, ".TP")
 				_, _ = fmt.Fprintf(w, ".BR %s\n", s.Name)
 				writeRoffParagraph(w, s.Short)
+				writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name}, s.Positionals, s.Flags))
 				if len(s.Examples) > 0 {
 					writeManExamples(w, s.Examples)
 				}
@@ -193,6 +194,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 					_, _ = fmt.Fprintln(w, ".TP")
 					_, _ = fmt.Fprintf(w, ".BR %s\n", child.Name)
 					writeRoffParagraph(w, child.Short)
+					writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name, child.Name}, child.Positionals, child.Flags))
 					if len(child.Examples) > 0 {
 						writeManExamples(w, child.Examples)
 					}
