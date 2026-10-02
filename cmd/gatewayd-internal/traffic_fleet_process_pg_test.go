@@ -10,6 +10,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +30,7 @@ type fleetDaemonApp struct {
 	ID, Deployment, Host string
 	Instances            []string
 	Port                 int
+	ReadinessSources     []string
 }
 
 type fleetDaemonSpec struct {
@@ -38,10 +41,11 @@ type fleetDaemonSpec struct {
 }
 
 type fleetDaemonReady struct {
-	Endpoint        string
-	ServiceEndpoint string
-	DNSUDP          string
-	DNSTCP          string
+	Endpoint          string
+	ServiceEndpoint   string
+	DNSUDP            string
+	DNSTCP            string
+	ReadinessEndpoint string
 	state.ServingGatewayTrafficRuntime
 }
 
@@ -85,21 +89,51 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	matcher := newGatewaydEdgeRules(store, log, nil, metrics).withPublicHostRouter(router)
 	backend := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), log).
 		WithStore(weightsStoreAdapter{store: store}).WithEdgeRules(matcher).WithResponseCache(cache)
+	readinessNotifications := false
+	expectedReady := make(map[string]map[string]bool)
 	for _, app := range spec.Apps {
+		expectedReady[app.ID] = make(map[string]bool)
 		port := app.Port
 		if port == 0 {
 			port = 8080
 		}
+		var states map[string]map[string]state.InstanceReadiness
+		if len(app.ReadinessSources) > 0 {
+			states, err = store.LatestInstanceReadinessBySource(t.Context(), app.Instances)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		for _, instance := range app.Instances {
-			backend.RecordTarget(app.ID, gateway.Target{AppID: app.ID, DeploymentID: app.Deployment,
-				InstanceID: instance, NodeID: spec.NodeID, Port: port, AddedAt: time.Now()})
+			ready := true
+			target := gateway.Target{AppID: app.ID, DeploymentID: app.Deployment,
+				InstanceID: instance, NodeID: spec.NodeID, Port: port, AddedAt: time.Now()}
+			if len(app.ReadinessSources) > 0 {
+				readinessNotifications = true
+				target.RequiresReadiness = true
+				target.ReadinessGates = &gateway.ReadinessGates{RequiredSources: app.ReadinessSources, States: make(map[string]gateway.ReadinessState)}
+				for source, current := range states[instance] {
+					target.ReadinessGates.States[source] = gateway.ReadinessState{Ready: current.Ready, UpdatedAt: current.At, EventID: current.EventID}
+				}
+				for _, source := range app.ReadinessSources {
+					ready = ready && states[instance][source].Ready
+				}
+			}
+			expectedReady[app.ID][instance] = ready
+			backend.RecordTarget(app.ID, target)
 		}
 	}
 	// Warm placement is a fixture boundary. Verify its real registry view
 	// before announcing readiness, including the selected deployment and port.
 	for _, app := range spec.Apps {
+		want := 0
+		for _, ready := range expectedReady[app.ID] {
+			if ready {
+				want++
+			}
+		}
 		snapshot, err := backend.ServiceEndpoints(t.Context(), app.ID)
-		if err != nil || len(snapshot.Endpoints) != len(app.Instances) {
+		if err != nil || len(snapshot.Endpoints) != want || backend.CapacityCount(app.ID) != len(app.Instances) {
 			t.Fatalf("warm service registry for %s: %+v err=%v", app.ID, snapshot, err)
 		}
 		port := app.Port
@@ -107,7 +141,7 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 			port = 8080
 		}
 		for _, endpoint := range snapshot.Endpoints {
-			if endpoint.NodeID != spec.NodeID || !slices.Contains(app.Instances, endpoint.InstanceID) || endpoint.DeploymentID != app.Deployment || endpoint.Port != port {
+			if endpoint.NodeID != spec.NodeID || !slices.Contains(app.Instances, endpoint.InstanceID) || !expectedReady[app.ID][endpoint.InstanceID] || endpoint.DeploymentID != app.Deployment || endpoint.Port != port {
 				t.Fatalf("warm service endpoint differs from fixture: %+v app=%+v", endpoint, app)
 			}
 		}
@@ -159,6 +193,38 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	deps.controlAddr = "127.0.0.1:0"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	var readinessEndpoint string
+	if readinessNotifications {
+		invalidations := &fleetReadinessInvalidator{PGBackend: backend}
+		subscribed, watched := make(chan struct{}), make(chan struct{})
+		deps.invalidationsReady = subscribed
+		go func() {
+			defer close(watched)
+			watchInvalidations(ctx, pool, invalidations, log, subscribed, config.NodeName)
+		}()
+		defer func() {
+			cancel()
+			select {
+			case <-watched:
+			case <-time.After(5 * time.Second):
+				t.Error("readiness subscriber did not stop")
+			}
+		}()
+		select {
+		case <-subscribed:
+		case <-time.After(8 * time.Second):
+			t.Fatal("readiness subscriber did not establish LISTEN")
+		}
+		control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			counts := make(map[string]fleetReadinessCounts)
+			for _, app := range spec.Apps {
+				counts[app.ID] = fleetReadinessCounts{Healthy: backend.HealthyCount(app.ID), Capacity: backend.CapacityCount(app.ID), LastEventID: invalidations.lastEvent.Load()}
+			}
+			_ = json.NewEncoder(w).Encode(counts)
+		}))
+		defer control.Close()
+		readinessEndpoint = control.URL
+	}
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, log, deps) }()
 	var observed state.ServingGatewayTrafficRuntime
@@ -184,7 +250,7 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	if observed.Generation == 0 {
 		t.Fatal("daemon did not publish actual serving wiring")
 	}
-	ready := fleetDaemonReady{Endpoint: "http://" + listener.Addr().String(), ServingGatewayTrafficRuntime: observed}
+	ready := fleetDaemonReady{Endpoint: "http://" + listener.Addr().String(), ReadinessEndpoint: readinessEndpoint, ServingGatewayTrafficRuntime: observed}
 	if spec.Managed {
 		select {
 		case ready.ServiceEndpoint = <-serviceEndpoint:
@@ -223,6 +289,7 @@ type fleetDaemonProcess struct {
 	stdin  io.WriteCloser
 	done   chan error
 	stderr bytes.Buffer
+	stdout bytes.Buffer
 	once   sync.Once
 }
 
@@ -306,12 +373,19 @@ func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp
 	go func() { p.done <- c.Wait(); close(p.done) }()
 	t.Cleanup(func() { p.stop(t) })
 	decoded := make(chan error, 1)
-	go func() { decoded <- json.NewDecoder(stdout).Decode(&p.ready) }()
+	go func() {
+		reader := io.TeeReader(stdout, &p.stdout)
+		err := json.NewDecoder(reader).Decode(&p.ready)
+		if err != nil {
+			_, _ = io.Copy(io.Discard, reader)
+		}
+		decoded <- err
+	}()
 	select {
 	case err := <-decoded:
 		if err != nil {
 			p.stop(t)
-			t.Fatalf("fleet daemon readiness: %v: %s", err, &p.stderr)
+			t.Fatalf("fleet daemon readiness: %v: stdout=%s stderr=%s", err, &p.stdout, &p.stderr)
 		}
 	case <-time.After(10 * time.Second):
 		p.stop(t)

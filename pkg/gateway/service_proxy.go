@@ -1066,9 +1066,12 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	if cached, ok := p.snapshots[appID]; ok && now.Before(cached.fetchedAt.Add(p.endpointTTL)) {
 		out := append([]ServiceEndpoint(nil), cached.endpoints...)
 		p.mu.Unlock()
-		return out, nil
+		if p.cachedEndpointsRoutable(appID, out) {
+			return out, nil
+		}
+	} else {
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 	snapshot, err := p.provider.ServiceEndpoints(ctx, appID)
 	if err != nil {
 		return nil, err
@@ -1078,6 +1081,22 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	p.snapshots[appID] = serviceProxySnapshot{fetchedAt: now, endpoints: append([]ServiceEndpoint(nil), endpoints...)}
 	p.mu.Unlock()
 	return endpoints, nil
+}
+
+func (p *ServiceProxy) cachedEndpointsRoutable(appID string, endpoints []ServiceEndpoint) bool {
+	validator, ok := p.provider.(ServiceEndpointRoutability)
+	if !ok {
+		return true
+	}
+	if len(endpoints) == 0 {
+		return false // Observe readiness recovery without waiting for the lease.
+	}
+	for _, endpoint := range endpoints {
+		if !validator.ServiceEndpointRoutable(appID, endpoint) {
+			return false
+		}
+	}
+	return true
 }
 
 // pruneIdle bounds per-app leases, round-robin cursors, and per-instance
@@ -1347,14 +1366,9 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 // hijacked connection, so the first endpoint chosen is the only one, and a
 // stale-target signal cannot be acted on after bytes have flowed.
 func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
-	endpoint, ok := p.pick(target.AppID, endpoints)
-	if len(endpoints) > 0 {
-		recordTrafficCircuit(r.Context(), ok)
-	}
+	endpoint, ok, eligible := p.pickForAttempt(target.AppID, endpoints)
+	p.recordEndpointPick(r.Context(), ok, eligible, len(endpoints))
 	if !ok {
-		if len(endpoints) > 0 {
-			recordTrafficRefusal(r.Context(), "circuit")
-		}
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 		return
 	}
@@ -1479,14 +1493,9 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		}
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		endpoint, ok := p.pick(appID, endpoints)
-		if len(endpoints) > 0 {
-			recordTrafficCircuit(ctx, ok)
-		}
+		endpoint, ok, eligible := p.pickForAttempt(appID, endpoints)
+		p.recordEndpointPick(ctx, ok, eligible, len(endpoints))
 		if !ok {
-			if len(endpoints) > 0 {
-				recordTrafficRefusal(ctx, "circuit")
-			}
 			if attempt > 0 {
 				recordTrafficRetryStop(ctx, RetrySkipNoTarget)
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
@@ -1604,11 +1613,11 @@ func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
 	}
 }
 
-// pick walks the round-robin ring and returns the first endpoint whose
-// breaker admits it. In half-open exactly one caller is admitted as a probe,
+// pickForAttempt walks the ring, rechecking current readiness and identity
+// before asking the breaker. In half-open exactly one caller is admitted as a probe,
 // so a recovering endpoint receives a single trial request rather than the
 // full share the ring would otherwise hand it.
-func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceEndpoint, bool) {
+func (p *ServiceProxy) pickForAttempt(appID string, endpoints []ServiceEndpoint) (ServiceEndpoint, bool, bool) {
 	p.mu.Lock()
 	start := p.next[appID]
 	p.next[appID]++
@@ -1623,29 +1632,48 @@ func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceE
 	// Round-robin still runs within each tier, so local replicas share load
 	// evenly and a benched local endpoint falls through to a remote one
 	// rather than failing the call.
-	if endpoint, ok := p.pickFrom(appID, endpoints, start, true); ok {
-		return endpoint, true
+	endpoint, ok, localEligible := p.pickFrom(appID, endpoints, start, true)
+	if ok {
+		return endpoint, true, true
 	}
-	return p.pickFrom(appID, endpoints, start, false)
+	endpoint, ok, eligible := p.pickFrom(appID, endpoints, start, false)
+	return endpoint, ok, localEligible || eligible
 }
 
 // pickFrom walks the rotation once, considering only endpoints that match the
 // requested locality. localOnly=false considers every endpoint, so the second
 // pass is a superset of the first and no target is unreachable.
-func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start uint64, localOnly bool) (ServiceEndpoint, bool) {
+func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start uint64, localOnly bool) (ServiceEndpoint, bool, bool) {
 	if localOnly && p.localNodeID == "" {
-		return ServiceEndpoint{}, false
+		return ServiceEndpoint{}, false, false
 	}
+	eligible := false
+	validator, validates := p.provider.(ServiceEndpointRoutability)
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := endpoints[(int(start)+i)%len(endpoints)]
 		if localOnly && endpoint.NodeID != p.localNodeID {
 			continue
 		}
+		if validates && !validator.ServiceEndpointRoutable(appID, endpoint) {
+			continue
+		}
+		eligible = true
 		if p.breaker.Allow(serviceProxyEndpointKey(appID, endpoint.InstanceID)) {
-			return endpoint, true
+			return endpoint, true, true
 		}
 	}
-	return ServiceEndpoint{}, false
+	return ServiceEndpoint{}, false, eligible
+}
+
+func (p *ServiceProxy) recordEndpointPick(ctx context.Context, picked, eligible bool, candidates int) {
+	if eligible {
+		recordTrafficCircuit(ctx, picked)
+		if !picked {
+			recordTrafficRefusal(ctx, "circuit")
+		}
+	} else if candidates > 0 {
+		recordTrafficRefusal(ctx, "capacity")
+	}
 }
 
 // quarantine reports a transport failure for an endpoint. The name is kept

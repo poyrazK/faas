@@ -674,6 +674,30 @@ release without verified source deployment 403, and an ineligible exact override
 422. These refusals precede wake/guest dispatch. Normal updates retain admitted
 policy; emergency generation fences still apply.
 
+### Service readiness and cached endpoints
+
+Service discovery returns only locally ready targets. For a deployment with
+multiple readiness sources, every required primary-app/sidecar source must be
+ready. An older observation cannot undo a newer withdrawal. Unready instances
+retain resident capacity and their readiness can recover without eviction.
+
+Managed endpoint leases refresh when a cached target becomes unready, is evicted,
+or changes its deployment/node/port. Empty leases reread discovery on the next
+request, including the bound `.internal` HEAD readiness probe. Every HTTP/gRPC
+routing attempt and Upgrade selection checks current local readiness before
+circuit admission; retries cannot forward to a newly withdrawn alternate.
+Readiness refusals do not consume a half-open circuit's only trial permit.
+Exact retained revision pins keep their existing readiness requirements.
+
+The check applies after the gateway receives the readiness update. Existing
+exchanges are not canceled by ordinary readiness changes. Notification loss or
+cross-host delay can still leave a stale local view. Recovered replicas joining
+an already nonempty lease can wait for its normal five-second refresh. Use the
+separate security-generation contract for emergency withdrawal. The local
+configured process test covers durable event delivery, no-wake probes and
+replacement hydration; native probes/networking, ordinary all-unready wake,
+notification outage recovery and deployed load remain unqualified.
+
 ## Covered paths
 
 | Path | Snapshot and evidence |

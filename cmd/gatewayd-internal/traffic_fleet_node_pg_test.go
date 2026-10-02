@@ -34,6 +34,7 @@ type fleetAdmissionObservation struct {
 		Plan            string
 	}
 	RPCs, GuestCalls, Peak int32
+	RPCInstances           map[string]int32
 	Chain                  struct {
 		Claims          map[string]trafficdeadline.Claims
 		ClaimErrors     map[string]string
@@ -122,9 +123,15 @@ func observeFleetAdmission(t *testing.T, node fleetAdmissionNode) fleetAdmission
 }
 
 func prepareFleetAdmission(t *testing.T) (fleetDaemonFixture, fleetAdmissionNode) {
+	return prepareFleetAdmissionReplicas(t, false)
+}
+
+func prepareFleetAdmissionReplicas(t *testing.T, retainReplicas bool) (fleetDaemonFixture, fleetAdmissionNode) {
 	t.Helper()
 	f := newFleetDaemonFixture(t)
-	f.apps[2].Instances = f.apps[2].Instances[:1]
+	if !retainReplicas {
+		f.apps[2].Instances = f.apps[2].Instances[:1]
+	}
 	node := startFleetAdmissionNode(t, f.apps)
 	role, gatewayURL := "compute-only", "tcp://127.0.0.1:9090"
 	f.nodes = nil

@@ -230,6 +230,7 @@ type nodeAdmissionProcessFixture struct {
 	port                       int
 	started                    chan struct{}
 	peak, guestCalls, rpcCalls *atomic.Int32
+	rpcInstances               *sync.Map
 }
 
 func newNodeAdmissionProcessFixture(t *testing.T) nodeAdmissionProcessFixture {
@@ -324,16 +325,31 @@ func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionF
 		t.Fatal(err)
 	}
 	rpcCalls := new(atomic.Int32)
+	rpcInstances := new(sync.Map)
 	rpc := grpc.NewServer(grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if strings.HasSuffix(info.FullMethod, "/ForwardHTTPStream") || strings.HasSuffix(info.FullMethod, "/ForwardRawStream") {
 			rpcCalls.Add(1)
 		}
-		return handler(srv, stream)
+		return handler(srv, nodeAdmissionObservedStream{ServerStream: stream, instances: rpcInstances})
 	}))
 	vmmdpb.RegisterVmmdServer(rpc, s)
 	go func() { _ = rpc.Serve(listener) }()
 	t.Cleanup(rpc.Stop)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	return nodeAdmissionProcessFixture{owner: owner, listener: listener, port: port,
-		started: started, peak: &peak, guestCalls: &calls, rpcCalls: rpcCalls}
+		started: started, peak: &peak, guestCalls: &calls, rpcCalls: rpcCalls, rpcInstances: rpcInstances}
+}
+
+type nodeAdmissionObservedStream struct {
+	grpc.ServerStream
+	instances *sync.Map
+}
+
+func (s nodeAdmissionObservedStream) RecvMsg(message any) error {
+	err := s.ServerStream.RecvMsg(message)
+	if request, ok := message.(*vmmdpb.ForwardHTTPStreamRequest); err == nil && ok && request.GetInit() != nil {
+		value, _ := s.instances.LoadOrStore(request.GetInit().GetInstance(), new(atomic.Int32))
+		value.(*atomic.Int32).Add(1)
+	}
+	return err
 }

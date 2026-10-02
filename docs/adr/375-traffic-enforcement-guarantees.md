@@ -1240,6 +1240,40 @@ binds, an ordinary DNS upstream and VM forwarding are explicit local fixtures.
 These checks do not establish native namespace/NAT/firewall or DNS-gated egress
 acceptance, outer daemon discovery, cross-host transport, deployed load or staging.
 
+### Follow-up: readiness-aware service leases and attempts
+
+The service endpoint registry projects only targets that pass the same current
+readiness gates as public routing. An unready resident remains resident capacity;
+discovery does not evict it or repeatedly hydrate a replacement. Independent
+primary-app and sidecar sources retain their existing AND and event ordering.
+
+The production PGBackend also validates exact instance, deployment, node and
+effective port against its current local picker. Managed service leases refresh
+when a cached target fails this check. Empty leases reread discovery so observed
+readiness recovery is available without waiting for lease expiry. Every HTTP,
+gRPC routing attempt, retry and Upgrade selection rechecks eligibility before
+asking the circuit breaker, preserving its single half-open probe. A readiness
+refusal is capacity evidence; a currently eligible target denied by its breaker
+remains circuit evidence. Explicit retained zero-traffic revision pins remain
+eligible when ready; ordinary routing still excludes them.
+
+These are point-in-time local checks after this gateway observes a transition.
+They do not cancel an already admitted exchange, guarantee instant delivery to
+other gateways, or repair a missed notification. When some cached targets remain
+ready, adding recovered replicas can still wait for the ordinary lease refresh.
+Custom mutable endpoint providers must implement ServiceEndpointRoutability;
+legacy immutable fixture providers retain their established lease behavior.
+
+Local qualification connects durable primary/sidecar event inserts and their
+existing PostgreSQL trigger to production LISTEN handlers in two configured
+gateway processes and a replacement, then to production vmmd admission and
+reusable bridges. It verifies cached withdrawal before lease expiry, source
+ordering, empty-lease probes, recovery, retained resident capacity and replacement
+hydration. Warm placement/readiness requirements, translated listeners/source
+addresses, guest serving, namespace selection and VM startup remain fixtures.
+All-unready ordinary wake, native readiness probes/VM networking, missed-notify
+recovery, deployed load and staging need their own acceptance evidence.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

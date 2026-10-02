@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -39,11 +40,17 @@ func TestNodeAdmissionVMMDProcess(t *testing.T) {
 		for _, spec := range instances {
 			states[spec.ID], _ = f.owner.HTTPAdmissionStatus(spec.ID)
 		}
+		rpcInstances := make(map[string]int32)
+		f.rpcInstances.Range(func(key, value any) bool {
+			rpcInstances[key.(string)] = value.(*atomic.Int32).Load()
+			return true
+		})
 		_ = json.NewEncoder(w).Encode(struct {
 			Instances              map[string]fcvm.HTTPAdmissionStatus
 			RPCs, GuestCalls, Peak int32
 			Chain                  nodeDeadlineObservation
-		}{states, f.rpcCalls.Load(), f.guestCalls.Load(), f.peak.Load(), chain.observation()})
+			RPCInstances           map[string]int32
+		}{states, f.rpcCalls.Load(), f.guestCalls.Load(), f.peak.Load(), chain.observation(), rpcInstances})
 	}))
 	defer control.Close()
 	ready := struct {

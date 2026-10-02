@@ -3,6 +3,90 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Service readiness across discovery, cached routes and replacement — 2026-10-02
+
+The corrected baseline reproduced six unsafe accepts: single-source and
+multi-source discovery exposed unready residents; cached HTTP, gRPC routing and
+Upgrade selections forwarded after withdrawal; and a retry reached a withdrawn
+alternate. Production service discovery now filters through the same readiness
+gates as public routing. Unready residents retain capacity, so an empty routable
+projection does not evict them or repeatedly hydrate duplicate placements.
+
+The production backend exposes an independent current-local check of instance,
+deployment, node and effective port. Managed leases refresh when a cached target
+fails that check; empty leases reread for observed recovery and no-wake probes.
+Every attempt, retry and Upgrade selection checks readiness before circuit
+admission. Readiness refusals preserve the half-open trial permit and report
+capacity evidence; eligible targets denied by a breaker still report circuit
+evidence. Exact retained zero-traffic revision pins remain eligible when ready.
+Additional regressions cover changed node/port/deployment, eviction, initially
+unready hydration, circuit recovery and the final decision record.
+
+A new actual Postgres integration inserts durable primary-app and sidecar
+readiness events through the existing store writer and SQL trigger. Two
+configured gateway processes establish production LISTEN subscriptions before
+serving. The fixture observes completed backend application of each event before
+asserting routing; it does not assume instantaneous cross-process propagation.
+Warm public/managed calls traverse production vmmd admission, the fcvm permit
+owner and reusable bridges. Withdrawal diverts four calls to the ready sibling
+before the five-second lease expires, with no RPC to the withdrawn target.
+Independent sidecar withdrawal removes the last ready target; bound `.internal`
+HEAD probes return 503 without wake, RPC or guest work. A newer event ID with an
+older observation time remains ignored. Primary recovery restores probes and
+four calls to that target while the sidecar-failed sibling remains excluded.
+A replacement advances its serving generation, hydrates the durable source AND,
+and routes only to the ready resident. Resident capacity remains two and node
+permits finish at zero.
+
+Readiness requirements and warm placement are fixtures, with real durable source
+hydration and notification application. Listener/source-address translation,
+guest serving, namespace selection and VM startup remain fixtures. Protocol
+unit cases verify routing eligibility through counting HTTP/raw handlers, not
+native gRPC or WebSocket wire semantics. This change checks local eligibility
+after an observed transition; it does not cancel previously admitted work,
+repair missed notifications or establish instant global withdrawal. Recovered
+replicas joining a nonempty lease can still await its ordinary refresh. Ordinary
+all-unready wake, native readiness probes/networking, outer placement discovery,
+deployed load/recovery and staging remain unqualified.
+
+Verification against the final 12,523-file source freeze:
+
+- All 12 complete unit packages pass in 172.228 s. Raw events contain 10,908
+  named passes and 1,451 skips. Excluding 46 passed parents with wholly guarded
+  children leaves 10,862 accepted and 1,497 guarded results.
+- The selected Postgres profile passes 174 named results with no skips in
+  77.634 s: 42 under 25 actual Postgres fixture roots and 132 memory/transport
+  checks. Across both profiles, 10,903 distinct named results are accepted;
+  1,470 guarded results remain without acceptance.
+- Lint 2.4.0 checks all 12 complete packages with tests and reports zero issues
+  in 3.406 s. SQLC 1.31.1 reproduces all four generated files exactly. Runbook SQL,
+  text encoding, shell quoting and ADR uniqueness pass in 20.819 s, retaining
+  the 71 existing duplicate groups.
+- Gates run serially with the preceding Go 1.25.13 runtime and task-owned caches.
+  Only this tracker changes after the final source freeze. No new suppression,
+  exclusion, overlay, schema, quota or relaxed assertion was introduced. The
+  disposable source retains zero public tables and fsync, synchronous_commit
+  and full_page_writes enabled.
+
+Whole failed/preliminary runs remain diagnostic evidence. Unprimed registry
+investigation did not establish a deterministic cold-registry defect; its
+temporary instrumentation was removed. New fixture repairs covered Upgrade
+enablement, valid readiness initialization, actual circuit/refusal semantics,
+placement quarantine, the alias-only probe route, partial readiness at
+replacement startup and the captured-context lint assertion. The first full
+unit/Postgres passes precede that assertion repair and are excluded from final
+acceptance. A lint preflight then hit a disk-full compiler error; it returned
+terminal failure before unchanged-source recovery. A selector-append bootstrap
+failure started no heavy gate. After focused runs became terminal, seven older
+owned Go cache artifacts were removed, reclaiming 515,297,280 physical bytes;
+no sibling cache, process or database changed. Full terminal receipts, source
+freezes, diagnostics and exact staged/committed content are under
+`outputs/traffic-managed-discovery-20261002/` relative to the checkout's parent.
+
+All six release requirements remain open. The user confirmed no available native
+Linux x86_64 KVM host; VM/firewall/namespace/restore/process-death/leak acceptance
+remains pending alongside complete path, deployed load/recovery and staging.
+
 ## Configured public and managed deadline chain — 2026-10-02
 
 A new Postgres integration connects a stored public total-deadline rule to a
