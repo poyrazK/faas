@@ -1,17 +1,19 @@
 """Real customer-transaction acceptance; no fake API or outbox relay."""
+
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 from uuid import uuid4
 
-import psycopg
-from psycopg import sql
 from faas_sdk import insert_commit_event
 
 
 @unittest.skipUnless(os.environ.get("DATABASE_URL"), "DATABASE_URL required")
 class CommitPostgresTest(unittest.TestCase):
     def test_business_transaction_and_public_schema(self):
+        import psycopg
+        from psycopg import sql
+
         dsn = os.environ["DATABASE_URL"]
         database = "commit_sdk_python_" + uuid4().hex
         admin = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
@@ -24,12 +26,16 @@ class CommitPostgresTest(unittest.TestCase):
             observer = psycopg.connect(dsn, dbname=database, autocommit=True, connect_timeout=5)
             ddl = (Path(__file__).resolve().parents[3] / "pkg/commit/schema.sql").read_text()
             writer.execute(ddl)
-            writer.execute("CREATE SCHEMA business; CREATE TABLE business.orders(id integer PRIMARY KEY); CREATE TABLE business.gregale_outbox(LIKE public.gregale_outbox INCLUDING ALL)")
+            writer.execute(
+                "CREATE SCHEMA business; CREATE TABLE business.orders(id integer PRIMARY KEY); CREATE TABLE business.gregale_outbox(LIKE public.gregale_outbox INCLUDING ALL)"
+            )
             writer.execute("SET search_path=business,public")
             writer.commit()
 
             def counts():
-                return observer.execute("SELECT (SELECT count(*) FROM business.orders),(SELECT count(*) FROM public.gregale_outbox)").fetchone()
+                return observer.execute(
+                    "SELECT (SELECT count(*) FROM business.orders),(SELECT count(*) FROM public.gregale_outbox)"
+                ).fetchone()
 
             writer.execute("INSERT INTO orders VALUES(1)")
             with writer.cursor() as cursor:
@@ -37,7 +43,10 @@ class CommitPostgresTest(unittest.TestCase):
             self.assertEqual(counts(), (0, 0))
             writer.commit()
             self.assertEqual(counts(), (1, 1))
-            self.assertEqual(observer.execute("SELECT event_id::text,event_type,payload FROM public.gregale_outbox").fetchone(), (identity, "order.created", {"order_id": 1}))
+            self.assertEqual(
+                observer.execute("SELECT event_id::text,event_type,payload FROM public.gregale_outbox").fetchone(),
+                (identity, "order.created", {"order_id": 1}),
+            )
             writer.execute("INSERT INTO orders VALUES(2)")
             with writer.cursor() as cursor:
                 insert_commit_event(cursor, "order.created", {"order_id": 2})

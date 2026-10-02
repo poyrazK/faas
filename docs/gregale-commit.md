@@ -4,8 +4,9 @@ This feature is not qualified for customer use. The current implementation
 contains the customer transaction helper, polling relay library, and a
 PostgreSQL-backed durable acceptance API. The scheduler relay is internally gated; source-bound credential registration,
 pause/resume, and transaction helpers are implemented. Blocked-event snapshots, durable replay requests, accepted-row cleanup,
-SDK/CLI source management are implemented. Strict Linux process and native KVM
-acceptance passed on the GCP internal test node on 2026-10-01 UTC. The remaining
+SDK/CLI source management are implemented. Strict Linux process acceptance
+passed on 2026-10-01 UTC and native KVM correctness acceptance passed on
+2026-10-02 UTC on the GCP internal test node. The remaining
 production qualification work below still prevents customer promotion.
 
 ## Transaction contract
@@ -53,9 +54,10 @@ implemented. Customer-supplied tenant payload fields must never confer identity.
 2. Verify metrics and source-health behavior under sustained production outages;
    configure operational alerts and audit bounded history and cleanup settings.
 3. Extend the combined HTTP consumer scenario to competing relays, relay
-   checkpoint interruption, credential outages, and poison events. Producer
+   checkpoint interruption, and poison events. Producer
    death, producer rollback, consumer crashes before and after its business
-   commit, lost HTTP responses, scheduler restart, and concurrent consumer
+   commit, source database outages, credential rotation, lost HTTP responses,
+   scheduler restart, and concurrent consumer
    duplicates already pass with real databases and daemon processes. The relay
    lease, acceptance-response loss, TLS outage, and blocked replay cases also
    pass in their database/API integration gates; the complete combined fault
@@ -70,11 +72,45 @@ delivery and Firecracker execution in an isolated qualification environment.
 
 ## Revision qualification
 
-The evidence below qualifies the earlier implementation revision. The branch
-was subsequently rebased onto main commit
-`a3e1800e37962a3341ef13703b28a3d3c628191b`. The rebase includes newer VM,
-harness, Operations, and SDK behavior, so its full process and native gates must
-be recorded separately before claiming the current revision is qualified.
+The branch was rebased onto main commit
+`a3e1800e37962a3341ef13703b28a3d3c628191b`. The rebased implementation passed
+all 14 strict process gates, the Go/Node/Python transaction helpers, and leakcheck
+on the GCP internal node at 23:00 UTC on 2026-10-01. The combined consumer
+scenario now includes repeated source-database outage observations and a
+credential rotation before recovery. It still completes after three deliveries
+and preserves one business effect under concurrent duplicates. The source
+archive SHA-256 is
+`9063bee415f631b0e61df5dc3a1a31ea9564eeafc84a1fa249853ec3f7037d29`; all
+13,364 source files matched manifest
+`8f0e359ac0abbd5eb74d91a2eed84bd3864a6a9d7b5e50e67c9663a889b5f265`.
+The disposable PostgreSQL cluster stopped successfully.
+
+The same rebased runtime passed the full native KVM suite at 00:22 UTC on
+2026-10-02. Its parent and all 11 subtests passed in 421.27 seconds, including
+source deployment, snapshot wake, forced cold boot, corrupt-capture fallback
+and replacement restore, and both Commit producer-death wake cases. The
+pre-reaper leak check passed and the disposable PostgreSQL cluster stopped.
+Snapshots used a bounded 8 GiB tmpfs inside the run's private mount namespace;
+this qualifies execution correctness and does not qualify SSD latency. Earlier
+attempts with an isolated disk root failed because of incomplete inputs, a
+legacy device-state path mismatch, or storage performance/capacity; their
+failed test events are retained separately from the successful evidence.
+
+The current Commit target remains a durable HTTP invocation. Main now also
+contains policy-backed managed Operations; the shared operation-status route
+preserves access to Commit receipts, but Commit does not yet admit work into
+those policies. This is a delivery-target gap, not evidence of policy-backed
+Commit execution. Python client generation now uses the shared status endpoint
+and decodes both response types. Its 116 unit/contract tests and deterministic
+regeneration pass; real PostgreSQL acceptance is a separate strict gate.
+
+The regenerated Python transaction helper and existing managed Operations
+API/PostgreSQL owner contracts passed on the same node after the native run.
+The incoming policy-retirement test needed explicit migration when using a
+fresh schema; it now passes with both fresh-schema and migrated-template
+fixtures. This follow-up changes test setup and SDK decoding, not the native
+runtime qualified above. Its pre-reaper leak check passed and its disposable
+PostgreSQL cluster stopped successfully.
 
 ## GCP acceptance evidence
 
@@ -216,6 +252,11 @@ available. Scheduler delivery is independently gated by
 Commit-driven snapshot restore, and Commit-driven cold-boot completion. It requires
 native x86_64 Linux KVM, root, qualified kernel/builder inputs, and disposable
 PostgreSQL. Required subtests must pass; skipped subtests fail qualification.
+Build daemon binaries with `-tags metal`. For an isolated local storage root,
+the legacy `/srv/fc/snap` device-state locator must resolve to the same snapshot
+objects as the storage backend. The GCP runner provides this mapping inside a
+private mount namespace. Capacity must include temporary private-drive copies
+while publishing replacement captures; final artifact size understates peak use.
 On the GCP internal node, the full native gate passed in one strict run:
 source deployment, public HTTP readiness, snapshot HTTP wake, forced cold boot,
 corrupted-snapshot fallback, both Commit producer-death wake profiles, and cleanup.
