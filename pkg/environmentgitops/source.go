@@ -19,6 +19,16 @@ import (
 // No archive content is extracted onto the host. Both compressed and expanded
 // streams are bounded, and the full gzip stream is verified before approval.
 func ReadGitDefinition(reader io.Reader, manifestPath string, maxArchiveBytes int64) (environmentsync.DesiredState, error) {
+	return readGitBuildDefinition(reader, manifestPath, maxArchiveBytes, nil)
+}
+
+// ReadGitBuildDefinition also verifies the exact build roots and Dockerfiles.
+// A repository-root Dockerfile cannot substitute for a missing member file.
+func ReadGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveBytes int64, sources []api.EnvironmentWorkloadSource) (environmentsync.DesiredState, error) {
+	return readGitBuildDefinition(reader, manifestPath, maxArchiveBytes, sources)
+}
+
+func readGitBuildDefinition(reader io.Reader, manifestPath string, maxArchiveBytes int64, sources []api.EnvironmentWorkloadSource) (environmentsync.DesiredState, error) {
 	if maxArchiveBytes <= 0 || manifestPath == "." || path.Clean(manifestPath) != manifestPath || tarball.EscapesRoot(manifestPath) || strings.ContainsAny(manifestPath, "\\\x00") {
 		return environmentsync.DesiredState{}, fmt.Errorf("invalid Git definition path or archive limit")
 	}
@@ -33,6 +43,7 @@ func ReadGitDefinition(reader io.Reader, manifestPath string, maxArchiveBytes in
 	root := ""
 	var definition []byte
 	seen := map[string]bool{}
+	buildRoots, dockerfiles := make([]bool, len(sources)), make([]bool, len(sources))
 	for count := 0; ; count++ {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
@@ -59,6 +70,12 @@ func ReadGitDefinition(reader io.Reader, manifestPath string, maxArchiveBytes in
 			return environmentsync.DesiredState{}, fmt.Errorf("Git source has duplicate archive paths")
 		}
 		seen[name] = true
+		if len(parts) == 2 && header.Typeflag == tar.TypeReg {
+			for i, source := range sources {
+				buildRoots[i] = buildRoots[i] || source.Directory == "." || strings.HasPrefix(parts[1], source.Directory+"/")
+				dockerfiles[i] = dockerfiles[i] || parts[1] == path.Join(source.Directory, source.Dockerfile)
+			}
+		}
 		if len(parts) != 2 || parts[1] != manifestPath {
 			continue
 		}
@@ -77,6 +94,11 @@ func ReadGitDefinition(reader io.Reader, manifestPath string, maxArchiveBytes in
 	}
 	if definition == nil {
 		return environmentsync.DesiredState{}, fmt.Errorf("environment manifest was not found")
+	}
+	for i, source := range sources {
+		if !buildRoots[i] || (source.Dockerfile != "" && !dockerfiles[i]) {
+			return environmentsync.DesiredState{}, fmt.Errorf("reviewed Git build root or Dockerfile was not found")
+		}
 	}
 	parsed, err := gregalemanifest.ParseEnvironment(definition)
 	if err != nil {

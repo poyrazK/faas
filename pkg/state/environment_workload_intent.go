@@ -16,13 +16,14 @@ import (
 // EnvironmentWorkloadIntent is scoped customer intent. Recording it does not
 // qualify a deployment or prove that its serving graph uses these settings.
 type EnvironmentWorkloadIntent struct {
-	AccountID     string                         `json:"account_id"`
-	AppID         string                         `json:"app_id"`
-	EnvironmentID string                         `json:"environment_id"`
-	Source        *api.EnvironmentWorkloadSource `json:"source"`
-	Runtime       map[string]json.RawMessage     `json:"runtime"`
-	CreatedAt     time.Time                      `json:"created_at"`
-	UpdatedAt     time.Time                      `json:"updated_at"`
+	AccountID      string                         `json:"account_id"`
+	AppID          string                         `json:"app_id"`
+	EnvironmentID  string                         `json:"environment_id"`
+	Source         *api.EnvironmentWorkloadSource `json:"source"`
+	SourceRevision string                         `json:"source_revision,omitempty"`
+	Runtime        map[string]json.RawMessage     `json:"runtime"`
+	CreatedAt      time.Time                      `json:"created_at"`
+	UpdatedAt      time.Time                      `json:"updated_at"`
 }
 
 type EnvironmentWorkloadIntentStore interface {
@@ -60,6 +61,9 @@ func workloadIntentFields(row EnvironmentWorkloadIntent) map[string]json.RawMess
 	if row.Source != nil {
 		fields["source"], _ = json.Marshal(row.Source)
 	}
+	if row.SourceRevision != "" {
+		fields["source_revision"], _ = json.Marshal(row.SourceRevision)
+	}
 	return fields
 }
 
@@ -77,6 +81,9 @@ func workloadIntentChangedPaths(before, after EnvironmentWorkloadIntent) []strin
 		if _, exists := next[key]; !exists {
 			paths = append(paths, key)
 		}
+	}
+	if before.SourceRevision != after.SourceRevision {
+		paths = append(paths, "source")
 	}
 	return paths
 }
@@ -101,6 +108,9 @@ func runtimeManifestValues(manifest AppManifest) map[string]json.RawMessage {
 
 func validateWorkloadIntent(row EnvironmentWorkloadIntent, app App, environment string, plan api.Plan) (EnvironmentWorkloadIntent, error) {
 	row = cloneWorkloadIntent(row)
+	if row.SourceRevision != "" && (!environmentCommitRE.MatchString(row.SourceRevision) || row.Source == nil || row.Source.Kind == "image") {
+		return row, ErrInvalidArgument
+	}
 	raw, _ := json.Marshal(row.Runtime)
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "intent", Environment: environment, Workloads: map[string]api.EnvironmentWorkload{"workload": {Source: row.Source, Runtime: raw}}})
 	if err != nil {
@@ -151,7 +161,7 @@ func validateWorkloadIntentWrite(row, previous EnvironmentWorkloadIntent, app Ap
 }
 
 func gitOpsWorkloadField(path string) bool {
-	return path == "source" || strings.HasPrefix(path, "runtime/")
+	return path == "source" || path == "source_revision" || strings.HasPrefix(path, "runtime/")
 }
 
 func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.Plan, ids map[string]string, preserve bool) map[string]EnvironmentWorkloadIntent {
@@ -178,6 +188,11 @@ func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.
 			row.Source = nil
 			if change.Action != "remove" && !bytes.Equal(value, json.RawMessage("null")) {
 				_ = json.Unmarshal(value, &row.Source)
+			}
+		} else if change.Path == "source_revision" {
+			row.SourceRevision = ""
+			if change.Action != "remove" {
+				_ = json.Unmarshal(value, &row.SourceRevision)
 			}
 		} else {
 			key := strings.TrimPrefix(change.Path, "runtime/")

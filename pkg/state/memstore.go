@@ -10121,6 +10121,9 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 	if !ok {
 		return ErrNotFound
 	}
+	if d.EnvironmentWorkloadHeld() && (d.SourceURL != sourceURL || d.CommitSHA != commitSHA) {
+		return ErrInvalidArgument
+	}
 	d.SourceURL = sourceURL
 	d.CommitSHA = commitSHA
 	m.deployments[id] = d

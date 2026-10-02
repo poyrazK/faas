@@ -2027,44 +2027,84 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
-const createEnvironmentGitOpsImageCandidate = `-- name: CreateEnvironmentGitOpsImageCandidate :one
+const createEnvironmentGitOpsSourceBuild = `-- name: CreateEnvironmentGitOpsSourceBuild :exec
+WITH queued AS (
+ INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
+ VALUES($1::uuid,$2::uuid,'github',$3::bigint,'queued',$4::text)
+ RETURNING id,deployment_id
+)
+UPDATE deployments d SET status='building',build_id=queued.id FROM queued
+WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending'
+`
+
+type CreateEnvironmentGitOpsSourceBuildParams struct {
+	BuildID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	SourceBytes  int64
+	LogPath      string
+}
+
+func (q *Queries) CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsSourceBuildParams) error {
+	_, err := db.Exec(ctx, createEnvironmentGitOpsSourceBuild,
+		arg.BuildID,
+		arg.DeploymentID,
+		arg.SourceBytes,
+		arg.LogPath,
+	)
+	return err
+}
+
+const createEnvironmentGitOpsWorkloadCandidate = `-- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
  rollback_on_5xx)
-VALUES($1::uuid,$2::text,'image',$3::text,$4::text,'pending',0,true,
- (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$5::jsonb,
- (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
- (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
- $5::jsonb->'deployment_inputs'->'override_env',$5::jsonb->'deployment_inputs'->'override_env_secrets',
- ($5::jsonb->'deployment_inputs'->>'override_port')::integer,
- $5::jsonb->'deployment_inputs'->'override_healthcheck',$5::jsonb->'deployment_inputs'->'override_liveness_probe',
- $5::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($5::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
- coalesce($5::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($5::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
- coalesce(($5::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($5::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
- coalesce(($5::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
- (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
- coalesce(($5::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
- coalesce(($5::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
- coalesce(($5::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
+VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
+ nullif($6::text,''),$7::text,nullif($8::text,''),$9::bigint,nullif($10::text,''),$11::jsonb->'source_archive'->>'log_path',
+ (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$11::jsonb,
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ $11::jsonb->'deployment_inputs'->'override_env',$11::jsonb->'deployment_inputs'->'override_env_secrets',
+ ($11::jsonb->'deployment_inputs'->>'override_port')::integer,
+ $11::jsonb->'deployment_inputs'->'override_healthcheck',$11::jsonb->'deployment_inputs'->'override_liveness_probe',
+ $11::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($11::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
+ coalesce($11::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($11::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce(($11::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ coalesce(($11::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
+ coalesce(($11::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
+ coalesce(($11::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
 RETURNING id
 `
 
-type CreateEnvironmentGitOpsImageCandidateParams struct {
-	AppID     pgtype.UUID
-	Scope     string
-	Image     string
-	CommitSha string
-	Runtime   []byte
+type CreateEnvironmentGitOpsWorkloadCandidateParams struct {
+	AppID        pgtype.UUID
+	Scope        string
+	Kind         string
+	Image        string
+	CommitSha    string
+	SourcePath   string
+	SourceRoot   string
+	SourceSha256 string
+	SourceBytes  int64
+	SourceUrl    string
+	Runtime      []byte
 }
 
-func (q *Queries) CreateEnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsImageCandidateParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, createEnvironmentGitOpsImageCandidate,
+func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsWorkloadCandidateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createEnvironmentGitOpsWorkloadCandidate,
 		arg.AppID,
 		arg.Scope,
+		arg.Kind,
 		arg.Image,
 		arg.CommitSha,
+		arg.SourcePath,
+		arg.SourceRoot,
+		arg.SourceSha256,
+		arg.SourceBytes,
+		arg.SourceUrl,
 		arg.Runtime,
 	)
 	var id pgtype.UUID
@@ -3521,7 +3561,7 @@ func (q *Queries) EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX
 }
 
 const environmentGitOpsImageCandidate = `-- name: EnvironmentGitOpsImageCandidate :one
-SELECT id,app_id,status,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
+SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
 FROM deployments WHERE id=$1::uuid AND environment_workload_runtime IS NOT NULL
 `
 
@@ -3529,6 +3569,7 @@ type EnvironmentGitOpsImageCandidateRow struct {
 	ID         pgtype.UUID
 	AppID      pgtype.UUID
 	Status     string
+	BuildID    string
 	RootfsPath string
 	RootfsKey  string
 }
@@ -3540,6 +3581,7 @@ func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, 
 		&i.ID,
 		&i.AppID,
 		&i.Status,
+		&i.BuildID,
 		&i.RootfsPath,
 		&i.RootfsKey,
 	)
@@ -3759,7 +3801,7 @@ func (q *Queries) EnvironmentSecretReferenceWriteOwned(ctx context.Context, db D
 }
 
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
-SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at FROM app_environment_workload_intents w
+SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at, w.source_revision FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
 WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND w.environment_id=$3::uuid
@@ -3782,6 +3824,7 @@ func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg En
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceRevision,
 	)
 	return i, err
 }
@@ -18698,18 +18741,19 @@ func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, 
 }
 
 const putEnvironmentWorkloadIntent = `-- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb)
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,updated_at=now()
-RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb,nullif($6::text,''))
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
+RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at, source_revision
 `
 
 type PutEnvironmentWorkloadIntentParams struct {
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	EnvironmentID pgtype.UUID
-	Source        []byte
-	Runtime       []byte
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Source         []byte
+	Runtime        []byte
+	SourceRevision string
 }
 
 func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
@@ -18719,6 +18763,7 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		arg.EnvironmentID,
 		arg.Source,
 		arg.Runtime,
+		arg.SourceRevision,
 	)
 	var i AppEnvironmentWorkloadIntent
 	err := row.Scan(
@@ -18729,6 +18774,7 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.Runtime,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceRevision,
 	)
 	return i, err
 }

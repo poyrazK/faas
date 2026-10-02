@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 )
 
@@ -36,6 +37,32 @@ func gitArchive(t *testing.T, headers []*tar.Header, bodies []string) []byte {
 		t.Fatal(err)
 	}
 	return out.Bytes()
+}
+
+func TestReadGitBuildDefinitionRequiresExactMemberDockerfile(t *testing.T) {
+	archive := gitArchive(t, []*tar.Header{
+		{Name: "shop-sha/environments/production.yaml", Typeflag: tar.TypeReg},
+		{Name: "shop-sha/Dockerfile", Typeflag: tar.TypeReg},
+		{Name: "shop-sha/apps/api/package.json", Typeflag: tar.TypeReg},
+		{Name: "shop-sha/apps/api/deploy/Dockerfile", Typeflag: tar.TypeReg},
+	}, []string{manifest, "FROM scratch", `{}`, "FROM scratch"})
+	for _, tc := range []struct {
+		name   string
+		source api.EnvironmentWorkloadSource
+		valid  bool
+	}{
+		{"source member", api.EnvironmentWorkloadSource{Kind: "source", Directory: "apps/api"}, true},
+		{"exact Dockerfile", api.EnvironmentWorkloadSource{Kind: "dockerfile", Directory: "apps/api", Dockerfile: "deploy/Dockerfile"}, true},
+		{"missing member", api.EnvironmentWorkloadSource{Kind: "source", Directory: "apps/missing"}, false},
+		{"repository fallback forbidden", api.EnvironmentWorkloadSource{Kind: "dockerfile", Directory: "apps/api", Dockerfile: "Dockerfile"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := environmentgitops.ReadGitBuildDefinition(bytes.NewReader(archive), "environments/production.yaml", int64(len(archive)), []api.EnvironmentWorkloadSource{tc.source})
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+		})
+	}
 }
 
 func TestReadGitDefinitionVerifiesArchiveAndManifest(t *testing.T) {

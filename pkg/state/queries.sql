@@ -6670,9 +6670,9 @@ JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_
 WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND w.environment_id=sqlc.arg(environment_id)::uuid;
 
 -- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime)
-VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb)
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,updated_at=now()
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''))
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
 RETURNING *;
 
 -- name: EnvironmentWorkloadIntentLockSource :many
@@ -6710,16 +6710,17 @@ SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=sqlc
  AND environment_workload_runtime->>'plan_hash'=sqlc.arg(plan_hash)::text;
 
 -- name: EnvironmentGitOpsImageCandidate :one
-SELECT id,app_id,status,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
+SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
 FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid AND environment_workload_runtime IS NOT NULL;
 
--- name: CreateEnvironmentGitOpsImageCandidate :one
+-- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
  rollback_on_5xx)
-VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,'image',sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
+VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
+ nullif(sqlc.arg(source_path)::text,''),sqlc.arg(source_root)::text,nullif(sqlc.arg(source_sha256)::text,''),sqlc.arg(source_bytes)::bigint,nullif(sqlc.arg(source_url)::text,''),sqlc.arg(runtime)::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid),sqlc.arg(runtime)::jsonb,
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
@@ -6735,3 +6736,12 @@ VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,'image',sqlc.arg(image)::tex
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
 RETURNING id;
+
+-- name: CreateEnvironmentGitOpsSourceBuild :exec
+WITH queued AS (
+ INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
+ VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,'github',sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
+ RETURNING id,deployment_id
+)
+UPDATE deployments d SET status='building',build_id=queued.id FROM queued
+WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending';

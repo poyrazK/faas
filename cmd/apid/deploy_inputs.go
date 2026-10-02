@@ -744,6 +744,18 @@ func scanForStatefulShape(path string, dockerfileFlag bool) *api.Problem {
 // must not make a selected app look stateful merely because they contain a
 // top-level data/ or db/ directory of their own.
 func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot string) *api.Problem {
+	return scanForStatefulShapeWithDockerfileAtRoot(path, dockerfileFlag, sourceRoot, "Dockerfile")
+}
+
+// scanForStatefulShapeWithDockerfileAtRoot checks the exact Dockerfile selected
+// for a reviewed build. A root Dockerfile cannot substitute for that file.
+func scanForStatefulShapeWithDockerfileAtRoot(path string, dockerfileFlag bool, sourceRoot, dockerfilePath string) *api.Problem {
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+	if filepath.Clean(dockerfilePath) != dockerfilePath || dockerfilePath == "." || escapesArchiveRoot(dockerfilePath) || strings.ContainsAny(dockerfilePath, "\\\x00") {
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile path", "Dockerfile must be a relative path within the selected source root")
+	}
 	logicalRoot, rootErr := archiveLogicalRoot(path, sourceRoot)
 	if rootErr != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error())
@@ -781,11 +793,17 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 				return api.ErrStatelessOnlyViolation("tarball", reason)
 			}
 		}
-		// Only read the Dockerfile at the selected source root. We do this
+		// Only read the selected Dockerfile within the source root. We do this
 		// lazily — dockerfileMaxBytes caps the read so a hostile
 		// heredoc can't pin apid.
-		if rel == "Dockerfile" {
-			dockerfileBytes, _ = io.ReadAll(io.LimitReader(tr, dockerfileMaxBytes))
+		if rel == dockerfilePath {
+			if hdr.Typeflag != tar.TypeReg || hdr.Size > dockerfileMaxBytes {
+				return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile", "selected Dockerfile must be a bounded regular file")
+			}
+			dockerfileBytes, err = io.ReadAll(io.LimitReader(tr, dockerfileMaxBytes))
+			if err != nil {
+				return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad Dockerfile", "selected Dockerfile is incomplete")
+			}
 		}
 	}
 
@@ -797,7 +815,7 @@ func scanForStatefulShapeAtRoot(path string, dockerfileFlag bool, sourceRoot str
 	if dockerfileFlag && len(dockerfileBytes) == 0 {
 		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid,
 			"Dockerfile missing",
-			"`dockerfile=true` was set but no Dockerfile was found at the selected source root")
+			"a Dockerfile build was requested but the selected Dockerfile was not found within the source root")
 	}
 	if len(dockerfileBytes) > 0 {
 		if reason := scanDockerfileForStatefulShape(dockerfileBytes); reason != "" {

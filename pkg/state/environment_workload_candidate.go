@@ -20,11 +20,14 @@ var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workl
 // carrying it remains held until a graph qualification/activation adapter is
 // implemented; creating the row or building its image never implies readiness.
 type EnvironmentWorkloadRuntime struct {
+	Source            *api.EnvironmentWorkloadSource       `json:"source,omitempty"`
+	SourceArchive     *EnvironmentWorkloadSourceArtifact   `json:"source_archive,omitempty"`
 	SourceDeployments []string                             `json:"source_deployments,omitempty"`
 	DeploymentInputs  *EnvironmentWorkloadDeploymentInputs `json:"deployment_inputs,omitempty"`
 	SourceID          string                               `json:"source_id"`
 	EnvironmentID     string                               `json:"environment_id"`
 	RevisionID        string                               `json:"revision_id"`
+	DefinitionDigest  string                               `json:"definition_digest,omitempty"`
 	Generation        int64                                `json:"generation"`
 	IntentVersion     int64                                `json:"intent_version"`
 	Resource          string                               `json:"resource"`
@@ -43,10 +46,36 @@ type EnvironmentWorkloadRuntime struct {
 // frozen inputs and produce artifacts, but may not create customer intent.
 type EnvironmentGitOpsPreparationStore interface {
 	PrepareEnvironmentGitOpsImageCandidates(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error)
+	EnvironmentGitOpsSourceRequests(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) ([]EnvironmentWorkloadSourceRequest, error)
+	PrepareEnvironmentGitOpsCandidates(context.Context, EnvironmentGitOpsLease, environmentsync.Plan, map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error)
+}
+
+// Source requests are reviewed before network work. Build IDs are reserved
+// UUIDv7 values so an uploaded object can be retained/collected even if apid
+// stops before committing its queue row.
+type EnvironmentWorkloadSourceRequest struct {
+	Resource         string
+	BuildID          string
+	Source           api.EnvironmentWorkloadSource
+	RevisionID       string
+	CommitSHA        string
+	DefinitionDigest string
+}
+
+type EnvironmentWorkloadSourceArtifact struct {
+	RevisionID       string `json:"revision_id"`
+	CommitSHA        string `json:"commit_sha"`
+	DefinitionDigest string `json:"definition_digest"`
+	BuildID          string `json:"build_id"`
+	Path             string `json:"path"`
+	SHA256           string `json:"sha256"`
+	Bytes            int64  `json:"bytes"`
+	LogPath          string `json:"log_path"`
 }
 
 type EnvironmentWorkloadCandidate struct {
 	DeploymentID string           `json:"deployment_id"`
+	BuildID      string           `json:"build_id,omitempty"`
 	AppID        string           `json:"app_id"`
 	Resource     string           `json:"resource"`
 	Status       DeploymentStatus `json:"status"`
@@ -77,6 +106,17 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 		if len(frozen.SourceDeployments) == 0 || !bytes.Equal(expected, actual) {
 			return nil, fmt.Errorf("%w: inherited workload inputs disagree with candidate", ErrInvalidArgument)
 		}
+	}
+	if frozen.SourceArchive != nil {
+		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
+			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile") || d.Kind != DeploymentKindGitHub ||
+			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
+			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
+			frozen.RevisionID != frozen.SourceArchive.RevisionID || d.CommitSHA != frozen.SourceArchive.CommitSHA || frozen.DefinitionDigest != frozen.SourceArchive.DefinitionDigest {
+			return nil, fmt.Errorf("%w: frozen Git source disagrees with candidate", ErrInvalidArgument)
+		}
+	} else if frozen.Source != nil && frozen.Source.Kind != "image" {
+		return nil, fmt.Errorf("%w: frozen Git source has no archive", ErrInvalidArgument)
 	}
 	return &frozen, nil
 }
@@ -143,7 +183,7 @@ func ApplyDeploymentRuntime(manifest api.AppManifest, dep Deployment) (api.AppMa
 	return result, nil
 }
 
-func imageCandidateInputs(source EnvironmentGitSource, revision EnvironmentDesiredRevision, desired environmentsync.DesiredState, snapshot gitOpsIntentSnapshot, plan environmentsync.Plan) ([]Deployment, error) {
+func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDesiredRevision, desired environmentsync.DesiredState, snapshot gitOpsIntentSnapshot, plan environmentsync.Plan) ([]Deployment, error) {
 	if source.Spec.Mode != "enforce" || !plan.CanApply() || plan.HasDrift() {
 		return nil, ErrConflict
 	}
@@ -163,34 +203,40 @@ func imageCandidateInputs(source EnvironmentGitSource, revision EnvironmentDesir
 	var out []Deployment
 	for _, name := range names {
 		resource := "workload/" + name
-		managed := false
+		managed, sourceOwned := false, false
 		for _, owner := range snapshot.Owners {
 			managed = managed || owner.Manager == source.ID && owner.Resource == resource && gitOpsWorkloadField(owner.Path)
+			sourceOwned = sourceOwned || owner.Manager == source.ID && owner.Resource == resource && owner.Path == "source"
 		}
 		if !managed {
 			continue
 		}
 		app := byID[ids[resource]]
 		intent := app.WorkloadIntent
-		image, reason := observedWorkloadSource(app)
-		if app.ID == "" || app.Type != AppTypeApp || intent == nil || image == nil || reason != "" || image.Kind != "image" {
-			return nil, fmt.Errorf("%w: immutable image candidate requires a mapped container app and consistent source", ErrEnvironmentWorkloadPreparationUnavailable)
+		workloadSource, reason := observedWorkloadSource(app)
+		if app.ID == "" || app.Type != AppTypeApp || intent == nil || workloadSource == nil || reason != "" {
+			return nil, fmt.Errorf("%w: candidate requires a mapped container app and consistent source", ErrEnvironmentWorkloadPreparationUnavailable)
+		}
+		if workloadSource.Kind != "image" && (!sourceOwned || intent.SourceRevision != revision.CommitSHA) {
+			return nil, fmt.Errorf("%w: source builds require owned source intent at the reviewed commit", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		// Runtime-only ownership inherits a reviewed immutable image without
 		// importing it into scoped intent or transferring source ownership.
 		if _, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: snapshot.Project,
-			Environment: snapshot.Environment, Workloads: map[string]api.EnvironmentWorkload{"image": {Source: image}}}); err != nil {
-			return nil, fmt.Errorf("%w: inherited image must be immutable", ErrEnvironmentWorkloadPreparationUnavailable)
+			Environment: snapshot.Environment, Workloads: map[string]api.EnvironmentWorkload{"workload": {Source: workloadSource}}}); err != nil {
+			return nil, fmt.Errorf("%w: candidate source must be valid and immutable", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		// Generated application-wide service environment is not a scoped graph.
 		// Its migration belongs to the service-binding adapter, before release.
 		if len(app.Manifest.Env) != 0 || len(app.Manifest.ServiceBindings) != 0 {
 			return nil, fmt.Errorf("%w: shared service environment requires scoped binding preparation", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
-		frozen := EnvironmentWorkloadRuntime{SourceID: source.ID, EnvironmentID: source.EnvironmentID, RevisionID: revision.ID,
+		frozen := EnvironmentWorkloadRuntime{SourceID: source.ID, EnvironmentID: source.EnvironmentID, RevisionID: revision.ID, DefinitionDigest: revision.Digest,
 			Generation: source.Generation, IntentVersion: snapshot.Version, Resource: resource, PlanHash: plan.Hash,
 			AppID: app.ID, Scope: snapshot.Environment, AppType: app.Type, RuntimeBase: app.RuntimeBase, WorkloadClass: app.WorkloadClass,
 			Baseline: app.Manifest, StartCommand: app.StartCommand, Runtime: cloneWorkloadIntent(*intent).Runtime}
+		sourceCopy := *workloadSource
+		frozen.Source = &sourceCopy
 		slices.SortFunc(app.Sources, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })
 		for i, baseline := range app.Sources {
 			raw, _ := json.Marshal(baseline.Inputs)
@@ -212,7 +258,11 @@ func imageCandidateInputs(source EnvironmentGitSource, revision EnvironmentDesir
 			return nil, err
 		}
 		input := Deployment{AppID: app.ID, Scope: snapshot.Environment, Kind: DeploymentKindImage,
-			ImageDigest: image.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api", EnvironmentWorkloadRuntime: string(raw)}
+			ImageDigest: workloadSource.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api", EnvironmentWorkloadRuntime: string(raw)}
+		if workloadSource.Kind != "image" {
+			input.Kind, input.SourceRoot = DeploymentKindGitHub, workloadSource.Directory
+			input.SourceURL = "github://" + source.Spec.Repository + "@" + revision.CommitSHA
+		}
 		if frozen.DeploymentInputs != nil {
 			frozen.DeploymentInputs.apply(&input)
 		}

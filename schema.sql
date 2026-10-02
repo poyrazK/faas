@@ -3059,6 +3059,11 @@ BEGIN
  frozen:=NEW.environment_workload_runtime;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL THEN
   IF NEW.environment_workload_runtime IS DISTINCT FROM OLD.environment_workload_runtime OR
+   (OLD.environment_workload_runtime ? 'source_archive' AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
+    IS DISTINCT FROM ROW(OLD.source_bytes,OLD.source_url,OLD.log_path,OLD.inferred_profile,OLD.github_source_ref,OLD.github_installation_id)) OR
+   (NEW.build_id IS DISTINCT FROM OLD.build_id AND (OLD.build_id IS NOT NULL OR frozen->'source_archive' IS NULL OR
+    NEW.build_id IS DISTINCT FROM (frozen->'source_archive'->>'build_id')::uuid OR NOT EXISTS(
+     SELECT 1 FROM builds b WHERE b.id=NEW.build_id AND b.deployment_id=NEW.id AND b.kind='github' AND b.source_bytes=NEW.source_bytes))) OR
    environment_workload_deployment_inputs(NEW) IS DISTINCT FROM environment_workload_deployment_inputs(OLD) OR
    ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
        NEW.override_entrypoint,NEW.override_cmd,NEW.override_env,NEW.override_env_secrets,NEW.override_port,NEW.override_healthcheck,
@@ -3082,12 +3087,26 @@ BEGIN
    JOIN environment_desired_revisions rev ON rev.id=src.approved_revision_id AND rev.source_id=src.id
    WHERE r.source_id=src.id AND r.logical_name=frozen->>'resource' AND r.app_id=NEW.app_id AND a.status IN ('active','evicted_cold') AND a.type='app'
     AND a.account_id=src.account_id AND a.project_id=src.project_id AND e.account_id=src.account_id AND e.project_id=src.project_id
-    AND NEW.app_id=(frozen->>'app_id')::uuid AND NEW.scope=frozen->>'scope' AND NEW.scope=e.slug AND NEW.kind='image' AND NEW.status='pending'
-    AND ((w.source->>'kind'='image' AND NEW.image_digest=w.source->>'image') OR
-     (w.source IS NULL AND frozen ? 'deployment_inputs' AND jsonb_array_length(coalesce(frozen->'source_deployments','[]'::jsonb))>0
-      AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'
-       AND (d.kind<>'image' OR d.image_digest IS DISTINCT FROM NEW.image_digest))))
-    AND NEW.image_digest ~ '^[^[:space:]]+@sha256:[a-f0-9]{64}$' AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=w.runtime
+    AND NEW.app_id=(frozen->>'app_id')::uuid AND NEW.scope=frozen->>'scope' AND NEW.scope=e.slug AND NEW.status='pending' AND (
+     (NEW.kind='image' AND (
+       (w.source->>'kind'='image' AND NEW.image_digest=w.source->>'image') OR
+       (w.source IS NULL AND frozen ? 'deployment_inputs' AND jsonb_array_length(coalesce(frozen->'source_deployments','[]'::jsonb))>0
+        AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'
+         AND (d.kind<>'image' OR d.image_digest IS DISTINCT FROM NEW.image_digest))))
+      AND NEW.image_digest ~ '^[^[:space:]]+@sha256:[a-f0-9]{64}$') OR
+     (NEW.kind='github' AND w.source->>'kind' IN ('source','dockerfile') AND w.source_revision=rev.commit_sha
+      AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND f.field_path='source') AND frozen->'source'=w.source AND
+      jsonb_typeof(frozen->'source_archive')='object' AND frozen->'source_archive' ?& ARRAY['build_id','path','sha256','bytes','log_path','revision_id','commit_sha','definition_digest'] AND
+      frozen->'source_archive'->>'revision_id'=rev.id::text AND frozen->'source_archive'->>'commit_sha'=rev.commit_sha AND
+      frozen->'source_archive'->>'definition_digest'=rev.definition_digest AND frozen->>'definition_digest'=rev.definition_digest AND
+      (frozen->'source_archive'->>'build_id')::uuid IS NOT NULL AND substring(frozen->'source_archive'->>'build_id',15,1)='7' AND
+      NEW.source_root=w.source->>'directory' AND NEW.source_path=frozen->'source_archive'->>'path' AND NEW.source_path LIKE '/%' AND
+      NEW.source_sha256=frozen->'source_archive'->>'sha256' AND NEW.source_sha256 ~ '^[a-f0-9]{64}$' AND
+      NEW.source_bytes=(frozen->'source_archive'->>'bytes')::bigint AND NEW.source_bytes>0 AND
+      NEW.log_path=frozen->'source_archive'->>'log_path' AND NEW.log_path LIKE '/%' AND
+      NEW.source_url='github://'||src.repository||'@'||rev.commit_sha AND NEW.build_id IS NULL AND NEW.inferred_profile IS NULL AND
+      coalesce(NEW.github_source_ref,'')='' AND coalesce(NEW.image_digest,'')=''))
+    AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=w.runtime
     AND jsonb_strip_nulls(frozen->'baseline')=jsonb_strip_nulls(a.manifest)
     AND frozen->>'start_command'=coalesce(a.start_command,'')
     AND frozen->>'app_type'=a.type AND frozen->>'runtime_base'=coalesce(a.runtime,'') AND frozen->>'workload_class'=a.workload_class
@@ -3163,11 +3182,12 @@ BEGIN
    WHERE w.app_id=NEW.app_id AND w.environment_id=NEW.environment_id FOR UPDATE OF w;
   prior:=coalesce(prior,'{}');
  ELSE prior:=to_jsonb(OLD); END IF;
- IF TG_OP='DELETE' THEN row_value:=row_value||jsonb_build_object('source',NULL,'runtime','{}'::jsonb); END IF;
+ IF TG_OP='DELETE' THEN row_value:=row_value||jsonb_build_object('source',NULL,'source_revision',NULL,'runtime','{}'::jsonb); END IF;
  SELECT array_agg('runtime/'||k) INTO paths FROM (
   SELECT key k FROM jsonb_each(coalesce(prior->'runtime','{}')) UNION SELECT key FROM jsonb_each(row_value->'runtime')
  ) keys WHERE (prior->'runtime'->k) IS DISTINCT FROM (row_value->'runtime'->k);
  IF coalesce(prior->'source','null'::jsonb) IS DISTINCT FROM coalesce(row_value->'source','null'::jsonb) THEN paths:=coalesce(paths,'{}')||ARRAY['source']; END IF;
+ IF coalesce(prior->'source_revision','null'::jsonb) IS DISTINCT FROM coalesce(row_value->'source_revision','null'::jsonb) THEN paths:=coalesce(paths,'{}')||ARRAY['source_revision','source']; END IF;
  IF coalesce(cardinality(paths),0)=0 THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
  IF src.id IS NOT NULL THEN
   SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=(row_value->>'app_id')::uuid;
@@ -5613,8 +5633,10 @@ CREATE TABLE public.app_environment_workload_intents (
     runtime jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_revision text,
     CONSTRAINT app_environment_workload_intents_runtime_check CHECK ((jsonb_typeof(runtime) = 'object'::text)),
-    CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text)))
+    CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text))),
+    CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text])))))
 );
 
 

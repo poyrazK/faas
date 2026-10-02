@@ -61,6 +61,10 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	row := EnvironmentWorkloadIntent{Runtime: map[string]json.RawMessage{}}
 	if app.WorkloadIntent != nil {
 		row = cloneWorkloadIntent(*app.WorkloadIntent)
+		if row.SourceRevision != "" {
+			value, _ := json.Marshal(row.SourceRevision)
+			out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: value})
+		}
 		for key, value := range row.Runtime {
 			runtime[key] = value
 		}
@@ -114,6 +118,9 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	}
 	if workload.Source != nil {
 		row.Source = workload.Source
+		if workload.Source.Kind == "image" {
+			row.SourceRevision = ""
+		}
 	}
 	if wantedSource || len(keys) > 0 {
 		actual := App{Manifest: app.Manifest, WorkloadClass: app.WorkloadClass}

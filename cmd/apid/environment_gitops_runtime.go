@@ -87,7 +87,22 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	if !ok {
 		return nil // the runtime verifier continues reporting the graph unqualified
 	}
-	candidates, err := preparer.PrepareEnvironmentGitOpsImageCandidates(ctx, lease, plan)
+	requests, err := preparer.EnvironmentGitOpsSourceRequests(ctx, lease, plan)
+	if errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
+	for _, request := range requests {
+		artifact, err := b.server.prepareEnvironmentGitArchive(ctx, lease, request)
+		if err != nil {
+			return err
+		}
+		artifacts[request.Resource] = artifact
+	}
+	candidates, err := preparer.PrepareEnvironmentGitOpsCandidates(ctx, lease, plan, artifacts)
 	if errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) {
 		return nil // unsupported adapters retain partial status; never serving proof
 	}
@@ -97,6 +112,15 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	// PgStore also commits the durable handoff with candidate creation. A
 	// repeated pending hint is safe: imaging deduplicates on deployment status.
 	for _, candidate := range candidates {
+		if candidate.BuildID != "" {
+			if candidate.Status == state.DeployBuilding {
+				payload, _ := json.Marshal(map[string]string{"build_id": candidate.BuildID, "app_id": candidate.AppID, "deployment_id": candidate.DeploymentID, "kind": "github"})
+				if err := b.server.notif.Notify(ctx, db.NotifyBuildQueued, string(payload)); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if candidate.Status != state.DeployPending {
 			continue
 		}

@@ -33,7 +33,7 @@ func (c *environmentGitOpsClient) ListInstallableRepos(context.Context, string, 
 }
 func (c *environmentGitOpsClient) StreamSourceRef(_ context.Context, _ string, _ int64, _ string, _ string, _ int64) (*StreamSourceRefResult, error) {
 	c.fetches++
-	return &StreamSourceRefResult{Body: io.NopCloser(bytes.NewReader(c.archive)), Stats: &StreamSourceRefStats{ResolvedCommitSHA: c.resolvedSHA, Truncated: c.truncated}}, nil
+	return &StreamSourceRefResult{Body: io.NopCloser(bytes.NewReader(c.archive)), Stats: &StreamSourceRefStats{ResolvedCommitSHA: c.resolvedSHA, Truncated: c.truncated, BytesStreamed: int64(len(c.archive))}}, nil
 }
 
 func environmentGitOpsArchive(t *testing.T) []byte {

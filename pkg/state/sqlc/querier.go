@@ -152,7 +152,8 @@ type Querier interface {
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
 	CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBridgeParams) (int64, error)
 	CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg CreateDevBridgeWebhookReplayParams) (int64, error)
-	CreateEnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsImageCandidateParams) (pgtype.UUID, error)
+	CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsSourceBuildParams) error
+	CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsWorkloadCandidateParams) (pgtype.UUID, error)
 	CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg CreateEnvironmentGitSourceParams) (EnvironmentGitSource, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	// --- Organizations (ADR-061, IAM-6, PR 2) -------------------------------

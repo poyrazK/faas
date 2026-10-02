@@ -1,9 +1,9 @@
-# ADR-429 · Git-owned environment intent and continuous reconciliation
+# ADR-430 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425 and ADR-428
+  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425, ADR-428 and ADR-429
   documents, refer to this contract.
   Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations;
   ADR-425 covers retained cache materialization.
@@ -73,8 +73,9 @@
    generation. Existing build owners and scheduler admission remain authoritative.
    Immutable image candidates now capture scoped inputs and commit a durable
    imaging handoff, including runtime-only ownership that inherits a reviewed
-   immutable live image. Source/archive builders and new workload creation still
-   need their preparation adapters.
+   immutable live image. Pinned Git source and Dockerfile candidates now publish
+   held build rows from verified archives. Functions, new workload creation and
+   inherited non-image source provenance still need preparation adapters.
 2. Prepare the dependency graph using immutable source artifacts and durable
    deployment/effect identities. Qualify API and worker candidates before release
    activation. Retry and crash recovery resume the journaled operation; an older
@@ -919,8 +920,9 @@ This checkpoint is integrated with main through `a3e1800e3`. Focused routed
 GitOps/queue and policy-retirement API/CLI checks, the PostgreSQL GitOps suite,
 populated migration replay and Node/Python transport checks pass on the combined
 tree. Isolated SQLC regeneration, matching OpenAPI copies and ADR number
-uniqueness pass. The contract is now ADR-429; historical unreleased migration
-references to ADR-425 remain unchanged.
+uniqueness pass. The contract is now ADR-430 to keep the number unique alongside main's
+handled-service-request ADR-429; historical migration comments retain their
+original ADR references.
 
 Main's subsequent request-streaming gateway fix through `650574079` is also
 integrated. Its duplex/body-admission tests and focused routed GitOps/queue API
@@ -944,6 +946,45 @@ environment or one that manages only environment configuration; a missing or
 null map is rejected. Removing the last workload produces the same reviewed
 prune candidates as any other removal, preserves unmanaged resources and
 other managers, and remains blocked by the workload pruning adapter gate.
+
+Source and Dockerfile preparation now persists the exact approved source commit
+separately from its directory/Dockerfile parameters. A commit-only change therefore
+produces reviewed drift even when the environment definition is unchanged. This
+scoped source revision has the same ownership and original environment identity
+as the other workload settings; it records intent rather than serving evidence.
+
+Preparation first verifies every mapped workload and the current reviewed plan,
+then requests only missing source artifacts. The API streams the pinned commit
+through the bound GitHub installation/repository, applies plan archive limits and
+existing source validation, verifies the approved definition digest and exact
+member/Dockerfile paths, and hashes the complete archive. Each artifact is bound
+to its revision UUID, commit SHA and definition digest. The existing filesystem
+or remote source transport stages the archive before a source-first transaction
+publishes the held deployment and durable queue row under a reserved UUIDv7
+build ID. A failed queue publication rolls back the candidate. A lost reply is
+recovered from the existing candidate/build identity without downloading again;
+a superseded lease or an artifact from another revision cannot publish work.
+Remote source objects use the existing build-aware retention. Local spool retention
+and graph-owned cancellation still require the complete operational qualification.
+
+Builderd consumes the candidate's frozen app baseline and explicit source selection,
+including clearing a shared Dockerfile for autodetected source builds. Dockerfile
+selection cannot fall back to the repository root. The API scans that same
+selected file for unsupported persistence directives and rejects a missing or
+oversized Dockerfile before publishing work. Builds retain the existing
+builder microVM, slot and plan boundaries, and artifact completion does not release
+the workload hold. Shared manifest environment/service bindings, function or new
+workload creation, inherited non-image runtime-only sources, scoped dependency
+qualification and release activation remain gates. Native Linux KVM serving,
+`test-metal` and `leakcheck` evidence are still required before enabling the
+approved-intent executor.
+
+Source preparation qualification covers the HTTP review/adoption/build flow,
+commit-only drift, substituted archives, retry without another download,
+frozen builder runtime/Dockerfile inputs, PostgreSQL queue rollback and raw SQL
+mutation fences. The selected Git definition, builder, source transport, API,
+PostgreSQL integration, migration replay, imaged and scheduler tests pass on
+macOS. These checks do not substitute for native KVM serving qualification.
 
 ## Review and control workflow
 

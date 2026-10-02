@@ -14,7 +14,7 @@ import (
 var _ EnvironmentWorkloadIntentStore = (*PgStore)(nil)
 
 func workloadIntentFromSQL(row sqlc.AppEnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
-	out := EnvironmentWorkloadIntent{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), EnvironmentID: pgUUIDString(row.EnvironmentID), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	out := EnvironmentWorkloadIntent{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), EnvironmentID: pgUUIDString(row.EnvironmentID), SourceRevision: row.SourceRevision.String, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
 	_ = json.Unmarshal(row.Source, &out.Source)
 	_ = json.Unmarshal(row.Runtime, &out.Runtime)
 	return cloneWorkloadIntent(out)
@@ -26,7 +26,7 @@ func putWorkloadIntentTx(ctx context.Context, tx sqlc.DBTX, row EnvironmentWorkl
 		source, _ = json.Marshal(row.Source)
 	}
 	runtime, _ := json.Marshal(cloneWorkloadIntent(row).Runtime)
-	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), Source: source, Runtime: runtime})
+	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), Source: source, Runtime: runtime, SourceRevision: row.SourceRevision})
 	if err != nil {
 		return row, mapErr(err)
 	}

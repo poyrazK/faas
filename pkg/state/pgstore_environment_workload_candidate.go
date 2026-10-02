@@ -15,29 +15,42 @@ import (
 
 var _ EnvironmentGitOpsPreparationStore = (*PgStore)(nil)
 
+func (s *PgStore) environmentCandidateInputsTx(ctx context.Context, tx pgx.Tx, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]Deployment, gitOpsIntentSnapshot, error) {
+	q := sqlc.New()
+	if _, err := q.LockEnvironmentGitOpsCandidateApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
+		return nil, gitOpsIntentSnapshot{}, mapErr(err)
+	}
+	source, revision, desired, err := lockApprovedEnvironmentGitOps(ctx, tx, lease.Source.AccountID, lease.Source.ID)
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, err
+	}
+	observed, snapshot, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, err
+	}
+	plan, err := environmentGitOpsPlan(source, revision, desired, observed, false)
+	if err != nil || plan.Hash != reviewed.Hash {
+		return nil, gitOpsIntentSnapshot{}, ErrConflict
+	}
+	inputs, err := workloadCandidateInputs(source, revision, desired, snapshot, plan)
+	if err != nil {
+		return nil, gitOpsIntentSnapshot{}, err
+	}
+	return inputs, snapshot, nil
+}
+
 func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
+	return s.PrepareEnvironmentGitOpsCandidates(ctx, lease, reviewed, nil)
+}
+
+func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
 	tx, err := s.gitOpsEffectTx(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err := q.LockEnvironmentGitOpsCandidateApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
-		return nil, mapErr(err)
-	}
-	source, revision, desired, err := lockApprovedEnvironmentGitOps(ctx, tx, lease.Source.AccountID, lease.Source.ID)
-	if err != nil {
-		return nil, err
-	}
-	observed, snapshot, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := environmentGitOpsPlan(source, revision, desired, observed, false)
-	if err != nil || plan.Hash != reviewed.Hash {
-		return nil, ErrConflict
-	}
-	inputs, err := imageCandidateInputs(source, revision, desired, snapshot, plan)
+	inputs, snapshot, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {
 		return nil, err
 	}
@@ -46,13 +59,22 @@ func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, l
 	}
 	out := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
 	for _, input := range inputs {
-		frozen, _ := input.ScopedWorkloadRuntime()
+		frozen := candidateFrozenInputs(input)
 		id, err := q.EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
-			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: plan.Hash})
+			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: reviewed.Hash})
 		if errors.Is(err, pgx.ErrNoRows) {
-			id, err = q.CreateEnvironmentGitOpsImageCandidate(ctx, tx, sqlc.CreateEnvironmentGitOpsImageCandidateParams{
-				AppID: mustPgUUID(input.AppID), Scope: input.Scope, Image: input.ImageDigest, CommitSha: input.CommitSHA, Runtime: []byte(input.EnvironmentWorkloadRuntime)})
-			if err == nil {
+			input, err = attachCandidateSource(input, artifacts, snapshot.Plan)
+			if err != nil {
+				return nil, err
+			}
+			id, err = q.CreateEnvironmentGitOpsWorkloadCandidate(ctx, tx, sqlc.CreateEnvironmentGitOpsWorkloadCandidateParams{
+				AppID: mustPgUUID(input.AppID), Scope: input.Scope, Kind: string(input.Kind), Image: input.ImageDigest, CommitSha: input.CommitSHA, Runtime: []byte(input.EnvironmentWorkloadRuntime),
+				SourcePath: input.SourcePath, SourceRoot: input.SourceRoot, SourceSha256: input.SourceSHA256, SourceBytes: input.SourceBytes, SourceUrl: input.SourceURL})
+			if err == nil && input.Kind != DeploymentKindImage {
+				err = q.CreateEnvironmentGitOpsSourceBuild(ctx, tx, sqlc.CreateEnvironmentGitOpsSourceBuildParams{
+					DeploymentID: id, BuildID: mustPgUUID(input.BuildID), SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath})
+			}
+			if err == nil && input.Kind == DeploymentKindImage {
 				payload, _ := json.Marshal(map[string]string{"app_id": input.AppID, "to": pgUUIDString(id), "deployment_id": pgUUIDString(id), "kind": string(input.Kind)})
 				err = db.EnqueueDurableNotificationTx(ctx, tx, db.NotifyEnvironmentWorkloadImage, string(payload))
 			}
@@ -64,7 +86,7 @@ func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, l
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
+		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), BuildID: dep.BuildID, AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
 			Status: DeploymentStatus(dep.Status), HasRootfs: dep.RootfsPath != "" || dep.RootfsKey != ""})
 	}
 	// A long preparation must not commit after its issued lease expires.
@@ -72,4 +94,40 @@ func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, l
 		return nil, err
 	}
 	return out, tx.Commit(ctx)
+}
+
+func (s *PgStore) EnvironmentGitOpsSourceRequests(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadSourceRequest, error) {
+	tx, err := s.gitOpsEffectTx(ctx, lease)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	inputs, _, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
+	if err != nil {
+		return nil, err
+	}
+	var requests []EnvironmentWorkloadSourceRequest
+	for _, input := range inputs {
+		if input.Kind == DeploymentKindImage {
+			continue
+		}
+		frozen := candidateFrozenInputs(input)
+		_, err := sqlc.New().EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
+			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: reviewed.Hash})
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		request, err := sourceRequest(input)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	if err := lockEnvironmentGitOps(ctx, tx, lease, time.Now()); err != nil {
+		return nil, err
+	}
+	return requests, tx.Commit(ctx)
 }
