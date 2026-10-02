@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE app_issue_ownership_rules (
+CREATE TABLE IF NOT EXISTS app_issue_ownership_rules (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     rule_order integer NOT NULL CHECK (rule_order BETWEEN 0 AND 49),
     exception_type text,
