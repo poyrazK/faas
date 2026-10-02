@@ -53,11 +53,46 @@ func (m *MemStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, 
 	if old, ok := m.applicationStandardSnapshotCaptures[g.Token]; ok {
 		return standardSnapshotIssueRetry(old, expectedState, g, now, deadline)
 	}
+	for _, snap := range m.snapshots {
+		if snap.StorageKey == g.MemoryKey {
+			return runtimeadmission.SnapshotGrant{}, ErrConflict
+		}
+	}
 	if m.applicationStandardSnapshotCaptures == nil {
 		m.applicationStandardSnapshotCaptures = map[string]ApplicationStandardSnapshotCaptureRecord{}
 	}
 	m.applicationStandardSnapshotCaptures[g.Token] = ApplicationStandardSnapshotCaptureRecord{ExpectedState: expectedState, Grant: g.Clone(), CreatedAt: now}
 	return g.Clone(), nil
+}
+
+func (m *MemStore) guardStandardSnapshotPublicationLocked(snap Snapshot) error {
+	if snap.ApplicationStandardCaptureToken == "" {
+		for _, r := range m.applicationStandardSnapshotCaptures {
+			if r.Grant.MemoryKey == snap.StorageKey {
+				return ErrInvalidArgument
+			}
+		}
+		return nil // Legacy cache data is not a measured capture receipt.
+	}
+	r, ok := m.applicationStandardSnapshotCaptures[snap.ApplicationStandardCaptureToken]
+	dep, found := m.deployments[snap.DeploymentID]
+	app, owned := m.apps[dep.AppID]
+	if !ok || !found || !owned || standardSnapshotRecordValid(r) != nil || r.Acknowledgment == nil {
+		return ErrInvalidArgument
+	}
+	g, a := r.Grant, r.Acknowledgment
+	b := g.Parent.Binding
+	tier := SnapshotTierInit
+	if g.Mode == "warm" {
+		tier = SnapshotTierWarm
+	}
+	if !sameStandardUUID(dep.ID, b.DeploymentID) || !sameStandardUUID(app.ID, b.AppID) || !sameStandardUUID(app.AccountID, b.AccountID) ||
+		g.Mode != "warm" && g.Mode != "park" || snap.StorageKey != g.MemoryKey || snap.FCVersion != g.FCVersion || snap.Tier != tier ||
+		SnapshotVMStateKey(snap) != g.VMStateKey || SnapshotDriveKey(snap) != g.PrivateDriveKey ||
+		snap.MemBytes != a.Capture.Memory.Bytes || snap.DiskBytes != a.Capture.VMState.Bytes || snap.StoredBytes < 0 {
+		return ErrInvalidArgument
+	}
+	return nil
 }
 
 func (m *MemStore) PublishApplicationStandardSnapshotCapture(ctx context.Context, ack runtimeadmission.SnapshotAcknowledgment) error {

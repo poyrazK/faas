@@ -4429,6 +4429,8 @@ type Snapshot struct {
 	// Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.
 	BaseImageVersion string
 	DeletePending    bool
+	// Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.
+	ApplicationStandardCaptureToken pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {

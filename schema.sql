@@ -2166,6 +2166,101 @@ $$;
 
 
 --
+-- Name: application_standard_snapshot_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_snapshot_captures (
+    token uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    parent_token uuid NOT NULL,
+    memory_key text NOT NULL,
+    expected_state text NOT NULL,
+    grant_data jsonb NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    acknowledgment jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    received_at timestamp with time zone,
+    CONSTRAINT application_standard_snapshot_captures_acknowledgment_check CHECK ((jsonb_typeof(acknowledgment) = 'object'::text)),
+    CONSTRAINT application_standard_snapshot_captures_check CHECK (((acknowledgment IS NULL) = (received_at IS NULL))),
+    CONSTRAINT application_standard_snapshot_captures_expected_state_check CHECK ((expected_state = ANY (ARRAY['running'::text, 'snapshotting'::text, 'migrating'::text]))),
+    CONSTRAINT application_standard_snapshot_captures_grant_data_check CHECK ((jsonb_typeof(grant_data) = 'object'::text)),
+    CONSTRAINT application_standard_snapshot_captures_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    disk_bytes bigint NOT NULL,
+    stale boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    tier text DEFAULT 'init'::text NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    base_image_version text DEFAULT ''::text NOT NULL,
+    delete_pending boolean DEFAULT false NOT NULL,
+    application_standard_capture_token uuid,
+    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
+    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
+);
+
+
+--
+-- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
+
+
+--
+-- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
+
+
+--
+-- Name: COLUMN snapshots.application_standard_capture_token; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: application_standard_snapshot_catalog_matches(public.snapshots, public.application_standard_snapshot_captures); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_catalog_matches(s public.snapshots, c public.application_standard_snapshot_captures) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE g jsonb; a jsonb;
+BEGIN
+ g:=c.grant_data; a:=c.acknowledgment;
+ RETURN coalesce(c.received_at IS NOT NULL AND a IS NOT NULL
+  AND c.deployment_id=s.deployment_id AND c.memory_key=s.storage_key AND g->>'memory_key'=s.storage_key
+  AND g->>'vmstate_key'=left(s.storage_key,length(s.storage_key)-3)||'vmstate'
+  AND g->>'private_drive_key'=left(s.storage_key,length(s.storage_key)-3)||'drive'
+  AND g->>'mode' IN ('warm','park') AND s.tier=CASE WHEN g->>'mode'='warm' THEN 'warm' ELSE 'init' END
+  AND g->>'fc_version'=s.fc_version AND s.stored_bytes>=0
+  AND (a->'capture'->'memory'->>'bytes')::bigint=s.mem_bytes
+  AND (a->'capture'->'vmstate'->>'bytes')::bigint=s.disk_bytes
+  AND application_standard_snapshot_acknowledgment_valid(a,g,(a->>'completed_at_unix_nano')::bigint),false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$$;
+
+
+--
 -- Name: application_standard_snapshot_grant_valid(jsonb, uuid, jsonb, text, bigint, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2212,6 +2307,23 @@ $$;
 
 
 --
+-- Name: application_standard_snapshot_namespace_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_namespace_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.memory_key,43120261002));
+ IF EXISTS(SELECT 1 FROM snapshots WHERE storage_key=NEW.memory_key) THEN
+  RAISE EXCEPTION 'snapshot key was published before its grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_snapshot_positive_integer(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2224,6 +2336,44 @@ BEGIN
 EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
 END;
 $_$;
+
+
+--
+-- Name: application_standard_snapshot_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c application_standard_snapshot_captures;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.application_standard_capture_token IS DISTINCT FROM OLD.application_standard_capture_token
+   OR (OLD.application_standard_capture_token IS NOT NULL AND
+    (to_jsonb(NEW)-ARRAY['stale','delete_pending','stored_bytes']) IS DISTINCT FROM
+    (to_jsonb(OLD)-ARRAY['stale','delete_pending','stored_bytes'])) THEN
+   RAISE EXCEPTION 'snapshot capture association is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+  IF (to_jsonb(NEW)-ARRAY['stale','delete_pending','stored_bytes']) IS NOT DISTINCT FROM
+   (to_jsonb(OLD)-ARRAY['stale','delete_pending','stored_bytes']) THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.storage_key,43120261002));
+ IF NEW.application_standard_capture_token IS NULL THEN
+  IF EXISTS(SELECT 1 FROM application_standard_snapshot_captures WHERE memory_key=NEW.storage_key) THEN
+   RAISE EXCEPTION 'snapshot requires its catalog reference' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+  END IF;
+  RETURN NEW; -- Unknown legacy cache rows never become measured capture proof.
+ END IF;
+ SELECT * INTO c FROM application_standard_snapshot_captures
+ WHERE token=NEW.application_standard_capture_token FOR KEY SHARE;
+ IF NOT FOUND OR NOT application_standard_snapshot_catalog_matches(NEW,c)
+  OR NOT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+   WHERE d.id=NEW.deployment_id AND a.id=c.app_id AND a.account_id=c.account_id) THEN
+  RAISE EXCEPTION 'snapshot does not match published capture' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
 
 
 --
@@ -7507,33 +7657,6 @@ CREATE TABLE public.application_standard_review_plans (
     CONSTRAINT application_standard_review_plans_blockers_check CHECK ((jsonb_typeof(blockers) = 'array'::text)),
     CONSTRAINT application_standard_review_plans_check CHECK ((expires_at > created_at)),
     CONSTRAINT application_standard_review_plans_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
-);
-
-
---
--- Name: application_standard_snapshot_captures; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.application_standard_snapshot_captures (
-    token uuid NOT NULL,
-    instance_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    node_id uuid NOT NULL,
-    parent_token uuid NOT NULL,
-    memory_key text NOT NULL,
-    expected_state text NOT NULL,
-    grant_data jsonb NOT NULL,
-    input_snapshot jsonb NOT NULL,
-    acknowledgment jsonb,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    received_at timestamp with time zone,
-    CONSTRAINT application_standard_snapshot_captures_acknowledgment_check CHECK ((jsonb_typeof(acknowledgment) = 'object'::text)),
-    CONSTRAINT application_standard_snapshot_captures_check CHECK (((acknowledgment IS NULL) = (received_at IS NULL))),
-    CONSTRAINT application_standard_snapshot_captures_expected_state_check CHECK ((expected_state = ANY (ARRAY['running'::text, 'snapshotting'::text, 'migrating'::text]))),
-    CONSTRAINT application_standard_snapshot_captures_grant_data_check CHECK ((jsonb_typeof(grant_data) = 'object'::text)),
-    CONSTRAINT application_standard_snapshot_captures_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
 );
 
 
@@ -13590,42 +13713,6 @@ COMMENT ON COLUMN public.snapshot_storage_daily.snapshot_bytes IS 'Σ snapshots.
 --
 
 COMMENT ON COLUMN public.snapshot_storage_daily.layer_bytes IS 'Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.';
-
-
---
--- Name: snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.snapshots (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    fc_version text NOT NULL,
-    mem_bytes bigint NOT NULL,
-    disk_bytes bigint NOT NULL,
-    stale boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text DEFAULT ''::text NOT NULL,
-    tier text DEFAULT 'init'::text NOT NULL,
-    stored_bytes bigint DEFAULT 0 NOT NULL,
-    base_image_version text DEFAULT ''::text NOT NULL,
-    delete_pending boolean DEFAULT false NOT NULL,
-    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
-    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
-);
-
-
---
--- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
-
-
---
--- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
 
 
 --
@@ -22179,6 +22266,13 @@ CREATE INDEX snapshot_storage_daily_account_day_idx ON public.snapshot_storage_d
 
 
 --
+-- Name: snapshots_application_standard_capture_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshots_application_standard_capture_idx ON public.snapshots USING btree (application_standard_capture_token) WHERE (application_standard_capture_token IS NOT NULL);
+
+
+--
 -- Name: snapshots_delete_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23352,6 +23446,20 @@ CREATE TRIGGER application_standard_signer_input_guard BEFORE INSERT OR DELETE O
 --
 
 CREATE TRIGGER application_standard_snapshot_capture_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_snapshot_captures FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_capture_guard();
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_namespace_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_namespace_guard BEFORE INSERT ON public.application_standard_snapshot_captures FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_namespace_guard();
+
+
+--
+-- Name: snapshots application_standard_snapshot_publication_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_publication_guard BEFORE INSERT OR UPDATE ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_publication_guard();
 
 
 --
@@ -28308,6 +28416,14 @@ ALTER TABLE ONLY public.snapshot_replicas
 
 ALTER TABLE ONLY public.snapshot_restore_pressure_leases
     ADD CONSTRAINT snapshot_restore_pressure_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshots snapshots_application_standard_capture_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshots
+    ADD CONSTRAINT snapshots_application_standard_capture_token_fkey FOREIGN KEY (application_standard_capture_token) REFERENCES public.application_standard_snapshot_captures(token) ON DELETE CASCADE;
 
 
 --

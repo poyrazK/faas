@@ -14736,6 +14736,9 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		// SnapshotTierWarm explicitly.
 		snap.Tier = SnapshotTierInit
 	}
+	if err := m.guardStandardSnapshotPublicationLocked(snap); err != nil {
+		return Snapshot{}, err
+	}
 	if snap.ID == "" {
 		snap.ID = uuid.NewString()
 	}

@@ -870,3 +870,29 @@ complete live-egress/log convergence or consumer observations. Native KVM
 acceptance, existing-runtime convergence and the remaining acceptance gates are
 required before public activation. No capture or native boot/promotion receipt
 advances an observed standard revision.
+
+Managed cold boots with artifact protocol 2 now publish the measured producer
+and injected drive facts. Warm and park capture use a separate single-use grant
+and native RPC. The grant binds the published source residency and a private
+memory, VM-state and frozen writable-drive namespace. The scheduler saves that
+grant before capture and publishes the exact native acknowledgment before
+notifying imaged. The catalog survives source instance cleanup; it is erased
+with the owning application, deployment or account. Shared base and sidecar
+drives remain read-only; the per-instance main drive remains private and writable.
+
+The ordinary snapshot row retains an immutable foreign key to this published
+capture. Database triggers and MemStore compare ownership, namespace, capture
+mode/tier, Firecracker version and memory/VM-state byte counts. Catalog grant
+insertion and snapshot publication serialize on the memory key, so a preceding
+legacy row cannot later gain capture authority and a saved grant cannot publish
+without its reference. The additive upgrade links only exact published history
+and marks known mismatched rows stale. Stale/delete-pending and physical allocation
+updates remain possible, and cache GC preserves the historical catalog.
+
+This association is historical evidence, not a current restore grant. Unknown
+legacy rows remain unproved cache data. Protocol 2 measured sources currently
+take a verified cold fallback rather than restoring or promoting a cache with
+old protocol semantics. Fresh approval of the overlaid runtime, a separately
+versioned restore/promotion grant, migration recovery, real consumer convergence
+and dedicated Linux amd64 Grype/ext4/KVM/leakcheck acceptance remain required.
+The public activation gate remains disabled.

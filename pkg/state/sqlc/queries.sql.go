@@ -2497,6 +2497,59 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 	return i, err
 }
 
+const createSnapshot = `-- name: CreateSnapshot :one
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token)
+VALUES($1::uuid,$2::text,$3::text,
+ $4::bigint,$5::bigint,$6::bigint,
+ $7::text,$8::boolean,$9::text,$10::uuid)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token
+`
+
+type CreateSnapshotParams struct {
+	DeploymentID                    pgtype.UUID
+	FcVersion                       string
+	BaseImageVersion                string
+	MemBytes                        int64
+	DiskBytes                       int64
+	StoredBytes                     int64
+	StorageKey                      string
+	Stale                           bool
+	Tier                            string
+	ApplicationStandardCaptureToken pgtype.UUID
+}
+
+func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
+	row := db.QueryRow(ctx, createSnapshot,
+		arg.DeploymentID,
+		arg.FcVersion,
+		arg.BaseImageVersion,
+		arg.MemBytes,
+		arg.DiskBytes,
+		arg.StoredBytes,
+		arg.StorageKey,
+		arg.Stale,
+		arg.Tier,
+		arg.ApplicationStandardCaptureToken,
+	)
+	var i Snapshot
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.DiskBytes,
+		&i.Stale,
+		&i.CreatedAt,
+		&i.StorageKey,
+		&i.Tier,
+		&i.StoredBytes,
+		&i.BaseImageVersion,
+		&i.DeletePending,
+		&i.ApplicationStandardCaptureToken,
+	)
+	return i, err
+}
+
 const createTrigger = `-- name: CreateTrigger :one
 
 insert into triggers (account_id, app_id, kind, slug, enabled, config,
@@ -10344,6 +10397,63 @@ func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const latestSnapshot = `-- name: LatestSnapshot :one
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
+`
+
+func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Snapshot, error) {
+	row := db.QueryRow(ctx, latestSnapshot, deploymentID)
+	var i Snapshot
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.DiskBytes,
+		&i.Stale,
+		&i.CreatedAt,
+		&i.StorageKey,
+		&i.Tier,
+		&i.StoredBytes,
+		&i.BaseImageVersion,
+		&i.DeletePending,
+		&i.ApplicationStandardCaptureToken,
+	)
+	return i, err
+}
+
+const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+ORDER BY created_at DESC LIMIT 1
+`
+
+type LatestSnapshotForTierParams struct {
+	DeploymentID pgtype.UUID
+	Tier         string
+}
+
+func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg LatestSnapshotForTierParams) (Snapshot, error) {
+	row := db.QueryRow(ctx, latestSnapshotForTier, arg.DeploymentID, arg.Tier)
+	var i Snapshot
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.FcVersion,
+		&i.MemBytes,
+		&i.DiskBytes,
+		&i.Stale,
+		&i.CreatedAt,
+		&i.StorageKey,
+		&i.Tier,
+		&i.StoredBytes,
+		&i.BaseImageVersion,
+		&i.DeletePending,
+		&i.ApplicationStandardCaptureToken,
+	)
+	return i, err
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -14983,6 +15093,18 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
+SELECT a.id::text FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1::uuid FOR UPDATE OF a
+`
+
+func (q *Queries) LockSnapshotPublicationApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockSnapshotPublicationApp, deploymentID)
+	var a_id string
+	err := row.Scan(&a_id)
+	return a_id, err
 }
 
 const lockUDPListenerAppOwner = `-- name: LockUDPListenerAppOwner :one
@@ -22014,6 +22136,34 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 		return nil, err
 	}
 	return items, nil
+}
+
+const snapshotPublicationRuntimeChangedAt = `-- name: SnapshotPublicationRuntimeChangedAt :one
+SELECT changed_at FROM app_runtime_config_changes WHERE app_id=$1::uuid
+`
+
+func (q *Queries) SnapshotPublicationRuntimeChangedAt(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, snapshotPublicationRuntimeChangedAt, appID)
+	var changed_at pgtype.Timestamptz
+	err := row.Scan(&changed_at)
+	return changed_at, err
+}
+
+const snapshotPublicationSource = `-- name: SnapshotPublicationSource :one
+SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=$1::uuid
+`
+
+type SnapshotPublicationSourceRow struct {
+	AppID        string
+	DeploymentID string
+	StartedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) SnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (SnapshotPublicationSourceRow, error) {
+	row := db.QueryRow(ctx, snapshotPublicationSource, instanceID)
+	var i SnapshotPublicationSourceRow
+	err := row.Scan(&i.AppID, &i.DeploymentID, &i.StartedAt)
+	return i, err
 }
 
 const snapshotStorageKeys = `-- name: SnapshotStorageKeys :many

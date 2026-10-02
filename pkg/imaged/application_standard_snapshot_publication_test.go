@@ -18,8 +18,28 @@ import (
 
 type snapshotCatalogPublicationStore struct {
 	*state.MemStore
-	record state.ApplicationStandardSnapshotCaptureRecord
-	err    error
+	record    state.ApplicationStandardSnapshotCaptureRecord
+	err       error
+	published *state.Snapshot
+}
+
+// This boundary fake records the handler's publication arguments. It deliberately
+// does not insert its simulated catalog into MemStore's real authority tables.
+// Real store publication and raw SQL fences are tested in pkg/state.
+func (s *snapshotCatalogPublicationStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap state.Snapshot, _ string, _ time.Time) (state.Snapshot, error) {
+	if s.published != nil {
+		return state.Snapshot{}, state.ErrConflict
+	}
+	snap.ID, snap.CreatedAt = uuid.NewString(), time.Now()
+	s.published = &snap
+	return snap, nil
+}
+
+func (s *snapshotCatalogPublicationStore) LatestSnapshotForTier(_ context.Context, depID, tier string) (state.Snapshot, error) {
+	if s.published == nil || s.published.DeploymentID != depID || s.published.Tier != tier {
+		return state.Snapshot{}, state.ErrNotFound
+	}
+	return *s.published, nil
 }
 
 func (s *snapshotCatalogPublicationStore) GetApplicationStandardSnapshotCapture(_ context.Context, accountID, appID, depID, token string) (state.ApplicationStandardSnapshotCaptureRecord, error) {
@@ -84,7 +104,7 @@ func TestStandardSnapshotPublicationRecordsOnlyMatchingCatalogReference(t *testi
 		}
 	}
 	snap, err := s.LatestSnapshotForTier(t.Context(), dep.ID, state.SnapshotTierWarm)
-	if err != nil || snap.StorageKey != s.record.Grant.MemoryKey || snap.MemBytes != s.record.Acknowledgment.Capture.Memory.Bytes {
+	if err != nil || snap.ApplicationStandardCaptureToken != s.record.Grant.Token || snap.StorageKey != s.record.Grant.MemoryKey || snap.MemBytes != s.record.Acknowledgment.Capture.Memory.Bytes {
 		t.Fatal("matching catalog reference was not published", err)
 	}
 }

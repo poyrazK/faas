@@ -3278,13 +3278,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 
 		snap := state.Snapshot{
-			DeploymentID:     snapshot.DeploymentID,
-			FCVersion:        snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
-			BaseImageVersion: snapshot.BaseImageVersion, // pins H2C runner/base compatibility
-			StorageKey:       snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
-			MemBytes:         snapshot.MemBytes,
-			DiskBytes:        snapshot.VMStateBytes,
-			StoredBytes:      snapshot.StoredBytes,
+			DeploymentID:                    snapshot.DeploymentID,
+			FCVersion:                       snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+			BaseImageVersion:                snapshot.BaseImageVersion, // pins H2C runner/base compatibility
+			StorageKey:                      snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			MemBytes:                        snapshot.MemBytes,
+			DiskBytes:                       snapshot.VMStateBytes,
+			StoredBytes:                     snapshot.StoredBytes,
+			ApplicationStandardCaptureToken: snapshot.ApplicationStandardCaptureToken,
 			// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 			// back to "init" (the DB column default and the legacy
 			// pre-#470 behaviour); warm-tier rows are only ever
