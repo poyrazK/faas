@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -110,13 +111,15 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		providerID, providerErr := req.provider.EnsureMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
-			SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0,
-			Metadata: objectstorage.ObjectMetadata{
-				ContentType: claimed.ContentType, CacheControl: claimed.Metadata.CacheControl,
-				ContentDisposition: claimed.Metadata.ContentDisposition, ContentEncoding: claimed.Metadata.ContentEncoding,
-				ContentLanguage: claimed.Metadata.ContentLanguage, Metadata: claimed.Metadata.UserMetadata, Tags: claimed.Metadata.Tags,
-			},
+		providerID, providerErr := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func() (string, error) {
+			return req.provider.EnsureMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
+				SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0,
+				Metadata: objectstorage.ObjectMetadata{
+					ContentType: claimed.ContentType, CacheControl: claimed.Metadata.CacheControl,
+					ContentDisposition: claimed.Metadata.ContentDisposition, ContentEncoding: claimed.Metadata.ContentEncoding,
+					ContentLanguage: claimed.Metadata.ContentLanguage, Metadata: claimed.Metadata.UserMetadata, Tags: claimed.Metadata.Tags,
+				},
+			})
 		})
 		if providerErr != nil {
 			h.providerError(w, r, req, providerErr, key)
@@ -229,7 +232,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 	for name, value := range signed.Headers {
 		upstream.Header.Set(name, value)
 	}
-	response, err := h.client.Do(upstream)
+	response, err := h.doMutationRequest(upstream, req)
 	if err != nil {
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return
@@ -382,7 +385,9 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)}); err != nil {
+	if err = h.mutate(r.Context(), req, func() error {
+		return req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)})
+	}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
 	}
@@ -418,7 +423,9 @@ func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID}); err != nil {
+	if err = h.mutate(r.Context(), req, func() error {
+		return req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID})
+	}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
 	}

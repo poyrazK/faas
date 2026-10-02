@@ -3068,3 +3068,55 @@ production code included. Full test-file builds were attempted; the API linker
 exhausted the shared disk. This is scoped evidence, not the complete API or
 repository suites. No live provider resources were mutated. Native KVM and live
 provider acceptance remain outstanding.
+
+
+### Shared object writer tracking and private bucket fences (2026-10-02)
+
+The object data plane now reserves a durable placement-pinned writer receipt
+before each synchronous provider mutation. The API object-delete and multipart
+workers, and the S3 gateway PUT/part upload/delete/batch delete/copy/tag/multipart
+paths use this guard. Reservation failure prevents provider IO. Observed
+synchronous provider success removes the receipt through a bounded completion
+acknowledgement that can survive caller cancellation. Provider errors, response
+loss, asynchronous HTTP acceptance and failed completion persistence leave the
+writer outstanding; request deadlines do not establish drainage.
+
+The API reserves a separate native-write-grant receipt before exposing a native
+PUT URL or multipart-part URL. Signing success, a failed signing response, an
+expired URL and an expired multipart session do not clear that receipt. An
+expired native URL may already have admitted a provider-side upload. This
+increment deliberately supplies no generic grant-expiry or lease-expiry drain
+rule. Existing outstanding native grants require a future provider-specific
+revocation/drain proof or a replacement upload path controlled by Gregale.
+
+Private per-bucket fences close new instrumented write admission, report
+outstanding synchronous writers and native grants independently, and require
+an exact owner token plus the source placement to inspect or release. They do
+not expire automatically. A source-row lock serializes fencing and writer
+admission. Lifecycle deletion takes that same lock and checks fences in a fresh
+statement after waiting; it cannot delete a fenced source. Successful writers
+already admitted can still record completion while the fence is held. Releasing
+and reacquiring a fence does not erase unknown writes or native grants.
+
+These primitives are not an environment checkpoint and are not wired into full
+clone admission. Zero tracked writers does not prove coverage of legacy issued
+URLs, external provider credentials or application/background writers. The
+future leased coordinator must own and recover its fences, establish complete
+writer coverage, secure PostgreSQL and object snapshots at one justified
+application checkpoint, and release only after immutable source retention or
+failed-capture recovery. No coordinator-selected timestamp or ready-stage
+publication is added here. The full clone and other-resource compensation gates
+remain closed.
+
+Verification: the complete S3 gateway suite passed (4.353 s). Eleven selected
+state contracts passed (25.996 s), and twenty-one selected API contracts passed
+after the final handler extraction (1.999 s). A separate verbose PostgreSQL run
+confirmed actual execution of the
+new receipt/fence and blocked-lifecycle contracts (15.353 s). The focused state
+and API builds retain original selected test declarations and helpers via
+outside-repository test-only overlays, with all production files included.
+Independent SQLC generation matched the committed generated files. A broader
+production build was attempted and exhausted the shared disk; scoped test
+builds then compiled the changed production paths successfully. No live
+provider resources were mutated. Full repository, native KVM and live provider
+acceptance remain outstanding.

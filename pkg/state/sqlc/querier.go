@@ -1158,8 +1158,17 @@ type Querier interface {
 	ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucketListParams) ([]ObjectBucket, error)
 	ObjectBucketListForKey(ctx context.Context, db DBTX, arg ObjectBucketListForKeyParams) ([]ObjectBucket, error)
 	ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBucketLockAppParams) (pgtype.UUID, error)
+	ObjectBucketMutationFinish(ctx context.Context, db DBTX, arg ObjectBucketMutationFinishParams) (int64, error)
+	ObjectBucketMutationInsert(ctx context.Context, db DBTX, arg ObjectBucketMutationInsertParams) (ObjectBucketMutation, error)
+	// ADR-375: these statements run after ObjectBucketMutationLock in one
+	// transaction. Separate statements are necessary for a fresh READ COMMITTED
+	// snapshot after waiting for a concurrent source writer or lifecycle change.
+	ObjectBucketMutationLock(ctx context.Context, db DBTX, arg ObjectBucketMutationLockParams) (ObjectBucket, error)
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
+	ObjectBucketWriteFenceDelete(ctx context.Context, db DBTX, arg ObjectBucketWriteFenceDeleteParams) (int64, error)
+	ObjectBucketWriteFenceInsert(ctx context.Context, db DBTX, arg ObjectBucketWriteFenceInsertParams) error
+	ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketWriteFenceReadRow, error)
 	ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucketsDueParams) ([]ObjectBucket, error)
 	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)

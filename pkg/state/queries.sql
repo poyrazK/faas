@@ -4212,6 +4212,9 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','aborting')
 ))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_bucket_write_fences f WHERE f.bucket_id = object_buckets.id
+))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
 
@@ -7814,3 +7817,39 @@ WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='compensating'
         AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
         AND o.lease_until>clock_timestamp()) RETURNING s.*;
+
+-- ADR-375: these statements run after ObjectBucketMutationLock in one
+-- transaction. Separate statements are necessary for a fresh READ COMMITTED
+-- snapshot after waiting for a concurrent source writer or lifecycle change.
+-- name: ObjectBucketMutationLock :one
+SELECT * FROM object_buckets
+WHERE id=sqlc.arg(bucket_id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+FOR UPDATE;
+
+-- name: ObjectBucketMutationInsert :one
+INSERT INTO object_bucket_mutations (id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
+VALUES (sqlc.arg(id), sqlc.arg(bucket_id), sqlc.arg(kind), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint), sqlc.arg(physical_name))
+RETURNING *;
+
+-- name: ObjectBucketMutationFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE id=sqlc.arg(id) AND bucket_id=sqlc.arg(bucket_id) AND kind='request'
+AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
+AND physical_name=sqlc.arg(physical_name);
+
+-- name: ObjectBucketWriteFenceInsert :exec
+INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name)
+VALUES (sqlc.arg(bucket_id), sqlc.arg(token), sqlc.arg(backend_id), sqlc.arg(backend_fingerprint), sqlc.arg(physical_name))
+ON CONFLICT (bucket_id) DO NOTHING;
+
+-- name: ObjectBucketWriteFenceRead :one
+SELECT f.*,
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants
+FROM object_bucket_write_fences f WHERE f.bucket_id=sqlc.arg(bucket_id);
+
+-- name: ObjectBucketWriteFenceDelete :execrows
+DELETE FROM object_bucket_write_fences
+WHERE bucket_id=sqlc.arg(bucket_id) AND token=sqlc.arg(token)
+AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
+AND physical_name=sqlc.arg(physical_name);

@@ -17971,6 +17971,9 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','aborting')
 ))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_bucket_write_fences f WHERE f.bucket_id = object_buckets.id
+))
 AND (NOT $7::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id
 `
@@ -18311,6 +18314,116 @@ func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBu
 	return id, err
 }
 
+const objectBucketMutationFinish = `-- name: ObjectBucketMutationFinish :execrows
+DELETE FROM object_bucket_mutations
+WHERE id=$1 AND bucket_id=$2 AND kind='request'
+AND backend_id=$3 AND backend_fingerprint=$4
+AND physical_name=$5
+`
+
+type ObjectBucketMutationFinishParams struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectBucketMutationFinish(ctx context.Context, db DBTX, arg ObjectBucketMutationFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketMutationFinish,
+		arg.ID,
+		arg.BucketID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketMutationInsert = `-- name: ObjectBucketMutationInsert :one
+INSERT INTO object_bucket_mutations (id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, created_at
+`
+
+type ObjectBucketMutationInsertParams struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	Kind               string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectBucketMutationInsert(ctx context.Context, db DBTX, arg ObjectBucketMutationInsertParams) (ObjectBucketMutation, error) {
+	row := db.QueryRow(ctx, objectBucketMutationInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.Kind,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	var i ObjectBucketMutation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.Kind,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const objectBucketMutationLock = `-- name: ObjectBucketMutationLock :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets
+WHERE id=$1 AND account_id=$2 AND app_id=$3
+FOR UPDATE
+`
+
+type ObjectBucketMutationLockParams struct {
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-375: these statements run after ObjectBucketMutationLock in one
+// transaction. Separate statements are necessary for a fresh READ COMMITTED
+// snapshot after waiting for a concurrent source writer or lifecycle change.
+func (q *Queries) ObjectBucketMutationLock(ctx context.Context, db DBTX, arg ObjectBucketMutationLockParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectBucketMutationLock, arg.BucketID, arg.AccountID, arg.AppID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
+}
+
 const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 `
@@ -18344,6 +18457,94 @@ func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBuck
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectBucketWriteFenceDelete = `-- name: ObjectBucketWriteFenceDelete :execrows
+DELETE FROM object_bucket_write_fences
+WHERE bucket_id=$1 AND token=$2
+AND backend_id=$3 AND backend_fingerprint=$4
+AND physical_name=$5
+`
+
+type ObjectBucketWriteFenceDeleteParams struct {
+	BucketID           pgtype.UUID
+	Token              pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectBucketWriteFenceDelete(ctx context.Context, db DBTX, arg ObjectBucketWriteFenceDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketWriteFenceDelete,
+		arg.BucketID,
+		arg.Token,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectBucketWriteFenceInsert = `-- name: ObjectBucketWriteFenceInsert :exec
+INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (bucket_id) DO NOTHING
+`
+
+type ObjectBucketWriteFenceInsertParams struct {
+	BucketID           pgtype.UUID
+	Token              pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+}
+
+func (q *Queries) ObjectBucketWriteFenceInsert(ctx context.Context, db DBTX, arg ObjectBucketWriteFenceInsertParams) error {
+	_, err := db.Exec(ctx, objectBucketWriteFenceInsert,
+		arg.BucketID,
+		arg.Token,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+	)
+	return err
+}
+
+const objectBucketWriteFenceRead = `-- name: ObjectBucketWriteFenceRead :one
+SELECT f.bucket_id, f.token, f.backend_id, f.backend_fingerprint, f.physical_name, f.created_at,
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
+ (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants
+FROM object_bucket_write_fences f WHERE f.bucket_id=$1
+`
+
+type ObjectBucketWriteFenceReadRow struct {
+	BucketID           pgtype.UUID
+	Token              pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+	Requests           int64
+	NativeGrants       int64
+}
+
+func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketWriteFenceReadRow, error) {
+	row := db.QueryRow(ctx, objectBucketWriteFenceRead, bucketID)
+	var i ObjectBucketWriteFenceReadRow
+	err := row.Scan(
+		&i.BucketID,
+		&i.Token,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.CreatedAt,
+		&i.Requests,
+		&i.NativeGrants,
+	)
+	return i, err
 }
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many

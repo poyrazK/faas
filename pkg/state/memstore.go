@@ -176,6 +176,8 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics             map[string]map[string]CustomMetric
 	objectBuckets             map[string]ObjectBucket
+	objectMutations           map[string]ObjectBucketMutation
+	objectWriteFences         map[string]ObjectBucketWriteFence
 	objectUsage               map[string]ObjectBucketUsage
 	objectGrants              map[string]map[string]int64
 	objectReports             []api.ObjectStorageUsageReport

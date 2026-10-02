@@ -138,6 +138,7 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	ObjectMutationObservationTimeout          = 5 * time.Second
 	MaxObjectUploadBytes                int64 = 5 << 40
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20

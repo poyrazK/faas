@@ -104,11 +104,28 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
-	b, err := sqlc.New().ObjectBucketClaim(ctx, s.pool, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Take the same source lock as write admission/fence acquisition, then
+	// evaluate dependencies in a new statement after any lock wait.
+	if _, err := sqlc.New().ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{
+		BucketID: mustPgUUID(id), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ObjectBucket{}, ErrConflict
+		}
+		return ObjectBucket{}, mapErr(err)
+	}
+	b, err := sqlc.New().ObjectBucketClaim(ctx, tx, sqlc.ObjectBucketClaimParams{State: next, LeaseToken: pgtype.Text{String: token, Valid: true}, Column3: int32(ObjectBucketLeaseDuration / time.Second), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id), Recovery: recovery})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectBucket{}, ErrConflict
 	}
-	return objectBucketFromSQL(b), mapErr(err)
+	if err != nil {
+		return ObjectBucket{}, mapErr(err)
+	}
+	return objectBucketFromSQL(b), mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {

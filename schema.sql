@@ -8979,6 +8979,42 @@ CREATE TABLE public.oauth_links (
 
 
 --
+-- Name: object_bucket_mutations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_mutations (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    kind text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT object_bucket_mutations_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_mutations_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_mutations_kind_check CHECK ((kind = ANY (ARRAY['request'::text, 'native_grant'::text]))),
+    CONSTRAINT object_bucket_mutations_physical_name_check CHECK ((physical_name <> ''::text))
+);
+
+
+--
+-- Name: object_bucket_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_write_fences (
+    bucket_id uuid NOT NULL,
+    token uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT object_bucket_write_fences_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_physical_name_check CHECK ((physical_name <> ''::text))
+);
+
+
+--
 -- Name: object_buckets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14439,6 +14475,22 @@ ALTER TABLE ONLY public.oauth_links
 
 
 --
+-- Name: object_bucket_mutations object_bucket_mutations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_buckets object_buckets_physical_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19125,6 +19177,13 @@ CREATE INDEX notification_outbox_runtime_config_status_idx ON public.notificatio
 --
 
 CREATE INDEX oauth_links_account_idx ON public.oauth_links USING btree (account_id);
+
+
+--
+-- Name: object_bucket_mutations_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_mutations_bucket_idx ON public.object_bucket_mutations USING btree (bucket_id);
 
 
 --
@@ -24648,6 +24707,22 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_mutations object_bucket_mutations_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE RESTRICT;
 
 
 --

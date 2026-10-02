@@ -2903,6 +2903,25 @@ type ObjectBucket struct {
 	EnvironmentCloneOperationID    pgtype.UUID
 }
 
+type ObjectBucketMutation struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	Kind               string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+}
+
+type ObjectBucketWriteFence struct {
+	BucketID           pgtype.UUID
+	Token              pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ObjectStorageAccessGrant struct {
 	AccountID  pgtype.UUID
 	BucketID   pgtype.UUID
