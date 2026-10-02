@@ -22,6 +22,27 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 	return c
 }
 
+func TestClientMCPRequestIDReceipt(t *testing.T) {
+	for _, id := range []string{"b9ddc41d-60c6-4f22-8d16-f6c3248c0453", "private-forged-id", ""} {
+		c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-MCP-Request-ID", id)
+			_, _ = fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`)
+		})
+		_, receipt, err := c.Tools(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if ValidEventRequestID(id) {
+			want = id
+		}
+		if receipt.RequestID != want {
+			t.Fatalf("request ID=%q want=%q", receipt.RequestID, want)
+		}
+	}
+}
+
 func TestStatelessDiscoveryAndStreaming(t *testing.T) {
 	// adr: 426 — POST metadata, JSON/SSE, origin validation and unbuffered progress.
 	calls := 0

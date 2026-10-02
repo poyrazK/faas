@@ -21,6 +21,15 @@ func mcpCLICommand() cliCommand {
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
 		{Name: "call", Short: "Execute one discovered tool without automatic retries", Flags: remote, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`}},
 		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
+		{Name: "events", Short: "Read correlated MCP diagnostics from application logs", Flags: []cliFlag{
+			{Name: "app", Short: "app slug (defaults to linked app)", Value: "SLUG"},
+			{Name: "tool", Short: "filter by registered tool name", Value: "NAME"},
+			{Name: "outcome", Short: "filter by event outcome", Value: "OUTCOME", ClosedSet: []string{"success", "denied", "validation_error", "tool_error", "error", "cancelled", "protocol_error"}},
+			{Name: "request", Short: "filter by server-generated MCP request ID", Value: "UUID"},
+			{Name: "since", Short: "lookback duration or RFC3339 timestamp", Value: "TIME"},
+			{Name: "deployment", Short: "deployment ID or vN", Value: "REF"},
+			{Name: "follow", Short: "follow live events"},
+		}, Examples: []string{"gregale mcp events --app my-mcp --tool add --outcome denied --since 15m --json", "gregale mcp events --app my-mcp --follow"}},
 		{Name: "lock", Short: "Capture a complete tool contract without invoking tools", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app endpoint", Value: "SLUG"},

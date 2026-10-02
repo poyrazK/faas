@@ -221,9 +221,7 @@ this profile does not host an authorization server.
 ## Runtime and qualification
 
 The starter uses the official SDK, supports MCP 2026-07-28 and optional stateless
-2025-11-25 compatibility, and stops streaming work on disconnect. It logs validated
-tool callback name, duration and outcome without arguments, results or tokens.
-Use normal app logs to inspect those events. Stateful protocol sessions, old
+2025-11-25 compatibility, and stops streaming work on disconnect. Stateful protocol sessions, old
 HTTP+SSE and direct stdio hosting are outside this profile. For those workloads,
 use an explicit adapter with durable session storage and its own acceptance tests.
 
@@ -239,3 +237,45 @@ rollout checks are follow-on capabilities, not included in this preview.
 Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
 and [authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
 Design: [ADR-426](adr/426-mcp-hosting-contract.md).
+
+## Correlated execution events
+
+New starters emit one `mcp_request` summary per MCP HTTP request, including Origin
+and authentication denials before dispatch, schema failures and disconnects.
+`mcp_tool_call` records only callbacks that actually execute. Both carry
+`event_version: 1`, a fresh server-generated `request_id`, a recognized protocol
+or `unknown`, a bounded RPC method, tool name, outcome and duration in milliseconds.
+Request summaries also carry `http_status` and a fixed `reason` when available.
+The response's `X-MCP-Request-ID` joins the summary to callback events and is
+exposed to allowed browser origins. Caller-supplied IDs are ignored; this ID is
+separate from the gateway's HTTP request ID. CLI call and discovery receipts include
+`request_id` when the server returns a valid ID, ready to use with `events --request`.
+
+```sh
+gregale mcp events --app my-mcp --since 15m --json
+gregale mcp events --app my-mcp --tool add --outcome denied
+gregale mcp events --app my-mcp --request SERVER_REQUEST_UUID --follow
+```
+
+The command reads the existing account-authenticated application log stream;
+omit `--app` inside a linked project. `--deployment` accepts a deployment ID or
+`vN`; normal log plan restrictions apply. `--since` accepts a positive duration
+(including `3d`) or RFC3339 timestamp. `--json` writes one validated event per line.
+Tool, outcome and request filters apply locally after decoding. A retention gap,
+degraded stream or error returns nonzero with an incomplete-results diagnostic;
+Ctrl-C exits 130. Earlier starters' unversioned callback logs are skipped.
+
+Outcomes are `success`, `denied`, `validation_error`, `tool_error`, `error`,
+`cancelled` and `protocol_error`. A callback's success means it returned a result;
+the terminal request can still fail output validation. A tool error or schema
+failure can accompany HTTP 200. Requests denied before body parsing have an
+unknown RPC method and no tool name. Unknown submitted tool names are bucketed as
+`unknown`. Registered names must use 1–64 ASCII letters, digits, `_`, `.` or `-`.
+Register new tools through the helper to preserve telemetry and authorization.
+
+Events exclude arguments, results, tokens, identities, caller IDs and raw error
+or validation messages. The CLI drops unknown fields and invalid event rows.
+These are application-owned diagnostics subject to log retention and loss; they
+are not a durable audit ledger or complete fleet metrics. An arbitrary customer's
+server must implement the event contract itself. Existing deployed starters need
+their application code updated to emit these events.

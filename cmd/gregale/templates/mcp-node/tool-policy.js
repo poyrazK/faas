@@ -25,9 +25,9 @@ export function createToolPolicy(auth) {
   return {
     requiredScopes,
     canAccess,
-    guard(name, callback) {
+    guard(name, callback, onDenied = () => {}) {
       return (args, ctx) => {
-        if (!canAccess(name, ctx.http?.authInfo)) throw new Error('Tool access denied');
+        if (!canAccess(name, ctx.http?.authInfo)) { onDenied(); throw new Error('Tool access denied'); }
         return callback(args, ctx);
       };
     },
