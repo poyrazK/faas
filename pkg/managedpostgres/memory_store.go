@@ -36,7 +36,7 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
-	if database.EnvironmentCloneOperationID != "" {
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
 		return Database{}, false, ErrInvalid
 	}
 	key := database.AccountID + "\x00" + database.Name
@@ -61,7 +61,7 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 			return Database{}, false, ErrNotFound
 		}
 		if source.State != StateReady || source.ProviderResourceID == "" ||
-			source.ProviderResourceID != database.RestoreSourceResourceID {
+			databaseDataResource(source) != database.RestoreSourceResourceID {
 			return Database{}, false, ErrConflict
 		}
 	}

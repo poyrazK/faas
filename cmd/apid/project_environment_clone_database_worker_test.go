@@ -19,7 +19,7 @@ func capturedDatabasePlanningFixture() (state.ProjectEnvironmentCloneOperation, 
 	}
 	binding := state.ProjectEnvironmentClonePostgresBinding{ID: "binding-a", DatabaseID: "shared-db", DatabaseName: "orders", Region: "eu", PostgresMajor: 17,
 		ServiceClass: string(managedpostgres.ClassDevelopment), Availability: string(managedpostgres.AvailabilitySingleZone), ScaleToZero: true,
-		StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600, BackendID: "backend", BackendFingerprint: strings.Repeat("a", 64), ProviderResourceID: "source-provider"}
+		StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600, BackendID: "backend", BackendFingerprint: strings.Repeat("a", 64), ProviderResourceID: "source-provider", DataResourceID: "source-provider/source-branch"}
 	other := binding
 	other.ID, other.EnvironmentKey, other.Access = "binding-b", "READ_DATABASE", "read_only"
 	catalogue := []state.ProjectEnvironmentCloneBindings{
@@ -35,8 +35,14 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 	if err != nil || len(plans) != 1 || plans[0].source.ID != "shared-db" {
 		t.Fatalf("shared plans = %+v, %v", plans, err)
 	}
-	// Persisted pre-reservation-worker receipts retain their exact hash.
-	if plans[0].hash != "a3210e328478e053a41dcc26ebe93cad5736506069ef314f78c7dbd22836fc7a" {
+	// Legacy receipts retain their hash, but are no longer cloneable sources.
+	legacy := catalogue[0].Postgres[0]
+	legacy.DataResourceID = ""
+	legacyHash, err := state.ProjectEnvironmentCloneDatabaseSourceHash(legacy)
+	if err != nil || plans[0].hash == legacyHash {
+		t.Fatal("exact dataset identity is absent from the source hash")
+	}
+	if legacyHash != "a3210e328478e053a41dcc26ebe93cad5736506069ef314f78c7dbd22836fc7a" {
 		t.Fatalf("database definition receipt encoding changed: %s", plans[0].hash)
 	}
 	otherOp := op
@@ -49,7 +55,7 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 	if err != nil || otherPlans[0].name == plans[0].name || otherPlans[0].hash != plans[0].hash {
 		t.Fatalf("operation-specific target identity changed source definition: %+v, %v", otherPlans, err)
 	}
-	for _, fault := range []string{"missing_catalogue", "duplicate_workload", "duplicate_catalogue", "foreign_operation", "scope", "hash", "shared_database_spec", "shared_database_provider", "invalid_spec", "no_restore_window"} {
+	for _, fault := range []string{"missing_catalogue", "duplicate_workload", "duplicate_catalogue", "foreign_operation", "scope", "hash", "shared_database_spec", "shared_database_provider", "invalid_spec", "no_restore_window", "missing_data_identity", "shared_database_data"} {
 		t.Run(fault, func(t *testing.T) {
 			op, views, catalogue := capturedDatabasePlanningFixture()
 			switch fault {
@@ -69,6 +75,10 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 				catalogue[1].Postgres[0].StorageLimitBytes *= 2
 			case "shared_database_provider":
 				catalogue[1].Postgres[0].ProviderResourceID = "replaced"
+			case "missing_data_identity":
+				catalogue[0].Postgres[0].DataResourceID = ""
+			case "shared_database_data":
+				catalogue[1].Postgres[0].DataResourceID += "/different"
 			case "invalid_spec":
 				catalogue[0].Postgres[0].PostgresMajor = 0
 			case "no_restore_window":

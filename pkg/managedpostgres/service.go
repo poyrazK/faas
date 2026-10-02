@@ -79,6 +79,7 @@ type RestoreDatabaseRequest struct {
 type RestoreSourceDefinition struct {
 	Spec                                              Spec
 	BackendID, BackendFingerprint, ProviderResourceID string
+	DataResourceID                                    string
 }
 
 func NewService(registry *Registry, store Store, options ServiceOptions) (*Service, error) {
@@ -245,10 +246,10 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	now := s.now()
 	if request.SourceDefinition != nil {
 		definition := *request.SourceDefinition
-		if definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.BackendID == "" || definition.BackendFingerprint == "" || definition.ProviderResourceID == "" {
+		if definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.BackendID == "" || definition.BackendFingerprint == "" || definition.ProviderResourceID == "" || definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
 			return Database{}, false, ErrInvalid
 		}
-		if source.BackendID != definition.BackendID || source.BackendFingerprint != definition.BackendFingerprint || source.ProviderResourceID != definition.ProviderResourceID {
+		if source.BackendID != definition.BackendID || source.BackendFingerprint != definition.BackendFingerprint || source.ProviderResourceID != definition.ProviderResourceID || source.DataResourceID != definition.DataResourceID {
 			return Database{}, false, ErrConflict
 		}
 		// Current retention may have been shortened since capture. Never
@@ -282,7 +283,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		return Database{}, false, err
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
-		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID})
+		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
 	if err != nil {
 		return Database{}, false, err
 	}
@@ -294,7 +295,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		BackendID:               source.BackendID,
 		BackendFingerprint:      source.BackendFingerprint,
 		RestoreSourceDatabaseID: source.ID,
-		RestoreSourceResourceID: source.ProviderResourceID,
+		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
 		State:                   StateProvisioning,
 		DesiredGeneration:       1,
@@ -329,7 +330,8 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return 0, ErrUnavailable
 	}
-	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" {
+	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
+		definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
 		return 0, ErrInvalid
 	}
 	if s.admit != nil {
@@ -352,8 +354,8 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 
 func restoreMatchesSourceDefinition(target, source Database) bool {
 	return target.ID != source.ID && target.Spec == source.Spec && target.BackendID == source.BackendID && target.BackendFingerprint == source.BackendFingerprint &&
-		target.RestoreSourceResourceID == source.ProviderResourceID && target.State != StateDeleting && target.State != StateDeleted &&
-		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID)
+		target.RestoreSourceResourceID == databaseDataResource(source) && target.State != StateDeleting && target.State != StateDeleted &&
+		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID && target.ProviderResourceID != databaseDataResource(source))
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -472,6 +474,19 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 			}
 			return result, nil
 		}
+		if observed.DataResourceID != "" {
+			pins, ok := s.store.(DataResourceProvisionStore)
+			if !ok {
+				return Database{}, s.releaseKnownError(ctx, database, StateProvisioning, "data_identity_unavailable", ErrUnsupported, time.Hour)
+			}
+			finishContext, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+			defer finishCancel()
+			result, finishErr := pins.FinishProvisionWithDataResource(finishContext, database, observed, s.now())
+			if finishErr != nil {
+				return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, finishErr)
+			}
+			return result, nil
+		}
 		return s.finishProvision(ctx, database.ID, leaseToken)
 	case ProviderStatusFailed:
 		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "provider_failed", ErrUnavailable, time.Hour)
@@ -487,11 +502,11 @@ func validateCloneRestoreObservation(database Database, observed ObservedDatabas
 	if database.EnvironmentCloneOperationID == "" {
 		return nil
 	}
-	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" {
+	if observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID == "" || observed.RestoreLineage.PointInTime.IsZero() || observed.ProviderResourceID == "" || !validDataResourceID(observed.DataResourceID) {
 		return ErrUnavailable
 	}
 	if database.RestoreSourceDatabaseID == "" || database.RestoreSourceResourceID == "" || database.RestorePointInTime.IsZero() ||
-		observed.ProviderResourceID == database.RestoreSourceResourceID ||
+		observed.ProviderResourceID == database.RestoreSourceResourceID || observed.DataResourceID == database.RestoreSourceResourceID || database.DataResourceID != "" && database.DataResourceID != observed.DataResourceID ||
 		observed.RestoreLineage.SourceResourceID != database.RestoreSourceResourceID ||
 		!observed.RestoreLineage.PointInTime.Equal(database.RestorePointInTime) {
 		return ErrConflict

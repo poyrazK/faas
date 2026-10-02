@@ -112,9 +112,14 @@ type UpdateRequest struct {
 
 type ObservedDatabase struct {
 	ProviderResourceID string
-	Status             ProviderStatus
-	ComputeState       ComputeState
-	Spec               Spec
+	// DataResourceID identifies the exact observed dataset, never a mutable
+	// default selector. ProviderResourceID still owns lifecycle cleanup.
+	// Providers without this evidence leave it empty; they cannot supply a
+	// source for a complete stage clone.
+	DataResourceID string
+	Status         ProviderStatus
+	ComputeState   ComputeState
+	Spec           Spec
 	// RestoreLineage comes from the provider's actual target metadata, never
 	// from echoing a RestoreRequest. A missing observation cannot qualify an
 	// isolated stage database. SourceResourceID must identify the exact source
@@ -133,6 +138,7 @@ type RestoreProof struct {
 	DatabaseID, AccountID, OperationID string
 	BackendID, BackendFingerprint      string
 	ProviderResourceID                 string
+	DataResourceID                     string
 	SourceDatabaseID                   string
 	Lineage                            RestoreLineage
 	Spec                               Spec
@@ -145,6 +151,13 @@ type RestoreProof struct {
 type CloneRestoreProofStore interface {
 	FinishCloneRestoreProvision(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
 	GetCloneRestoreProof(context.Context, string, string) (RestoreProof, error)
+}
+
+// DataResourceProvisionStore commits the observed data identity and readiness
+// together under the same provisioning lease. A ready legacy row cannot be
+// pinned by simply resolving its current default selector.
+type DataResourceProvisionStore interface {
+	FinishProvisionWithDataResource(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
 }
 
 // ScaleToZeroProbeResult is the non-sensitive evidence produced by an
@@ -610,6 +623,7 @@ type Database struct {
 	BackendID                   string
 	BackendFingerprint          string
 	ProviderResourceID          string
+	DataResourceID              string
 	RestoreSourceDatabaseID     string
 	RestoreSourceResourceID     string
 	RestorePointInTime          time.Time

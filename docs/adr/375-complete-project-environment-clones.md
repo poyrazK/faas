@@ -2803,3 +2803,65 @@ shared application/database/object checkpoint and source-data retention remain
 required; pending/capturing coordinator phases continue to report
 `data_checkpoint_unavailable`. This increment does not enable full admission or
 publication.
+
+### Pinned managed PostgreSQL data identities (2026-10-02)
+
+A managed database now records a separate `data_resource_id` from the provider's
+actual observation. The lifecycle `provider_resource_id` retains its cleanup and
+metering scope. For Neon, the former is an exact project/branch pair and the
+latter remains the project ID for a root database. This avoids changing root
+cleanup into branch-only deletion or billing a project aggregate as branch usage.
+
+The data identity commits atomically with provisioning readiness under the same
+lease, backend fingerprint, desired generation, specification and lifecycle
+identity. PostgreSQL obtains the row lock before reading the server clock; a
+worker that loses its lease during that wait cannot publish a pin. Readiness
+acknowledgement loss recovers the committed identity without another provider
+request. A ready row cannot have its pin replaced through this provision writer.
+
+Credential issuance, rotation and revocation use the pinned data identity, as do
+ordinary restore reservations for databases with evidence. Lifecycle cleanup
+continues using the original provider identity. Clone-owned restores atomically
+retain their target data identity in the provider lineage receipt; receipt reads
+and credential preparation reject a changed target dataset.
+
+The frozen clone binding catalogue and database source hash now include the
+source data identity. Both the worker and leased reservation writer require it,
+compare it with the live logical source before creating a private target, and
+restore from that exact identity. Distinct lifecycle/data identities are covered
+in the clone worker contracts. Empty legacy fields retain their old receipt
+encoding, but cannot authorize a complete clone. Existing ready rows are not
+backfilled from their mutable current default; attesting their original bound
+dataset remains necessary before those sources can support full cloning.
+
+Migration `20261002030000000` adds checked nullable data identities to databases
+and restore receipts. The source schema inventory names both columns. Managed
+PostgreSQL lifecycle and usage-list projections now use SQLC and include the pin
+through internal, customer, list, and recovery reads. The provider evidence
+contains no credential material and adds no public API fields.
+
+This increment pins source identity; it does not establish the shared database
+and object-store checkpoint or source retention. The coordinator's
+pending/capturing phases and complete admission/publication remain closed pending
+that evidence, remaining resource strategies, compensation and acceptance.
+
+Verification: the complete managed PostgreSQL suite passed (12.131 s), including
+atomic identity readiness, lost acknowledgement recovery, stale observation and
+lease rejection, post-lock expiry fencing, credential rotation/revocation,
+restore lineage and lifecycle cleanup. The complete Neon adapter suite passed
+(0.896 s), with a simulated default-branch change followed by exact-branch
+inspection, credentials, restoration and root project cleanup. No live provider
+mutation was performed.
+
+Clone-worker/coordinator and ordinary database-copy contracts passed (11.049 s).
+Focused state contracts passed (2.741 s), including schema drift admission,
+registered migration columns and the frozen PostgreSQL binding catalogue after
+source data-identity changes. Final state/API builds used temporary Go overlays
+containing the original selected test declarations and their helpers, with all
+production code included, to fit the shared host's available disk. A preceding
+API run passed before the final validation refinements (10.572 s); later full
+test-file builds exceeded shared disk space. These results do not claim the
+complete state/API or repository suites. The overlay files and diagnostics are
+retained in the task-owned runtime; repository test files were not reduced.
+Independent SQLC regeneration matched all generated files and whitespace checks
+passed. Provider and native KVM acceptance remain outstanding.

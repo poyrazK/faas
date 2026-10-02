@@ -264,6 +264,7 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		"update managed_postgres_databases set restore_window_seconds=1 where id=$1",
 		"update managed_postgres_databases set state='updating' where id=$1",
 		"update managed_postgres_databases set provider_resource_id='replaced' where id=$1",
+		"update managed_postgres_databases set data_resource_id='replaced' where id=$1",
 		"update managed_postgres_databases set backend_fingerprint=repeat('f',64) where id=$1",
 	} {
 		if _, err := pool.Exec(ctx, mutation, source.ID); err != nil {
@@ -272,8 +273,8 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, lease, source.ID, 3); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("source identity/availability/retention drift accepted: %s: %v", mutation, err)
 		}
-		if _, err := pool.Exec(ctx, "update managed_postgres_databases set state='ready', restore_window_seconds=$2, provider_resource_id=$3, backend_fingerprint=$4 where id=$1",
-			source.ID, source.Spec.RestoreWindowSeconds, source.ProviderResourceID, source.BackendFingerprint); err != nil {
+		if _, err := pool.Exec(ctx, "update managed_postgres_databases set state='ready', restore_window_seconds=$2, provider_resource_id=$3, backend_fingerprint=$4, data_resource_id=$5 where id=$1",
+			source.ID, source.Spec.RestoreWindowSeconds, source.ProviderResourceID, source.BackendFingerprint, source.DataResourceID); err != nil {
 			t.Fatal(err)
 		}
 	}

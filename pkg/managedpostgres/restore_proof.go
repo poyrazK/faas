@@ -14,7 +14,7 @@ func newCloneRestoreProof(database Database, observed ObservedDatabase, now time
 		return RestoreProof{}, err
 	}
 	return RestoreProof{DatabaseID: database.ID, AccountID: database.AccountID, OperationID: database.EnvironmentCloneOperationID,
-		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: observed.ProviderResourceID,
+		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: observed.ProviderResourceID, DataResourceID: observed.DataResourceID,
 		SourceDatabaseID: database.RestoreSourceDatabaseID, Lineage: *observed.RestoreLineage, Spec: observed.Spec,
 		Generation: database.DesiredGeneration, ObservedAt: now}, nil
 }
@@ -23,11 +23,11 @@ func validateCloneRestoreProof(database Database, proof RestoreProof) error {
 	if database.EnvironmentCloneOperationID == "" || database.State != StateReady || database.LeaseToken != "" || database.DeletedAt != nil ||
 		proof.DatabaseID != database.ID || proof.AccountID != database.AccountID || proof.OperationID != database.EnvironmentCloneOperationID ||
 		proof.BackendID != database.BackendID || proof.BackendFingerprint != database.BackendFingerprint || proof.Spec != database.Spec ||
-		proof.SourceDatabaseID != database.RestoreSourceDatabaseID || proof.ProviderResourceID != database.ProviderResourceID ||
+		proof.SourceDatabaseID != database.RestoreSourceDatabaseID || proof.ProviderResourceID != database.ProviderResourceID || proof.DataResourceID != database.DataResourceID ||
 		proof.Generation != database.DesiredGeneration || proof.Generation != database.ObservedGeneration || proof.ObservedAt.IsZero() {
 		return ErrConflict
 	}
-	return validateCloneRestoreObservation(database, ObservedDatabase{ProviderResourceID: proof.ProviderResourceID, RestoreLineage: &proof.Lineage})
+	return validateCloneRestoreObservation(database, ObservedDatabase{ProviderResourceID: proof.ProviderResourceID, DataResourceID: proof.DataResourceID, RestoreLineage: &proof.Lineage})
 }
 
 var _ CloneRestoreProofStore = (*MemoryStore)(nil)
@@ -52,6 +52,7 @@ func (s *MemoryStore) FinishCloneRestoreProvision(_ context.Context, expected Da
 	if _, exists := s.restoreProofs[database.ID]; exists {
 		return Database{}, ErrConflict
 	}
+	database.DataResourceID = observed.DataResourceID
 	database.State, database.ObservedGeneration = StateReady, database.DesiredGeneration
 	database.LastErrorCode, database.LeaseToken, database.AttemptCount = "", "", 0
 	database.LeaseUntil, database.RetryAt, database.UpdatedAt = time.Time{}, now, now

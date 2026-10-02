@@ -259,7 +259,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "credential_access_unsupported", err, time.Hour)
 	}
 
-	credentialRequest := bindingCredentialRequest(binding, database.ProviderResourceID)
+	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	material, err := backend.Provider.IssueCredentials(providerContext, credentialRequest)
 	cancel()
@@ -321,7 +321,7 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		if generation < 1 {
 			continue
 		}
-		credentialRequest := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, generation)
+		credentialRequest := bindingCredentialRequestForGeneration(binding, databaseDataResource(database), generation)
 		providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 		err = backend.Provider.RevokeCredentials(providerContext, credentialRequest)
 		cancel()
@@ -367,7 +367,7 @@ func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateRetiring, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
-	request := bindingCredentialRequestForGeneration(binding, database.ProviderResourceID, binding.RotationPreviousGeneration)
+	request := bindingCredentialRequestForGeneration(binding, databaseDataResource(database), binding.RotationPreviousGeneration)
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	err = backend.Provider.RevokeCredentials(providerContext, request)
 	cancel()

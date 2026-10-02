@@ -20,6 +20,7 @@ func (p *cloneLineageProvider) Restore(ctx context.Context, request RestoreReque
 		p.lineage = &RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}
 		lineage := *p.lineage
 		observed.RestoreLineage = &lineage
+		observed.DataResourceID = observed.ProviderResourceID
 		if p.edit != nil {
 			p.edit(&observed)
 		}
@@ -32,6 +33,7 @@ func (p *cloneLineageProvider) Inspect(ctx context.Context, id string) (Observed
 	if err == nil && p.lineage != nil {
 		lineage := *p.lineage
 		observed.RestoreLineage = &lineage
+		observed.DataResourceID = observed.ProviderResourceID
 		if p.edit != nil {
 			p.edit(&observed)
 		}
@@ -47,6 +49,8 @@ func TestCloneRestoreRequiresProviderLineageBeforeAdoptionAndReadiness(t *testin
 	}{
 		{"valid", func(*ObservedDatabase) {}, nil},
 		{"missing_proof", func(o *ObservedDatabase) { o.RestoreLineage = nil }, ErrUnavailable},
+		{"missing_data_identity", func(o *ObservedDatabase) { o.DataResourceID = "" }, ErrUnavailable},
+		{"shared_data_identity", func(o *ObservedDatabase) { o.DataResourceID = o.RestoreLineage.SourceResourceID }, ErrConflict},
 		{"missing_source", func(o *ObservedDatabase) { o.RestoreLineage.SourceResourceID = "" }, ErrUnavailable},
 		{"missing_point", func(o *ObservedDatabase) { o.RestoreLineage.PointInTime = time.Time{} }, ErrUnavailable},
 		{"wrong_source", func(o *ObservedDatabase) { o.RestoreLineage.SourceResourceID += "/another-branch" }, ErrConflict},

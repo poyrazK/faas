@@ -2587,6 +2587,7 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceResourceID     pgtype.Text
 	RestorePointInTime          pgtype.Timestamptz
 	EnvironmentCloneOperationID pgtype.UUID
+	DataResourceID              pgtype.Text
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -2602,6 +2603,7 @@ type ManagedPostgresRestoreProof struct {
 	Spec               []byte
 	Generation         int64
 	ObservedAt         pgtype.Timestamptz
+	DataResourceID     pgtype.Text
 }
 
 type ManagedPostgresUsage struct {

@@ -58,7 +58,7 @@ func buildCapturedProjectEnvironmentDatabasePlans(op state.ProjectEnvironmentClo
 		delete(byApp, definitions.AppID)
 		for _, binding := range definitions.Postgres {
 			source := capturedProjectEnvironmentDatabase(op.AccountID, binding)
-			if source.ID == "" || source.Name == "" || source.ProviderResourceID == "" || source.BackendID == "" || source.BackendFingerprint == "" || source.Spec.Validate() != nil || source.Spec.RestoreWindowSeconds <= 0 {
+			if source.ID == "" || source.Name == "" || source.ProviderResourceID == "" || source.DataResourceID == "" || source.BackendID == "" || source.BackendFingerprint == "" || source.Spec.Validate() != nil || source.Spec.RestoreWindowSeconds <= 0 {
 				return nil, state.ErrProjectEnvironmentCloneBindingCapture
 			}
 			hash, err := state.ProjectEnvironmentCloneDatabaseSourceHash(binding)
@@ -82,7 +82,7 @@ func buildCapturedProjectEnvironmentDatabasePlans(op state.ProjectEnvironmentClo
 func capturedProjectEnvironmentDatabase(accountID string, binding state.ProjectEnvironmentClonePostgresBinding) managedpostgres.Database {
 	return managedpostgres.Database{
 		ID: binding.DatabaseID, AccountID: accountID, Name: binding.DatabaseName, State: managedpostgres.StateReady,
-		BackendID: binding.BackendID, BackendFingerprint: binding.BackendFingerprint, ProviderResourceID: binding.ProviderResourceID,
+		BackendID: binding.BackendID, BackendFingerprint: binding.BackendFingerprint, ProviderResourceID: binding.ProviderResourceID, DataResourceID: binding.DataResourceID,
 		Spec: managedpostgres.Spec{Region: binding.Region, PostgresMajor: binding.PostgresMajor, Class: managedpostgres.ServiceClass(binding.ServiceClass),
 			Availability: managedpostgres.Availability(binding.Availability), ScaleToZero: binding.ScaleToZero,
 			StorageLimitBytes: binding.StorageLimitBytes, RestoreWindowSeconds: binding.RestoreWindowSeconds},
@@ -219,7 +219,7 @@ func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, 
 	reservation, err := databases.ProjectEnvironmentCloneDatabaseForLease(ctx, lease, plan.source.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		limit, admissionErr := s.managedPostgres.AdmitRestoreReservation(ctx, plan.source.AccountID, managedpostgres.RestoreSourceDefinition{
-			Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID})
+			Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID, DataResourceID: plan.source.DataResourceID})
 		if admissionErr != nil {
 			return managedpostgres.Database{}, admissionErr
 		}
@@ -249,11 +249,11 @@ func verifyCapturedProjectEnvironmentDatabaseTarget(plan capturedProjectEnvironm
 	if target.ID == "" || target.ID == source.ID || target.AccountID != source.AccountID || target.Name != plan.name ||
 		resource.TargetID != "" && resource.TargetID != target.ID || target.Spec != source.Spec || target.BackendID != source.BackendID ||
 		target.BackendFingerprint != source.BackendFingerprint || target.RestoreSourceDatabaseID != source.ID ||
-		target.RestoreSourceResourceID != source.ProviderResourceID || !target.RestorePointInTime.Equal(point) ||
+		target.RestoreSourceResourceID != source.DataResourceID || !target.RestorePointInTime.Equal(point) ||
 		(target.State != managedpostgres.StateProvisioning && target.State != managedpostgres.StateReady) {
 		return state.ErrConflict
 	}
-	if target.State == managedpostgres.StateReady && (target.ProviderResourceID == "" || target.ProviderResourceID == source.ProviderResourceID) {
+	if target.State == managedpostgres.StateReady && (target.ProviderResourceID == "" || target.ProviderResourceID == source.ProviderResourceID || target.ProviderResourceID == source.DataResourceID || target.DataResourceID == "" || target.DataResourceID == source.DataResourceID || target.DataResourceID == source.ProviderResourceID) {
 		return state.ErrConflict
 	}
 	return nil

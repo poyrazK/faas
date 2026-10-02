@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -49,6 +50,7 @@ type ProjectEnvironmentClonePostgresBinding struct {
 	BackendID            string `json:"backend_id"`
 	BackendFingerprint   string `json:"backend_fingerprint"`
 	ProviderResourceID   string `json:"provider_resource_id"`
+	DataResourceID       string `json:"data_resource_id,omitempty"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major"`
 	ServiceClass         string `json:"service_class"`
@@ -185,9 +187,21 @@ var (
 func validClonePostgresBinding(b ProjectEnvironmentClonePostgresBinding) bool {
 	return b.ID != "" && b.DatabaseID != "" && cloneBindingNameRE.MatchString(b.DatabaseName) && cloneBindingEnvironmentKeyRE.MatchString(b.EnvironmentKey) &&
 		(b.Access == "read_write" || b.Access == "read_only") && b.CredentialRef != "" && b.CredentialGeneration > 0 && cloneBindingNameRE.MatchString(b.BackendID) &&
-		cloneBindingFingerprintRE.MatchString(b.BackendFingerprint) && b.ProviderResourceID != "" && cloneBindingNameRE.MatchString(b.Region) && b.PostgresMajor >= 12 && b.PostgresMajor <= 99 &&
+		cloneBindingFingerprintRE.MatchString(b.BackendFingerprint) && validCloneProviderIdentity(b.ProviderResourceID) && (b.DataResourceID == "" || validCloneProviderIdentity(b.DataResourceID)) && cloneBindingNameRE.MatchString(b.Region) && b.PostgresMajor >= 12 && b.PostgresMajor <= 99 &&
 		(b.ServiceClass == "development" || b.ServiceClass == "burstable" || b.ServiceClass == "production") && (b.Availability == "single_zone" || b.Availability == "high_availability") &&
 		b.StorageLimitBytes >= 0 && b.RestoreWindowSeconds > 0
+}
+
+func validCloneProviderIdentity(value string) bool {
+	if value == "" || len(value) > 255 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validCloneBucketPublicPolicy(public bool, path string) bool {

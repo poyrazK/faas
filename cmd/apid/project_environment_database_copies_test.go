@@ -33,9 +33,16 @@ func (p *environmentClonePostgresProvider) Restore(_ context.Context, request ma
 			return managedpostgres.ObservedDatabase{}, err
 		}
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: "restore-" + request.ResourceID,
+	return managedpostgres.ObservedDatabase{ProviderResourceID: "restore-" + request.ResourceID, DataResourceID: "restore-" + request.ResourceID,
 		Status: managedpostgres.ProviderStatusReady, ComputeState: managedpostgres.ComputeStateActive, Spec: request.Spec,
 		RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: request.SourceResourceID, PointInTime: request.PointInTime}}, nil
+}
+
+// The provider's root datasets are immutable identities in this test backend.
+func (p *environmentClonePostgresProvider) Provision(ctx context.Context, request managedpostgres.ProvisionRequest) (managedpostgres.ObservedDatabase, error) {
+	observed, err := p.sourceRefManagedPostgresProvider.Provision(ctx, request)
+	observed.DataResourceID = "data-" + observed.ProviderResourceID
+	return observed, err
 }
 
 func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testing.T) {
@@ -92,7 +99,7 @@ func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testin
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("clone status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(provider.restores) != 1 || provider.restores[0].SourceResourceID != source.ProviderResourceID || provider.restores[0].PointInTime.Nanosecond()%1000 != 0 {
+	if len(provider.restores) != 1 || provider.restores[0].SourceResourceID != source.DataResourceID || provider.restores[0].PointInTime.Nanosecond()%1000 != 0 {
 		t.Fatalf("shared database was not copied once at a durable recovery time: %+v", provider.restores)
 	}
 	var targetDatabaseID, firstBindingID string
@@ -177,10 +184,10 @@ func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testin
 
 func TestProjectEnvironmentDatabaseCopyPointReusesCaptureAndRejectsMismatch(t *testing.T) {
 	point := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
-	a := managedpostgres.Database{ID: "source-a", ProviderResourceID: "provider-a", BackendID: "test", BackendFingerprint: "fingerprint"}
+	a := managedpostgres.Database{ID: "source-a", ProviderResourceID: "provider-a", DataResourceID: "provider-a/original-branch", BackendID: "test", BackendFingerprint: "fingerprint"}
 	b := managedpostgres.Database{ID: "source-b", ProviderResourceID: "provider-b", BackendID: "test", BackendFingerprint: "fingerprint"}
 	copies := map[string]projectEnvironmentDatabaseCopy{"source-a": {source: a, name: "copy-a"}, "source-b": {source: b, name: "copy-b"}}
-	copyA := managedpostgres.Database{Name: "copy-a", RestoreSourceDatabaseID: a.ID, RestoreSourceResourceID: a.ProviderResourceID,
+	copyA := managedpostgres.Database{Name: "copy-a", RestoreSourceDatabaseID: a.ID, RestoreSourceResourceID: a.DataResourceID,
 		BackendID: a.BackendID, BackendFingerprint: a.BackendFingerprint, RestorePointInTime: point, State: managedpostgres.StateReady}
 	copyB := copyA
 	copyB.Name, copyB.RestoreSourceDatabaseID, copyB.RestoreSourceResourceID = "copy-b", b.ID, b.ProviderResourceID
@@ -192,6 +199,11 @@ func TestProjectEnvironmentDatabaseCopyPointReusesCaptureAndRejectsMismatch(t *t
 		{"partial retry", []managedpostgres.Database{copyA}, false},
 		{"complete retry", []managedpostgres.Database{copyA, copyB}, false},
 		{"different capture", []managedpostgres.Database{copyA, func() managedpostgres.Database { d := copyB; d.RestorePointInTime = point.Add(time.Second); return d }()}, true},
+		{"mutable default selector", []managedpostgres.Database{func() managedpostgres.Database {
+			d := copyA
+			d.RestoreSourceResourceID = a.ProviderResourceID
+			return d
+		}()}, true},
 		{"changed provider identity", []managedpostgres.Database{func() managedpostgres.Database { d := copyA; d.RestoreSourceResourceID = "different-source"; return d }()}, true},
 		{"deleting target", []managedpostgres.Database{func() managedpostgres.Database { d := copyA; d.State = managedpostgres.StateDeleting; return d }()}, true},
 	} {

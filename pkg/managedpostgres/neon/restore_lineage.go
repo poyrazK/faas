@@ -30,6 +30,7 @@ func restoredBranchObservation(projectID, parentID, name string, target branch, 
 	}
 	return managedpostgres.ObservedDatabase{
 		ProviderResourceID: (resourceRef{projectID: projectID, branchID: target.ID}).String(),
+		DataResourceID:     (resourceRef{projectID: projectID, branchID: target.ID}).String(),
 		Status:             managedpostgres.ProviderStatusPending, Spec: request.Spec, RestoreLineage: lineage,
 	}, nil
 }

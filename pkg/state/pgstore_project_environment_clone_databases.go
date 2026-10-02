@@ -42,11 +42,12 @@ func validateCloneDatabaseReservation(op ProjectEnvironmentCloneOperation, sourc
 		actual.ServiceClass != source.ServiceClass || actual.Availability != source.Availability || actual.ScaleToZero != source.ScaleToZero ||
 		actual.StorageLimitBytes != source.StorageLimitBytes || actual.RestoreWindowSeconds != source.RestoreWindowSeconds ||
 		actual.BackendID != source.BackendID || actual.BackendFingerprint != source.BackendFingerprint ||
-		pgUUIDString(actual.RestoreSourceDatabaseID) != source.DatabaseID || !actual.RestoreSourceResourceID.Valid || actual.RestoreSourceResourceID.String != source.ProviderResourceID ||
+		pgUUIDString(actual.RestoreSourceDatabaseID) != source.DatabaseID || !actual.RestoreSourceResourceID.Valid || actual.RestoreSourceResourceID.String != source.DataResourceID ||
 		!actual.RestorePointInTime.Valid || !actual.RestorePointInTime.Time.Equal(point) || actual.DeletedAt.Valid ||
 		(actual.State != "provisioning" && actual.State != "ready") || actual.DesiredGeneration != 1 ||
-		actual.ProviderResourceID.Valid && actual.ProviderResourceID.String == source.ProviderResourceID ||
-		actual.State == "ready" && (!actual.ProviderResourceID.Valid || actual.ProviderResourceID.String == "" || actual.ObservedGeneration != 1) {
+		actual.ProviderResourceID.Valid && (actual.ProviderResourceID.String == source.ProviderResourceID || actual.ProviderResourceID.String == source.DataResourceID) ||
+		actual.State == "ready" && (!actual.ProviderResourceID.Valid || actual.ProviderResourceID.String == "" || actual.ObservedGeneration != 1 ||
+			!actual.DataResourceID.Valid || actual.DataResourceID.String == "" || actual.DataResourceID.String == source.DataResourceID || actual.DataResourceID.String == source.ProviderResourceID) {
 		return ErrConflict
 	}
 	return nil
@@ -102,7 +103,7 @@ func (s *PgStore) ReserveProjectEnvironmentCloneDatabase(ctx context.Context, le
 		if clockErr != nil {
 			return ProjectEnvironmentCloneDatabaseTarget{}, false, clockErr
 		}
-		if live.State != "ready" || live.ProviderResourceID.String != source.ProviderResourceID || live.BackendID != source.BackendID || live.BackendFingerprint != source.BackendFingerprint ||
+		if live.State != "ready" || live.ProviderResourceID.String != source.ProviderResourceID || live.DataResourceID.String != source.DataResourceID || live.BackendID != source.BackendID || live.BackendFingerprint != source.BackendFingerprint ||
 			!cloneDatabaseRestorePointRetained(point, now.Time, source.RestoreWindowSeconds) || !cloneDatabaseRestorePointRetained(point, now.Time, live.RestoreWindowSeconds) {
 			return ProjectEnvironmentCloneDatabaseTarget{}, false, ErrConflict
 		}
@@ -121,7 +122,7 @@ func (s *PgStore) ReserveProjectEnvironmentCloneDatabase(ctx context.Context, le
 			ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(op.AccountID), Name: ProjectEnvironmentCloneDatabaseName(op, sourceID),
 			Region: source.Region, PostgresMajor: int16(source.PostgresMajor), ServiceClass: source.ServiceClass, Availability: source.Availability, ScaleToZero: source.ScaleToZero,
 			StorageLimitBytes: source.StorageLimitBytes, RestoreWindowSeconds: source.RestoreWindowSeconds, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint,
-			RestoreSourceDatabaseID: mustPgUUID(sourceID), RestoreSourceResourceID: pgtype.Text{String: source.ProviderResourceID, Valid: true},
+			RestoreSourceDatabaseID: mustPgUUID(sourceID), RestoreSourceResourceID: pgtype.Text{String: source.DataResourceID, Valid: true},
 			RestorePointInTime: pgtype.Timestamptz{Time: point, Valid: true}, EnvironmentCloneOperationID: mustPgUUID(op.ID)})
 		created = true
 	}

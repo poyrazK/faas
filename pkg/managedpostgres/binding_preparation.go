@@ -33,7 +33,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 	if err != nil {
 		return "", "", err
 	}
-	if database.EnvironmentCloneOperationID != operationID || database.State != StateReady || database.ProviderResourceID == "" || database.ProviderResourceID == database.RestoreSourceResourceID {
+	if database.EnvironmentCloneOperationID != operationID || database.State != StateReady || database.ProviderResourceID == "" || database.ProviderResourceID == database.RestoreSourceResourceID || !validDataResourceID(database.DataResourceID) || database.DataResourceID == database.RestoreSourceResourceID {
 		return "", "", ErrConflict
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
@@ -44,7 +44,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		return "", "", err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := backend.Provider.IssueCredentials(callCtx, bindingCredentialRequest(binding, database.ProviderResourceID))
+	material, err := backend.Provider.IssueCredentials(callCtx, bindingCredentialRequest(binding, databaseDataResource(database)))
 	cancel()
 	defer clearCredentialMaterial(&material)
 	if err != nil {

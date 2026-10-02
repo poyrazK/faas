@@ -113,7 +113,7 @@ func projectEnvironmentDatabaseCopyPoint(copies map[string]projectEnvironmentDat
 			if database.Name != copy.name {
 				continue
 			}
-			if database.RestoreSourceDatabaseID != copy.source.ID || database.RestoreSourceResourceID != copy.source.ProviderResourceID || database.Spec != copy.source.Spec ||
+			if database.RestoreSourceDatabaseID != copy.source.ID || database.RestoreSourceResourceID != projectEnvironmentDatabaseCopySourceID(copy.source) || database.Spec != copy.source.Spec ||
 				database.BackendID != copy.source.BackendID || database.BackendFingerprint != copy.source.BackendFingerprint || database.RestorePointInTime.IsZero() ||
 				database.State == managedpostgres.StateDeleting || database.State == managedpostgres.StateDeleted {
 				return time.Time{}, managedpostgres.ErrConflict
@@ -136,7 +136,7 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 	cloned, created, err := s.managedPostgres.RestoreWithResult(ctx, managedpostgres.RestoreDatabaseRequest{
 		AccountID: acct.ID, SourceDatabaseID: copy.source.ID, Name: copy.name, PointInTime: copy.pointInTime,
 		SourceDefinition: &managedpostgres.RestoreSourceDefinition{Spec: copy.source.Spec, BackendID: copy.source.BackendID,
-			BackendFingerprint: copy.source.BackendFingerprint, ProviderResourceID: copy.source.ProviderResourceID},
+			BackendFingerprint: copy.source.BackendFingerprint, ProviderResourceID: copy.source.ProviderResourceID, DataResourceID: copy.source.DataResourceID},
 	})
 	if err != nil {
 		// Restore persists its intent before provider I/O. Keep that row so a
@@ -151,10 +151,18 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 		})
 	}
 	if cloned.State != managedpostgres.StateReady || cloned.ID == copy.source.ID || cloned.ProviderResourceID == copy.source.ProviderResourceID ||
-		cloned.RestoreSourceDatabaseID != copy.source.ID || cloned.RestoreSourceResourceID != copy.source.ProviderResourceID || cloned.Spec != copy.source.Spec ||
+		cloned.RestoreSourceDatabaseID != copy.source.ID || cloned.RestoreSourceResourceID != projectEnvironmentDatabaseCopySourceID(copy.source) || cloned.Spec != copy.source.Spec ||
 		cloned.BackendID != copy.source.BackendID || cloned.BackendFingerprint != copy.source.BackendFingerprint ||
 		!cloned.RestorePointInTime.Equal(copy.pointInTime) {
 		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
 	}
 	return cloned, nil
+}
+
+// Ordinary legacy cloning retains its selector; complete clones require a pin.
+func projectEnvironmentDatabaseCopySourceID(source managedpostgres.Database) string {
+	if source.DataResourceID != "" {
+		return source.DataResourceID
+	}
+	return source.ProviderResourceID
 }

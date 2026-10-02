@@ -79,7 +79,7 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 	database := Database{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), Name: row.Name,
 		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass), Availability: Availability(row.Availability),
 			ScaleToZero: row.ScaleToZero, StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},
-		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID.String,
+		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID.String, DataResourceID: row.DataResourceID.String,
 		RestoreSourceDatabaseID: databaseUUID(row.RestoreSourceDatabaseID), RestoreSourceResourceID: row.RestoreSourceResourceID.String,
 		RestorePointInTime: row.RestorePointInTime.Time, EnvironmentCloneOperationID: databaseUUID(row.EnvironmentCloneOperationID),
 		State: State(row.State), DesiredGeneration: row.DesiredGeneration, ObservedGeneration: row.ObservedGeneration, LastErrorCode: row.LastErrorCode.String,

@@ -41,11 +41,13 @@ func ProjectEnvironmentCloneDatabaseSourceHash(b ProjectEnvironmentClonePostgres
 			RestoreWindowSeconds int64
 		}
 		BackendID, BackendFingerprint, ProviderResourceID string
+		DataResourceID                                    string `json:",omitempty"`
 	}{}
 	definition.Spec.Region, definition.Spec.PostgresMajor = b.Region, b.PostgresMajor
 	definition.Spec.Class, definition.Spec.Availability, definition.Spec.ScaleToZero = b.ServiceClass, b.Availability, b.ScaleToZero
 	definition.Spec.StorageLimitBytes, definition.Spec.RestoreWindowSeconds = b.StorageLimitBytes, b.RestoreWindowSeconds
 	definition.BackendID, definition.BackendFingerprint, definition.ProviderResourceID = b.BackendID, b.BackendFingerprint, b.ProviderResourceID
+	definition.DataResourceID = b.DataResourceID
 	raw, err := json.Marshal(struct {
 		ID, Name   string
 		Definition any
@@ -61,7 +63,7 @@ func capturedCloneDatabaseReservation(op ProjectEnvironmentCloneOperation, views
 	sources := map[string]ProjectEnvironmentClonePostgresBinding{}
 	for _, view := range views {
 		for _, source := range view.Postgres {
-			if !validClonePostgresBinding(source) {
+			if !validClonePostgresBinding(source) || source.DataResourceID == "" {
 				return ProjectEnvironmentClonePostgresBinding{}, ProjectEnvironmentCloneResource{}, time.Time{}, ErrProjectEnvironmentCloneBindingCapture
 			}
 			if previous, ok := sources[source.DatabaseID]; ok && !sameClonePostgresDatabase(previous, source) {

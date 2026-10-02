@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ UsageStore = (*PostgresStore)(nil)
@@ -14,44 +15,17 @@ func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatab
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if after.isZero() {
-		rows, err = s.pool.Query(ctx,
-			`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-			 WHERE state = 'ready' AND provider_resource_id IS NOT NULL
-			 ORDER BY updated_at, id LIMIT $1`, limit,
-		)
-	} else {
-		afterID, idErr := postgresUUID(after.ID)
-		if idErr != nil {
-			return nil, idErr
+	var afterID pgtype.UUID
+	if !after.isZero() {
+		var err error
+		afterID, err = postgresUUID(after.ID)
+		if err != nil {
+			return nil, err
 		}
-		rows, err = s.pool.Query(ctx,
-			`SELECT `+postgresDatabaseColumns+` FROM managed_postgres_databases
-			 WHERE state = 'ready' AND provider_resource_id IS NOT NULL
-			   AND (updated_at, id) > ($1, $2)
-			 ORDER BY updated_at, id LIMIT $3`, after.UpdatedAt, afterID, limit,
-		)
 	}
-	if err != nil {
-		return nil, mapPostgresError(err)
-	}
-	defer rows.Close()
-	items := make([]Database, 0)
-	for rows.Next() {
-		database, scanErr := scanDatabase(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, database)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, mapPostgresError(err)
-	}
-	return items, nil
+	rows, err := new(sqlc.Queries).ListManagedPostgresLifecycleUsageDatabases(ctx, s.pool, sqlc.ListManagedPostgresLifecycleUsageDatabasesParams{
+		FirstPage: after.isZero(), AfterTime: databaseNullableTime(after.UpdatedAt), AfterID: afterID, RowLimit: int32(limit)})
+	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
 func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) error {

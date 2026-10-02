@@ -56,7 +56,7 @@ func (s *PostgresStore) FinishCloneRestoreProvision(ctx context.Context, databas
 	proof.ObservedAt = clock.Time
 	_, err = q.FinishManagedPostgresCloneRestoreWithProof(ctx, tx, sqlc.FinishManagedPostgresCloneRestoreWithProofParams{
 		DatabaseID: ids[0], AccountID: ids[1], OperationID: ids[2], SourceDatabaseID: ids[3], LeaseToken: database.LeaseToken,
-		BackendID: proof.BackendID, BackendFingerprint: proof.BackendFingerprint, ProviderResourceID: proof.ProviderResourceID,
+		BackendID: proof.BackendID, BackendFingerprint: proof.BackendFingerprint, ProviderResourceID: proof.ProviderResourceID, DataResourceID: proof.DataResourceID,
 		SourceResourceID: proof.Lineage.SourceResourceID, PointInTime: pgtype.Timestamptz{Time: proof.Lineage.PointInTime, Valid: true},
 		Spec: spec, Generation: proof.Generation, ObservedAt: pgtype.Timestamptz{Time: proof.ObservedAt, Valid: true}})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -88,7 +88,7 @@ func (s *PostgresStore) GetCloneRestoreProof(ctx context.Context, accountID, dat
 		return RestoreProof{}, mapPostgresError(err)
 	}
 	proof := RestoreProof{DatabaseID: uuid.UUID(row.DatabaseID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(), OperationID: uuid.UUID(row.OperationID.Bytes).String(),
-		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
+		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID, DataResourceID: row.DataResourceID.String,
 		SourceDatabaseID: uuid.UUID(row.SourceDatabaseID.Bytes).String(), Lineage: RestoreLineage{SourceResourceID: row.SourceResourceID, PointInTime: row.PointInTime.Time},
 		Generation: row.Generation, ObservedAt: row.ObservedAt.Time}
 	if err := json.Unmarshal(row.Spec, &proof.Spec); err != nil || proof.Spec.Validate() != nil {

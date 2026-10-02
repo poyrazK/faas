@@ -115,6 +115,7 @@ func TestPostgresCloneRestoreReceiptRejectsGenerationAndIdentityDrift(t *testing
 	}
 	for _, statement := range []string{
 		`update managed_postgres_databases set provider_resource_id='changed' where id=$1`,
+		`update managed_postgres_databases set data_resource_id='changed' where id=$1`,
 		`update managed_postgres_databases set restore_source_resource_id='changed' where id=$1`,
 		`update managed_postgres_databases set restore_point_in_time=restore_point_in_time+interval '1 microsecond' where id=$1`,
 		`update managed_postgres_databases set backend_fingerprint=repeat('f',64) where id=$1`,
@@ -177,7 +178,7 @@ func TestPostgresCloneRestoreReceiptChecksLeaseAfterUnchangedRowLockWait(t *test
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, err := store.FinishCloneRestoreProvision(ctx, claimed, ObservedDatabase{ProviderResourceID: claimed.ProviderResourceID,
+		_, err := store.FinishCloneRestoreProvision(ctx, claimed, ObservedDatabase{ProviderResourceID: claimed.ProviderResourceID, DataResourceID: claimed.ProviderResourceID,
 			Status: ProviderStatusReady, Spec: claimed.Spec, RestoreLineage: provider.lineage}, now)
 		result <- err
 	}()
@@ -237,7 +238,7 @@ func TestPostgresCloneRestoreReceiptConflictRollsBackReadiness(t *testing.T) {
 		target.RestorePointInTime.Add(time.Second), spec); err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.FinishCloneRestoreProvision(t.Context(), claimed, ObservedDatabase{ProviderResourceID: claimed.ProviderResourceID,
+	_, err = store.FinishCloneRestoreProvision(t.Context(), claimed, ObservedDatabase{ProviderResourceID: claimed.ProviderResourceID, DataResourceID: claimed.ProviderResourceID,
 		Status: ProviderStatusReady, Spec: claimed.Spec, RestoreLineage: provider.lineage}, now)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflicting original receipt was adopted or overwritten: %v", err)

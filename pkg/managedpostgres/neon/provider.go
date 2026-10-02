@@ -302,7 +302,14 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec, RestoreLineage: lineage}, nil
+	dataID := ""
+	if selectedBranch.ID != "" {
+		if !validProviderID.MatchString(selectedBranch.ID) || selectedBranch.ProjectID != "" && selectedBranch.ProjectID != ref.projectID {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+		}
+		dataID = (resourceRef{projectID: ref.projectID, branchID: selectedBranch.ID}).String()
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec, RestoreLineage: lineage}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.

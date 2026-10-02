@@ -5438,7 +5438,7 @@ SELECT jsonb_build_object(
     'environment_key', b.environment_key, 'access', b.access,
     'credential_ref', coalesce(b.credential_ref, ''), 'credential_generation', b.credential_generation,
     'backend_id', d.backend_id, 'backend_fingerprint', d.backend_fingerprint,
-    'provider_resource_id', coalesce(d.provider_resource_id, ''), 'region', d.region,
+    'provider_resource_id', coalesce(d.provider_resource_id, ''), 'data_resource_id', coalesce(d.data_resource_id, ''), 'region', d.region,
     'postgres_major', d.postgres_major, 'service_class', d.service_class,
     'availability', d.availability, 'scale_to_zero', d.scale_to_zero,
     'storage_limit_bytes', d.storage_limit_bytes, 'restore_window_seconds', d.restore_window_seconds
@@ -6888,7 +6888,7 @@ SELECT id FROM app_stamp;
 -- name: FinishManagedPostgresCloneRestoreWithProof :one
 WITH ready AS (
     UPDATE managed_postgres_databases d SET state='ready', observed_generation=desired_generation,
-        last_error_code=NULL, lease_token=NULL, lease_until=NULL, attempt_count=0,
+        data_resource_id=sqlc.arg(data_resource_id)::text, last_error_code=NULL, lease_token=NULL, lease_until=NULL, attempt_count=0,
         retry_at=sqlc.arg(observed_at)::timestamptz, updated_at=sqlc.arg(observed_at)::timestamptz
     WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid
         AND d.state='provisioning' AND d.deleted_at IS NULL AND d.lease_token=sqlc.arg(lease_token)::text
@@ -6896,6 +6896,7 @@ WITH ready AS (
         AND d.environment_clone_operation_id=sqlc.arg(operation_id)::uuid
         AND d.backend_id=sqlc.arg(backend_id)::text AND d.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
         AND d.provider_resource_id=sqlc.arg(provider_resource_id)::text
+        AND (d.data_resource_id IS NULL OR d.data_resource_id=sqlc.arg(data_resource_id)::text)
         AND d.restore_source_database_id=sqlc.arg(source_database_id)::uuid
         AND d.restore_source_resource_id=sqlc.arg(source_resource_id)::text
         AND d.restore_point_in_time=sqlc.arg(point_in_time)::timestamptz
@@ -6906,10 +6907,10 @@ WITH ready AS (
     RETURNING d.*
 )
 INSERT INTO managed_postgres_restore_proofs(database_id,account_id,operation_id,backend_id,backend_fingerprint,
-    provider_resource_id,source_database_id,source_resource_id,point_in_time,spec,generation,observed_at)
+    provider_resource_id,source_database_id,source_resource_id,point_in_time,spec,generation,observed_at,data_resource_id)
 SELECT id,account_id,environment_clone_operation_id,backend_id,backend_fingerprint,provider_resource_id,
     restore_source_database_id,restore_source_resource_id,restore_point_in_time,sqlc.arg(spec)::jsonb,
-    observed_generation,sqlc.arg(observed_at)::timestamptz FROM ready
+    observed_generation,sqlc.arg(observed_at)::timestamptz,data_resource_id FROM ready
 ON CONFLICT(database_id) DO NOTHING RETURNING database_id;
 
 -- name: ReadManagedPostgresCloneRestoreProof :one
@@ -6919,7 +6920,7 @@ WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uu
     AND d.state='ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
     AND p.account_id=d.account_id AND p.operation_id=d.environment_clone_operation_id
     AND p.backend_id=d.backend_id AND p.backend_fingerprint=d.backend_fingerprint
-    AND p.provider_resource_id=d.provider_resource_id AND p.source_database_id=d.restore_source_database_id
+    AND p.provider_resource_id=d.provider_resource_id AND p.data_resource_id=d.data_resource_id AND p.source_database_id=d.restore_source_database_id
     AND p.source_resource_id=d.restore_source_resource_id AND p.point_in_time=d.restore_point_in_time
     AND p.generation=d.desired_generation AND p.generation=d.observed_generation
     AND p.spec=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
@@ -7654,3 +7655,103 @@ with config as (select (json_populate_record(null::apps, sqlc.arg(settings)::jso
 		eviction_priority = c.eviction_priority, cors_default_enabled = c.cors_default_enabled,
 		cors_default_origins = coalesce(c.cors_default_origins, '{}'), scaling_policy_revision = a.scaling_policy_revision + 1
 		from config c where a.id = sqlc.arg(app_id)::uuid;
+
+-- ADR-375: managed PostgreSQL lifecycle reads include the separately pinned
+-- dataset identity. These replace the catalog adapter's dynamic projections.
+-- name: LockManagedPostgresLifecycleAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status<>'deleted_pending' FOR UPDATE;
+
+-- name: FindManagedPostgresLifecycleDatabase :one
+SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND name=$2 AND state<>'deleted';
+
+-- name: GetManagedPostgresLifecycleDatabase :one
+SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2;
+
+-- name: ListManagedPostgresLifecycleDatabases :many
+SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id;
+
+-- name: DueManagedPostgresLifecycleDatabases :many
+SELECT * FROM managed_postgres_databases
+WHERE (state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed')))
+    AND retry_at<=sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
+ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: CountManagedPostgresLifecycleDatabases :one
+SELECT count(*) FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted';
+
+-- name: ReadManagedPostgresLifecycleRestoreSource :one
+SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
+
+-- name: InsertManagedPostgresLifecycleDatabase :one
+INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,scale_to_zero,
+    storage_limit_bytes,restore_window_seconds,backend_id,backend_fingerprint,restore_source_database_id,restore_source_resource_id,
+    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *;
+
+-- name: ClaimManagedPostgresLifecycleProvision :one
+UPDATE managed_postgres_databases SET state='provisioning',lease_token=sqlc.arg(lease_token)::text,
+    lease_until=sqlc.arg(lease_until)::timestamptz,updated_at=sqlc.arg(at)::timestamptz,
+    attempt_count=least(attempt_count+1,30),last_error_code=CASE WHEN state<>'provisioning' THEN NULL ELSE last_error_code END,
+    retry_at=sqlc.arg(at)::timestamptz
+WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND state IN ('provisioning','failed')
+    AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz) AND retry_at<=sqlc.arg(at)::timestamptz RETURNING *;
+
+-- name: ExistsManagedPostgresLifecycleDatabase :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_databases WHERE account_id=$1 AND id=$2);
+
+-- name: LockManagedPostgresLifecycleDatabase :one
+SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDATE;
+
+-- name: ReadManagedPostgresLifecycleDependants :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
+    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants;
+
+-- name: ClaimManagedPostgresLifecycleDelete :one
+UPDATE managed_postgres_databases SET state='deleting',lease_token=sqlc.arg(lease_token)::text,
+    lease_until=sqlc.arg(lease_until)::timestamptz,updated_at=sqlc.arg(at)::timestamptz,
+    attempt_count=CASE WHEN state<>'deleting' THEN 1 ELSE least(attempt_count+1,30) END,
+    last_error_code=CASE WHEN state<>'deleting' THEN NULL ELSE last_error_code END,retry_at=sqlc.arg(at)::timestamptz
+WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid RETURNING *;
+
+-- name: RecordManagedPostgresLifecycleResource :execrows
+UPDATE managed_postgres_databases SET provider_resource_id=sqlc.arg(provider_resource_id)::text,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(database_id)::uuid AND state='provisioning' AND lease_token=sqlc.arg(lease_token)::text
+    AND lease_until>sqlc.arg(at)::timestamptz
+    AND (provider_resource_id IS NULL OR provider_resource_id=sqlc.arg(provider_resource_id)::text);
+
+-- name: FinishManagedPostgresLifecycleProvision :one
+UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_generation,last_error_code=NULL,
+    lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(database_id)::uuid AND state='provisioning' AND lease_token=sqlc.arg(lease_token)::text
+    AND lease_until>sqlc.arg(at)::timestamptz AND provider_resource_id IS NOT NULL RETURNING *;
+
+-- name: FinishManagedPostgresLifecycleDataProvision :one
+UPDATE managed_postgres_databases d SET state='ready',observed_generation=desired_generation,last_error_code=NULL,
+    lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz,
+    data_resource_id=sqlc.arg(data_resource_id)::text
+WHERE d.id=sqlc.arg(database_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid AND d.state='provisioning'
+    AND d.environment_clone_operation_id IS NULL AND d.deleted_at IS NULL AND d.lease_token=sqlc.arg(lease_token)::text
+    AND d.lease_until>sqlc.arg(at)::timestamptz AND d.lease_until>clock_timestamp()
+    AND d.provider_resource_id=sqlc.arg(provider_resource_id)::text AND d.backend_id=sqlc.arg(backend_id)::text
+    AND d.backend_fingerprint=sqlc.arg(backend_fingerprint)::text AND d.desired_generation=sqlc.arg(generation)::bigint
+    AND (d.data_resource_id IS NULL OR d.data_resource_id=sqlc.arg(data_resource_id)::text)
+    AND sqlc.arg(spec)::jsonb=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+RETURNING d.*;
+
+-- name: ReleaseManagedPostgresLifecycleLease :execrows
+UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
+    lease_token=NULL,lease_until=NULL,retry_at=sqlc.arg(retry_at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(database_id)::uuid AND lease_token=sqlc.arg(lease_token)::text AND lease_until>sqlc.arg(at)::timestamptz;
+
+-- name: FinishManagedPostgresLifecycleDelete :one
+UPDATE managed_postgres_databases SET state='deleted',last_error_code=NULL,lease_token=NULL,lease_until=NULL,
+    attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz,deleted_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(database_id)::uuid AND state='deleting' AND lease_token=sqlc.arg(lease_token)::text
+    AND lease_until>sqlc.arg(at)::timestamptz RETURNING *;
+
+-- name: ListManagedPostgresLifecycleUsageDatabases :many
+SELECT * FROM managed_postgres_databases WHERE state='ready' AND provider_resource_id IS NOT NULL
+    AND (sqlc.arg(first_page)::boolean OR (updated_at,id)>(sqlc.arg(after_time)::timestamptz,sqlc.arg(after_id)::uuid))
+ORDER BY updated_at,id LIMIT sqlc.arg(row_limit)::integer;

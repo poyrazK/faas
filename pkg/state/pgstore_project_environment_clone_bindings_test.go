@@ -57,9 +57,9 @@ func clonePostgresSecretFixture(t *testing.T, pool *pgxpool.Pool, a state.Accoun
 	ref := "credential:" + bindingID
 	if _, err := pool.Exec(ctx, `insert into managed_postgres_databases(id, account_id, name, region, postgres_major,
 		service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id,
-		backend_fingerprint, provider_resource_id, state, observed_generation)
-		values ($1,$2,$3,'us-east-1',16,'production','single_zone',true,1073741824,86400,'postgres',$4,$5,'ready',1)`,
-		databaseID, a.ID, name, strings.Repeat("d", 64), "provider:"+databaseID); err != nil {
+		backend_fingerprint, provider_resource_id, data_resource_id, state, observed_generation)
+		values ($1,$2,$3,'us-east-1',16,'production','single_zone',true,1073741824,86400,'postgres',$4,$5,$6,'ready',1)`,
+		databaseID, a.ID, name, strings.Repeat("d", 64), "provider:"+databaseID, "provider:"+databaseID+"/branch"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `insert into managed_postgres_bindings(id, account_id, database_id, app_id, scope,
@@ -91,11 +91,11 @@ func TestPgClonePostgresBindingCatalogueIsFrozen(t *testing.T) {
 	}
 	binding := bindings[0].Postgres[0]
 	if binding.ID != secret.ManagedPostgresBindingID || binding.CredentialGeneration != 3 || binding.Access != "read_only" ||
-		binding.PostgresMajor != 16 || binding.StorageLimitBytes != 1073741824 || binding.RestoreWindowSeconds != 86400 || !binding.ScaleToZero || bindings[0].Hash != views[0].SourceBindingsHash {
+		binding.DataResourceID != binding.ProviderResourceID+"/branch" || binding.PostgresMajor != 16 || binding.StorageLimitBytes != 1073741824 || binding.RestoreWindowSeconds != 86400 || !binding.ScaleToZero || bindings[0].Hash != views[0].SourceBindingsHash {
 		t.Fatal("database configuration or binding ownership omitted from capture")
 	}
 	before, _ := json.Marshal(bindings)
-	if _, err := pool.Exec(ctx, `update managed_postgres_databases set storage_limit_bytes=2147483648, scale_to_zero=false where id=$1`, binding.DatabaseID); err != nil {
+	if _, err := pool.Exec(ctx, `update managed_postgres_databases set storage_limit_bytes=2147483648, scale_to_zero=false, data_resource_id='replaced-branch' where id=$1`, binding.DatabaseID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `update managed_postgres_bindings set access='read_write' where id=$1`, binding.ID); err != nil {
