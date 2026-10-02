@@ -21,6 +21,11 @@ class HotfixContracts(unittest.TestCase):
             self.assertEqual(controller.api('actions/runs?per_page=100'), {'workflow_runs': []})
         get.assert_called_once_with('repos/' + controller.REPO + '/actions/runs?per_page=100')
 
+    def test_image_verifier_uses_the_shared_github_api_helper(self):
+        verifier = Path(controller.__file__).with_name('request_evidence_hotfix_images.py').read_text()
+        self.assertIn("controller.api('actions/runs/'", verifier)
+        self.assertNotIn("['gh'", verifier)
+
     def test_github_token_is_removed_before_redirect_to_asset_storage(self):
         request = urllib.request.Request('https://api.github.com/repos/example/release', headers={
             'Authorization': 'Bearer secret', 'X-GitHub-Api-Version': '2022-11-28',
