@@ -1,4 +1,4 @@
-// ADR-435: recover ownership before vmmd exposes admission.
+// adr: 435 — recover ownership before vmmd exposes admission.
 package main
 
 import (

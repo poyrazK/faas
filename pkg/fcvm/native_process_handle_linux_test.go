@@ -1,5 +1,6 @@
 //go:build linux
 
+// adr: 435 — environment intent and runtime ownership contracts.
 package fcvm
 
 import (

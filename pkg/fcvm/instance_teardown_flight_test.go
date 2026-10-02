@@ -1,4 +1,4 @@
-// ADR-435: a duplicate stop must not acknowledge unfinished physical cleanup.
+// adr: 435 — a duplicate stop must not acknowledge unfinished physical cleanup.
 package fcvm
 
 import (

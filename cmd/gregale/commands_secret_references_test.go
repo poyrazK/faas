@@ -46,6 +46,8 @@ func TestSecretReferenceCLIRejectsImplicitOrInvalidIntent(t *testing.T) {
 		{"set", "--app", "shop-api", "--environment", "production", "URL=plaintext"},
 		{"set", "--app", "shop-api", "--environment", "production", "URL=secret:bad-key"},
 		{"list", "--app", "shop-api", "--environment", "production", "URL"},
+		{"set", "--app", "shop-api", "--environment", "production", "URL=secret:DATABASE", "unexpected"},
+		{"unset", "--app", "shop-api", "--environment", "production", "URL", "unexpected"},
 	} {
 		resetJSONOut(t)
 		f := authedFakeAPI(t, `{}`, 200)

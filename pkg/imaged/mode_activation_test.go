@@ -69,14 +69,20 @@ func TestDeploymentReadyWorkerRequiresMatchingRunningInstance(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "running worker") {
 		t.Fatalf("stopped worker readiness error = %v", err)
 	}
-	if err := store.UpdateInstanceState(context.Background(), stopped.ID, string(state.StateColdBooting)); err != nil {
-		t.Fatalf("reset worker state: %v", err)
+	// adr: 435 — a stopped worker cannot borrow its former reservation.
+	if err := store.UpdateInstanceState(context.Background(), stopped.ID, string(state.StateColdBooting)); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("revived worker without fresh reservation: %v", err)
 	}
-	if err := store.UpdateInstanceState(context.Background(), stopped.ID, string(state.StateRunning)); err != nil {
+	running, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, state.DefaultLocalNodeName, "wake-worker-fresh", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("reserve fresh worker: %v", err)
+	}
+	if err := store.UpdateInstanceState(context.Background(), running.ID, string(state.StateRunning)); err != nil {
 		t.Fatalf("run worker state: %v", err)
 	}
 	if err := handler.handleDeploymentReady(context.Background(), deploymentReadyPayload{
-		DeploymentID: dep.ID, ExecutionMode: api.ExecutionModeWorker, InstanceID: stopped.ID,
+		DeploymentID: dep.ID, ExecutionMode: api.ExecutionModeWorker, InstanceID: running.ID,
 	}); err != nil {
 		t.Fatalf("handleDeploymentReady(worker): %v", err)
 	}

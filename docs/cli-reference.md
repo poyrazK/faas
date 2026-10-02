@@ -82,7 +82,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
-| [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|audit\|rotate) |
+| [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
@@ -3501,6 +3501,34 @@ Configure a simple push workload with queue-depth scaling
 
 Manage queue bindings
 
+#### queue bindings list
+
+List app queue bindings
+
+`gregale queue bindings list [--include-retired]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--include-retired` | include retained binding UUIDs for reviewed recovery |  |
+
+#### queue bindings create
+
+Create a queue binding
+
+`gregale queue bindings create`
+
+#### queue bindings update
+
+Update a queue binding
+
+`gregale queue bindings update`
+
+#### queue bindings rm
+
+Retire a queue binding
+
+`gregale queue bindings rm`
+
 
 ## dlq
 
@@ -3884,9 +3912,64 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
 ## secrets
 
-Manage env secrets (secrets list|set|unset|list-all|audit|rotate)
+Manage sealed secrets and environment secret references
 
 `gregale secrets [<subcommand>]`
+
+### secrets refs
+
+Manage destination-to-source names in a registered environment
+
+#### secrets refs list
+
+List reference names and shared environment-key quota
+
+`gregale secrets refs list --app <slug> --environment <ENV>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs list --app my-api --environment production
+```
+
+#### secrets refs set
+
+Select an existing scoped secret; respects Git field ownership
+
+`gregale secrets refs set <KEY=secret:NAME> --app <slug> --environment <ENV>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs set --app my-api --environment production DATABASE_URL=secret:DATABASE_PRIMARY
+```
+
+#### secrets refs unset
+
+Suppress a primary workload secret destination and preserve the sealed source
+
+`gregale secrets refs unset <KEY> --app <slug> --environment <ENV>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs unset --app my-api --environment production DATABASE_URL
+```
 
 ### secrets list
 

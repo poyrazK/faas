@@ -27,6 +27,9 @@ func cmdSecretReferences(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	if operation == "list" && fs.NArg() != 0 || operation != "list" && fs.NArg() != 1 {
+		return printErr("Invalid reference", fmt.Errorf("unexpected positional arguments: list takes none; set and unset take one destination key"))
+	}
 	if *app == "" || !api.ValidProjectEnvironmentSlug(*environment) || api.ValidateScope(*environment) != nil {
 		return printErr("Select an app and environment", fmt.Errorf("--app and --environment are required"))
 	}

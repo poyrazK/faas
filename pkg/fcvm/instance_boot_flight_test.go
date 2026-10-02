@@ -1,4 +1,4 @@
-// ADR-435: qualification retirement must join an unfinished boot or restore.
+// adr: 435 — qualification retirement must join an unfinished boot or restore.
 package fcvm
 
 import (
