@@ -24,6 +24,8 @@ T = TypeVar("T", bound="ObjectBucketVersioning")
 
 @_attrs_define
 class ObjectBucketVersioning:
+    """Desired and observed bucket versioning status with propagation and inventory progress."""
+
     bucket_id: UUID
     desired_status: ObjectBucketVersioningDesiredStatus
     observed_status: ObjectBucketVersioningObservedStatus

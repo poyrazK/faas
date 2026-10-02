@@ -9,6 +9,13 @@ export type ObjectCapacityReconciliation = {
   id: string;
   bucket_id: string;
   state: 'waiting' | 'scanning' | 'completed' | 'blocked' | 'failed' | 'cancelled';
+  /**
+   * Verified inventory scope; retained versions require all_versions.
+   */
+  inventory_scope: 'current' | 'all_versions';
+  scanned_pages: number;
+  scanned_bytes: number;
+  scanned_versions: number;
   before_bytes: number;
   before_keys: number;
   after_bytes: number;

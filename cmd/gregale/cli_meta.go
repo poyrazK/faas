@@ -314,7 +314,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Inspect write receipts and reconcile reserved object-storage capacity",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage versioning, delete versions, inspect receipts and reconcile capacity",
 		Subcommands: []cliSub{{Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 			{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
@@ -330,7 +330,12 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "maximum wait (default 5m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
 			}},
-		}}},
+		}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
+			{Name: "versioning", Short: "Inspect or configure bucket versioning", Subcommands: []cliSub{
+				{Name: "status", Short: "Show durable versioning progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "enable", Short: "Enable retained versions", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "suspend", Short: "Suspend versioning while retaining older versions", Positionals: []string{"<app>", "<bucket-id>"}},
+			}}},
 	},
 	{
 		Name:        "bindings",

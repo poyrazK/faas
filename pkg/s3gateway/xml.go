@@ -173,13 +173,16 @@ type deleteObjectsResult struct {
 }
 
 type deletedObjectResult struct {
-	Key string `xml:"Key"`
+	Key          string `xml:"Key"`
+	VersionID    string `xml:"VersionId,omitempty"`
+	DeleteMarker bool   `xml:"DeleteMarker,omitempty"`
 }
 
 type deleteObjectError struct {
-	Key     string `xml:"Key"`
-	Code    string `xml:"Code"`
-	Message string `xml:"Message"`
+	Key       string `xml:"Key"`
+	VersionID string `xml:"VersionId,omitempty"`
+	Code      string `xml:"Code"`
+	Message   string `xml:"Message"`
 }
 
 func objectTagSet(tags map[string]string) []objectTag {

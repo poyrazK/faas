@@ -1557,7 +1557,7 @@ paths:
     delete:
       operationId: deleteBucketObject
       summary: Delete one object by exact key
-      description: Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this bucket. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+      description: Requires storage:write or admin and a bucket write grant. Current-object deletion is declined when retained versions, native inventories or a versioning transition require marker admission. Use permanent immutable version deletion for retained data or markers.
       tags: [storage]
       parameters:
         - { name: key, description: Exact object key to delete; URL-encode it., in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
@@ -1569,10 +1569,34 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/objects/versions:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket owning the selected version., schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteObjectBucketVersion
+      summary: Permanently delete an immutable object version or delete marker
+      description: Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is unsupported. Quota is reclaimed only through verified capacity inventory.
+      tags: [storage]
+      parameters:
+        - { name: key, in: query, required: true, description: Exact key owning the selected version., schema: { type: string, minLength: 1, maxLength: 1024 } }
+        - { name: version_id, in: query, required: true, description: Owned public immutable version UUID; native provider IDs and null are not accepted., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Deleted or already removed immutable version; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionDeleteResult' }
+        default:
+          description: Invalid or unowned version, unsupported provider, access denied or uncertain provider response
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/versioning:
     parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } }
-      - { name: bucket, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: slug, in: path, required: true, description: App whose bucket configuration is being read or changed., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose versioning is configured., schema: { type: string, format: uuid } }
     get:
       operationId: getObjectBucketVersioning
       summary: Read bucket versioning configuration and cutover progress
@@ -23217,6 +23241,13 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ObjectVersionDeleteResult:
+      type: object
+      description: Selected immutable public version and the acknowledged marker flag after permanent deletion.
+      required: [version_id, delete_marker]
+      properties:
+        version_id: { type: string, format: uuid }
+        delete_marker: { type: boolean, description: True when the acknowledged removal deleted a marker. A retry after removal can return false. }
     CreateDevBridgeRequest:
       type: object
       description: Owned app and explicit development graph for local execution.
@@ -24424,12 +24455,14 @@ components:
 
     ObjectBucketVersioningRequest:
       type: object
+      description: Desired Enabled or Suspended status for a durable bucket configuration cutover.
       additionalProperties: false
       required: [status]
       properties:
         status: { type: string, enum: [Enabled, Suspended] }
     ObjectBucketVersioning:
       type: object
+      description: Desired and observed bucket versioning status with propagation and inventory progress.
       required: [bucket_id, desired_status, observed_status, state, revision, versions_required, updated_at]
       properties:
         bucket_id: { type: string, format: uuid }
@@ -24445,16 +24478,16 @@ components:
 
     ObjectCapacityReconciliation:
       type: object
-      description: Durable fenced capacity inventory and quota rebase. Native scans count retained versions and delete markers. Failed or blocked jobs retain reservations; billing is unaffected.
+      description: Durable fenced capacity inventory and quota rebase. Failed or blocked jobs retain reservations; billing is unaffected.
       required: [id, bucket_id, state, inventory_scope, scanned_pages, scanned_bytes, scanned_versions, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         bucket_id: { type: string, format: uuid }
         state: { type: string, enum: [waiting, scanning, completed, blocked, failed, cancelled] }
-        inventory_scope: { type: string, enum: [current, all_versions] }
-        scanned_pages: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        inventory_scope: { type: string, enum: [current, all_versions], description: Verified inventory scope; retained versions require all_versions. }
+        scanned_pages: { type: integer, format: int64, minimum: 0 }
         scanned_bytes: { type: integer, format: int64, minimum: 0 }
-        scanned_versions: { type: integer, format: int64, minimum: 0, maximum: 1000000, description: Retained data versions and delete markers counted so far. }
+        scanned_versions: { type: integer, format: int64, minimum: 0 }
         before_bytes: { type: integer, format: int64, minimum: 0 }
         before_keys: { type: integer, format: int64, minimum: 0 }
         after_bytes: { type: integer, format: int64, minimum: 0 }
@@ -24509,6 +24542,8 @@ components:
         content_type: { type: string, maxLength: 255 }
         state: { type: string, enum: [initiating, active, completing, completing_conditional, aborting, completed, aborted] }
         completion_error_code: { type: string, description: Persisted conditional completion rejection; retries retain the outcome. }
+        etag: { type: string, description: Actual committed ETag when completion is confirmed. }
+        version_id: { type: string, description: Owned public version ID when completion is confirmed; null denotes a mutable provider version. }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
     ObjectMultipartUploadList:

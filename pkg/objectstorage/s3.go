@@ -149,7 +149,9 @@ func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectLis
 }
 
 func (p *S3) DeleteObject(ctx context.Context, bucket, key string) error {
-	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	// Ordinary deletion can create a fresh marker on every dispatch. An SDK
+	// retry after a lost acknowledgment must never create another marker.
+	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	return normalize(err)
 }
 

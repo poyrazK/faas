@@ -436,7 +436,7 @@ Rollback requires conditional completion or cleanup to be terminal. See
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication, bucket lifecycle APIs,
-bucket versioning configuration, version deletion, ACLs, and bucket
+mutable null-version deletion, marker creation, ACLs, and bucket
 create/delete through the S3 protocol remain
 explicit `NotImplemented` gaps. Bucket lifecycle remains on the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
@@ -466,8 +466,8 @@ Observing a non-null native version or any delete marker activates the retained
 version accounting fence. Reads and listings continue under ordinary read
 accounting. New writes wait for capacity reconciliation to establish an inventory
 of all retained data versions and delete markers. A current-only inventory cannot
-refund this history. This does not enable provider versioning or create markers;
-configuration and version deletion remain explicit NotImplemented gaps.
+refund this history. Listing does not change provider configuration or create
+markers. Configuration and immutable version deletion are described below.
 See [ADR-400](adr/400-customer-s3-version-identities-and-reads.md).
 
 Copy a retained version with the standard SDK `CopySource` value
@@ -546,8 +546,9 @@ lifecycle rule as a backup with a window longer than Gregale's 24-hour session
 TTL. Enable provider/account public-access blocking where available. The driver
 creates buckets without public ACLs, but does not manage provider-specific
 account policies, lifecycle rules, encryption keys, residency controls,
-retention, or replication. Keep versioning and object lock off for this preview;
-the UI does not manage historical versions or retention locks.
+retention, or replication. Enable versioning through the managed cutover below;
+keep Object Lock off until retention support is implemented. The UI does not
+manage historical versions or retention locks.
 
 Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
@@ -1203,7 +1204,8 @@ its full size and one additional entry even when overwriting the same key.
 Direct signed PUTs, legacy untracked writes/completion and current-object
 single/bulk DELETE return a conflict or NotImplemented in this mode until their
 replay/marker admission is implemented. Public bucket versioning configuration
-and version-specific deletion remain pending. Customer IDs, version listing,
+and immutable version deletion are implemented. Mutable null deletion and
+ordinary marker admission remain pending. Customer IDs, version listing,
 exact reads and restoration by same-key selected-version copy are implemented
 (ADRs 400–401).
 See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
@@ -1244,4 +1246,41 @@ an empty bucket until adoption is verified. Unresolved legacy direct-write grant
 block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
 GCS configuration and unsupported provider endpoints return NotImplemented.
 See [ADR-403](adr/403-durable-bucket-versioning-configuration.md). Delete-marker
-admission, version deletion/tagging and replay-safe direct writes remain gaps.
+admission, mutable null deletion, version tagging and replay-safe direct writes
+remain gaps.
+
+
+## Permanently deleting retained versions
+
+Use an owned public version UUID from ListObjectVersions or a write response:
+
+```sh
+aws --endpoint-url "$GREGALE_S3_ENDPOINT" s3api delete-object \
+  --bucket assets --key hello.txt --version-id <public-version-id>
+gregale bucket version-delete <app> <bucket-id> hello.txt <public-version-id>
+```
+
+The control endpoint is
+`DELETE /v1/apps/{slug}/buckets/{bucket}/objects/versions?key=KEY&version_id=ID`.
+URL-encode both values. It returns `version_id` and `delete_marker`. Go, Node and
+Python typed clients expose `DeleteObjectBucketVersion` / `deleteObjectBucketVersion`
+/ `delete_object_bucket_version`. Storage write scope and a matching bucket write
+grant are required. Cleanup remains available with object data ingress disabled.
+
+This permanently removes the selected immutable data version or marker.
+Removing a marker can reveal an older data version. The public selector survives
+deletion, so retrying after a lost acknowledgment or restart addresses the same
+version. A retry after removal can return a false marker flag. Missing or unowned
+public selectors fail before provider contact. Private provider IDs are never
+accepted or returned.
+
+DeleteObjects supports these selectors with per-entry success/error results;
+quiet mode suppresses successes and retains errors. Unsupported null/current
+entries do not prevent valid immutable entries from being deleted. Conditional
+DELETE, MFA and retention-bypass directives fail explicitly. Mutable `null`
+deletion and ordinary DELETE creating a marker still require the pending durable
+admission/recovery implementation, including coordination with versioning changes.
+
+Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
+start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
+See [ADR-404](adr/404-immutable-s3-version-deletion.md).

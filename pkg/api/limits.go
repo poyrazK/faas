@@ -100,6 +100,10 @@ const MaxObjectCopyDateHeaderBytes = 128
 // A version page plus its private paired continuation identity.
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
+// Permanent immutable deletion is a single bounded provider attempt. Its
+// durable public selector makes retry safe after an uncertain acknowledgment.
+const ObjectVersionDeleteOperationTimeout = time.Minute
+
 const (
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and
@@ -7798,6 +7802,7 @@ const (
 const (
 	ObjectS3CORSMaxAgeSeconds    = 3600
 	MaxObjectS3ListItems         = 1000
+	MaxObjectS3DeleteItems       = 1000
 	MaxObjectS3ListTextBytes     = 1024
 	MaxObjectS3DelimiterBytes    = 4
 	MaxObjectS3ListCursorBytes   = 8192

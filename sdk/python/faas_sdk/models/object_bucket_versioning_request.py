@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ObjectBucketVersioningRequest")
 
 @_attrs_define
 class ObjectBucketVersioningRequest:
+    """Desired Enabled or Suspended status for a durable bucket configuration cutover."""
+
     status: ObjectBucketVersioningRequestStatus
 
     def to_dict(self) -> dict[str, Any]:

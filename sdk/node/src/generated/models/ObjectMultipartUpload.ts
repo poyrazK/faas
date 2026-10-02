@@ -17,6 +17,14 @@ export type ObjectMultipartUpload = {
    * Persisted conditional completion rejection; retries retain the outcome.
    */
   completion_error_code?: string;
+  /**
+   * Actual committed ETag when completion is confirmed.
+   */
+  etag?: string;
+  /**
+   * Owned public version ID when completion is confirmed; null denotes a mutable provider version.
+   */
+  version_id?: string;
   expires_at: string;
   created_at: string;
 };

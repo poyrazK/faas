@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Desired and observed bucket versioning status with propagation and inventory progress.
+ */
 export type ObjectBucketVersioning = {
   bucket_id: string;
   desired_status: '' | 'Enabled' | 'Suspended';

@@ -589,6 +589,7 @@ export type { ObjectStorageUsageReport } from './ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './ObjectStorageUsageResponse.js';
 export type { ObjectUploadRoute } from './ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './ObjectUploadRouteList.js';
+export type { ObjectVersionDeleteResult } from './ObjectVersionDeleteResult.js';
 export type { ObjectWriteReceipt } from './ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './ObjectWriteReceiptList.js';
 export type { ObsHealthResponse } from './ObsHealthResponse.js';

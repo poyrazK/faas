@@ -28,7 +28,11 @@ class ObjectMultipartUpload:
     expires_at: datetime.datetime
     created_at: datetime.datetime
     completion_error_code: str | Unset = UNSET
-    """ Persisted conditional completion rejection; retries retain the outcome. """
+    """Persisted conditional completion rejection; retries retain the outcome."""
+    etag: str | Unset = UNSET
+    """Actual committed ETag when completion is confirmed."""
+    version_id: str | Unset = UNSET
+    """Owned public version ID when completion is confirmed; null denotes a mutable provider version."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +56,10 @@ class ObjectMultipartUpload:
 
         completion_error_code = self.completion_error_code
 
+        etag = self.etag
+
+        version_id = self.version_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -69,6 +77,10 @@ class ObjectMultipartUpload:
         )
         if completion_error_code is not UNSET:
             field_dict["completion_error_code"] = completion_error_code
+        if etag is not UNSET:
+            field_dict["etag"] = etag
+        if version_id is not UNSET:
+            field_dict["version_id"] = version_id
 
         return field_dict
 
@@ -95,6 +107,10 @@ class ObjectMultipartUpload:
 
         completion_error_code = d.pop("completion_error_code", UNSET)
 
+        etag = d.pop("etag", UNSET)
+
+        version_id = d.pop("version_id", UNSET)
+
         object_multipart_upload = cls(
             id=id,
             key=key,
@@ -106,6 +122,8 @@ class ObjectMultipartUpload:
             expires_at=expires_at,
             created_at=created_at,
             completion_error_code=completion_error_code,
+            etag=etag,
+            version_id=version_id,
         )
 
         object_multipart_upload.additional_properties = d

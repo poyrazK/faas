@@ -564,6 +564,14 @@ func (s *server) deleteBucketObject(w http.ResponseWriter, r *http.Request, acct
 		bucketProblem(w, err)
 		return
 	}
+	if err := objectstorage.ValidateObjectDeleteRequest(r); err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	if err := objectstorage.CheckCurrentObjectDelete(r.Context(), s.store, b); err != nil {
+		bucketProblem(w, err)
+		return
+	}
 	if err := provider.DeleteObject(r.Context(), b.PhysicalName, key); err != nil {
 		bucketProblem(w, err)
 		return

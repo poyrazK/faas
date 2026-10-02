@@ -1080,6 +1080,7 @@ from .object_bucket_versioning_request import ObjectBucketVersioningRequest
 from .object_bucket_versioning_request_status import ObjectBucketVersioningRequestStatus
 from .object_bucket_versioning_state import ObjectBucketVersioningState
 from .object_capacity_reconciliation import ObjectCapacityReconciliation
+from .object_capacity_reconciliation_inventory_scope import ObjectCapacityReconciliationInventoryScope
 from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
@@ -1113,6 +1114,7 @@ from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
+from .object_version_delete_result import ObjectVersionDeleteResult
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -3026,6 +3028,7 @@ __all__ = (
     "ObjectBucketVersioningRequestStatus",
     "ObjectBucketVersioningState",
     "ObjectCapacityReconciliation",
+    "ObjectCapacityReconciliationInventoryScope",
     "ObjectCapacityReconciliationState",
     "ObjectMultipartCompletedPart",
     "ObjectMultipartPart",
@@ -3059,6 +3062,7 @@ __all__ = (
     "ObjectStorageUsageResponseBillingMode",
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
+    "ObjectVersionDeleteResult",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",

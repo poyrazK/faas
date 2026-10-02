@@ -27,6 +27,7 @@ import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageCom
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
+import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
@@ -596,7 +597,7 @@ export class StorageService {
   }
   /**
    * Delete one object by exact key
-   * Requires storage:write or admin. Non-admin keys also require a write or read_write grant on this bucket. With provider-side versioning this may create a delete marker; version management is not part of this preview.
+   * Requires storage:write or admin and a bucket write grant. Current-object deletion is declined when retained versions, native inventories or a versioning transition require marker admission. Use permanent immutable version deletion for retained data or markers.
    * @returns Problem Invalid request, access denied, or provider error
    * @throws ApiError
    */
@@ -631,6 +632,49 @@ export class StorageService {
     });
   }
   /**
+   * Permanently delete an immutable object version or delete marker
+   * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is unsupported. Quota is reclaimed only through verified capacity inventory.
+   * @returns ObjectVersionDeleteResult Deleted or already removed immutable version; Cache-Control no-store
+   * @returns Problem Invalid or unowned version, unsupported provider, access denied or uncertain provider response
+   * @throws ApiError
+   */
+  public static deleteObjectBucketVersion({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the selected version.
+     */
+    bucket: string,
+    /**
+     * Exact key owning the selected version.
+     */
+    key: string,
+    /**
+     * Owned public immutable version UUID; native provider IDs and null are not accepted.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionDeleteResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
    * Read bucket versioning configuration and cutover progress
    * Requires storage manage scope and the bucket write grant. Observes provider truth; discovering native versioning fences writes until a propagated, verified inventory accounts for all versions. Cache-Control no-store.
    * @returns ObjectBucketVersioning Observed configuration and persisted progress
@@ -641,7 +685,13 @@ export class StorageService {
     slug,
     bucket,
   }: {
+    /**
+     * App whose bucket configuration is being read or changed.
+     */
     slug: string,
+    /**
+     * Logical bucket whose versioning is configured.
+     */
     bucket: string,
   }): CancelablePromise<ObjectBucketVersioning | Problem> {
     return __request(OpenAPI, {
@@ -665,7 +715,13 @@ export class StorageService {
     bucket,
     requestBody,
   }: {
+    /**
+     * App whose bucket configuration is being read or changed.
+     */
     slug: string,
+    /**
+     * Logical bucket whose versioning is configured.
+     */
     bucket: string,
     requestBody: ObjectBucketVersioningRequest,
   }): CancelablePromise<Problem | ObjectBucketVersioning> {

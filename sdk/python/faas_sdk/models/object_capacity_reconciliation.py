@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.object_capacity_reconciliation_inventory_scope import (
+    ObjectCapacityReconciliationInventoryScope,
+    check_object_capacity_reconciliation_inventory_scope,
+)
 from ..models.object_capacity_reconciliation_state import (
     ObjectCapacityReconciliationState,
     check_object_capacity_reconciliation_state,
@@ -27,6 +31,11 @@ class ObjectCapacityReconciliation:
     id: UUID
     bucket_id: UUID
     state: ObjectCapacityReconciliationState
+    inventory_scope: ObjectCapacityReconciliationInventoryScope
+    """Verified inventory scope; retained versions require all_versions."""
+    scanned_pages: int
+    scanned_bytes: int
+    scanned_versions: int
     before_bytes: int
     before_keys: int
     after_bytes: int
@@ -46,6 +55,14 @@ class ObjectCapacityReconciliation:
         bucket_id = str(self.bucket_id)
 
         state: str = self.state
+
+        inventory_scope: str = self.inventory_scope
+
+        scanned_pages = self.scanned_pages
+
+        scanned_bytes = self.scanned_bytes
+
+        scanned_versions = self.scanned_versions
 
         before_bytes = self.before_bytes
 
@@ -78,6 +95,10 @@ class ObjectCapacityReconciliation:
                 "id": id,
                 "bucket_id": bucket_id,
                 "state": state,
+                "inventory_scope": inventory_scope,
+                "scanned_pages": scanned_pages,
+                "scanned_bytes": scanned_bytes,
+                "scanned_versions": scanned_versions,
                 "before_bytes": before_bytes,
                 "before_keys": before_keys,
                 "after_bytes": after_bytes,
@@ -104,6 +125,14 @@ class ObjectCapacityReconciliation:
         bucket_id = UUID(d.pop("bucket_id"))
 
         state = check_object_capacity_reconciliation_state(d.pop("state"))
+
+        inventory_scope = check_object_capacity_reconciliation_inventory_scope(d.pop("inventory_scope"))
+
+        scanned_pages = d.pop("scanned_pages")
+
+        scanned_bytes = d.pop("scanned_bytes")
+
+        scanned_versions = d.pop("scanned_versions")
 
         before_bytes = d.pop("before_bytes")
 
@@ -136,6 +165,10 @@ class ObjectCapacityReconciliation:
             id=id,
             bucket_id=bucket_id,
             state=state,
+            inventory_scope=inventory_scope,
+            scanned_pages=scanned_pages,
+            scanned_bytes=scanned_bytes,
+            scanned_versions=scanned_versions,
             before_bytes=before_bytes,
             before_keys=before_keys,
             after_bytes=after_bytes,

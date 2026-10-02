@@ -421,6 +421,10 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
 	if query.Has("versionId") {
+		if r.Method == http.MethodDelete && queryKeysOnly(query, "versionId") {
+			h.deleteVersion(w, r, req, key, query.Get("versionId"))
+			return
+		}
 		if (r.Method != http.MethodGet && r.Method != http.MethodHead) || !queryKeysOnly(query, "versionId") {
 			h.unsupported(w, r, req.requestID)
 			return
@@ -509,6 +513,10 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 			return
 		}
+		if err := objectstorage.ValidateObjectDeleteRequest(r); err != nil {
+			h.providerError(w, r, req, err, key)
+			return
+		}
 		if !h.allowCurrentObjectDelete(w, r, req, key) {
 			return
 		}
@@ -585,69 +593,21 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	if !h.allowCurrentObjectDelete(w, r, req, "") {
+	request, ok := h.readDeleteObjects(w, r, req)
+	if !ok {
 		return
-	}
-	if r.ContentLength <= 0 || r.ContentLength > maxDeleteObjectsBodyBytes {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
-		return
-	}
-	body, err := readVerifiedRequestBody(w, r, req.signature.PayloadHash, maxDeleteObjectsBodyBytes)
-	if err != nil {
-		if h.writeAWSChunkedError(w, r, req.requestID, err) {
-			return
-		}
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
-		return
-	}
-	checksum, _, checksumErr := requestChecksum(r.Header)
-	if checksumErr != nil {
-		h.writeAWSChunkedError(w, r, req.requestID, checksumErr)
-		return
-	}
-	if r.Header.Get("Content-MD5") == "" && checksum == nil && req.streaming == nil {
-		writeS3Error(w, http.StatusBadRequest, "MissingContentMD5", "Missing required Content-MD5 or x-amz-checksum header for this request.", r.URL.Path, req.requestID)
-		return
-	}
-
-	decoder := xml.NewDecoder(bytes.NewReader(body))
-	decoder.Strict = true
-	var request deleteObjectsRequest
-	if err := decoder.Decode(&request); err != nil || request.XMLName.Local != "Delete" || len(request.Objects) == 0 || len(request.Objects) > 1000 {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
-		return
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The XML you provided was not well-formed or did not validate against the published schema.", r.URL.Path, req.requestID)
-		return
-	}
-	for _, object := range request.Objects {
-		if !objectstorage.ValidKey(object.Key) || object.VersionID != "" {
-			writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "DeleteObjects contains an invalid key or unsupported version ID.", r.URL.Path, req.requestID)
-			return
-		}
 	}
 
 	result := deleteObjectsResult{XMLNS: s3XMLNamespace}
 	for _, object := range request.Objects {
-		if !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		err := req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, object.Key)
-		if err == nil || errors.Is(err, objectstorage.ErrNotFound) {
+		deleted, err := h.deleteBulkTarget(r.Context(), req, object)
+		if err == nil {
 			if !request.Quiet {
-				result.Deleted = append(result.Deleted, deletedObjectResult{Key: object.Key})
+				result.Deleted = append(result.Deleted, deleted)
 			}
 			continue
 		}
-		code, message := "ServiceUnavailable", "Gregale could not reach this bucket's storage placement."
-		if errors.Is(err, objectstorage.ErrInvalid) {
-			code, message = "InvalidRequest", "The request is invalid."
-		} else if errors.Is(err, objectstorage.ErrUnsupported) {
-			code, message = "NotImplemented", "This S3 operation is not implemented by the storage provider."
-		}
-		result.Errors = append(result.Errors, deleteObjectError{Key: object.Key, Code: code, Message: message})
+		result.Errors = append(result.Errors, bulkDeleteError(object, err))
 	}
 	writeS3XML(w, http.StatusOK, req.requestID, result)
 }
@@ -912,6 +872,13 @@ func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash
 }
 
 func hasUnsupportedS3Semantics(r *http.Request) bool {
+	if r.Method == http.MethodDelete {
+		for _, name := range []string{"If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "X-Amz-If-Match-Last-Modified-Time", "X-Amz-If-Match-Size"} {
+			if len(r.Header.Values(name)) != 0 {
+				return true
+			}
+		}
+	}
 	if len(r.Header.Values("X-Amz-Copy-Source")) != 0 && !isCopyRequest(r) {
 		return true
 	}
