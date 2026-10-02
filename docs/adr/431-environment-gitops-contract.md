@@ -85,7 +85,9 @@
    activation authority. Complete prepared cohorts now publish durable runtime
    qualification requests with separate bounded execution leases. Dedicated
    scheduler instance admission now binds the current attempt and preserves
-   reservation limits. The VM consumer, native readiness/smoke receipts, release commands and activation
+   reservation limits. Attempt-bound runtime publication and a bounded scheduler
+   VM execution primitive are now available. The durable VM consumer, native
+   qualification/smoke receipts, release commands and activation
    remain to be implemented. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
@@ -1096,7 +1098,7 @@ cannot turn a retry into a second admission. Original parent purges revoke their
 requests and release reservation cleanup; project deletion still detaches apps
 according to the existing project contract.
 
-This capability records `cold_booting` admission only. It does not call vmmd,
+This admission capability records `cold_booting` only. It does not call vmmd,
 run a release command, produce a qualification/snapshot receipt, activate a
 deployment or advance the applied revision. Native execution must still use
 the frozen host contract, revalidate the attempt before each effect, atomically
@@ -1110,6 +1112,62 @@ identity, duplicate reservation refusal, deletion/recovery and original parent
 cleanup. The broad GitOps suite, focused state/scheduler regressions, populated
 environment-intent migration replay, regenerated SQLC comparison and repository
 ADR number gate pass. These checks do not establish native VM qualification.
+
+## Qualification runtime publication and execution window
+
+Schedd can atomically publish a held candidate's `running` identity and the
+non-secret runtime input receipt under its exact qualification attempt. Both
+stores recheck the complete prepared graph, lease, reserved instance, node,
+wake, memory, execution mode, deployment scope and delivered input freshness.
+An identical retry preserves the incarnation timestamp; a replacement netns,
+node, wake or input receipt is refused. PostgreSQL fences raw receipt writers
+as well as the dedicated store method. Receipt failure rolls back readiness.
+Publication preserves the startup CPU reservation used to rebuild the ledger.
+The runtime receipt grants no graph qualification or activation authority.
+
+Intent job claiming also rechecks due time, desired generation and lease
+eligibility on the updated job row. The source lock preserves lock ordering;
+it cannot refresh a joined job's earlier eligibility snapshot. A contender
+whose candidate snapshot predates another worker's commit cannot replace the
+newly issued lease or supersede that worker's run.
+
+The scheduler execution primitive materializes the frozen contract through the
+same boot-payload builder as ordinary deployment priming. Explicit scoped port,
+HTTP readiness path and gRPC health settings take precedence over inherited
+deployment metadata, matching the imaging order. The candidate consumes normal
+app concurrency, node memory/vCPU/CPU and existing account worker/service limits;
+only the ordinary reviewed replacement overlap is allowed. The app lock covers
+admission and preparation, then releases before VM RPCs and evidence checks so
+existing serving wakes can continue.
+
+One execution window is bounded by the supplied claim deadline; it does not
+extend its own lease. Authority is rechecked around boot, publication and the
+evidence visitor. A periodic check cancels in-flight work when the graph,
+account, app owner or admitted node becomes ineligible. Cleanup uses a detached,
+bounded destroy context. Only confirmed destruction (including already absent)
+permits retirement and capacity release. An uncertain destroy keeps the active
+row, persisted CPU reservation and ledger charge for recovery. Reinvoking the
+same window cannot replay a boot on an existing/retired reservation.
+
+This primitive is not wired to the durable qualification notification consumer.
+Its visitor does not yet implement release commands, native smoke/snapshot
+qualification, isolated worker/queue qualification or graph activation. Those
+adapters must fence evidence publication and recovery against the same attempt;
+successful return from the execution window is insufficient serving proof.
+Host lifecycle and queue consumers still require their complete scoped contract
+before wiring the consumer. The approved-intent executor remains disabled.
+
+Focused memory/PostgreSQL and fake-VMM checks cover all non-job modes, custom
+port/readiness materialization, receipt atomicity and raw SQL fences, source
+supersession, cancellation, lease deadline, visitor/boot failures, node/account
+ineligibility, changed memory, physical retirement and admission ledger reseeding
+after an uncertain destroy. These are local contract/ordering checks; native
+`test-metal` and `leakcheck` remain mandatory and unverified.
+
+The combined environment-sync, PostgreSQL integration, scheduler, state and
+migration checks pass. The competing intent-claim check also passes ten repeated
+runs. The configured native acceptance host remains unavailable because its
+Google Cloud consumer project is suspended; this is not native VM evidence.
 
 ## Review and control workflow
 

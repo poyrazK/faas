@@ -5958,96 +5958,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
-	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, acct.ID, appID, dep.Scope)
+	prepared, err := e.prepareDeploymentPrimeBoot(ctx, app, acct, limits, dep, placement, ins)
 	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_runtime_inputs_invalid")
-		return fmt.Errorf("sched: prime: load runtime inputs: %w", err)
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, prepared.RejectionReason)
+		return err
 	}
-	sealedEnv, err := e.loadDeploymentSealedEnvDelivery(ctx, acct.ID, appID, dep)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
-		return fmt.Errorf("sched: prime: load sealed env: %w", err)
-	}
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sidecars_invalid")
-		return fmt.Errorf("sched: prime: load sidecars: %w", err)
-	}
-	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_secret_version_changed")
-		return fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
-	}
-	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, sealedEnv.AllSecrets)
-	runtimeInputs.SecretRefs = sealedEnv.References
-	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_main_dependencies_invalid")
-		return fmt.Errorf("sched: prime: load primary workload dependencies: %w", err)
-	}
-	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit: int32(limits.EgressMbit),
-		// M-3: deploy prime uses the same plan-resolved readiness budget
-		// as ordinary wakes, so first boot and later wakes agree.
-		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
-		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
-		ExecutionMode:          executionModeForApp(app),
-		Plan:                   acct.Plan, AccountID: acct.ID,
-		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv:     sealedEnv.Entries,
-		Sidecars:      sidecars,
-		MainDependsOn: mainDependencies,
-		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
-		// sealed secrets surface but stores non-sensitive runtime
-		// config. Precedence at the guest layer is "secrets >
-		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
-			runtimeAPIEnv,
-			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
-		// ADR-031: see the Wake builder above. Prime is the
-		// deploy-pipeline first boot — same wire shape, same
-		// per-netns ruleset; a freshly-deployed app starts under
-		// its declared egress policy rather than awaiting a later
-		// wake.
-		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
-		EgressPorts:                 app.EgressPorts,
-		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
-		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
-		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
-		PrivateNetworkID:            privateNetwork.NetworkID,
-		PrivateNetworkAddress:       privateNetwork.Address,
-		// ADR-119: see the Wake builder above. Prime threads
-		// the customer-supplied static IPv4 (BYOIP, Scale-only)
-		// onto the vmmd AppSpec so the per-netns renderer
-		// emits the SNAT-to-customer sibling rule.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// ADR-053: snapshot priming is the first cold boot for a source
-		// deployment, so it must use the same resolved guest port as later
-		// wakes. Without this field vmmd falls back to guest :8080 while the
-		// inferred profile starts Node/Python apps on their framework port.
-		Port:                   deploymentRuntimePort(dep),
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
-		// Issue #470 / PR #470-FU-B: per-deployment runner id
-		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
-		// the framework_ready DGRAM receipt path can label
-		// vmmd_guest_framework_warmup_seconds by runner. See
-		// buildAppSpec (engine.go:1757) for the same field
-		// wired on the (re)build path. Empty falls back to
-		// "unknown" in the histogram observer.
-		Runtime:     app.Runtime,
-		AppProtocol: app.AppProtocol,
-	}
+	runtimeInputs, spec := prepared.Inputs, prepared.Spec
 	primeDelivery := bootInput{
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
-		secretDeliveries: sealedEnv.Candidates,
+		secretDeliveries: prepared.SecretDeliveries,
 	}
 	deliveryFinalized := false
 	defer func() {

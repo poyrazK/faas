@@ -380,7 +380,9 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 	placement := qualificationPlacement(t, store, 4096)
 	var prior state.EnvironmentWorkloadQualificationRequest
 	for _, phase := range []state.State{state.State("pending"), state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateDraining, state.StateWarm, state.StateSnapshotting, state.StateMigrating, state.StateEvictingAccountDeleting} {
-		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", 250*time.Millisecond)
+		// Leave enough time for the real fenced admission/phase transactions
+		// under load before deliberately waiting for the short lease to expire.
+		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", time.Second)
 		if err != nil || (prior.ID != "" && (current.Attempt != prior.Attempt+1 || current.ReservedInstanceID == prior.ReservedInstanceID)) {
 			t.Fatalf("fresh attempt after retirement: %+v %v", current, err)
 		}

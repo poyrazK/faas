@@ -1009,7 +1009,7 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 
 const claimEnvironmentGitOpsJob = `-- name: ClaimEnvironmentGitOpsJob :one
 WITH candidate AS (
-    SELECT j.source_id FROM environment_gitops_jobs j
+    SELECT j.source_id, s.generation FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
       AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
@@ -1026,6 +1026,9 @@ SET claimed_generation = j.desired_generation,
     lease_until = $2::timestamptz,
     attempt_count = j.attempt_count + 1
 FROM candidate c WHERE j.source_id = c.source_id
+  AND j.desired_generation = c.generation AND j.next_attempt_at <= $3::timestamptz
+  AND (j.lease_until IS NULL OR j.lease_until <= $3::timestamptz
+       OR j.claimed_generation <> j.desired_generation)
 RETURNING j.source_id, j.desired_generation, j.claimed_generation, j.next_attempt_at, j.lease_token, j.lease_until, j.attempt_count
 `
 
@@ -15036,6 +15039,48 @@ func (q *Queries) LockEnvironmentQualificationNode(ctx context.Context, db DBTX,
 	return err
 }
 
+const lockEnvironmentQualificationRuntimeInstance = `-- name: LockEnvironmentQualificationRuntimeInstance :one
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Context, db DBTX, id pgtype.UUID) (Instance, error) {
+	row := db.QueryRow(ctx, lockEnvironmentQualificationRuntimeInstance, id)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+		&i.ExclusiveCaptureBlocked,
+		&i.CapacityRamMb,
+		&i.CapacityCpuMillicores,
+		&i.CapacityVcpu,
+	)
+	return i, err
+}
+
 const lockExclusiveSnapshotInstance = `-- name: LockExclusiveSnapshotInstance :one
 SELECT id::text,exclusive_capture_blocked FROM instances
 WHERE id=$1::text::uuid FOR UPDATE
@@ -19375,6 +19420,62 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingID,
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
+	)
+	return i, err
+}
+
+const publishEnvironmentQualificationRuntime = `-- name: PublishEnvironmentQualificationRuntime :one
+UPDATE instances SET state='running',started_at=clock_timestamp(),netns=$1::text,
+ host_ip=$2::text::inet,guest_uid=$3::integer
+WHERE id=$4::uuid AND state='cold_booting' RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu
+`
+
+type PublishEnvironmentQualificationRuntimeParams struct {
+	Netns    string
+	HostIp   string
+	GuestUid int32
+	ID       pgtype.UUID
+}
+
+func (q *Queries) PublishEnvironmentQualificationRuntime(ctx context.Context, db DBTX, arg PublishEnvironmentQualificationRuntimeParams) (Instance, error) {
+	row := db.QueryRow(ctx, publishEnvironmentQualificationRuntime,
+		arg.Netns,
+		arg.HostIp,
+		arg.GuestUid,
+		arg.ID,
+	)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+		&i.ExclusiveCaptureBlocked,
+		&i.CapacityRamMb,
+		&i.CapacityCpuMillicores,
+		&i.CapacityVcpu,
 	)
 	return i, err
 }

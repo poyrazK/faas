@@ -1,0 +1,254 @@
+package sched
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// WithEnvironmentWorkloadQualificationRuntime owns one bounded native execution
+// window. The visitor must produce release/smoke/snapshot evidence separately;
+// successful boot alone never emits deployment_ready or activates a graph.
+// Always retire this VM before returning, including failed/stale callbacks.
+func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context, claimed state.EnvironmentWorkloadQualificationRequest, visit func(context.Context, state.Instance) error) (result error) {
+	qualifier, ok := e.store.(state.EnvironmentGitOpsQualificationStore)
+	admitter, admissionOK := e.store.(state.EnvironmentGitOpsQualificationInstanceStore)
+	publisher, publishOK := e.store.(state.EnvironmentGitOpsQualificationRuntimeStore)
+	if !ok || !admissionOK || !publishOK || visit == nil || claimed.LeaseUntil == nil || claimed.ReservedInstanceID == "" {
+		return state.ErrInvalidArgument
+	}
+	release := e.lockApp(claimed.AppID)
+	locked := true
+	defer func() {
+		if locked {
+			release()
+		}
+	}()
+	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+		return err
+	}
+	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
+	defer deadlineCancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	done := make(chan struct{})
+	defer close(done)
+	go e.watchQualificationOwner(ctx, qualifier, claimed, cancel, done)
+
+	app, acct, limits, err := e.resolveAppForDeploy(ctx, claimed.AppID)
+	if err != nil {
+		return err
+	}
+	if !acct.MayDeploy() {
+		return acct.DeployBlockedProblem()
+	}
+	dep, err := e.store.DeploymentByID(ctx, claimed.DeploymentID)
+	if err != nil {
+		return err
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil || !dep.EnvironmentWorkloadHeld() {
+		return errors.Join(state.ErrConflict, err)
+	}
+	if err := securityQuarantineErr(dep); err != nil {
+		return err
+	}
+	cpu := effectiveAppCPUMillicores(app)
+	startupCPU := cpu
+	if !dep.DisableStartupCPUBoost {
+		startupCPU = startupCPUBoostQuota(acct.Plan, cpu)
+	}
+	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: app.NodeID})
+	if err != nil {
+		return err
+	}
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
+	if err != nil {
+		return err
+	}
+	if !admission.Created {
+		// An uncertain earlier boot must be recovered/retired explicitly. A
+		// second invocation cannot replay a VM RPC on the same reservation.
+		return state.ErrConflict
+	}
+	ins, vmAttempted := admission.Instance, false
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
+		defer cleanupCancel()
+		if vmAttempted {
+			if err := e.timedDestroy(cleanupCtx, ins.NodeID, ins.ID, DestroyTimeout); err != nil && status.Code(err) != codes.NotFound && !errors.Is(err, state.ErrNotFound) {
+				// Preserve the active row and ledger reservation until physical
+				// retirement is confirmed; expiry cannot start a parallel VM.
+				result = errors.Join(result, fmt.Errorf("qualification VM retirement: %w", err))
+				return
+			}
+		}
+		if !locked {
+			cleanupRelease := e.lockApp(claimed.AppID)
+			defer cleanupRelease()
+		}
+		if err := e.retireQualificationInstance(cleanupCtx, ins); err != nil {
+			result = errors.Join(result, err)
+			return
+		}
+		e.ledger.Release(ins.ID)
+	}()
+	if startupCPU > cpu {
+		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, claimed.LeaseUntil); err != nil {
+			return fmt.Errorf("qualification: persist startup CPU reservation: %w", err)
+		}
+	}
+	e.emitInstanceChanged(ctx, ins.ID, app.ID, state.StateColdBooting, ins.WakeID)
+	// Count this candidate in the app's total, with only the single reviewed
+	// replacement overlap when the original scope still has a live revision.
+	serving, servingErr := e.store.LiveDeploymentForScope(ctx, app.ID, dep.Scope)
+	if servingErr != nil && !errors.Is(servingErr, state.ErrNotFound) {
+		return servingErr
+	}
+	if err := e.ledger.Admit(Request{Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope,
+		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: cpu,
+		CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: *claimed.LeaseUntil, MaxConcurrency: app.MaxConcurrency,
+		AllowConcurrencyOverlap: servingErr == nil && serving.ID != dep.ID, NodeID: placement.NodeID,
+		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget, CPUBudgetMillicores: placement.CPUBudgetMillicores}); err != nil {
+		return err
+	}
+	prepared, err := e.prepareDeploymentPrimeBoot(ctx, app, acct, limits, dep, placement, ins)
+	if err != nil {
+		return err
+	}
+	delivery := bootInput{insID: ins.ID, appID: app.ID, accountID: acct.ID, wakeID: ins.WakeID, secretDeliveries: prepared.SecretDeliveries}
+	deliveryFinalized := false
+	defer func() {
+		if !deliveryFinalized {
+			e.recordAppSecretDelivery(ctx, delivery, state.SecretDeliveryFailed, "runtime_start_failed")
+		}
+	}()
+	if err := e.verifyPrimeLayer(ctx, app.ID, prepared.Spec.LayerKey); err != nil {
+		return err
+	}
+	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+		return err
+	}
+	// VM effects and evidence checks may consume the full lease window.
+	// Existing serving wakes retain access to the app lock during that work;
+	// the attempt and reserved instance are fenced at every publication.
+	release()
+	locked = false
+	bootCtx, bootCancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
+	defer bootCancel()
+	vmAttempted = true
+	out, err := e.vmm.CreateColdBoot(bootCtx, ins.NodeID, ins.ID, prepared.Spec)
+	if err != nil {
+		return errors.Join(err, context.Cause(ctx))
+	}
+	if out == nil {
+		return state.ErrConflict
+	}
+	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+		return err
+	}
+	ins, err = publisher.PublishEnvironmentWorkloadQualificationRuntime(ctx, claimed, state.EnvironmentWorkloadQualificationRuntime{
+		NodeID: ins.NodeID, WakeID: ins.WakeID, Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Inputs: prepared.Inputs})
+	if err != nil {
+		// Keep the admitted identity for cleanup even when publication failed.
+		ins = admission.Instance
+		return err
+	}
+	e.recordCommittedInstanceTransition(ctx, ins, state.StateColdBooting, state.StateRunning, app.ID, "state_transition", "environment_qualification")
+	e.recordAppSecretDelivery(ctx, delivery, state.SecretDeliveryDelivered, "")
+	deliveryFinalized = true
+	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+		return err
+	}
+	if err := visit(ctx, ins); err != nil {
+		return err
+	}
+	return e.validateQualificationOwner(ctx, qualifier, claimed)
+}
+
+// This helper runs only after confirmed destruction (or before any VM RPC).
+// Refuse an unexpected state rather than overwrite another lifecycle owner.
+func (e *Engine) retireQualificationInstance(ctx context.Context, admitted state.Instance) error {
+	ins, err := e.store.InstanceByID(ctx, admitted.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil // An original parent purge already removed the reservation.
+	}
+	if err != nil {
+		return err
+	}
+	from := state.State(ins.State)
+	if from == state.StateStopped || from == state.StateFailed || from == state.StateParked {
+		return nil
+	}
+	if !state.CanTransition(from, state.StateStopped) {
+		return state.ErrConflict
+	}
+	if err := e.store.UpdateInstanceStateToTerminal(ctx, ins.ID, string(state.StateStopped), time.Now().UTC()); err != nil {
+		return err
+	}
+	e.releaseHostPortLeases(ctx, ins.NodeID, ins.ID)
+	e.recordCommittedInstanceTransition(ctx, ins, from, state.StateStopped, ins.AppID, "state_transition", "environment_qualification_retired")
+	return nil
+}
+
+func (e *Engine) validateQualificationOwner(ctx context.Context, qualifier state.EnvironmentGitOpsQualificationStore, claimed state.EnvironmentWorkloadQualificationRequest) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, context.Cause(ctx))
+	}
+	app, err := e.store.AppByID(ctx, claimed.AppID)
+	if err != nil {
+		return err
+	}
+	if !e.ownsApp(app) {
+		return state.ErrConflict
+	}
+	if err := qualifier.ValidateEnvironmentWorkloadQualification(ctx, claimed); err != nil {
+		return err
+	}
+	ins, err := e.store.InstanceByID(ctx, claimed.ReservedInstanceID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil // Initial validation precedes admission.
+	}
+	if err != nil {
+		return err
+	}
+	if ins.AppID != claimed.AppID || ins.DeploymentID != claimed.DeploymentID || ins.RAMMB != app.RAMMB ||
+		(state.State(ins.State) != state.StateColdBooting && state.State(ins.State) != state.StateRunning) {
+		return state.ErrConflict
+	}
+	node, err := e.store.ComputeNodeByID(ctx, ins.NodeID)
+	if err != nil {
+		return err
+	}
+	if !node.Active || node.Lifecycle != state.NodeLifecycleActive {
+		return state.ErrConflict
+	}
+	return nil
+}
+
+func (e *Engine) watchQualificationOwner(ctx context.Context, qualifier state.EnvironmentGitOpsQualificationStore, claimed state.EnvironmentWorkloadQualificationRequest, cancel context.CancelCauseFunc, done <-chan struct{}) {
+	ticker := time.NewTicker(api.EnvironmentGitOpsQualificationRuntimeCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
+				cancel(err)
+				return
+			}
+		}
+	}
+}

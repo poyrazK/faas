@@ -64,6 +64,9 @@ const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
 const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
 const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 
+// Check revocation while a qualification VM effect or evidence check is running.
+const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
+
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
 const (

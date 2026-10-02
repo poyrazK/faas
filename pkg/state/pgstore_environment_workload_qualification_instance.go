@@ -24,6 +24,10 @@ func qualificationInstanceFromSQL(row sqlc.Instance) Instance {
 		at := row.FrameworkReadyAt.Time
 		ins.FrameworkReadyAt = &at
 	}
+	if row.StartupCpuBoostUntil.Valid {
+		at := row.StartupCpuBoostUntil.Time
+		ins.StartupCPUBoostUntil = &at
+	}
 	return ins
 }
 

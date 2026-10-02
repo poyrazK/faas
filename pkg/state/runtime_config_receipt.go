@@ -198,6 +198,9 @@ func (m *MemStore) RecordInstanceRuntimeConfigReceipt(_ context.Context, instanc
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deployments[m.instances[instanceID].DeploymentID].EnvironmentWorkloadHeld() {
+		return ErrConflict
+	}
 	return m.recordInstanceRuntimeConfigReceiptLocked(instanceID, wakeID, inputs)
 }
 

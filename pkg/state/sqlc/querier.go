@@ -1007,6 +1007,7 @@ type Querier interface {
 	LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg LockEnvironmentGitSourcePollParams) (pgtype.UUID, error)
 	LockEnvironmentQualificationAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
 	LockEnvironmentQualificationNode(ctx context.Context, db DBTX, arg LockEnvironmentQualificationNodeParams) error
+	LockEnvironmentQualificationRuntimeInstance(ctx context.Context, db DBTX, id pgtype.UUID) (Instance, error)
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
 	LockExclusiveWorkAccount(ctx context.Context, db DBTX, accountID string) (LockExclusiveWorkAccountRow, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
@@ -1234,6 +1235,7 @@ type Querier interface {
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
 	PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error)
+	PublishEnvironmentQualificationRuntime(ctx context.Context, db DBTX, arg PublishEnvironmentQualificationRuntimeParams) (Instance, error)
 	PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg PublishInstanceRuntimeConfigParams) (Instance, error)
 	PutEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsOverrideParams) (int64, error)
 	PutEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsPoliciesParams) error

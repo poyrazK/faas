@@ -5306,7 +5306,7 @@ SET desired_generation = excluded.desired_generation,
 
 -- name: ClaimEnvironmentGitOpsJob :one
 WITH candidate AS (
-    SELECT j.source_id FROM environment_gitops_jobs j
+    SELECT j.source_id, s.generation FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
       AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
@@ -5323,6 +5323,9 @@ SET claimed_generation = j.desired_generation,
     lease_until = sqlc.arg(lease_until)::timestamptz,
     attempt_count = j.attempt_count + 1
 FROM candidate c WHERE j.source_id = c.source_id
+  AND j.desired_generation = c.generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz
+  AND (j.lease_until IS NULL OR j.lease_until <= sqlc.arg(now_at)::timestamptz
+       OR j.claimed_generation <> j.desired_generation)
 RETURNING j.*;
 
 -- name: GetEnvironmentGitSourceByID :one
@@ -6819,6 +6822,14 @@ CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(n
 
 -- name: EnvironmentQualificationInstance :one
 SELECT * FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockEnvironmentQualificationRuntimeInstance :one
+SELECT * FROM instances WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: PublishEnvironmentQualificationRuntime :one
+UPDATE instances SET state='running',started_at=clock_timestamp(),netns=sqlc.arg(netns)::text,
+ host_ip=sqlc.arg(host_ip)::text::inet,guest_uid=sqlc.arg(guest_uid)::integer
+WHERE id=sqlc.arg(id)::uuid AND state='cold_booting' RETURNING *;
 
 -- name: LockEnvironmentQualificationAccount :one
 SELECT c.status='active' AND c.abuse_hold_at IS NULL AS may_deploy FROM accounts c JOIN apps a ON a.account_id=c.id
