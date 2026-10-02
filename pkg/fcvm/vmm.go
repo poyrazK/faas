@@ -84,9 +84,10 @@ type JailerVMM struct {
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
 
-	mu      sync.Mutex
-	proc    map[string]*exec.Cmd // instance -> running jailer process
-	clients map[string]*http.Client
+	mu              sync.Mutex
+	resourceJournal *ResourceJournal
+	proc            map[string]*exec.Cmd // instance -> running jailer process
+	clients         map[string]*http.Client
 	// cpuBoostTails owns the post-readiness quota-restoration timers. They live
 	// in vmmd rather than schedd so the wake RPC can return as soon as the app
 	// is ready; Kill cancels the timer before a cgroup can be reused.
@@ -752,6 +753,9 @@ func (v *JailerVMM) socketPath(instance string) string {
 // deferred Kill sweeps the tmp files alongside the chroot (which is
 // already on tmpfs, per spec §11).
 func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	t0 := time.Now()
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("vmm: cold boot: %w", err)
@@ -839,6 +843,9 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", 0, "", nil, nil, nil, "", false, nil, nil)
 }
 
@@ -1552,6 +1559,9 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
@@ -4530,6 +4540,9 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
 func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...string) error {
+	if err := v.prepareJournalLaunch(l); err != nil {
+		return err
+	}
 	execFile, err := exec.LookPath(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
@@ -4589,6 +4602,16 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		}
 		return fmt.Errorf("vmm: start jailer: %w", err)
 	}
+	// Capture before starting Wait: even an immediately exiting child retains
+	// its PID until reaped, so a reused PID cannot enter this checkpoint.
+	v.mu.Lock()
+	journal := v.resourceJournal
+	v.mu.Unlock()
+	var process resourceProcessIdentity
+	var checkpointErr error
+	if journal != nil {
+		process, checkpointErr = readResourceProcessIdentity("/proc", cmd.Process.Pid)
+	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
 	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
@@ -4631,6 +4654,14 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			sink(l.Instance, exitCode)
 		}
 	}()
+	if checkpointErr != nil {
+		return fmt.Errorf("vmm: process checkpoint identity: %w", checkpointErr)
+	}
+	if journal != nil {
+		if err := journal.recordProcess(l, process); err != nil {
+			return fmt.Errorf("vmm: commit process checkpoint: %w", err)
+		}
+	}
 	return nil
 }
 

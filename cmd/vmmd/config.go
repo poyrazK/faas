@@ -27,6 +27,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// ResourceJournalDir persists lease intent and process incarnations before
+	// resource creation (ADR-399). Keep it outside jail tmpfs and /run.
+	ResourceJournalDir string `toml:"resource_journal_dir"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-397). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -458,6 +461,7 @@ func LoadConfig(path string) (*Config, error) {
 		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
 		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
+		ResourceJournalDir: "/var/lib/faas/vmmd-resources",
 		FailureReportDir:   "/var/lib/faas/vmmd-failures",
 		SocketPath:         "/run/faas/vmmd.sock",
 		RestoreConcurrency: 3,

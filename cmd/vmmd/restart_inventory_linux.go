@@ -10,13 +10,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
-func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot string, log *slog.Logger) error {
+func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot, journalDir string, log *slog.Logger) (*fcvm.ResourceJournal, error) {
+	journal, err := fcvm.OpenResourceJournal(journalDir)
+	if err != nil {
+		return nil, err
+	}
+	if err = mgr.WithResourceJournal(journal); err != nil {
+		_ = journal.Close()
+		return nil, err
+	}
 	rep, err := mgr.RecoverRestartQuarantine(ctx, jailRoot)
 	if err != nil {
-		return err
+		_ = journal.Close()
+		return nil, err
 	}
 	log.Info("vmmd: restart resource quarantine", "slots", rep.Slots,
 		"instances", rep.Instances, "processes", rep.Processes,
+		"journal_records", rep.JournalRecords, "journal_process_matches", rep.JournalProcessMatches,
 		"ownership_reconciliation_required", rep.Instances > 0 || rep.Slots > 0)
-	return nil
+	return journal, nil
 }

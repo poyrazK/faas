@@ -940,8 +940,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
 	// ADR-398: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
-	if err := recoverRestartResources(ctx, mgr, jailer.JailRoot(), log); err != nil {
+	resourceJournal, err := recoverRestartResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+	if err != nil {
 		return err
+	}
+	if resourceJournal != nil {
+		defer func() { _ = resourceJournal.Close() }()
 	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.

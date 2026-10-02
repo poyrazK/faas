@@ -777,6 +777,7 @@ type Manager struct {
 	// entries, cleanup identities or permission to replay a failure report.
 	restartQuarantine    map[string]struct{}
 	restartInventoryDone bool
+	resourceJournal      *ResourceJournal
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -3656,6 +3657,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
 	}
+	if err = m.journalLease(lease); err != nil {
+		return nil, err
+	}
 
 	// Plumb the netns (tap0, 10.0.0.2/30, NAT, jailer cgroup).
 	// Same shape as Wake's netns setup — every VM gets one
@@ -3924,6 +3928,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	if !validCharacterizationExecutionMode(req.ExecutionMode) {
 		err = fmt.Errorf("wake %s: invalid execution_mode %q (ADR-137)", req.Instance, req.ExecutionMode)
+		return nil, err
+	}
+	if err = m.journalLease(lease); err != nil {
 		return nil, err
 	}
 	// Prepare runtime files before any VMM boot path. The concrete JailerVMM

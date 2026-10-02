@@ -49,8 +49,17 @@ surviving identities but does not reattach guests or resume recovered reports.
 Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-restart-quarantine/README.md)
 passed 13 selected top-level metal tests and three leak checks, including real
 guests with UUID, builder-prefixed and compact IDs. Admission fencing and local
-teardown do not yet provide durable all-node drain proof. Customer cutover
-activation remains disabled, and supported native lifecycle acceptance remains
+teardown do not yet provide durable all-node drain proof. Linux vmmd now commits
+lease intent before resource creation and records each guest's kernel boot ID,
+PID and process start time in private persistent storage
+([ADR-399](adr/399-managed-postgres-resource-intent-journal.md)). Restart inventory
+quarantines every journal record, including intent with no observable resources.
+Process provenance does not reconstruct lifecycle ownership; mount/artifact
+journaling, verified restart cleanup and serving recovery remain pending.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
+passed 21 selected top-level tests and three leak checks, including real guest
+checkpoint/reopen and confirmed journal retirement. Customer cutover activation
+remains disabled, and supported native lifecycle acceptance remains
 pending.
 
 ## M0 — repo scaffold. ✅

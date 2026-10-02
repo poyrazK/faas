@@ -78,6 +78,11 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		m.log.Warn("cleanup pending; retaining instance lease", "instance", lease.Instance, "err", err)
 		return err
 	}
+	if m.resourceJournal != nil {
+		if err := m.resourceJournal.forget(lease); err != nil {
+			return fmt.Errorf("cleanup %s: retire resource journal before release: %w", lease.Instance, err)
+		}
+	}
 	m.mu.Lock()
 	if err := m.alloc.Release(lease.Instance); err != nil {
 		m.mu.Unlock()

@@ -29,7 +29,8 @@ type restartInventory struct {
 // RestartQuarantineReport describes resources excluded from new allocation.
 // These are observations, not recovered live Instances or teardown receipts.
 type RestartQuarantineReport struct {
-	Slots, Instances, Processes int
+	Slots, Instances, Processes           int
+	JournalRecords, JournalProcessMatches int
 }
 
 // RecoverRestartQuarantine inventories surviving Firecracker/jailer processes,
@@ -53,10 +54,14 @@ func (m *Manager) recoverRestartQuarantine(ctx context.Context, opts restartInve
 	if err != nil {
 		return RestartQuarantineReport{}, fmt.Errorf("vmmd: restart inventory: %w", err)
 	}
+	records, matches, err := inv.reconcileJournal(ctx, m.resourceJournal, opts.procRoot)
+	if err != nil {
+		return RestartQuarantineReport{}, err
+	}
 	m.alloc.quarantine(inv.slots)
 	m.restartQuarantine = inv.instances
 	m.restartInventoryDone = true
-	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes}, nil
+	return RestartQuarantineReport{Slots: len(inv.slots), Instances: len(inv.instances), Processes: inv.processes, JournalRecords: records, JournalProcessMatches: matches}, nil
 }
 
 func scanRestartInventory(ctx context.Context, opts restartInventoryOptions) (restartInventory, error) {

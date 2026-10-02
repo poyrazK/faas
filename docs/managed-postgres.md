@@ -513,6 +513,28 @@ The internal nested-node [diagnostics](ops/evidence/20261002-managed-postgres-re
 cover real guests with UUID, builder-prefixed and compact IDs; supported native
 lifecycle acceptance remains pending.
 
+Linux vmmd also commits lease intent before creating new resources and records
+kernel boot ID, PID and process start ticks before guest boot returns
+([ADR-399](adr/399-managed-postgres-resource-intent-journal.md)). Keep
+`/var/lib/faas/vmmd-resources` on persistent storage alongside the failure outbox.
+The generated service provisions it with mode 0700. A `resource_journal_dir`
+TOML override requires a private, writable persistent directory and an existing
+parent hierarchy; provide any necessary service filesystem permissions.
+Unknown versions, corrupt records, another journal writer or persistence errors
+fail closed. Cleanup retires a record only after physical cleanup is confirmed,
+and commits removal before releasing the slot.
+
+Startup logs include `journal_records` and `journal_process_matches`. All
+journal records hold their slot and instance ID, even without a visible guest
+or when process provenance differs. A matching process still does not authorize
+adoption, recovered report application or teardown by a replacement Manager.
+Mount/artifact/namespace incarnation journaling and verified restart cleanup
+remain pending; do not delete records to reclaim capacity or treat them as
+durable drain receipts.
+The nested-node [journal diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
+passed the real guest checkpoint/reopen regression and three leak checks.
+Native lifecycle and filesystem power-loss qualification remain pending.
+
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

@@ -10,6 +10,6 @@ import (
 )
 
 // Portable builds have no Linux guest resources. Linux wiring is mandatory.
-func recoverRestartResources(context.Context, *fcvm.Manager, string, *slog.Logger) error {
-	return nil
+func recoverRestartResources(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error) {
+	return nil, nil
 }

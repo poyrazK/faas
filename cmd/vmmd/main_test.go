@@ -111,7 +111,7 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 	// injection, listen on a temp unix socket, then cancel.
 	dir := shortDir(t)
 	cfgPath := filepath.Join(dir, "vmmd.toml")
-	if err := os.WriteFile(cfgPath, []byte("socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("resource_journal_dir = \""+filepath.Join(dir, "resources")+"\"\n"+"socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +154,7 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 	// If the listener cannot be created, run must return that error.
 	dir := shortDir(t)
 	cfgPath := filepath.Join(dir, "vmmd.toml")
-	if err := os.WriteFile(cfgPath, []byte("socket_path = \""+filepath.Join(dir, "x.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("resource_journal_dir = \""+filepath.Join(dir, "resources")+"\"\n"+"socket_path = \""+filepath.Join(dir, "x.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,7 +181,7 @@ func TestRun_ListenFailurePropagates(t *testing.T) {
 func TestRun_PrepareJailHelperFailurePropagates(t *testing.T) {
 	dir := shortDir(t)
 	cfgPath := filepath.Join(dir, "vmmd.toml")
-	if err := os.WriteFile(cfgPath, []byte("socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("resource_journal_dir = \""+filepath.Join(dir, "resources")+"\"\n"+"socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 	// then cancelling.
 	dir := shortDir(t)
 	cfgPath := filepath.Join(dir, "vmmd.toml")
-	if err := os.WriteFile(cfgPath, []byte("socket_path = \""+filepath.Join(dir, "y.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("resource_journal_dir = \""+filepath.Join(dir, "resources")+"\"\n"+"socket_path = \""+filepath.Join(dir, "y.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
