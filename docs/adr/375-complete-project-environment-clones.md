@@ -3037,3 +3037,34 @@ and receipt rows. The tests use original selected declarations and helpers
 through a temporary test-only overlay with all production code included. This
 is scoped evidence, not the complete state/API or repository suites. Independent
 SQLC regeneration matches, and whitespace checks pass.
+
+### Snapshot worker capture and compensation recovery (2026-10-02)
+
+The internal capture worker authenticates its immutable plans and receipts, records
+provider observations, and leaves the operation in capturing. It cannot release
+a writer barrier, restore targets or publish a stage based on snapshot metadata.
+
+Compensating coordinator dispatch now recovers owned snapshot cleanup. It
+persists any discovered ID before deletion so a lost deletion/checkpoint reply
+can recover by that exact ID. Pending asynchronous deletions retain their hold.
+Never-dispatched intents can be cleaned without provider IO; dispatched unknown
+outcomes cannot be marked cleaned merely because discovery finds no copy.
+Other resource compensation still gates the final compensated state.
+
+The source writer barrier, common database/object/config checkpoint, snapshot
+completion and restoration proofs, successful-copy snapshot disposal, complete
+resource strategies, account/project deletion integration and ambiguous dispatch
+resolution remain required. Clone database targets still use their existing PITR
+restore path; these retained receipts are not yet used as target restore inputs.
+Full public admission and native/provider acceptance remain closed.
+
+
+Verification: eleven selected API contracts passed (90.274 s), including
+creation/reservation/receipt/cleanup acknowledgement loss, takeover,
+finite-history changes, pending deletion, unknown dispatch, and existing
+capture/coordinator regressions. The final run uses original selected test
+declarations and helpers through a temporary test-only overlay with all
+production code included. Full test-file builds were attempted; the API linker
+exhausted the shared disk. This is scoped evidence, not the complete API or
+repository suites. No live provider resources were mutated. Native KVM and live
+provider acceptance remain outstanding.
