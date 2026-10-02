@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -62,6 +63,7 @@ import (
 // does not import state.Store directly to keep the seam pointable
 // in tests and to make the dependency one-way.
 type Store interface {
+	AppByID(context.Context, string) (state.App, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
 	FailSourceDeployment(ctx context.Context, id, message string) error
@@ -159,7 +161,7 @@ type EnqueueParams struct {
 	// intermediate stage checkpoints are unavailable.
 	RetryOf       string
 	RetryFrom     state.StageName
-	SourceBuildID string // original build's immutable source object, for retries
+	SourceBuildID string // Deprecated: retries resolve the original build from state.
 	AppID         string
 	Kind          state.DeploymentKind
 	SourcePath    string
@@ -253,12 +255,11 @@ type EnqueueResult struct {
 	BuildID      string
 }
 
-// sourceBackendFromEnv enables the split-box source handoff only when the
-// deployment explicitly selects a remote backend. Single-box/local installs
-// keep the historical shared filesystem contract and do not upload a second
-// copy of the source archive.
+// sourceBackendFromEnv enables source handoff for a remote legacy backend or
+// explicit regional routes. Local installations without a routing file keep
+// the historical shared filesystem contract.
 func sourceBackendFromEnv(ctx context.Context) (storage.StorageBackend, error) {
-	if !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+	if !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) && os.Getenv("FAAS_STORAGE_REGIONS_FILE") == "" {
 		return nil, nil
 	}
 	be, err := storage.BackendFromEnvContext(ctx)
@@ -269,6 +270,10 @@ func sourceBackendFromEnv(ctx context.Context) (storage.StorageBackend, error) {
 }
 
 func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path string) error {
+	return publishSourceAtKey(ctx, be, "sources/"+buildID+".tar.gz", path)
+}
+
+func publishSourceAtKey(ctx context.Context, be storage.StorageBackend, key, path string) error {
 	if be == nil {
 		return nil
 	}
@@ -280,7 +285,7 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 		return fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := be.Put(ctx, "sources/"+buildID+".tar.gz", f); err != nil {
+	if err := be.Put(ctx, key, f); err != nil {
 		return fmt.Errorf("publish source archive: %w", err)
 	}
 	return nil
@@ -358,6 +363,16 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 }
 
 func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, p EnqueueParams, sourceStorage storage.StorageBackend) (EnqueueResult, error) {
+	app, err := store.AppByID(ctx, p.AppID)
+	if err != nil {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: app placement: %w", err)
+	}
+	if app.ComputeRegion != "" && sourceStorage == nil {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: regional source storage: %w", storage.ErrRegionNotConfigured)
+	}
+	if err := storage.ValidateArtifactRoute(sourceStorage, region.ArtifactKey(app.ComputeRegion, "sources/"+uuid.Nil.String()+".tar.gz")); err != nil {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source route: %w", err)
+	}
 	// Publish before creating any durable work. Polling workers can claim a
 	// queued row without receiving its notification.
 	id, err := uuid.NewV7()
@@ -369,11 +384,49 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	if p.DeliveryID != "" {
 		deploymentID, buildID = githubDeliveryIDs(p.DeliveryID, p.AppID)
 	}
+	sourceKey := ""
+	if sourceStorage != nil {
+		sourceKey = region.ArtifactKey(app.ComputeRegion, "sources/"+buildID+".tar.gz")
+	}
 	var sourceErr error
 	sourceSHA256 := ""
 	var inferredProfile json.RawMessage
 	if p.RetryOf != "" {
-		sourceErr = publishRetrySource(ctx, sourceStorage, buildID, p)
+		parents, ok := store.(interface {
+			DeploymentByID(context.Context, string) (state.Deployment, error)
+		})
+		if !ok {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: store does not support retry source lookup")
+		}
+		parent, lookupErr := parents.DeploymentByID(ctx, p.RetryOf)
+		if lookupErr != nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: retry source lookup: %w", lookupErr)
+		}
+		if parent.AppID != p.AppID {
+			return EnqueueResult{}, state.ErrInvalidArgument
+		}
+		// Durable parent inputs determine the source; caller fields cannot
+		// redirect a retry to another app's archive or change its size.
+		p.SourcePath, p.SourceBytes, p.Kind = parent.SourcePath, parent.SourceBytes, parent.Kind
+		originalKey := parent.SourceStorageKey
+		if originalKey == "" && sourceStorage != nil {
+			builds, ok := store.(interface {
+				BuildByDeployment(context.Context, string) (state.Build, error)
+			})
+			if !ok {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: store does not support retained build lookup")
+			}
+			original, lookupErr := builds.BuildByDeployment(ctx, parent.ID)
+			if lookupErr == nil {
+				originalKey = state.BuildSourceKey(parent, original.ID)
+			} else if !errors.Is(lookupErr, state.ErrNotFound) {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: retained build lookup: %w", lookupErr)
+			}
+		}
+		if parent.SourceStorageKey != "" && sourceStorage == nil {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: retained source storage: %w", storage.ErrRegionNotConfigured)
+		}
+		sourceErr = publishRetrySource(ctx, sourceStorage, originalKey, sourceKey, p)
 	} else {
 		sourceSHA256, err = hashSourceFile(p.SourcePath)
 		if err != nil {
@@ -430,7 +483,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				inferredProfile = nil
 			}
 		}
-		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
+		sourceErr = publishSourceAtKey(ctx, sourceStorage, sourceKey, p.SourcePath)
 	}
 	if err := sourceErr; err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
@@ -464,6 +517,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		SourceBytes:          p.SourceBytes,
 		SourceRoot:           p.SourceRoot,
 		SourceSHA256:         sourceSHA256,
+		SourceStorageKey:     sourceKey,
 		SourceURL:            p.SourceURL,
 		CommitSHA:            p.CommitSHA,
 		GitHubSourceRef:      p.GitHubSourceRef,
@@ -711,6 +765,12 @@ func githubDeliveryIDs(deliveryID, appID string) (deploymentID, buildID string) 
 func createDeployment(ctx context.Context, store Store, p EnqueueParams, input state.Deployment) (state.Deployment, error) {
 	if p.RetryOf == "" {
 		return store.CreateDeployment(ctx, input)
+	}
+	if retries, ok := store.(state.SourceRetryStore); ok {
+		return retries.RetryDeploymentFromStageWithSource(ctx, p.RetryOf, p.RetryFrom, input.SourceStorageKey)
+	}
+	if input.SourceStorageKey != "" {
+		return state.Deployment{}, fmt.Errorf("apidsource: store does not support immutable retry source binding")
 	}
 	retries, ok := store.(interface {
 		RetryDeploymentFromStage(context.Context, string, state.StageName) (state.Deployment, error)

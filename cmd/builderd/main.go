@@ -156,7 +156,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	var sourceStorage storage.StorageBackend
-	if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+	if storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) || os.Getenv("FAAS_STORAGE_REGIONS_FILE") != "" {
 		sourceStorage, err = storage.BackendFromEnvContext(ctx)
 		if err != nil {
 			return fmt.Errorf("builderd: source storage: %w", err)

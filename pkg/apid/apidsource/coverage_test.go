@@ -634,3 +634,7 @@ var _ = silentLogger()
 // helper to confirm api package is still imported (PlanHobby used
 // elsewhere); silence unused if these references rotate out.
 var _ = api.PlanHobby
+
+func (e *errStore) RetryDeploymentFromStageWithSource(ctx context.Context, id string, stage state.StageName, key string) (state.Deployment, error) {
+	return e.Store.(state.SourceRetryStore).RetryDeploymentFromStageWithSource(ctx, id, stage, key)
+}

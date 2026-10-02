@@ -56,6 +56,27 @@ func (r *RegionRouter) validate(key string) error {
 	return nil
 }
 
+// ValidateArtifactRoute checks routing before using a local source spool.
+// A regional reference requires the same explicit route as a storage read.
+func ValidateArtifactRoute(backend StorageBackend, key string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	id, _, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidKey, err)
+	}
+	if id == "" {
+		return nil
+	}
+	if validator, ok := backend.(interface{ ValidateArtifactRoute(string) error }); ok {
+		return validator.ValidateArtifactRoute(key)
+	}
+	return ErrRegionNotConfigured
+}
+
+func (r *RegionRouter) ValidateArtifactRoute(key string) error { return r.validate(key) }
+
 func (r *RegionRouter) Put(ctx context.Context, key string, body io.Reader) error {
 	if err := r.validate(key); err != nil {
 		return err

@@ -3,6 +3,7 @@ package builderd
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -61,7 +62,7 @@ func TestSourceGCSweepOnce_ProtectsLiveBuildsAndRemovesExpiredObjects(t *testing
 func TestSourceGCSweepOnce_UnknownBackendCapabilityFailsClosed(t *testing.T) {
 	store := state.NewMemStore()
 	_, err := SourceGCSweepOnce(context.Background(), noListBackend{}, store, time.Hour, time.Now(), quietLogger())
-	if err == nil || !strings.Contains(err.Error(), "does not support List") {
+	if !errors.Is(err, storage.ErrInvalidKey) {
 		t.Fatalf("error = %v, want missing List capability", err)
 	}
 }

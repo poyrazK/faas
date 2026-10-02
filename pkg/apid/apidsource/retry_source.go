@@ -12,11 +12,11 @@ import (
 
 var ErrRetrySourceUnavailable = errors.New("original source archive is unavailable")
 
-func publishRetrySource(ctx context.Context, be storage.StorageBackend, buildID string, p EnqueueParams) error {
+func publishRetrySource(ctx context.Context, be storage.StorageBackend, originalKey, destinationKey string, p EnqueueParams) error {
 	var source io.ReadCloser
-	if be != nil && p.SourceBuildID != "" {
+	if be != nil && originalKey != "" {
 		var err error
-		source, err = be.Get(ctx, "sources/"+p.SourceBuildID+".tar.gz")
+		source, err = be.Get(ctx, originalKey)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read retained source: %w", err)
 		}
@@ -41,5 +41,5 @@ func publishRetrySource(ctx context.Context, be storage.StorageBackend, buildID 
 	if be == nil {
 		return nil
 	}
-	return be.Put(ctx, "sources/"+buildID+".tar.gz", source)
+	return be.Put(ctx, destinationKey, source)
 }

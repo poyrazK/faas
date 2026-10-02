@@ -6946,6 +6946,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if !validSourceReference(app.ComputeRegion, d.SourceStorageKey) {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
 			return Deployment{}, 0, ErrConflict
@@ -9002,7 +9005,15 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 // from the failed row, seed the new row's stage_state to
 // `RetryStageState(fromStage)` (actual source_download + requested-stage metadata).
 // The fresh id is allocated by the existing newID() helper.
-func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, fromStage StageName) (Deployment, error) {
+func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
+	return m.retryDeploymentFromStage(ctx, failedID, fromStage, nil)
+}
+
+func (m *MemStore) RetryDeploymentFromStageWithSource(ctx context.Context, failedID string, fromStage StageName, key string) (Deployment, error) {
+	return m.retryDeploymentFromStage(ctx, failedID, fromStage, &key)
+}
+
+func (m *MemStore) retryDeploymentFromStage(_ context.Context, failedID string, fromStage StageName, sourceKey *string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !stageNameClosedSet[fromStage] {
@@ -9019,6 +9030,12 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	newDep, err := retryDeploymentInput(src, now)
 	if err != nil {
 		return Deployment{}, err
+	}
+	if sourceKey != nil {
+		newDep.SourceStorageKey = *sourceKey
+	}
+	if !validSourceReference(m.apps[newDep.AppID].ComputeRegion, newDep.SourceStorageKey) {
+		return Deployment{}, ErrInvalidArgument
 	}
 	newDep.ID = newID()
 	// Seed stage_state: the new row starts at fromStage with an

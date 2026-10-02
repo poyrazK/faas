@@ -1,14 +1,14 @@
 -- +goose Up
-ALTER TABLE builds ADD COLUMN builder_node_id uuid REFERENCES compute_nodes(id);
-ALTER TABLE builder_vm_cleanup ADD COLUMN builder_node_id uuid REFERENCES compute_nodes(id);
-CREATE INDEX builds_builder_node_idx ON builds (builder_node_id) WHERE builder_node_id IS NOT NULL;
-CREATE INDEX builder_vm_cleanup_node_idx ON builder_vm_cleanup (builder_node_id, next_attempt_at);
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS builder_node_id uuid REFERENCES compute_nodes(id);
+ALTER TABLE builder_vm_cleanup ADD COLUMN IF NOT EXISTS builder_node_id uuid REFERENCES compute_nodes(id);
+CREATE INDEX IF NOT EXISTS builds_builder_node_idx ON builds (builder_node_id) WHERE builder_node_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS builder_vm_cleanup_node_idx ON builder_vm_cleanup (builder_node_id, next_attempt_at);
 
 -- A claim is placed using the persisted app region and canonical node ID.
 -- Cache affinity is only a preference inside that region. Direct SQL and
 -- older workers cannot start a regional build without an eligible owner.
 -- +goose StatementBegin
-CREATE FUNCTION enforce_build_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_build_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE required_region text; node_region text; node_active boolean;
 BEGIN
     IF TG_OP = 'UPDATE' AND OLD.status <> 'queued' AND
@@ -34,6 +34,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS builds_compute_region_guard ON builds;
 CREATE TRIGGER builds_compute_region_guard BEFORE INSERT OR UPDATE OF status, deployment_id, builder_node_id
     ON builds FOR EACH ROW EXECUTE FUNCTION enforce_build_compute_region();
 
@@ -41,7 +42,7 @@ CREATE TRIGGER builds_compute_region_guard BEFORE INSERT OR UPDATE OF status, de
 -- Capture its owner here, in the same transaction, without requiring the
 -- cancelling control-plane process to know where the builder VM lives.
 -- +goose StatementBegin
-CREATE FUNCTION capture_builder_vm_cleanup_node() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION capture_builder_vm_cleanup_node() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         SELECT builder_node_id INTO NEW.builder_node_id FROM builds WHERE id = NEW.build_id;
@@ -53,6 +54,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS builder_vm_cleanup_node_guard ON builder_vm_cleanup;
 CREATE TRIGGER builder_vm_cleanup_node_guard BEFORE INSERT OR UPDATE OF build_id, builder_node_id
     ON builder_vm_cleanup FOR EACH ROW EXECUTE FUNCTION capture_builder_vm_cleanup_node();
 

@@ -4,9 +4,10 @@ Builder claims enforce an app's persisted region regardless of cache affinity
 settings (ADR-430). Configure regional builderd and vmmd with the same registered
 compute-node identity and drain outstanding builds before upgrading. Cancellation
 and timeout VM cleanup stays with the claim owner, including while that node is
-draining. Source uploads and build exports still use the legacy handoff and need
-the next implementation increment; these placement checks alone do not qualify
-source-build residency.
+draining. Source uploads and retries persist regional object references
+(ADR-431). Builderd fetches the committed reference and verifies size and hash
+before VM dispatch. Build exports still need the next handoff increment before
+the full source-to-runtime flow can be qualified.
 
 Regional compute is internal and default-off. Configure artifact routes before
 enabling regional deployments; an unconfigured region fails publication and reads.
@@ -48,12 +49,19 @@ lifecycle credentials according to each daemon's existing ownership. OCI routes
 use the existing egress policy. Each configured region must use a distinct
 bucket or registry/repository namespace, physically located as intended.
 
-New regional layers, sidecars, job images, snapshots, and signatures use regional
+New regional sources, layers, sidecars, job images, snapshots, and signatures use regional
 keys. Existing deployment/image references keep their original store. The local
 cache retains one shared budget and includes region in every key. A regional
 store failure does not redirect operations to another store. Removing a route
 also blocks cached reads; do not remove it while references in that region remain
 in use or await cleanup.
+
+The routing file enables source storage for apid and builderd even when their
+legacy backend is local. Source uploads complete before a build becomes
+claimable. Retried source builds read the original committed key, including an
+older unprefixed key, and publish a fresh regional copy. Source cleanup needs
+all participating routes and aborts without deleting anything when a region's
+inventory or retained-reference lookup is unavailable.
 
 Configure all publishers and consumers, restart them, verify storage access with
 their respective credentials, then run native regional acceptance and resource

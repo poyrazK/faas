@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -635,6 +636,26 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, placementErr
 		}
 	}
+	if dep.SourceStorageKey != "" {
+		sourceRegion, _, refErr := region.SplitArtifactKey(dep.SourceStorageKey)
+		if refErr != nil || sourceRegion != app.ComputeRegion {
+			refErr := fmt.Errorf("%w: source reference does not match app placement", ErrSourceBoundary)
+			b.markFailed(ctx, build, state.FailureInfra, refErr.Error(), time.Now())
+			return BuildResult{}, refErr
+		}
+	}
+	if app.ComputeRegion != "" && dep.SourceStorageKey != "" {
+		if b.cfg.SourceSpoolDir == "" {
+			configErr := errors.New("builderd: regional source requires a local spool root")
+			if err := b.requeueClaim(ctx, build); err != nil {
+				return BuildResult{}, errors.Join(configErr, err)
+			}
+			return BuildResult{}, configErr
+		}
+		// The API's absolute spool path belongs to another host. Resolve
+		// the archive inside this worker's root without changing durable intent.
+		dep.SourcePath = filepath.Join(b.cfg.SourceSpoolDir, "sources", build.ID+".tar.gz")
+	}
 	// Issue #197 B3.11: the cache key is partitioned by plan. A Hobby
 	// customer's cached layer must not serve a Pro build (the layer
 	// was built against the Hobby cap, not the Pro cap). Load the
@@ -730,7 +751,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// source to appear; if it still hasn't by the deadline, requeue
 	// (same contract as ErrNoSlot: the row stays queued, the durable
 	// worker re-claims it on the next tick).
-	if err := b.materializeSourceBounded(ctx, build.ID, dep.SourcePath, validationBytes, maxSourceBytes); err != nil {
+	if err := b.materializeSourceReferenceBounded(ctx, state.BuildSourceKey(dep, build.ID), dep.SourcePath, validationBytes, maxSourceBytes); err != nil {
 		if errors.Is(err, ErrSourceBoundary) {
 			b.markFailed(ctx, build, state.FailureInfra, "source boundary: "+err.Error(), buildStart)
 			return BuildResult{}, err
@@ -742,7 +763,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, err
 	}
 	if b.cfg.SourceWaitTimeout > 0 {
-		if err := b.waitForSourceBounded(ctx, build.ID, dep.SourcePath, b.cfg.SourceWaitTimeout, validationBytes, maxSourceBytes); err != nil {
+		if err := b.waitForSourceReferenceBounded(ctx, state.BuildSourceKey(dep, build.ID), dep.SourcePath, b.cfg.SourceWaitTimeout, validationBytes, maxSourceBytes); err != nil {
 			if errors.Is(err, ErrSourceBoundary) {
 				b.markFailed(ctx, build, state.FailureInfra, "source boundary: "+err.Error(), buildStart)
 				return BuildResult{}, err
@@ -1643,6 +1664,13 @@ func (b *Builderd) materializeSource(ctx context.Context, buildID, path string) 
 // capped before it reaches disk and the final install never replaces a file
 // another producer won the race to create.
 func (b *Builderd) materializeSourceBounded(ctx context.Context, buildID, path string, expectedBytes, maxBytes int64) error {
+	return b.materializeSourceReferenceBounded(ctx, "sources/"+buildID+".tar.gz", path, expectedBytes, maxBytes)
+}
+
+func (b *Builderd) materializeSourceReferenceBounded(ctx context.Context, key, path string, expectedBytes, maxBytes int64) error {
+	if err := storage.ValidateArtifactRoute(b.sourceStorage, key); err != nil {
+		return fmt.Errorf("builderd: source route: %w", err)
+	}
 	if err := validateSourcePath(path, b.cfg.SourceSpoolDir); err != nil {
 		return err
 	}
@@ -1654,7 +1682,7 @@ func (b *Builderd) materializeSourceBounded(ctx context.Context, buildID, path s
 	if b.sourceStorage == nil {
 		return nil
 	}
-	rc, err := b.sourceStorage.Get(ctx, "sources/"+buildID+".tar.gz")
+	rc, err := b.sourceStorage.Get(ctx, key)
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return nil
@@ -1724,6 +1752,13 @@ func (b *Builderd) waitForSource(ctx context.Context, buildID, path string, time
 // on builderd in ~ms, while the apid→compute-node rsync of the source tarball
 // needs ~1s.
 func (b *Builderd) waitForSourceBounded(ctx context.Context, buildID, path string, timeout time.Duration, expectedBytes, maxBytes int64) error {
+	return b.waitForSourceReferenceBounded(ctx, "sources/"+buildID+".tar.gz", path, timeout, expectedBytes, maxBytes)
+}
+
+func (b *Builderd) waitForSourceReferenceBounded(ctx context.Context, key, path string, timeout time.Duration, expectedBytes, maxBytes int64) error {
+	if err := storage.ValidateArtifactRoute(b.sourceStorage, key); err != nil {
+		return fmt.Errorf("builderd: source route: %w", err)
+	}
 	check := func() (bool, error) {
 		_, err := validateSourceFile(path, b.cfg.SourceSpoolDir, expectedBytes, maxBytes)
 		if err == nil {
@@ -1763,7 +1798,7 @@ func (b *Builderd) waitForSourceBounded(ctx context.Context, buildID, path strin
 				return fmt.Errorf("builderd: source %s did not appear within %s", path, timeout)
 			}
 		case <-remoteC:
-			if err := b.materializeSourceBounded(ctx, buildID, path, expectedBytes, maxBytes); err != nil {
+			if err := b.materializeSourceReferenceBounded(ctx, key, path, expectedBytes, maxBytes); err != nil {
 				return err
 			}
 			if present, err := check(); err != nil {

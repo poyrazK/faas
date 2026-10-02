@@ -23,7 +23,7 @@ func TestRetrySource_DurableQueueAndRetainedArchive(t *testing.T) {
 			ctx := t.Context()
 			st := state.NewMemStore()
 			app := mustSeedApp(t, st)
-			dep, err := st.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: filepath.Join(t.TempDir(), "removed-source.tar.gz"), SourceBytes: 16})
+			dep, err := st.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: filepath.Join(t.TempDir(), "removed-source.tar.gz"), SourceBytes: 16, SourceStorageKey: "sources/550e8400-e29b-41d4-a716-446655440000.tar.gz"})
 			if err != nil {
 				t.Fatal(err)
 			}

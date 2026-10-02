@@ -5637,3 +5637,12 @@ WITH claimable AS (
 UPDATE builder_vm_cleanup c SET claimed_at = now(), claim_token = gen_random_uuid(), attempts = c.attempts + 1, updated_at = now()
 FROM claimable q WHERE c.build_id = q.build_id
 RETURNING c.build_id, c.claim_token;
+
+
+-- name: SourceArtifactReferencedByPendingBuild :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d
+    WHERE d.source_storage_key = $1 AND d.status IN ('pending', 'building')
+      AND (NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id = d.id AND b.status IN ('queued', 'running')))
+);

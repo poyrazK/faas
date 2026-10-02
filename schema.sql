@@ -1219,6 +1219,35 @@ $$;
 
 
 --
+-- Name: enforce_deployment_source_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_deployment_source_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    selected_region text;
+    source_region text;
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.source_storage_key IS DISTINCT FROM OLD.source_storage_key THEN
+        RAISE EXCEPTION 'deployment source reference is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'deployments_source_reference_immutable';
+    END IF;
+    IF NEW.source_storage_key <> '' THEN
+        SELECT compute_region INTO selected_region FROM apps WHERE id = NEW.app_id FOR SHARE;
+        source_region := CASE WHEN NEW.source_storage_key LIKE 'regions/%'
+            THEN split_part(NEW.source_storage_key, '/', 2) ELSE '' END;
+        IF source_region IS DISTINCT FROM selected_region THEN
+            RAISE EXCEPTION 'source reference must match app compute region'
+                USING ERRCODE = '23514', CONSTRAINT = 'deployments_source_compute_region';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enforce_execution_profile_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3007,6 +3036,7 @@ $$;
 CREATE FUNCTION public.protect_compute_region_identity() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE in_use boolean;
 BEGIN
     IF TG_OP = 'UPDATE' THEN
         IF NEW.id IS DISTINCT FROM OLD.id THEN
@@ -3014,10 +3044,17 @@ BEGIN
         END IF;
         RETURN NEW;
     END IF;
-    IF EXISTS (SELECT 1 FROM apps WHERE compute_region = OLD.id) OR
-       EXISTS (SELECT 1 FROM projects WHERE compute_region = OLD.id) OR
-       EXISTS (SELECT 1 FROM jobs WHERE compute_region = OLD.id) OR
-       EXISTS (SELECT 1 FROM compute_nodes WHERE region = OLD.id) THEN
+    in_use := EXISTS (SELECT 1 FROM apps WHERE compute_region = OLD.id) OR
+              EXISTS (SELECT 1 FROM compute_nodes WHERE region = OLD.id);
+    -- Earlier migrations can be replayed after project/job placement exists.
+    -- Resolve each optional column before executing its statement.
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'projects'::regclass AND attname = 'compute_region' AND NOT attisdropped) THEN
+        in_use := in_use OR EXISTS (SELECT 1 FROM projects WHERE compute_region = OLD.id);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'jobs'::regclass AND attname = 'compute_region' AND NOT attisdropped) THEN
+        in_use := in_use OR EXISTS (SELECT 1 FROM jobs WHERE compute_region = OLD.id);
+    END IF;
+    IF in_use THEN
         RAISE EXCEPTION 'compute region is in use' USING ERRCODE = '23514', CONSTRAINT = 'compute_region_in_use';
     END IF;
     RETURN OLD;
@@ -5902,6 +5939,7 @@ CREATE TABLE public.deployments (
     secret_reload_signal text,
     github_source_ref text,
     github_installation_id bigint,
+    source_storage_key text DEFAULT ''::text NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -5934,6 +5972,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
     CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
     CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT deployments_source_storage_key_shape CHECK (((source_storage_key = ''::text) OR (source_storage_key ~ '^(regions/[a-z0-9]([a-z0-9-]*[a-z0-9])?/)?sources/([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[.]tar[.]gz$'::text))),
     CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
     CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
     CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
@@ -15941,6 +15980,13 @@ CREATE INDEX deployments_pending_priority_idx ON public.deployments USING btree 
 
 
 --
+-- Name: deployments_pending_source_reference; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_pending_source_reference ON public.deployments USING btree (source_storage_key) WHERE ((source_storage_key <> ''::text) AND (status = ANY (ARRAY['pending'::text, 'building'::text])));
+
+
+--
 -- Name: deployments_rollback_on_5xx_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19647,6 +19693,13 @@ CREATE TRIGGER deployments_record_traffic_change_trg AFTER UPDATE OF traffic_per
 --
 
 CREATE TRIGGER deployments_rollout_outcome_webhooks AFTER UPDATE OF rollout_state ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enqueue_rollout_outcome_webhooks();
+
+
+--
+-- Name: deployments deployments_source_region; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_source_region BEFORE INSERT OR UPDATE OF source_storage_key, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_deployment_source_region();
 
 
 --

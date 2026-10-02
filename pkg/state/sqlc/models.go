@@ -1390,6 +1390,7 @@ type Deployment struct {
 	SecretReloadSignal       pgtype.Text
 	GithubSourceRef          pgtype.Text
 	GithubInstallationID     pgtype.Int8
+	SourceStorageKey         string
 }
 
 type DeploymentAlias struct {

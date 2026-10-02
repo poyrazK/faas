@@ -1,16 +1,16 @@
 -- +goose Up
-ALTER TABLE apps ADD COLUMN compute_region text NOT NULL DEFAULT ''
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS compute_region text NOT NULL DEFAULT ''
     CONSTRAINT apps_compute_region_chk CHECK (
         compute_region = '' OR
         (length(compute_region) <= 63 AND compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
     );
-CREATE INDEX apps_compute_region_in_use_idx ON apps (compute_region)
+CREATE INDEX IF NOT EXISTS apps_compute_region_in_use_idx ON apps (compute_region)
     WHERE compute_region <> '';
 
 -- The region is customer intent. Scheduler hints, stale caches and direct
 -- SQL cannot move an owner or instance outside that intent.
 -- +goose StatementBegin
-CREATE FUNCTION enforce_app_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_app_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE node_region text;
 BEGIN
     IF TG_OP = 'UPDATE' AND NEW.compute_region IS DISTINCT FROM OLD.compute_region THEN
@@ -26,11 +26,12 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS apps_compute_region_guard ON apps;
 CREATE TRIGGER apps_compute_region_guard BEFORE INSERT OR UPDATE OF compute_region, node_id
     ON apps FOR EACH ROW EXECUTE FUNCTION enforce_app_compute_region();
 
 -- +goose StatementBegin
-CREATE FUNCTION enforce_instance_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_instance_compute_region() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE required_region text; node_region text;
 BEGIN
     SELECT compute_region INTO required_region FROM apps WHERE id = NEW.app_id;
@@ -44,6 +45,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS instances_compute_region_guard ON instances;
 CREATE TRIGGER instances_compute_region_guard BEFORE INSERT OR UPDATE OF app_id, node_id
     ON instances FOR EACH ROW EXECUTE FUNCTION enforce_instance_compute_region();
 
@@ -51,7 +53,7 @@ CREATE TRIGGER instances_compute_region_guard BEFORE INSERT OR UPDATE OF app_id,
 -- referenced region stable, including idle peers that an in-flight placement
 -- or migration may already have selected. Retire and replace such nodes.
 -- +goose StatementBegin
-CREATE FUNCTION enforce_bound_compute_node_region() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_bound_compute_node_region() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.region IS DISTINCT FROM OLD.region AND (
         EXISTS (SELECT 1 FROM apps WHERE compute_region = OLD.region AND compute_region <> '') OR
@@ -65,6 +67,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS compute_nodes_bound_region_guard ON compute_nodes;
 CREATE TRIGGER compute_nodes_bound_region_guard BEFORE UPDATE OF region
     ON compute_nodes FOR EACH ROW EXECUTE FUNCTION enforce_bound_compute_node_region();
 

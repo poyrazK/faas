@@ -85,6 +85,7 @@ func retryDeploymentInput(src Deployment, now time.Time) (Deployment, error) {
 		SourceRoot:             src.SourceRoot,
 		SourceBytes:            src.SourceBytes,
 		SourceSHA256:           src.SourceSHA256,
+		SourceStorageKey:       src.SourceStorageKey,
 		Handler:                src.Handler,
 		SourceURL:              src.SourceURL,
 		CommitSHA:              src.CommitSHA,

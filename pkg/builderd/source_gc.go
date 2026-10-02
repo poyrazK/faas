@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -42,11 +43,11 @@ func SourceGCSweepOnce(ctx context.Context, backend storage.StorageBackend, stor
 		log = slog.Default()
 	}
 
-	lister, ok := backend.(storage.LocalArtifactLister)
+	references, ok := store.(state.SourceArtifactReferenceStore)
 	if !ok {
-		return 0, errors.New("builderd: source gc: storage backend does not support List")
+		return 0, errors.New("builderd: source gc: store does not support retained source reference lookup")
 	}
-	keys, err := lister.List(ctx, sourceObjectPrefix)
+	keys, err := storage.ListArtifactKeys(ctx, backend, sourceObjectPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("builderd: source gc: list: %w", err)
 	}
@@ -72,7 +73,13 @@ func SourceGCSweepOnce(ctx context.Context, backend storage.StorageBackend, stor
 			// distinguish an orphan from a live build.
 			return 0, fmt.Errorf("builderd: source gc: lookup build %s: %w", buildID, err)
 		}
-		candidates = append(candidates, key)
+		referenced, err := references.SourceArtifactReferencedByPendingBuild(ctx, key)
+		if err != nil {
+			return 0, fmt.Errorf("builderd: source gc: retained reference lookup: %w", err)
+		}
+		if !referenced {
+			candidates = append(candidates, key)
+		}
 	}
 
 	var deleteErrs []error
@@ -117,6 +124,11 @@ func SourceGCSweepLoop(ctx context.Context, backend storage.StorageBackend, stor
 }
 
 func sourceObjectBuild(key string) (string, time.Time, bool) {
+	_, relative, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	key = relative
 	if !strings.HasPrefix(key, sourceObjectPrefix) || !strings.HasSuffix(key, ".tar.gz") {
 		return "", time.Time{}, false
 	}

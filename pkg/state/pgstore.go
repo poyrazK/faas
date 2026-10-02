@@ -6872,7 +6872,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id)
+		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id, source_storage_key)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -6886,7 +6886,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0))
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0), $54)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -6930,7 +6930,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
 		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn),
-		d.GitHubSourceRef, d.GitHubInstallationID)
+		d.GitHubSourceRef, d.GitHubInstallationID, d.SourceStorageKey)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -10021,6 +10021,14 @@ func (s *PgStore) CloseDeploymentStage(ctx context.Context, id string, name Stag
 // The original attempt is unchanged; APID owns subsequent build publication.
 // See RetryStageState and ADR-162 for the actual restart stage.
 func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
+	return s.retryDeploymentFromStage(ctx, failedID, fromStage, nil)
+}
+
+func (s *PgStore) RetryDeploymentFromStageWithSource(ctx context.Context, failedID string, fromStage StageName, key string) (Deployment, error) {
+	return s.retryDeploymentFromStage(ctx, failedID, fromStage, &key)
+}
+
+func (s *PgStore) retryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName, sourceKey *string) (Deployment, error) {
 	// Step 1 — closed-vocab guard. A caller-supplied unknown stage
 	// returns ErrInvalidArgument which the apid handler maps to a
 	// 400 RFC 7807 problem.
@@ -10048,6 +10056,9 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	newDep, err := retryDeploymentInput(src, retryStartedAt)
 	if err != nil {
 		return Deployment{}, err
+	}
+	if sourceKey != nil {
+		newDep.SourceStorageKey = *sourceKey
 	}
 	// Step 4 — INSERT with stage_state seeded to the requested
 	// fromStage. We do not call CreateDeployment because that path
@@ -10078,7 +10089,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
 		                          override_readiness_probe, override_main_depends_on,
-		                          github_source_ref, github_installation_id)
+		                          github_source_ref, github_installation_id, source_storage_key)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -10092,7 +10103,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0))
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52)
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -10123,7 +10134,7 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.GitHubSourceRef, newDep.GitHubInstallationID)
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.SourceStorageKey)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err
@@ -24408,7 +24419,7 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
-		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on`
+		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on, source_storage_key`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24466,7 +24477,7 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
-		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on`
+		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on, d.source_storage_key`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24583,7 +24594,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.FullRootfsAllowAuto, &d.FullRootfsOverride,
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
-		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
+		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn, &d.SourceStorageKey,
 	); err != nil {
 		return mapErr(err)
 	}
