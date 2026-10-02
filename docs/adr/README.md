@@ -427,3 +427,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## API hosting verification decisions
 
 - [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
+- [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
