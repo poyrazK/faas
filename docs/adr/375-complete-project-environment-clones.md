@@ -3381,6 +3381,46 @@ regeneration matches both generated packages. Full state/API/repository suites,
 deployed mixed-version behavior and live-provider/native acceptance remain
 unverified.
 
+### Owned native snapshot restore evidence (2026-10-02)
+
+A private provider/service protocol now restores an operation-owned retained
+snapshot into a separately named native fork. The source backend fingerprint,
+spec, lifecycle and exact dataset, snapshot owner and capture point remain
+frozen. Recovery discovers the original name until its opaque identity is
+persisted, then reads only that identity. Discovery cannot create a replacement;
+a missing pinned target cannot authorize another POST. Creation requires the
+caller's already committed target ownership and first-dispatch receipt. The
+control-plane dispatch registry and worker integration are still required.
+
+The [Neon snapshot restore API](https://api-docs.neon.tech/reference/restoresnapshot)
+is explicitly called with `finalize_restore: false` and the captured source
+branch as `target_branch_id`. Exact native snapshot lineage (`restored_from`)
+and independently read target `current_state: ready`, empty pending state and
+`restore_status: restored` establish native storage restoration. Snapshot
+metadata has no readiness field; creation timestamps, retention and POST
+acknowledgements alone cannot establish this completion. The target's creation
+time must follow the retained snapshot, and project organization, region and
+PostgreSQL major are independently rechecked. An optional `restored_as` must
+agree with the captured source when supplied. Branch discovery follows every
+page, rejects duplicate exact names and cursor cycles, and uses the documented
+API page bound rather than introducing a plan quota.
+
+Storage restoration is not application readiness, a common database/object
+checkpoint or publication authority. Copied maintenance resources, SQL roles,
+admission flags, endpoint configuration, credentials, target catalogue adoption
+and cleanup still require isolation and durable worker integration. The public
+data-bearing capture gate remains closed. No provider resource was changed.
+
+Verification: the managed PostgreSQL/Neon package run passed 111 top-level
+unit/memory/mock contracts; 16 opt-in PostgreSQL store contracts and one live
+Neon lifecycle contract were skipped. After adding future-time rejection and
+invalid-selector checks before provider IO, all six snapshot-restore contracts
+passed again. They cover asynchronous observation, lost replies and delayed
+visibility, identity and placement substitution, paginated discovery and pinned
+missing targets. `go vet` for both packages and `git diff --check` pass. These
+are service and HTTP fixture proofs; live-provider and full clone acceptance
+remain unverified.
+
 ### Recoverable maintenance bootstrap and exact Neon connection (2026-10-02)
 
 The SQL bootstrap now separates private owner reservation, closed database

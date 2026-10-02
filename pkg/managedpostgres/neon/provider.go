@@ -57,6 +57,11 @@ type branch struct {
 	ParentTimestamp string `json:"parent_timestamp"`
 	InitSource      string `json:"init_source"`
 	CurrentState    string `json:"current_state"`
+	PendingState    string `json:"pending_state"`
+	RestoreStatus   string `json:"restore_status"`
+	RestoredFrom    string `json:"restored_from"`
+	RestoredAs      string `json:"restored_as"`
+	CreatedAt       string `json:"created_at"`
 	Default         bool   `json:"default"`
 }
 
