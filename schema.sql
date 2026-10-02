@@ -5940,6 +5940,10 @@ CREATE TABLE public.deployments (
     github_source_ref text,
     github_installation_id bigint,
     source_storage_key text DEFAULT ''::text NOT NULL,
+    build_artifact_key text DEFAULT ''::text NOT NULL,
+    build_artifact_sha256 text DEFAULT ''::text NOT NULL,
+    build_artifact_bytes bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT deployments_build_artifact_shape CHECK ((((build_artifact_key = ''::text) AND (build_artifact_sha256 = ''::text) AND (build_artifact_bytes = 0)) OR ((build_artifact_bytes > 0) AND (build_artifact_sha256 ~ '^[0-9a-f]{64}$'::text) AND (build_artifact_key ~ (('^(regions/[a-z0-9]([a-z0-9-]*[a-z0-9])?/)?build-exports/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/'::text || build_artifact_sha256) || '[.]oci[.]tar$'::text))))),
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -24337,3 +24341,70 @@ CREATE TRIGGER compute_nodes_bound_job_region_guard BEFORE UPDATE OF region ON p
 --
 
 CREATE INDEX jobs_compute_region_in_use_idx ON public.jobs USING btree (compute_region) WHERE (compute_region <> ''::text);
+--
+-- Name: enforce_deployment_build_artifact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_deployment_build_artifact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE selected_region text; artifact_region text;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.build_artifact_key <> ''
+       AND (NEW.build_artifact_key, NEW.build_artifact_sha256, NEW.build_artifact_bytes, NEW.app_id)
+           IS DISTINCT FROM (OLD.build_artifact_key, OLD.build_artifact_sha256, OLD.build_artifact_bytes, OLD.app_id) THEN
+        RAISE EXCEPTION 'completed build artifact is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'deployments_build_artifact_immutable';
+    END IF;
+    IF NEW.build_artifact_key <> '' THEN
+        SELECT compute_region INTO selected_region FROM apps WHERE id = NEW.app_id FOR SHARE;
+        artifact_region := CASE WHEN NEW.build_artifact_key LIKE 'regions/%'
+            THEN split_part(NEW.build_artifact_key, '/', 2) ELSE '' END;
+        IF artifact_region IS DISTINCT FROM selected_region THEN
+            RAISE EXCEPTION 'build artifact must match app compute region'
+                USING ERRCODE = '23514', CONSTRAINT = 'deployments_build_artifact_region';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_regional_build_completion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_regional_build_completion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'succeeded' AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status)
+       AND EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+                   WHERE d.id = NEW.deployment_id AND a.compute_region <> '' AND d.build_artifact_key = '') THEN
+        RAISE EXCEPTION 'regional build success requires a durable export'
+            USING ERRCODE = '23514', CONSTRAINT = 'builds_regional_export_required';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployments_active_build_artifact; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_active_build_artifact ON public.deployments USING btree (build_artifact_key) WHERE ((build_artifact_key <> ''::text) AND (status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text])));
+
+
+--
+-- Name: builds builds_regional_completion; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER builds_regional_completion BEFORE INSERT OR UPDATE OF status ON public.builds FOR EACH ROW EXECUTE FUNCTION public.enforce_regional_build_completion();
+
+
+--
+-- Name: deployments deployments_build_artifact; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_build_artifact BEFORE INSERT OR UPDATE OF build_artifact_key, build_artifact_sha256, build_artifact_bytes, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_deployment_build_artifact();

@@ -1460,7 +1460,11 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
 			return fmt.Errorf("decode snapshot_boot payload: %w", err)
 		}
-		if !handlesSnapshotBoot(h.nodeName, p.NodeID) {
+		eligible, eligibilityErr := h.acceptBuildNotification(ctx, p)
+		if eligibilityErr != nil {
+			return eligibilityErr
+		}
+		if !eligible {
 			h.log.Debug("imaged: ignoring snapshot_boot for sibling node",
 				"owner_node", p.NodeID, "local_node", h.nodeName,
 				"deployment", p.DeploymentID)
@@ -2899,7 +2903,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
 	}
-	if h.runtimeBaseStagingEnabled {
+	if h.runtimeBaseStagingEnabled || dep.BuildArtifactKey != "" {
 		// Production source builds consume builderd's dependency-complete
 		// OCI export. Re-applying dep.SourcePath here would silently throw
 		// away Railpack's installed dependencies and, for Go, leave the
@@ -3713,6 +3717,9 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
+	if dep.BuildArtifactKey != "" {
+		return h.handleRegionalBuildExport(ctx, dep.ID)
+	}
 	switch dep.Status {
 	case state.DeployPending, state.DeployBuilding:
 		// proceed
@@ -3808,30 +3815,8 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	// F4: an image-kind deploy for a tarball/dockerfile source is a
 	// misconfig; we fail loud rather than silently try to OCI-pull a
 	// local file.
-	switch dep.Kind {
-	case state.DeploymentKindImage:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
-				return err
-			}
-		} else if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
-			return err
-		}
-	case state.DeploymentKindTarball, state.DeploymentKindDockerfile,
-		state.DeploymentKindGitHub, state.DeploymentKindPreview:
-		// GitHub push/preview deployments arrive here after builderd has
-		// produced the OCI source-build tarball. They use the same local
-		// OCI conversion as tarball/dockerfile builds; function apps still
-		// need their runtime runner layered into the result.
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
-				return err
-			}
-		} else if err := h.buildLocalOCIAppLayer(ctx, app, dep, acct); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
+	if err := h.assembleBuiltDeployment(ctx, app, dep, acct); err != nil {
+		return err
 	}
 	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
 		return err
@@ -3953,6 +3938,10 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 	if err := h.transition(ctx, depID, status, errMsg); err != nil {
 		return err
 	}
+	return h.appendImageStage(ctx, depID, from, to, hostingFlow...)
+}
+
+func (h *Handler) appendImageStage(ctx context.Context, depID string, from, to state.StageName, hostingFlow ...string) error {
 	row, err := h.store.AppendDeploymentStage(ctx, depID, from, to, time.Now(), "")
 	if err != nil {
 		// Stage projection is best-effort: a failed append logs
@@ -4898,4 +4887,33 @@ func deploymentLayerStorageKey(app state.App, dep state.Deployment) string {
 		return dep.RootfsKey
 	}
 	return region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
+}
+
+func (h *Handler) assembleBuiltDeployment(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+	switch dep.Kind {
+	case state.DeploymentKindImage:
+		if app.Type == state.AppTypeFunction || app.Runtime != "" {
+			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+				return err
+			}
+		} else if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
+	case state.DeploymentKindTarball, state.DeploymentKindDockerfile,
+		state.DeploymentKindGitHub, state.DeploymentKindPreview:
+		// GitHub push/preview deployments arrive here after builderd has
+		// produced the OCI source-build tarball. They use the same local
+		// OCI conversion as tarball/dockerfile builds; function apps still
+		// need their runtime runner layered into the result.
+		if app.Type == state.AppTypeFunction || app.Runtime != "" {
+			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+				return err
+			}
+		} else if err := h.buildLocalOCIAppLayer(ctx, app, dep, acct); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
+	}
+	return nil
 }

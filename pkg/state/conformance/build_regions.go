@@ -2,11 +2,13 @@ package conformance
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -94,10 +96,14 @@ func testRegionalBuildClaims(t *testing.T, fx *Fixture) {
 	if err != nil || read.BuilderNodeID != peer.ID {
 		t.Fatalf("claim owner not persisted: %+v %v", read, err)
 	}
-	if err := fx.Store.UpdateBuildStatus(fx.Ctx, b.ID, state.BuildSucceeded, "", false, true); err != nil {
+	publication, err := uuid.NewV7()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fx.Store.CreateBuildProvenance(fx.Ctx, state.BuildProvenance{BuildID: b.ID, BuilderNodeID: peer.Name, StartedAt: claimed.StartedAt, FinishedAt: time.Now()}); err != nil {
+	digest := strings.Repeat("a", 64)
+	export := state.BuildArtifactReference{Key: region.BuildExportKey(app.ComputeRegion, publication.String(), digest), SHA256: digest, Bytes: 10}
+	provenance := state.BuildProvenance{BuildID: b.ID, BuilderNodeID: peer.Name, StartedAt: claimed.StartedAt, FinishedAt: time.Now()}
+	if err := fx.Store.(state.BuildArtifactCompletionStore).CompleteBuildWithArtifact(fx.Ctx, claimed, "/producer/image.tar", "runtime-key", 10, provenance, export); err != nil {
 		t.Fatal(err)
 	}
 	if err := fx.Store.NodeSetLifecycle(fx.Ctx, node.ID, state.NodeLifecycleDraining, state.NodeLifecycleActive); err != nil {

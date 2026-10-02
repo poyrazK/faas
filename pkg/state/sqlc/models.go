@@ -1391,6 +1391,9 @@ type Deployment struct {
 	GithubSourceRef          pgtype.Text
 	GithubInstallationID     pgtype.Int8
 	SourceStorageKey         string
+	BuildArtifactKey         string
+	BuildArtifactSha256      string
+	BuildArtifactBytes       int64
 }
 
 type DeploymentAlias struct {

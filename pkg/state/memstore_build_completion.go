@@ -7,7 +7,11 @@ import (
 	"time"
 )
 
-func (m *MemStore) CompleteBuild(_ context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance) error {
+func (m *MemStore) CompleteBuild(ctx context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance) error {
+	return m.CompleteBuildWithArtifact(ctx, claim, path, key, bytes, prov, BuildArtifactReference{})
+}
+
+func (m *MemStore) CompleteBuildWithArtifact(_ context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance, ref BuildArtifactReference) error {
 	if claim.ID == "" || claim.StartedAt.IsZero() || path == "" || bytes <= 0 || prov.BuildID != claim.ID {
 		return fmt.Errorf("state: complete build: invalid claim or artifact")
 	}
@@ -21,7 +25,15 @@ func (m *MemStore) CompleteBuild(_ context.Context, claim Build, path, key strin
 	if !ok || (dep.Status != DeployPending && dep.Status != DeployBuilding) {
 		return ErrNotFound
 	}
+	app, ok := m.apps[dep.AppID]
+	if !ok {
+		return ErrNotFound
+	}
+	if !ref.ValidFor(app.ComputeRegion) || (ref.Key != "" && ref.Bytes != bytes) {
+		return ErrInvalidArgument
+	}
 	dep.RootfsPath, dep.RootfsKey, dep.RootfsBytes = path, key, bytes
+	dep.BuildArtifactKey, dep.BuildArtifactSHA256, dep.BuildArtifactBytes = ref.Key, ref.SHA256, ref.Bytes
 	b.Status, b.FinishedAt = BuildSucceeded, time.Now()
 	if prov.SBOMStorageKey == "" {
 		prov.SBOMStorageKey = m.buildProvenance[claim.ID].SBOMStorageKey
@@ -38,16 +50,29 @@ func (m *MemStore) ListBuildsAwaitingImage(_ context.Context, nodeID string, lim
 	var builds []Build
 	for _, b := range m.builds {
 		dep, ok := m.deployments[b.DeploymentID]
-		if !ok || (dep.Status != DeployPending && dep.Status != DeployBuilding) || dep.RootfsPath == "" || b.Status != BuildSucceeded {
+		if !ok || b.Status != BuildSucceeded {
 			continue
 		}
 		prov, ok := m.buildProvenance[b.ID]
-		if !ok || (nodeID != "" && prov.BuilderNodeID != "" && prov.BuilderNodeID != nodeID) {
+		if !ok {
+			continue
+		}
+		if dep.BuildArtifactKey != "" {
+			if !buildImageStatusActive(dep.Status) || !m.buildImageNodeEligibleLocked(nodeID, m.apps[dep.AppID].ComputeRegion) {
+				continue
+			}
+		} else if (dep.Status != DeployPending && dep.Status != DeployBuilding) || dep.RootfsPath == "" ||
+			(nodeID != "" && prov.BuilderNodeID != "" && prov.BuilderNodeID != nodeID) {
 			continue
 		}
 		builds = append(builds, b)
 	}
 	sort.Slice(builds, func(i, j int) bool {
+		// Pending conversions take priority over snapshot priming retries.
+		si, sj := m.deployments[builds[i].DeploymentID].Status == DeploySnapshotting, m.deployments[builds[j].DeploymentID].Status == DeploySnapshotting
+		if si != sj {
+			return !si
+		}
 		if builds[i].FinishedAt.Equal(builds[j].FinishedAt) {
 			return builds[i].ID < builds[j].ID
 		}
@@ -56,12 +81,24 @@ func (m *MemStore) ListBuildsAwaitingImage(_ context.Context, nodeID string, lim
 	if limit >= 0 && len(builds) > limit {
 		builds = builds[:limit]
 	}
-	var out []BuildImageWork
+	out := make([]BuildImageWork, 0, len(builds))
 	for _, b := range builds {
 		dep := m.deployments[b.DeploymentID]
 		out = append(out, BuildImageWork{AppID: dep.AppID, DeploymentID: dep.ID, NodeID: m.buildProvenance[b.ID].BuilderNodeID})
 	}
 	return out, nil
+}
+
+func (m *MemStore) buildImageNodeEligibleLocked(name, computeRegion string) bool {
+	if name == "" {
+		return false
+	}
+	for _, node := range m.computeNodes {
+		if node.Name == name {
+			return node.Active && node.Region != nil && *node.Region == computeRegion
+		}
+	}
+	return false
 }
 
 func (m *MemStore) FailBuild(_ context.Context, claim Build, fc FailureClass, message string) error {

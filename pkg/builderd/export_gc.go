@@ -53,6 +53,9 @@ func SweepBuildExports(ctx context.Context, store state.Store, cfg BuildExportGC
 			if err != nil {
 				return buildexport.ReferenceUnknown, err
 			}
+			if build.Status == state.BuildSucceeded && dep.BuildArtifactKey != "" {
+				return buildexport.ReferenceReleased, nil
+			}
 			if build.Status == state.BuildQueued || build.Status == state.BuildRunning ||
 				(dep.RootfsPath == artifact && !dep.Status.IsTerminal()) {
 				return buildexport.ReferenceActive, nil

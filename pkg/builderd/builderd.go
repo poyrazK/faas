@@ -867,7 +867,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
 				BuilderBaseDigest: buildEnvironment.BaseDigest}, buildStart)
-		if completeErr != nil || completed.BuildID == "" {
+		if completeErr != nil || completed.BuildID == "" || app.ComputeRegion != "" {
 			b.cache.ReleaseLease(cached.Path)
 		}
 		return completed, completeErr
@@ -1499,6 +1499,16 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // completeBuild commits the claim, artifact and provenance before publishing
 // any success signal. imaged polls the committed records if NOTIFY is lost.
 func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
+	completion, supportsExports := b.store.(state.BuildArtifactCompletionStore)
+	if app.ComputeRegion != "" && !supportsExports {
+		_ = b.requeueClaim(ctx, build)
+		return BuildResult{}, fmt.Errorf("builderd: regional export completion is required")
+	}
+	ref, err := b.publishBuildExport(ctx, app, acct, result)
+	if err != nil {
+		_ = b.requeueClaim(ctx, build)
+		return BuildResult{}, err
+	}
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,
@@ -1507,7 +1517,11 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		StartedAt:  build.StartedAt, FinishedAt: time.Now(), FrameworkVer: frameworkVer,
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+		key := region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
+		if ref.Key != "" {
+			return completion.CompleteBuildWithArtifact(ctx, build, result.LayerPath, key, result.LayerBytes, prov, ref)
+		}
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, key, result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil

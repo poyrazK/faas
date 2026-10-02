@@ -21,6 +21,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"golang.org/x/sync/errgroup"
 )
@@ -266,17 +267,18 @@ func (o *OCIRegistryStorageBackend) RepoPrefix() string { return o.prefix }
 // OCI driver — pkg/storage.LocalStorageBackend never sees them.
 // Lifted from inline strings so the goconst lint stays quiet.
 const (
-	repoApps    = "apps"
-	repoSnap    = "snap"
-	repoBase    = "base"
-	repoLayers  = "layers"
-	repoJobs    = "jobs"
-	repoKernel  = "kernel"
-	repoScans   = "scans"
-	repoSigs    = "sigs"
-	repoSources = "sources"
-	repoSBOMs   = "sboms"
-	repoSnapIdx = "snap-index"
+	repoApps         = "apps"
+	repoSnap         = "snap"
+	repoBase         = "base"
+	repoLayers       = "layers"
+	repoJobs         = "jobs"
+	repoKernel       = "kernel"
+	repoScans        = "scans"
+	repoSigs         = "sigs"
+	repoSources      = "sources"
+	repoBuildExports = "build-exports"
+	repoSBOMs        = "sboms"
+	repoSnapIdx      = "snap-index"
 )
 
 const snapshotRepoIndexVersionTag = "v1"
@@ -419,6 +421,12 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 			return "", "", fmt.Errorf("%w: %q produces invalid OCI tag %q", ErrInvalidKey, key, tag)
 		}
 		return repoSigs + "/" + strings.Join(parts[1:len(parts)-1], "/"), tag, nil
+	case repoBuildExports:
+		_, publication, digest, err := region.ParseBuildExportKey(key)
+		if err != nil {
+			return "", "", fmt.Errorf("%w: %w", ErrInvalidKey, err)
+		}
+		return repoBuildExports, publication + "__" + digest + ".oci.tar", nil
 	case repoSources:
 		// sources/<build>.tar.gz → repo "sources", tag "<build>.tar.gz".
 		// Source archives are the split-box handoff from apid to builderd;
@@ -945,6 +953,8 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix s
 			return true
 		})
 		return out, nil
+	case repoBuildExports:
+		return []string{repoBuildExports}, nil
 	case repoSources:
 		return []string{repoSources}, nil
 	case repoSBOMs:
@@ -1116,6 +1126,16 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 			return "", false
 		}
 		return "sources/" + tag, true
+	case repoBuildExports:
+		publication, suffix, ok := strings.Cut(tag, "__")
+		if !ok {
+			return "", false
+		}
+		key := repoBuildExports + "/" + publication + "/" + suffix
+		if _, _, _, err := region.ParseBuildExportKey(key); err != nil {
+			return "", false
+		}
+		return key, true
 	case repoSBOMs:
 		if !strings.HasSuffix(tag, ".cdx.json") || !tagCharset.MatchString(tag) {
 			return "", false

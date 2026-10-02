@@ -6,8 +6,10 @@ compute-node identity and drain outstanding builds before upgrading. Cancellatio
 and timeout VM cleanup stays with the claim owner, including while that node is
 draining. Source uploads and retries persist regional object references
 (ADR-431). Builderd fetches the committed reference and verifies size and hash
-before VM dispatch. Build exports still need the next handoff increment before
-the full source-to-runtime flow can be qualified.
+before VM dispatch. Build exports are published before claim-fenced completion
+and consumed by an active imaged worker in the same region (ADR-432), even after
+the producer's local file is lost. The full source-to-runtime flow still needs
+native qualification.
 
 Regional compute is internal and default-off. Configure artifact routes before
 enabling regional deployments; an unconfigured region fails publication and reads.
@@ -49,7 +51,7 @@ lifecycle credentials according to each daemon's existing ownership. OCI routes
 use the existing egress policy. Each configured region must use a distinct
 bucket or registry/repository namespace, physically located as intended.
 
-New regional sources, layers, sidecars, job images, snapshots, and signatures use regional
+New regional sources, build exports, layers, sidecars, job images, snapshots, and signatures use regional
 keys. Existing deployment/image references keep their original store. The local
 cache retains one shared budget and includes region in every key. A regional
 store failure does not redirect operations to another store. Removing a route
@@ -63,8 +65,23 @@ older unprefixed key, and publish a fresh regional copy. Source cleanup needs
 all participating routes and aborts without deleting anything when a region's
 inventory or retained-reference lookup is unavailable.
 
+Regional build completion requires a persisted OCI export key, SHA-256 and byte
+count. Imaged verifies that descriptor before conversion, serializes consumers
+across workers, and polls pending or interrupted materializations. A failed
+snapshot-prime notification remains retryable. The producer's absolute path is
+diagnostic once its remote reference is committed.
+
+Remote build exports share builderd's existing source sweep cadence and maximum
+age (24-hour defaults). Active image work protects them, including security scan
+and snapshot preparation; terminal and orphan exports become eligible after
+retention. Export cleanup requires all participating routes and aborts before
+deletion if inventory or reference lookup is incomplete. Drain regional builds
+before installing the export migration and upgrading builderd and imaged
+together. A downgrade refuses to discard persisted regional export references.
+
 Configure all publishers and consumers, restart them, verify storage access with
 their respective credentials, then run native regional acceptance and resource
 leak checks on the dedicated Linux x86_64/KVM fleet. This file configures runtime
-artifact delivery; source builds, persistent services, regional ingress, and
-control-plane independence require further implementation and qualification.
+artifact delivery; source builds require native qualification. Logs/SBOM storage,
+persistent services, regional ingress and control-plane independence require
+further implementation or qualification.

@@ -6946,7 +6946,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
-	if !validSourceReference(app.ComputeRegion, d.SourceStorageKey) {
+	if !validSourceReference(app.ComputeRegion, d.SourceStorageKey) || d.BuildArtifactReference() != (BuildArtifactReference{}) {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
 	if d.ID != "" {
@@ -10403,6 +10403,12 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 	}
 	if (status == BuildSucceeded || status == BuildFailed) && b.Status != BuildRunning {
 		return ErrNotFound
+	}
+	if status == BuildSucceeded {
+		dep := m.deployments[b.DeploymentID]
+		if app := m.apps[dep.AppID]; app.ComputeRegion != "" && dep.BuildArtifactKey == "" {
+			return ErrInvalidArgument
+		}
 	}
 	if status == BuildRunning {
 		nodeName := m.computeNodes[b.BuilderNodeID].Name

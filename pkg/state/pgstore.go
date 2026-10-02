@@ -6719,6 +6719,9 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+	if d.BuildArtifactReference() != (BuildArtifactReference{}) {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -24419,7 +24422,7 @@ const deploymentSelectColumnsWithRootfs = `
 	nullif(coalesce(api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
-		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on, source_storage_key`
+		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on, source_storage_key, build_artifact_key, build_artifact_sha256, build_artifact_bytes`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -24477,7 +24480,7 @@ const deploymentSelectColumnsQualified = `
 	nullif(coalesce(d.api_hosting_receipt, '{}'::jsonb), '{}'::jsonb),
 	nullif(coalesce(d.inferred_profile, '{}'::jsonb), '{}'::jsonb),
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
-		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on, d.source_storage_key`
+		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on, d.source_storage_key, d.build_artifact_key, d.build_artifact_sha256, d.build_artifact_bytes`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -24595,6 +24598,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn, &d.SourceStorageKey,
+		&d.BuildArtifactKey, &d.BuildArtifactSHA256, &d.BuildArtifactBytes,
 	); err != nil {
 		return mapErr(err)
 	}

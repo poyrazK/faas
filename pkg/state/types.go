@@ -2120,14 +2120,19 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
-	ID          string
-	AppID       string
-	BuildID     string // empty when an image deploy has no build pipeline
-	ImageDigest string
-	Kind        DeploymentKind
-	SourcePath  string // tarball spool path (kind=tarball|dockerfile)
-	SourceBytes int64
-	SourceRoot  string // repository-relative build root inside SourcePath; empty = archive root
+	ID      string
+	AppID   string
+	BuildID string // empty when an image deploy has no build pipeline
+	// BuildArtifact* identify the immutable OCI export independently of the
+	// runtime rootfs, which imaged subsequently replaces.
+	BuildArtifactKey    string
+	BuildArtifactSHA256 string
+	BuildArtifactBytes  int64
+	ImageDigest         string
+	Kind                DeploymentKind
+	SourcePath          string // tarball spool path (kind=tarball|dockerfile)
+	SourceBytes         int64
+	SourceRoot          string // repository-relative build root inside SourcePath; empty = archive root
 	// SourceSHA256 is the digest of the exact source archive handed to the
 	// builder. Empty is retained for deployments created before the integrity
 	// column was introduced.

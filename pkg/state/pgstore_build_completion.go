@@ -3,35 +3,65 @@ package state
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CompleteBuild(ctx context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance) error {
+	return s.CompleteBuildWithArtifact(ctx, claim, path, key, bytes, prov, BuildArtifactReference{})
+}
+
+func (s *PgStore) CompleteBuildWithArtifact(ctx context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance, ref BuildArtifactReference) error {
 	if claim.ID == "" || claim.StartedAt.IsZero() || path == "" || bytes <= 0 || prov.BuildID != claim.ID {
 		return fmt.Errorf("state: complete build: invalid claim or artifact")
+	}
+	depID, err := parsePgUUID(claim.DeploymentID)
+	if err != nil {
+		return err
+	}
+	buildID, err := parsePgUUID(claim.ID)
+	if err != nil {
+		return err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// Match cancellation's lock order: deployment first, then its builds.
-	var depStatus DeploymentStatus
-	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, claim.DeploymentID).Scan(&depStatus); err != nil {
+	q := sqlc.New()
+	// Match cancellation's lock order: deployment first, then its build.
+	dep, err := q.LockBuildCompletionDeployment(ctx, tx, depID)
+	if err != nil {
 		return mapErr(err)
 	}
-	if depStatus != DeployPending && depStatus != DeployBuilding {
+	if dep.Status != string(DeployPending) && dep.Status != string(DeployBuilding) {
 		return ErrNotFound
 	}
-	tag, err := tx.Exec(ctx, `update builds set status='succeeded', finished_at=now()
-  where id=$1 and deployment_id=$2 and status='running' and started_at=$3`, claim.ID, claim.DeploymentID, claim.StartedAt)
+	current, err := q.LockBuildCompletionClaim(ctx, tx, sqlc.LockBuildCompletionClaimParams{ID: buildID, DeploymentID: depID})
+	if err != nil {
+		return mapErr(err)
+	}
+	if current.Status != string(BuildRunning) || !current.StartedAt.Valid || !current.StartedAt.Time.Equal(claim.StartedAt) {
+		return ErrNotFound
+	}
+	if !ref.ValidFor(dep.ComputeRegion) || (ref.Key != "" && ref.Bytes != bytes) {
+		return ErrInvalidArgument
+	}
+	if err := q.SetBuildCompletionArtifact(ctx, tx, sqlc.SetBuildCompletionArtifactParams{
+		DeploymentID: depID, ArtifactPath: path, RuntimeKey: key, ArtifactBytes: bytes,
+		ExportKey: ref.Key, ExportSha256: ref.SHA256, ExportBytes: ref.Bytes,
+	}); err != nil {
+		return err
+	}
+	changed, err := q.SucceedBuildClaim(ctx, tx, sqlc.SucceedBuildClaimParams{
+		BuildID: buildID, DeploymentID: depID, ClaimStartedAt: pgtype.Timestamptz{Time: claim.StartedAt, Valid: true},
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if changed != 1 {
 		return ErrNotFound
-	}
-	if _, err := tx.Exec(ctx, `update deployments set rootfs_path=$2,rootfs_key=$3,rootfs_bytes=$4 where id=$1`, claim.DeploymentID, path, key, bytes); err != nil {
-		return err
 	}
 	if err := createBuildProvenance(ctx, tx, prov); err != nil {
 		return err
@@ -40,26 +70,18 @@ func (s *PgStore) CompleteBuild(ctx context.Context, claim Build, path, key stri
 }
 
 func (s *PgStore) ListBuildsAwaitingImage(ctx context.Context, nodeID string, limit int) ([]BuildImageWork, error) {
-	rows, err := s.pool.Query(ctx, `select d.app_id,d.id,coalesce(p.builder_node_id,'')
-  from deployments d join builds b on b.deployment_id=d.id
-  join build_provenance p on p.build_id=b.id
-  where d.status in ('pending','building') and b.status='succeeded'
-    and d.rootfs_path is not null
-    and (nullif($1,'') is null or coalesce(p.builder_node_id,'')='' or p.builder_node_id=$1)
-  order by b.finished_at,b.id limit $2`, nodeID, limit)
+	if limit < 0 {
+		limit = 2147483647
+	}
+	rows, err := sqlc.New().ListBuildsAwaitingRegionalOrLocalImage(ctx, s.pool, sqlc.ListBuildsAwaitingRegionalOrLocalImageParams{NodeName: nodeID, BatchSize: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []BuildImageWork
-	for rows.Next() {
-		var work BuildImageWork
-		if err := rows.Scan(&work.AppID, &work.DeploymentID, &work.NodeID); err != nil {
-			return nil, err
-		}
-		out = append(out, work)
+	out := make([]BuildImageWork, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, BuildImageWork{AppID: row.DAppID, DeploymentID: row.DeploymentID, NodeID: row.NodeID})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // FailBuild fences failure against cancellation, reaping and a newer claim.

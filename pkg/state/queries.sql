@@ -5646,3 +5646,50 @@ SELECT EXISTS (
       AND (NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id = d.id AND b.status IN ('queued', 'running')))
 );
+
+-- name: BuildArtifactReferencedForMaterialization :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d WHERE d.build_artifact_key = $1
+      AND d.status IN ('pending', 'building', 'imaging', 'snapshotting')
+);
+
+-- name: LockBuildCompletionDeployment :one
+SELECT d.status, a.compute_region FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $1 FOR UPDATE OF d;
+
+-- name: SetBuildCompletionArtifact :exec
+UPDATE deployments SET rootfs_path = sqlc.arg(artifact_path)::text,
+    rootfs_key = sqlc.arg(runtime_key)::text, rootfs_bytes = sqlc.arg(artifact_bytes)::bigint,
+    build_artifact_key = sqlc.arg(export_key)::text,
+    build_artifact_sha256 = sqlc.arg(export_sha256)::text,
+    build_artifact_bytes = sqlc.arg(export_bytes)::bigint
+WHERE id = sqlc.arg(deployment_id)::uuid;
+
+-- name: SucceedBuildClaim :execrows
+UPDATE builds SET status = 'succeeded', finished_at = now()
+WHERE id = sqlc.arg(build_id)::uuid AND deployment_id = sqlc.arg(deployment_id)::uuid
+  AND status = 'running' AND started_at = sqlc.arg(claim_started_at)::timestamptz;
+
+-- name: ListBuildsAwaitingRegionalOrLocalImage :many
+SELECT d.app_id::text, d.id::text AS deployment_id, coalesce(p.builder_node_id, '')::text AS node_id
+FROM deployments d JOIN apps a ON a.id = d.app_id JOIN builds b ON b.deployment_id = d.id
+JOIN build_provenance p ON p.build_id = b.id
+WHERE b.status = 'succeeded' AND (
+    (d.build_artifact_key <> '' AND a.compute_region <> '' AND sqlc.arg(node_name)::text <> ''
+        AND d.status IN ('pending', 'building', 'imaging', 'snapshotting')
+        AND EXISTS (SELECT 1 FROM compute_nodes n WHERE n.name = sqlc.arg(node_name)::text
+                    AND n.active AND n.region = a.compute_region))
+    OR (d.build_artifact_key = '' AND d.status IN ('pending', 'building') AND d.rootfs_path IS NOT NULL
+        AND (sqlc.arg(node_name)::text = '' OR coalesce(p.builder_node_id, '') = ''
+             OR p.builder_node_id = sqlc.arg(node_name)::text))
+)
+ORDER BY (d.status = 'snapshotting'), b.finished_at, b.id
+LIMIT sqlc.arg(batch_size)::int;
+
+-- name: LockBuildCompletionClaim :one
+SELECT status, started_at FROM builds WHERE id = $1 AND deployment_id = $2 FOR UPDATE;
+
+-- name: AdvanceBuildImageStatus :execrows
+UPDATE deployments SET status = sqlc.arg(next_status)::text
+WHERE id = sqlc.arg(deployment_id)::uuid AND status = sqlc.arg(expected_status)::text
+  AND build_artifact_key <> '';

@@ -49,6 +49,9 @@ func AcquireArtifact(path string) (*Lease, bool, error) {
 	return &Lease{file: f}, true, nil
 }
 
+// OpenArtifact opens a regular export without following its final symlink or blocking on a FIFO.
+func OpenArtifact(path string) (*os.File, error) { return openArtifact(path) }
+
 // openArtifact is shared by readers and cleanup. O_NONBLOCK prevents a FIFO
 // from hanging in open before Flock can apply its non-blocking lease; checking
 // the opened descriptor avoids a type-check/open race. O_NOFOLLOW rejects the

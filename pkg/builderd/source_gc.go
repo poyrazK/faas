@@ -116,6 +116,10 @@ func SourceGCSweepLoop(ctx context.Context, backend storage.StorageBackend, stor
 			return
 		case <-t.C:
 		}
+		exports, exportErr := BuildArtifactGCSweepOnce(ctx, backend, store, maxAge, time.Now())
+		if exportErr != nil {
+			log.Warn("builderd: build export gc sweep", "err", exportErr, "deleted", exports)
+		}
 		n, err := SourceGCSweepOnce(ctx, backend, store, maxAge, time.Now(), log)
 		if err != nil {
 			log.Warn("builderd: source gc sweep", "err", err, "deleted", n)
