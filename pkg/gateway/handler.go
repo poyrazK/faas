@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
@@ -6874,6 +6875,7 @@ haveApp:
 	// are stripped by forwardedResponseHeader.
 	if h.authorizedDeploymentSmoke(r, app) {
 		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
+		r = r.WithContext(withDeploymentSmokeResponse(r.Context(), target.DeploymentID, r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader)))
 	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
@@ -8889,12 +8891,20 @@ var sharedUpstreamTransport = newFirstByteRoundTripper(&http.Transport{
 func defaultProxy(addr string, cap int64) http.Handler {
 	target := &url.URL{Scheme: "http", Host: addr}
 	p := httputil.NewSingleHostReverseProxy(target)
+	director := p.Director
+	p.Director = func(req *http.Request) {
+		director(req)
+		req.Header.Del(apihostingreceipt.PlatformSmokeTokenHeader)
+		req.Header.Del(apihostingreceipt.PlatformSmokeDeploymentHeader)
+		req.Header.Del(apihostingreceipt.ServedResponseHeader)
+	}
 	p.Transport = sharedUpstreamTransport
 	// Legacy addr-based forwarding uses net/http's ReverseProxy rather than
 	// the gRPC stream, so consume the same runner markers in ModifyResponse.
 	p.ModifyResponse = func(resp *http.Response) error {
 		stripGuestEvidenceResponseHeaders(resp)
 		stripGuestManagedPlatformCookiesResponseHeader(resp)
+		stampDeploymentSmokeResponse(resp.Request.Context(), resp.Header)
 		return nil
 	}
 	// Issue #995 Phase 2 / ADR-121 — the upstream guard. Wrap the

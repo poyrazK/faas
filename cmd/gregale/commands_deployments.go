@@ -662,17 +662,28 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_status:", receipt.Smoke.Status)
+	if receipt.Smoke.Verification != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_check:", receipt.Smoke.Verification)
+	}
+	if receipt.Smoke.Authentication != "" {
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "probe_access:", receipt.Smoke.Authentication)
+	}
+	probeLabel := "health"
+	if receipt.Smoke.Verification == apihostingreceipt.VerificationRouteConnectivity {
+		probeLabel = "route"
+		_, _ = fmt.Fprintln(w, "  Candidate connectivity check; endpoint health and anonymous access are not verified.")
+	}
 	if receipt.AppURL != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_app_url:", receipt.AppURL)
 	}
 	if receipt.Smoke.Path != "" {
-		_, _ = fmt.Fprintf(w, "%-14s %s\n", "health_path:", receipt.Smoke.Path)
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", probeLabel+"_path:", receipt.Smoke.Path)
 	}
 	if receipt.Smoke.StatusCode != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %d\n", "health_status:", receipt.Smoke.StatusCode)
+		_, _ = fmt.Fprintf(w, "%-14s %d\n", probeLabel+"_status:", receipt.Smoke.StatusCode)
 	}
 	if receipt.Smoke.LatencyMS != 0 {
-		_, _ = fmt.Fprintf(w, "%-14s %dms\n", "health_latency:", receipt.Smoke.LatencyMS)
+		_, _ = fmt.Fprintf(w, "%-14s %dms\n", probeLabel+"_latency:", receipt.Smoke.LatencyMS)
 	}
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))

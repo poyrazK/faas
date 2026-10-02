@@ -45,6 +45,21 @@ Direct OCI images use TCP listener readiness by default; Gregale does not
 invent a `/healthz` endpoint that the image never declared. An explicit
 deployment health-path override selects HTTP readiness instead.
 
+For an image with TCP readiness and no HTTP health path, the post-readiness
+public smoke checks candidate route connectivity at `/`. A candidate-authored
+2xx, 3xx, 401, 403, or 404 response can verify connectivity; an API does not
+need to implement a successful root route. Gateway errors, missing candidate
+response evidence, a different revision, 429, and 5xx still fail verification.
+An explicit HTTP health path (including `/`) continues to require 2xx.
+
+The deployment's `hosting_receipt.smoke.verification` records `http_health`
+or `route_connectivity`, alongside the actual response status.
+`authentication: platform_challenge` means the platform probe bypassed Gregale
+customer access gates; it does not prove anonymous access or bypass
+application-owned authentication. Connectivity probes record redirects without
+following them. Roll out the gateway response-proof support before the new
+imaged verifier; older gateways cannot satisfy the connectivity check.
+
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
