@@ -24,7 +24,12 @@ RECEIPT = Path('request-evidence-hotfix-receipt.json')
 
 
 def run(args, **kwargs):
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=600, **kwargs)
+    try:
+        return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=600, **kwargs)
+    except subprocess.CalledProcessError as error:
+        if args[0] == 'ssh':
+            raise RuntimeError('SSH failure: ' + error.stderr.strip()) from error
+        raise
 
 
 def api(path):
@@ -170,7 +175,7 @@ def main():
             image_evidence.mkdir(exist_ok=True)
             for path in root.glob(label + '-image-*.json'):
                 shutil.copy2(path, image_evidence / path.name)
-            key = root / 'ssh-key'; key.write_text(os.environ['COMPUTE_SSH_KEY']); key.chmod(0o600)
+            key = root / 'ssh-key'; key.write_text(os.environ['COMPUTE_SSH_KEY'].rstrip() + '\n'); key.chmod(0o600)
             known = root / 'known-hosts'
             for target, expected in TARGETS:
                 scan = run(['ssh-keyscan', '-T', '10', '-t', 'ed25519', target])
