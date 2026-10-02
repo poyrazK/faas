@@ -57,11 +57,17 @@ func runMCPEvents(ctx context.Context, slug, deployment, since string, follow bo
 	}
 	deployment, err = resolveDeploymentRef(ctx, client, slug, deployment)
 	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		return printErr("MCP events deployment", err)
 	}
 	// Account credentials go only to the existing control-plane logs endpoint.
 	body, err := client.StreamAppLogs(ctx, slug, deployment, follow, api.LogFilter{Grep: "mcp_", Since: since})
 	if err != nil {
+		if ctx.Err() != nil {
+			return 130
+		}
 		return printErr("MCP event stream", err)
 	}
 	defer func() { _ = body.Close() }()

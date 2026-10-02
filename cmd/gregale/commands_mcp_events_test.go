@@ -136,3 +136,19 @@ func TestMCPEventsPreflightAndCancellation(t *testing.T) {
 		t.Fatalf("cancel exit=%d", code)
 	}
 }
+
+func TestMCPEventsCancelBeforeStreamHeaders(t *testing.T) {
+	mcpEventOutput(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		cancel() // Interrupt while the control-plane connection is still opening.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "operator-token")
+	if code := runMCPEvents(ctx, "my-mcp", "", "", true, mcpEventFilter{}); code != 130 {
+		t.Fatalf("cancel before headers exit=%d", code)
+	}
+}
