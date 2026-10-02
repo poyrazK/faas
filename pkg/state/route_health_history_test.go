@@ -43,7 +43,7 @@ func TestRouteHealthHistoryMemImmutableScopedAndReadOnly(t *testing.T) {
 		t.Fatal("missing held decision", err)
 	}
 	entry, err := s.GetRouteHealthHistoryEntry(t.Context(), a.ID, app.ID, d.ID, decision.HistoryID)
-	if err != nil || entry.Decision != decision || entry.Policy != routehealth.HistoryPolicy() || entry.Report.Status != "unknown" || entry.Source != "manual" || entry.Report.ObservationAnchor == nil || entry.Report.Routes[0].MaxP95MS != 300 {
+	if err != nil || !routeHealthDecisionsEqual(entry.Decision, decision) || entry.Policy != routehealth.HistoryPolicy() || entry.Report.Status != "unknown" || entry.Source != "manual" || entry.Report.ObservationAnchor == nil || entry.Report.Routes[0].MaxP95MS != 300 {
 		t.Fatalf("lost evidence: %+v %v", entry, err)
 	}
 	original, _ := json.Marshal(entry)
@@ -208,7 +208,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 				}
 				return
 			}
-			if len(page.Entries) != 1 || page.Entries[0].Decision != decision || page.Entries[0].Policy != routehealth.HistoryPolicy() || *page.Entries[0].Report.Routes[0].Windows[0].Candidate.P95LatencyMS != 500 {
+			if len(page.Entries) != 1 || !routeHealthDecisionsEqual(page.Entries[0].Decision, decision) || page.Entries[0].Policy != routehealth.HistoryPolicy() || *page.Entries[0].Report.Routes[0].Windows[0].Candidate.P95LatencyMS != 500 {
 				t.Fatalf("snapshot: %+v %v", page, err)
 			}
 			first := page.Entries[0]
@@ -234,7 +234,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 					var retryDecision api.RouteHealthDecision
 					retryParams.RouteHealthDecision = &retryDecision
 					_, _, err := s.AdvanceCanary(t.Context(), d.ID, retryParams)
-					if retryDecision != first.Decision {
+					if !routeHealthDecisionsEqual(retryDecision, first.Decision) {
 						err = fmt.Errorf("retry decision differs from saved evidence: %+v", retryDecision)
 					}
 					errs <- err
@@ -278,7 +278,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 			var fields struct {
 				RouteHealth api.RouteHealthDecision `json:"route_health"`
 			}
-			if len(audits) != 1 || json.Unmarshal(audits[0].Data, &fields) != nil || fields.RouteHealth != decision {
+			if len(audits) != 1 || json.Unmarshal(audits[0].Data, &fields) != nil || !routeHealthDecisionsEqual(fields.RouteHealth, decision) {
 				t.Fatal("traffic audit not correlated")
 			}
 			if err := s.UpdateAccountPlan(t.Context(), a.ID, api.PlanFree); err != nil {
@@ -354,4 +354,15 @@ func TestRouteHealthHistoryPostgresRetentionAndCursor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// PostgreSQL timestamps and JSON timestamps can describe the same instant with
+// different location metadata. Keep comparing every decision field and compare
+// CheckedAt by its instant rather than time.Time's internal representation.
+func routeHealthDecisionsEqual(a, b api.RouteHealthDecision) bool {
+	if !a.CheckedAt.Equal(b.CheckedAt) {
+		return false
+	}
+	a.CheckedAt, b.CheckedAt = time.Time{}, time.Time{}
+	return a == b
 }
