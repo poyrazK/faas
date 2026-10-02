@@ -17,7 +17,7 @@ import (
 	"syscall"
 )
 
-const resourceRecordLimit = 8192
+const resourceRecordLimit = 256 * 1024
 
 var errResourceJournalClosed = errors.New("resource journal closed")
 
@@ -44,6 +44,7 @@ type resourceJournalRecord struct {
 	Version int                      `json:"version"`
 	Lease   Lease                    `json:"lease"`
 	Process *resourceProcessIdentity `json:"process,omitempty"`
+	Assets  []resourceAsset          `json:"assets,omitempty"`
 }
 
 func resourceRecordName(id string) string {
@@ -196,12 +197,15 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 	if err = d.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return r, errors.New("trailing resource journal data")
 	}
+	if r.Version == 1 && info.Size() > 8192 {
+		return r, errors.New("oversized legacy resource journal record")
+	}
 	return r, r.validate()
 }
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if r.Version != 1 || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || !l.Plan.Valid() || l.MemoryMaxMiB <= 0 {
+	if (r.Version != 1 && r.Version != 2) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || !l.Plan.Valid() || l.MemoryMaxMiB <= 0 {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)
@@ -211,7 +215,7 @@ func (r resourceJournalRecord) validate() error {
 	if r.Process != nil && (r.Process.PID <= 1 || r.Process.StartTicks == 0 || !looksLikeInstanceID(r.Process.BootID)) {
 		return errors.New("invalid resource journal process incarnation")
 	}
-	return nil
+	return r.validateAssets()
 }
 
 func (j *ResourceJournal) begin(l Lease) error {
@@ -220,7 +224,7 @@ func (j *ResourceJournal) begin(l Lease) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r := resourceJournalRecord{Version: 1, Lease: l}
+	r := resourceJournalRecord{Version: 2, Lease: l}
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -258,6 +262,9 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
+	}
+	if len(b) > resourceRecordLimit {
+		return errors.New("oversized resource journal record")
 	}
 	name := ".pending-" + rand.Text()
 	f, err := j.dir.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -316,6 +323,7 @@ func (j *ResourceJournal) snapshot() ([]resourceJournalRecord, error) {
 	}
 	items := make([]resourceJournalRecord, 0, len(j.records))
 	for _, r := range j.records {
+		r.Assets = cloneResourceAssets(r.Assets)
 		if r.Process != nil {
 			p := *r.Process
 			r.Process = &p
@@ -332,6 +340,7 @@ func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, 
 		return resourceJournalRecord{}, false, errResourceJournalClosed
 	}
 	r, ok := j.records[instance]
+	r.Assets = cloneResourceAssets(r.Assets)
 	if r.Process != nil {
 		p := *r.Process
 		r.Process = &p

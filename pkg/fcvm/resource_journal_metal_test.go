@@ -47,6 +47,7 @@ func TestMetalResourceJournalSurvivingGuest(t *testing.T) {
 		// artifact bookkeeping. Rebind its journal storage solely for cleanup;
 		// the fresh Manager never receives that lifecycle ownership.
 		old.resourceJournal = activeJournal
+		old.vmm.(*JailerVMM).SetResourceJournal(activeJournal)
 		if err := old.Destroy(cleanupCtx, idLive); err != nil {
 			t.Errorf("survivor cleanup: %v", err)
 		}
@@ -75,6 +76,18 @@ func TestMetalResourceJournalSurvivingGuest(t *testing.T) {
 	records, err := activeJournal.snapshot()
 	if err != nil || len(records) != 1 || records[0].Process == nil || records[0].Process.PID != pid || records[0].Process.StartTicks == 0 {
 		t.Fatalf("durable process checkpoint: %+v, %v", records, err)
+	}
+	binds := 0
+	for _, a := range records[0].Assets {
+		if a.Kind == "bind" {
+			binds++
+			if a.Target == nil || a.File == nil || a.Mount == nil || a.Mount.MountID == 0 {
+				t.Fatalf("surviving guest lacks bind provenance: %+v", a)
+			}
+		}
+	}
+	if binds == 0 {
+		t.Fatal("surviving guest lacks image-bind checkpoints")
 	}
 	if err := fresh.WithResourceJournal(activeJournal); err != nil {
 		t.Fatal(err)

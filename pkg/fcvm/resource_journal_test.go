@@ -304,7 +304,7 @@ func TestResourceJournalRejectsCorruptStorage(t *testing.T) {
 			r := resourceJournalRecord{Version: 1, Lease: lease}
 			switch kind {
 			case "version":
-				r.Version = 2
+				r.Version = 99
 				b, _ = json.Marshal(r)
 			case "uid":
 				r.Lease.UID++

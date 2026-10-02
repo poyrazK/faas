@@ -528,12 +528,27 @@ Startup logs include `journal_records` and `journal_process_matches`. All
 journal records hold their slot and instance ID, even without a visible guest
 or when process provenance differs. A matching process still does not authorize
 adoption, recovered report application or teardown by a replacement Manager.
-Mount/artifact/namespace incarnation journaling and verified restart cleanup
-remain pending; do not delete records to reclaim capacity or treat them as
-durable drain receipts.
+Verified restart cleanup and complete namespace incarnations remain pending;
+do not delete records to reclaim capacity or treat them as durable drain receipts.
 The nested-node [journal diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
 passed the real guest checkpoint/reopen regression and three leak checks.
 Native lifecycle and filesystem power-loss qualification remain pending.
+
+Version-2 records additionally persist temporary materialization/reflink intent
+and image-bind provenance ([ADR-400](adr/400-managed-postgres-resource-assets.md)).
+Intent precedes creation or source chmod; inode checkpoints precede copying or
+mounting. Bind records include the target placeholder, source/original mode,
+read-only policy and vmmd mount namespace plus mount ID. The running owner
+refuses observed file/mount replacements and retains failed cleanup or fsync for
+retry. Shared sources keep their permissions until the final owned reference
+can restore and fsync them; unknown journal owners protect those permissions.
+Version-1 records remain conservative observations, and older binaries reject
+version 2. This does not authorize replacement-daemon cleanup or adoption.
+Child TUN, loop/parent mounts, jail-local links/copies, snapshot publication and
+complete jail/network namespace incarnations are not covered by this asset list.
+The final nested-node [asset diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
+passed 31 selected top-level tests and three leak checks. Native lifecycle and
+filesystem power-loss qualification remain pending.
 
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain

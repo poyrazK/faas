@@ -54,13 +54,20 @@ lease intent before resource creation and records each guest's kernel boot ID,
 PID and process start time in private persistent storage
 ([ADR-399](adr/399-managed-postgres-resource-intent-journal.md)). Restart inventory
 quarantines every journal record, including intent with no observable resources.
-Process provenance does not reconstruct lifecycle ownership; mount/artifact
-journaling, verified restart cleanup and serving recovery remain pending.
+Process provenance does not reconstruct lifecycle ownership; verified restart
+cleanup and serving recovery remain pending.
 Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-journal/README.md)
 passed 21 selected top-level tests and three leak checks, including real guest
-checkpoint/reopen and confirmed journal retirement. Customer cutover activation
-remains disabled, and supported native lifecycle acceptance remains
-pending.
+checkpoint/reopen and confirmed journal retirement. Image staging now persists
+temporary-file and bind intent, inode/namespace/mount provenance and original
+source modes; live-owner cleanup retains failures and refuses observed replacements
+([ADR-400](adr/400-managed-postgres-resource-assets.md)). This inventory still
+excludes several resource classes and complete jail/network namespace incarnations.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
+passed 31 selected top-level tests and three leak checks, including real mount
+failure/replacement guards and reopened guest bind provenance.
+Customer cutover activation remains disabled, and supported native lifecycle
+acceptance remains pending.
 
 ## M0 — repo scaffold. ✅
 
