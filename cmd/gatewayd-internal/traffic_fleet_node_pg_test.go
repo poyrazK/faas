@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 )
 
 type fleetAdmissionNode struct {
@@ -33,6 +34,13 @@ type fleetAdmissionObservation struct {
 		Plan            string
 	}
 	RPCs, GuestCalls, Peak int32
+	Chain                  struct {
+		Claims          map[string]trafficdeadline.Claims
+		ClaimErrors     map[string]string
+		ChildFinishedNS int64
+		ChildStatus     int
+		ChildError      bool
+	}
 }
 
 func startFleetAdmissionNode(t *testing.T, apps []fleetDaemonApp) fleetAdmissionNode {

@@ -3,6 +3,80 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Configured public and managed deadline chain — 2026-10-02
+
+A new Postgres integration connects a stored public total-deadline rule to a
+declared managed dependency through two configured `runWithDeps` gateway
+processes, the production vmmd gRPC admission server, fcvm permit owner and
+reusable bridge binaries. The public total allowance is 1,200 ms; public
+execution and dependency allowances are 5,000 ms. The caller guest fixture
+spends 300 ms before explicitly copying the opaque carrier into an independent
+outgoing context with its own three-second fallback.
+
+Authenticated guest observations prove correct receiving apps, one account and
+chain, and a child deadline no later than its parent. A forged public carrier is
+replaced. Exactly two forwarding RPCs reach two guest requests. The independent
+child returns 504, both node permits release, and fresh public and managed work
+succeeds. The fixture now calls the production operator-key loader that outer
+`run()` already supplies; its earlier omission was a test setup defect.
+
+Warm placement and the endpoint registry are explicit fixture boundaries.
+Before readiness, the fixture loads the real registry and checks node, instance,
+deployment and port, priming deployment weights outside the timed request.
+Listener/source-address translation, guest serving, VM startup and namespace
+selection remain fixtures. This establishes manually propagated ordinary HTTP
+deadline integration; it does not establish SDK propagation, cold endpoint
+initialization, outer discovery, the separate public edge daemon, cross-host
+clock/key rotation, native VM/network or deployed acceptance.
+
+Profiling reproduced state-policy refusals at the existing two-second analysis
+ceiling and identified the byte-at-a-time pass over large escaped JSON strings.
+The in-memory projection estimator now searches quote candidates in bulk and
+uses backslash parity to locate string endings. Quoted separators/exponent text
+stay excluded, while JSONB whitespace and numeric expansion allowances remain.
+New boundary cases cover odd/even backslashes, adjacent escaped quotes, nesting,
+HTML escaping and real versus quoted exponents. Existing overload/refusal/repair
+assertions and all byte, quota and time ceilings are preserved.
+
+Verification against the final 12,521-file source freeze:
+
+- All 12 complete unit packages pass in 245.496 s. Raw events contain 10,892
+  named passes and 1,450 skips. Excluding 46 passed parents with wholly guarded
+  children leaves 10,846 accepted and 1,496 guarded results.
+- The selected Postgres profile passes 173 named results without skips in
+  155.001 s: 41 under 24 actual Postgres fixture roots and 132 memory/transport
+  checks. Across both profiles, 10,886 distinct named results are accepted;
+  1,470 guarded results remain without acceptance.
+- Lint 2.4.0 checks all 12 complete packages with tests and reports zero issues
+  in 230.701 s. SQLC 1.31.1 reproduces all four generated files exactly. Runbook
+  SQL, text encoding, shell quoting and ADR uniqueness pass in 52.209 s, with
+  the 71 existing duplicate groups retained at baseline.
+- All gates run serially with Go 1.25.13, CGO disabled, GOMAXPROCS=2, GOGC=50,
+  one package/analysis worker, disabled inlining/DWARF and stripped test binaries.
+  Only this tracker changes after the final freeze. No new lint suppression,
+  source exclusion, overlay, schema change or weakened assertion was introduced.
+  The disposable Postgres source retains zero public tables and fsync,
+  synchronous_commit and full_page_writes enabled.
+
+Complete failed and preliminary source iterations remain diagnostic evidence.
+They include the missing fixture signer, a disk-full linker failure, policy
+analysis timeouts, the restored environment's omitted migrated-template switch,
+and unprimed warm-registry failures. A successful unit run preceding the registry
+preflight is also excluded from final acceptance because its source differs.
+The Postgres profile explicitly enables the existing migrated-template harness;
+it does not migrate the source database. Focused passes and the cold preliminary
+lint pass remain preliminary. After owned heavy runs became terminal, ten owned
+Go cache archives were transparently compressed with byte/hash equality checked,
+reclaiming 566,763,520 physical bytes. No sibling cache, process or database was
+changed. Full receipts, profiles, source freezes and exact staged/committed
+content are under `outputs/traffic-deadline-bridge-20261002/` relative to the
+checkout's parent.
+
+All six release requirements remain open. The user confirmed no available native
+Linux x86_64 KVM host; VM/firewall/namespace/restore/process-death/leak acceptance
+remains pending, together with complete path, deployed load/recovery, cross-host
+clock/key rotation and staging qualification.
+
 ## Configured gateway policies connected to node admission — 2026-10-02
 
 The earlier configured gateway cases used a forwarding stub, while the node

@@ -28,8 +28,13 @@ func TestNodeAdmissionVMMDProcess(t *testing.T) {
 	if err := json.Unmarshal(encoded, &instances); err != nil || len(instances) == 0 {
 		t.Fatalf("instance fixture: %v", err)
 	}
-	f := newNodeAdmissionProcessFixtureWith(t, instances, true)
-	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	chain := newNodeDeadlineFixture()
+	f := newNodeAdmissionProcessFixtureWith(t, instances, true, chain.serveGuest)
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			chain.configure(w, r)
+			return
+		}
 		states := make(map[string]fcvm.HTTPAdmissionStatus, len(instances))
 		for _, spec := range instances {
 			states[spec.ID], _ = f.owner.HTTPAdmissionStatus(spec.ID)
@@ -37,7 +42,8 @@ func TestNodeAdmissionVMMDProcess(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(struct {
 			Instances              map[string]fcvm.HTTPAdmissionStatus
 			RPCs, GuestCalls, Peak int32
-		}{states, f.rpcCalls.Load(), f.guestCalls.Load(), f.peak.Load()})
+			Chain                  nodeDeadlineObservation
+		}{states, f.rpcCalls.Load(), f.guestCalls.Load(), f.peak.Load(), chain.observation()})
 	}))
 	defer control.Close()
 	ready := struct {

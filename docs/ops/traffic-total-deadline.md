@@ -110,3 +110,23 @@ cleanup while the stalled client connection remained open. These fixtures do
 not establish native VM/network or deployed acceptance.
 Detached work, arbitrary guest sockets and background computation after a
 disconnect are outside this request deadline.
+
+## Configured gateway and node integration
+
+A local Postgres process test connects configured compute gateways to the
+production vmmd gRPC admission server and reusable bridges. The stored public
+total allowance is 1.2 seconds; execution and declared dependency allowances are
+five seconds. A guest fixture spends 300 ms before explicitly propagating the
+carrier to another gateway. Its outgoing context is independent from the public
+request, so caller cancellation cannot by itself prove downstream enforcement.
+Authenticated observations verify the same chain/account, the correct receiving
+apps and no later child deadline. The managed call returns a timeout, both node
+permits release, and fresh public and managed work succeeds. A forged public
+carrier is replaced before the guest receives it.
+
+The fixture calls the same operator-key loader used by outer gateway startup.
+Warm placement, source/listener translation, guest serving, namespace and VM
+startup remain fixtures. This is explicit application carrier propagation;
+the warm registry and deployment weights are loaded and checked before readiness.
+SDKs, the separate public edge daemon, cross-host clock/key rotation, native
+network/KVM, deployed load and staging retain separate acceptance requirements.

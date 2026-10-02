@@ -125,6 +125,20 @@ carrier. Keys must be shared across participating gateways, clocks must be
 synchronized, and coordinated key rotation may refuse old in-flight tokens.
 Cross-node clock and key-rollover acceptance remains required.
 
+Configured compute gateway integration connects a stored public total rule and
+declared managed binding through Postgres policy/source identity, separate gateway
+processes, the production vmmd admission server and reusable bridges. A caller
+fixture spends 300 ms before propagating its opaque carrier using an independent
+outgoing context. The managed hop retains the same or earlier authenticated
+deadline despite longer execution/binding allowances. The child times out and
+both node permits are released before fresh work succeeds. Public carrier claims
+are replaced before guest delivery. The test uses the production operator-key
+loader; it does not establish SDK propagation, public edge startup, cross-host
+clock/key rotation, native VM/network or deployed acceptance. Warm placement,
+guest serving and namespace/VM startup remain fixtures. Before readiness, the
+warm placement fixture loads the real registry and verifies node, instance,
+deployment and port; this primes deployment weights outside the timed request.
+
 ## Shared traffic accounting
 
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres
@@ -463,6 +477,13 @@ precedes the phase context timeout and the prior setting is restored on
 success, so a blocked query releases transaction locks before its refusal.
 Exhausted analysis refuses the mutation with a distinct error rather than
 accepting unverified policy.
+
+The in-memory canonical estimate searches encoded strings for quote candidates
+in bulk, with backslash parity deciding whether each quote closes the string.
+Quoted separators and exponent text remain excluded from the JSONB whitespace
+and numeric expansion allowances. This avoids a byte-at-a-time pass over large
+HTML-escaped policy bodies; serialization, conservative size estimates and all
+analysis ceilings retain their existing meaning.
 
 Route creates and replacements also check the enabled route-only discovery
 projection across accounts. Positive traffic writers acquire a session advisory

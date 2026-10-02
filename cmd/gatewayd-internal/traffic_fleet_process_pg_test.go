@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +95,23 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 				InstanceID: instance, NodeID: spec.NodeID, Port: port, AddedAt: time.Now()})
 		}
 	}
+	// Warm placement is a fixture boundary. Verify its real registry view
+	// before announcing readiness, including the selected deployment and port.
+	for _, app := range spec.Apps {
+		snapshot, err := backend.ServiceEndpoints(t.Context(), app.ID)
+		if err != nil || len(snapshot.Endpoints) != len(app.Instances) {
+			t.Fatalf("warm service registry for %s: %+v err=%v", app.ID, snapshot, err)
+		}
+		port := app.Port
+		if port == 0 {
+			port = 8080
+		}
+		for _, endpoint := range snapshot.Endpoints {
+			if endpoint.NodeID != spec.NodeID || !slices.Contains(app.Instances, endpoint.InstanceID) || endpoint.DeploymentID != app.Deployment || endpoint.Port != port {
+				t.Fatalf("warm service endpoint differs from fixture: %+v app=%+v", endpoint, app)
+			}
+		}
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +119,12 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	defer listener.Close()
 	deps := defaultDeps()
 	deps.config, deps.pool, deps.pgStore = config, pool, store
+	// Outer run() loads the operator key before runWithDeps. Exercise that
+	// same loader here; a configured deadline must not use a fixture signer.
+	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
 	deps.backend, deps.metrics, deps.edgeRulesMatcher, deps.responseCache = backend, metrics, matcher, cache
 	deps.nodeCache = newNodeCache(store, nil, log, metrics)
 	deps.capCheck = func() error { return nil }

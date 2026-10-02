@@ -237,7 +237,7 @@ func newNodeAdmissionProcessFixture(t *testing.T) nodeAdmissionProcessFixture {
 	return newNodeAdmissionProcessFixtureWith(t, []nodeAdmissionFixtureInstance{
 		{ID: "vm", Deployment: "dep", Plan: api.PlanFree},
 		{ID: "untrusted", Deployment: "dep-untrusted"},
-	}, false)
+	}, false, nil)
 }
 
 type nodeAdmissionFixtureInstance struct {
@@ -245,7 +245,7 @@ type nodeAdmissionFixtureInstance struct {
 	Plan           api.Plan
 }
 
-func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionFixtureInstance, unix bool) nodeAdmissionProcessFixture {
+func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionFixtureInstance, unix bool, guestHook func(http.ResponseWriter, *http.Request) bool) nodeAdmissionProcessFixture {
 	t.Helper()
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v2")
 	t.Setenv(streamBridgePersistentEnv, "1")
@@ -268,6 +268,9 @@ func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionF
 		for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
 		}
 		calls.Add(1)
+		if guestHook != nil && guestHook(w, r) {
+			return
+		}
 		if r.URL.Path == "/hold" || r.URL.Path == "/body-hold" {
 			if r.URL.Path == "/body-hold" {
 				w.WriteHeader(http.StatusOK)

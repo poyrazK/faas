@@ -2,6 +2,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -107,22 +108,11 @@ func memTrafficProjectionSize(scope string, projection any) (int64, error) {
 		return 0, fmt.Errorf("state: encode %s traffic projection: %w", scope, err)
 	}
 	observed := int64(len(payload))
-	quoted, escaped := false, false
 	for i := 0; i < len(payload); i++ {
 		c := payload[i]
-		if quoted {
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				quoted = false
-			}
-			continue
-		}
 		switch c {
 		case '"':
-			quoted = true
+			i = trafficJSONStringEnd(payload, i)
 		case ',', ':':
 			observed++
 		case 'e', 'E':
@@ -146,4 +136,26 @@ func memTrafficProjectionSize(scope string, projection any) (int64, error) {
 		}
 	}
 	return observed, nil
+}
+
+// Marshal has already validated the JSON. Find quote candidates in bulk so
+// large escaped strings do not consume the analysis budget byte by byte.
+// An odd number of immediately preceding backslashes escapes a candidate.
+func trafficJSONStringEnd(payload []byte, start int) int {
+	for offset := start + 1; offset < len(payload); {
+		index := bytes.IndexByte(payload[offset:], '"')
+		if index < 0 {
+			return len(payload)
+		}
+		end := offset + index
+		backslashes := 0
+		for prior := end - 1; prior > start && payload[prior] == '\\'; prior-- {
+			backslashes++
+		}
+		if backslashes%2 == 0 {
+			return end
+		}
+		offset = end + 1
+	}
+	return len(payload)
 }
