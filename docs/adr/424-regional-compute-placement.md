@@ -64,8 +64,8 @@ Redeploying with a different region fails before configuration changes; omitting
 the flag preserves the choice. Existing unconstrained apps cannot be repinned.
 Create a new app to choose a different region. ADR-426 extends project deploys
 and their scan/dry-run/diff plans with locality. ADR-428 carries placement
-through standalone diff and local simple-app plans. Workflow snippets still
-reject region selection until a supporting deploy Action can be pinned.
+through standalone diff and local simple-app plans. Workflow snippets accept
+region selection only with a verified supporting deploy Action release (ADR-428).
 Pull-request previews derived from a region-bound app inherit its region.
 
 Operators declare `region` and optional `zone` per fleet host. The renderer

@@ -48,10 +48,20 @@ The Go SDK adds the previously missing typed diff client, and Node exposes the
 generated diff service through its public entry point. Workflow durations in the
 Go preview DTO use the same duration strings as the wire contract.
 
-Workflow snippet generation still rejects `--region`: the CLI's default pinned
-deploy Action predates that input. Reserve the regional app first and let the
-workflow deploy to that existing identity until a supporting Action release can
-be pinned. Do not emit an input the referenced immutable Action cannot consume.
+Workflow snippets accept `--region` only when the referenced immutable deploy
+Action supports it. Releases verify the Action's versioned capability manifest
+and bundled CLI at the same SHA, then bind that capability to the embedded pin.
+The default remains network-free. An older embedded Action refuses region
+selection with guidance to use `--pin-action` or `--pinned-sha`; these explicit
+pins verify the manifest and released bundle before emitting a workflow.
+Source commits without a vendored CLI cannot satisfy this check.
+
+The Action's optional `region` input forwards canonical placement intent to
+`gregale deploy --region`. It verifies bundled CLI support before exchanging
+OIDC or deploying. Omission preserves existing placement and remains compatible
+with older CLI bundles. Explicit intent must match an existing app's immutable
+choice, including the legacy unconstrained identity. The release canary exercises
+region creation through the exact Action and compiled CLI before publishing.
 
 ## Validation and rollout
 
@@ -61,6 +71,10 @@ creation during preview. CLI tests verify the three preview spellings issue only
 the read-only planner request, and local plans remain network-free. SDK tests
 cover request/response transport, including explicit empty versus omission.
 OpenAPI and embedded specs remain identical; generated clients retain the fields.
+Action tests cover canonical identifiers, omission, older bundles, and argument
+forwarding. Snippet tests cover exact-pin capability binding, older/unreleased
+Actions, cancellation, and failure without workflow output. A hermetic API fixture
+checks the compiled CLI's creation request carries the region.
 
 This is a preview extension to the shared-fleet compute placement contract.
 It does not add regional data residency, independent control planes, global

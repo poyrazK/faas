@@ -2415,9 +2415,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
-	if *computeRegion != "" && *githubSnippet {
-		return printErr("Invalid --region", fmt.Errorf("the pinned GitHub deploy Action does not support region selection; create the regional app first and deploy to its existing identity"))
-	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -2801,6 +2798,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
 		snippetArgs := []string{"--app", slug}
+		if *computeRegion != "" {
+			snippetArgs = append(snippetArgs, "--region", *computeRegion)
+		}
 		if *pinnedActionSHA != "" {
 			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
 		}

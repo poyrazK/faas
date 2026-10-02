@@ -16,8 +16,9 @@ setup_default="$workflow_dir/$prefix-setup-default.yml"
 setup_override="$workflow_dir/$prefix-setup-override.yml"
 snippet_default="$workflow_dir/$prefix-snippet-default.yml"
 snippet_refresh="$workflow_dir/$prefix-snippet-refresh.yml"
+snippet_regional="$workflow_dir/$prefix-snippet-regional.yml"
 
-for path in "$setup_default" "$setup_override" "$snippet_default" "$snippet_refresh"; do
+for path in "$setup_default" "$setup_override" "$snippet_default" "$snippet_refresh" "$snippet_regional"; do
 	if [[ -e "$path" ]]; then
 		printf 'generated workflow fixture already exists: %s\n' "$path" >&2
 		exit 1
@@ -29,7 +30,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 cli="$tmpdir/gregale"
 go build \
-	-ldflags "-X main.githubActionDefaultSHA=$test_action_sha" \
+	-ldflags "-X main.githubActionDefaultSHA=$test_action_sha -X main.githubActionRegionSupportSHA=$test_action_sha" \
 	-o "$cli" ./cmd/gregale
 
 generate_setup() {
@@ -64,6 +65,11 @@ generate_setup "$setup_override" \
 
 "$cli" deploy --github --name actionlint-probe > "$snippet_default"
 expect_action_ref "$snippet_default" "$test_action_ref # v0"
+
+# The hermetic build above binds region support to its fixture pin. Release
+# builds use the capability resolver before embedding this binding.
+"$cli" deploy --github --name actionlint-probe --region eu-fsn > "$snippet_regional"
+expect_action_ref "$snippet_regional" "$test_action_ref # v0"
 
 # Keep the deploy snippet's --pin-action path offline and deterministic while
 # exercising the shared Action tag resolver.

@@ -58,7 +58,10 @@ func TestComputeRegionDeployCreationAndRedeploy(t *testing.T) {
 	}
 }
 
-func TestComputeRegionUnsupportedFlowsFailBeforeRemoteChanges(t *testing.T) {
+func TestComputeRegionGithubUnsupportedPinFailsBeforeRemoteChanges(t *testing.T) {
+	oldSupport := githubActionRegionSupportSHA
+	githubActionRegionSupportSHA = ""
+	t.Cleanup(func() { githubActionRegionSupportSHA = oldSupport })
 	for _, flag := range []string{"--github"} {
 		t.Run(flag, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

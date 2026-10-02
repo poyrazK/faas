@@ -45,6 +45,10 @@ inputs:
     description: "Registered Gregale project environment to deploy into; omit for the app's default scope"
     required: false
     default: ""
+  region:
+    description: "Compute region for a new app, or an assertion of an existing app's immutable region. Omit to preserve existing placement."
+    required: false
+    default: ""
   format:
     description: "Source format passed to the source-ref endpoint"
     required: false
@@ -127,6 +131,7 @@ runs:
         INPUT_APP: ${{ inputs.app }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_REGION: ${{ inputs.region }}
         INPUT_ROLLOUT: ${{ inputs.rollout }}
       run: bash "$ACTION_PATH/src/run.sh" validate
     - name: Deploy
@@ -141,6 +146,7 @@ runs:
         INPUT_REF: ${{ inputs.ref || github.sha }}
         INPUT_REF_EXPLICIT: ${{ inputs.ref != '' }}
         INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_REGION: ${{ inputs.region }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}

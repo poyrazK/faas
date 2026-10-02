@@ -298,8 +298,10 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 	python3 scripts/ci/check_shell_quoting_test.py
 
 .PHONY: deploy-action-head-check
-deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
+deploy-action-head-check: ## Verify deploy Action ref guards and regional compatibility
 	@bash scripts/ci/test_deploy_action_head.sh
+	@bash scripts/ci/test_deploy_action_regions.sh
+	@python3 scripts/ci/test_github_action_region_support.py
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action

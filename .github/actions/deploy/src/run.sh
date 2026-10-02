@@ -147,6 +147,7 @@ check_run_update() {
 }
 
 cmd_validate() {
+    local LC_ALL=C
     if [ -z "${INPUT_APP:-}" ]; then
         die "missing required input: app"
     fi
@@ -173,12 +174,22 @@ cmd_validate() {
 	if [ -n "${INPUT_ENVIRONMENT:-}" ] && { [[ ! "${INPUT_ENVIRONMENT}" =~ ^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$ ]] || [ "${INPUT_ENVIRONMENT}" = "default" ]; }; then
 		die "environment must be a registered project environment slug"
 	fi
+	if [ -n "${INPUT_REGION:-}" ] && [[ ! "$INPUT_REGION" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+		die "region must be a canonical lowercase identifier of at most 63 characters"
+	fi
     if [ ! -x "$BIN" ]; then
         die "vendored binary not found at $BIN (action must be released as a tagged version)"
     fi
     if [ ! -f "$VERSION_FILE" ]; then
         die "version file not found at $VERSION_FILE (action must be released as a tagged version)"
     fi
+	if [ -n "${INPUT_REGION:-}" ]; then
+		local deploy_help
+		deploy_help="$("$BIN" deploy --help 2>&1 || true)"
+		if ! printf '%s\n' "$deploy_help" | grep -Eq '^[[:space:]]+-{1,2}region([=[:space:]]|$)'; then
+			die "bundled CLI does not support --region; choose a newer deploy Action release"
+		fi
+	fi
     # Echo the bundled CLI version so the action log shows what's
     # actually running. Note: this is NOT the action version — it's
     # the gregale CLI version. Useful for post-mortem traceability.
@@ -414,6 +425,10 @@ cmd_deploy() {
 	if [ -n "${INPUT_ENVIRONMENT:-}" ]; then
 		environment_args+=(--environment "$INPUT_ENVIRONMENT")
 	fi
+	local region_args=()
+	if [ -n "${INPUT_REGION:-}" ]; then
+		region_args+=(--region "$INPUT_REGION")
+	fi
 	local source_branch_args=()
 	local source_branch
 	source_branch="$(current_run_source_branch)"
@@ -430,10 +445,11 @@ cmd_deploy() {
             --name "$INPUT_APP" \
 			--repo "$INPUT_REPO" \
 			--ref "$INPUT_REF" \
-			"${source_branch_args[@]}" \
-			"${environment_args[@]}" \
-			"${rollout_args[@]}" \
-            "${annotation_args[@]}" \
+			${source_branch_args[@]+"${source_branch_args[@]}"} \
+			${environment_args[@]+"${environment_args[@]}"} \
+			${region_args[@]+"${region_args[@]}"} \
+			${rollout_args[@]+"${rollout_args[@]}"} \
+            ${annotation_args[@]+"${annotation_args[@]}"} \
             2>&1
     )"; then
         # The CLI exited non-zero. Persist the captured output for
@@ -503,7 +519,7 @@ cmd_deploy() {
 			if [ "${USING_OIDC:-false}" = "true" ] && [ "$attempt_timeout" -gt 240 ]; then
 				attempt_timeout=240
 			fi
-			if wait_output="$("$BIN" --json deployment wait "$dep_id" "${rollout_wait_args[@]}" --timeout "$attempt_timeout" 2>&1)"; then
+			if wait_output="$("$BIN" --json deployment wait "$dep_id" ${rollout_wait_args[@]+"${rollout_wait_args[@]}"} --timeout "$attempt_timeout" 2>&1)"; then
 				wait_succeeded=true
 				break
 			fi

@@ -14,6 +14,7 @@ DEPLOYMENT_ID = "00000000000000000000000000000001"
 
 class Handler(BaseHTTPRequestHandler):
     request_log: Path
+    compute_region: str = ""
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -34,13 +35,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
         content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length:
-            self.rfile.read(content_length)
+        body = self.rfile.read(content_length) if content_length else b"{}"
         with self.request_log.open("a", encoding="utf-8") as log:
             log.write(f"POST {self.path}\n")
 
         if self.path == "/v1/apps":
-            self._write_json(200, {"id": "app-action-ref-canary", "slug": "action-ref-canary"})
+            try:
+                intent = json.loads(body)
+            except (ValueError, UnicodeError):
+                self._write_json(400, {"status": 400, "code": "validation_error"})
+                return
+            if not isinstance(intent, dict) or intent.get("compute_region", "") != self.compute_region:
+                self._write_json(422, {"status": 422, "code": "region_mismatch"})
+                return
+            self._write_json(200, {
+                "id": "app-action-ref-canary", "slug": "action-ref-canary",
+                "compute_region": self.compute_region,
+            })
             return
         if self.path == "/v1/apps/action-ref-canary/deployments/source-ref":
             self._write_json(
@@ -61,10 +72,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--request-log", type=Path, required=True)
+    parser.add_argument("--compute-region", default="")
+    parser.add_argument("--port-file", type=Path)
     args = parser.parse_args()
     args.request_log.write_text("", encoding="utf-8")
     Handler.request_log = args.request_log
-    ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    Handler.compute_region = args.compute_region
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    if args.port_file:
+        args.port_file.write_text(str(server.server_port), encoding="utf-8")
+    server.serve_forever()
 
 
 if __name__ == "__main__":

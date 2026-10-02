@@ -254,6 +254,10 @@ func TestReleaseWorkflowEmbedsCurrentGithubActionPin(t *testing.T) {
 		`sha=$(bash scripts/ci/resolve-github-action-pin.sh)`,
 		"ACTION_SHA: ${{ needs.resolve-action-pin.outputs.sha }}",
 		"-X main.githubActionDefaultSHA=${action_sha}",
+		`regional_action_sha="$(python3 scripts/ci/resolve-github-action-region-support.py "$action_sha")"`,
+		"-X main.githubActionRegionSupportSHA=${regional_action_sha}",
+		"--compute-region eu-test",
+		"region: eu-test",
 		`ref=${ACTION_SHA}`,
 	} {
 		if !strings.Contains(string(workflow), want) {

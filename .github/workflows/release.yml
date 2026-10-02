@@ -102,8 +102,9 @@ jobs:
           archive="/tmp/gregale-build/archives/gregale_${VERSION#v}_${GOOS}_${GOARCH}.tar.gz"
           mkdir -p "$stage" "$(dirname "$archive")"
           action_sha="${ACTION_SHA:?missing resolved deploy Action pin}"
+          regional_action_sha="$(python3 scripts/ci/resolve-github-action-region-support.py "$action_sha")"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -X main.githubActionDefaultSHA=${action_sha}" \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION} -X main.githubActionDefaultSHA=${action_sha} -X main.githubActionRegionSupportSHA=${regional_action_sha}" \
             -o "$stage/gregale" ./cmd/gregale
           bash scripts/archive-cli-binary.sh \
             --binary "$stage/gregale" \
@@ -211,6 +212,7 @@ jobs:
         run: |
           python3 scripts/ci/github-action-fixture-server.py \
             --port 18081 \
+            --compute-region eu-test \
             --request-log "$RUNNER_TEMP/github-action-fixture.requests" &
           for attempt in 1 2 3 4 5; do
             if curl --fail --silent http://127.0.0.1:18081/healthz >/dev/null; then
@@ -229,6 +231,7 @@ jobs:
           api-base: http://127.0.0.1:18081
           api-key: action-ref-canary-nonsecret
           app: action-ref-canary
+          region: eu-test
           wait: "false"
 
       - name: Verify fixture workflow contract

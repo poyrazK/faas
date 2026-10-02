@@ -22,3 +22,15 @@ func TestDeployActionRefChecks(t *testing.T) {
 		t.Fatalf("%s: %v\n%s", script, err, out)
 	}
 }
+
+func TestDeployActionRegions(t *testing.T) {
+	for _, tool := range []string{"bash", "python3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+	}
+	script := filepath.Join("..", "..", "scripts", "ci", "test_deploy_action_regions.sh")
+	if out, err := exec.Command("bash", script).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v\n%s", script, err, out)
+	}
+}

@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // githubActionVersion is the moving major Action tag maintained by the
@@ -73,6 +75,7 @@ type githubSnippetEnv struct {
 	// (when non-empty) regardless of env.Runner.
 	ConcreteRepository string
 	ConcreteSHA        string
+	ComputeRegion      string
 }
 
 // detectGithubSnippetEnv reads the runner env. The two GITHUB_REPOSITORY
@@ -143,6 +146,11 @@ func renderGithubSnippet(env githubSnippetEnv, app, pinnedSHA string, actionVers
 	// (different for Hobby/Pro/Scale deployments). The README's
 	// "Before you commit" section explains the substitution.
 	apiBase := defaultAPIBase
+	regionInput := ""
+	if env.ComputeRegion != "" {
+		// Preserve identifiers such as 001, true, and null as YAML strings.
+		regionInput = fmt.Sprintf("          region: %q\n", env.ComputeRegion)
+	}
 
 	// The generated workflow grants GitHub's id-token permission so the
 	// Action can exchange a short-lived OIDC assertion for a Gregale
@@ -175,7 +183,7 @@ jobs:
         with:
           api-base: %s
           app: %s
-          # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
+%s          # repo / ref default to ${{ github.repository }} / ${{ github.sha }}
           # Keep the job open until the deployment reaches a terminal state.
           wait: "true"
 `,
@@ -187,6 +195,7 @@ jobs:
 		versionComment,
 		apiBase,
 		app,
+		regionInput,
 	)
 }
 
@@ -201,10 +210,11 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")
+	computeRegion := fs.String("region", "", "immutable compute region; verifies a compatible released deploy Action")
 	pinnedSHA := fs.String("pinned-sha", "", "pin the generated Action to this full 40-character commit SHA")
 	pinAction := fs.Bool("pin-action", false, "resolve the current v0 deploy Action tag to its commit SHA")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA | --pin-action]", "deploy")
+		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--region REGION] [--pinned-sha SHA | --pin-action]", "deploy")
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
@@ -213,6 +223,11 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 	if *app == "" {
 		PrintFail(osStderr, "missing --app (the snippet generator needs a slug to embed)")
 		return 1
+	}
+	explicitRegion := false
+	fs.Visit(func(f *flag.Flag) { explicitRegion = explicitRegion || f.Name == "region" })
+	if explicitRegion && (*computeRegion == "" || !api.ValidComputeRegion(*computeRegion)) {
+		return printErr("Invalid --region", errors.New("use a canonical region from gregale regions list"))
 	}
 	if *pinnedSHA != "" {
 		sha, err := normalizeGithubActionSHA(*pinnedSHA)
@@ -233,7 +248,17 @@ func cmdDeployGithubSnippet(ctx context.Context, args []string) int {
 		*pinnedSHA = sha
 		actionVersionComment = true
 	}
+	if *computeRegion != "" {
+		actionSHA := githubActionDefaultSHA
+		if *pinnedSHA != "" {
+			actionSHA = *pinnedSHA
+		}
+		if err := requireGithubActionRegion(ctx, actionSHA, *pinnedSHA != ""); err != nil {
+			return printErr("Could not select a regional deploy Action", err)
+		}
+	}
 	env := detectGithubSnippetEnv()
+	env.ComputeRegion = *computeRegion
 	// CLI overrides beat env detection on a field-by-field basis so a
 	// customer can override one without blanking the other. Setting
 	// `Runner=true` here would force BOTH fields concrete, blanking

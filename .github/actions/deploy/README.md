@@ -53,6 +53,22 @@ with `--deploy-branches staging=staging`, its generated workflow listens to
 saved through `github bind` are reused unless the flag supplies a replacement.
 Manual dispatch is limited to the configured production and mapped branches.
 
+To choose compute placement for a new standalone app, use a regional-capable
+Action release:
+
+```sh
+gregale deploy --github --name my-app --region eu-fsn --pin-action > .github/workflows/deploy.yml
+```
+
+The generator verifies regional support at the selected immutable Action SHA
+before emitting the workflow. An older release refuses this flag; use it after
+a supporting Action has been published. CLI releases with a verified compatible
+embedded pin also support `--region` without `--pin-action` or network access.
+The emitted `region` input creates the app in that region or asserts the existing
+app's immutable placement. Omission preserves its choice. An existing app cannot
+be moved to another region through a redeploy. Regional creation remains subject
+to the operator's admission gate, registry policy, and capacity.
+
 ## Inputs
 
 | Input | Description | Required | Default |
@@ -64,6 +80,7 @@ Manual dispatch is limited to the configured production and mapped branches.
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |
 | `ref` | git ref — branch, tag, or 40-char SHA. | no | `${{ github.sha }}` |
 | `environment` | Registered Gregale project environment to deploy into. Omit to use the app's default scope. | no | — |
+| `region` | Immutable compute region for a new app, or an assertion of existing placement. Omit to preserve placement. Requires a supporting Action release. | no | — |
 | `format` | Source format passed to the source-ref endpoint. | no | `tarball` |
 | `wait` | If `true`, block until the deployment is live (or fails); if `false`, queue it and return immediately. | no | `true` |
 | `wait-timeout` | Maximum seconds to wait when `wait=true`. | no | `1200` |
@@ -134,8 +151,8 @@ gregale deploy --github --name my-app --pinned-sha "$ACTION_SHA"
 ```
 
 Both `--pinned-sha` options put the SHA directly in the generated workflow's
-`uses:` reference. Without a pin, generated workflows keep using the moving
-`@v0` tag.
+`uses:` reference. Without an explicit pin, generated workflows use the
+immutable Action SHA embedded in the CLI, with a `# v0` update comment.
 
 The bundled `cli-version` output lets you lint for drift in enterprise monorepos.
 
