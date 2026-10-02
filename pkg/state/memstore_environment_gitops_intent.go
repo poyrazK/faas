@@ -125,7 +125,7 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		row.SuppressionCount = m.environmentSecretSuppressionCountLocked(app.ID)
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == source.EnvironmentSlug && deployment.Status == DeployLive {
-				row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest})
+				row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest, Inputs: environmentWorkloadDeploymentInputs(deployment)})
 				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID, SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...)})
 			}
 		}

@@ -4759,6 +4759,9 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	if d.EnvironmentWorkloadHeld() && d.MinInstances != min {
+		return Deployment{}, ErrInvalidArgument
+	}
 	d.MinInstances = min
 	m.deployments[id] = d
 	return d, nil

@@ -16,10 +16,12 @@ import (
 )
 
 func TestEnvironmentWorkloadFrozenManifestProjection(t *testing.T) {
+	deniedCallers := []string{}
 	app := state.App{ID: "app", StartCommand: "./changed-after-review", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeRequest}}
 	frozen := state.EnvironmentWorkloadRuntime{SourceID: "source", EnvironmentID: "original-environment", RevisionID: "approved-revision",
 		Generation: 2, PlanHash: strings.Repeat("a", 64), AppID: app.ID, AppType: state.AppTypeApp, Scope: "production", Resource: "workload/api", StartCommand: "./reviewed",
-		Baseline: state.AppManifest{ExecutionMode: api.ExecutionModeService, StartupDeadlineS: 12}, Runtime: map[string]json.RawMessage{
+		Baseline: state.AppManifest{ExecutionMode: api.ExecutionModeService, StartupDeadlineS: 12, ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
+			AllowedServiceCallers: &deniedCallers, BuildDockerfile: "Reviewed.Dockerfile"}, Runtime: map[string]json.RawMessage{
 			"port": json.RawMessage(`9090`), "ports": json.RawMessage(`[]`), "healthz": json.RawMessage(`"/ready"`),
 			"stop_grace_period": json.RawMessage(`1500000000`), "service_replicas": json.RawMessage(`{"min":1,"max":2,"desired":2}`)}}
 	raw, _ := json.Marshal(frozen)
@@ -27,6 +29,9 @@ func TestEnvironmentWorkloadFrozenManifestProjection(t *testing.T) {
 	resolved, err := state.AppForDeploymentRuntime(app, dep)
 	if err != nil || resolved.StartCommand != "./reviewed" || resolved.Manifest.ExecutionMode != api.ExecutionModeService || resolved.Manifest.ServiceReplicas.Desired != 2 {
 		t.Fatalf("frozen app projection: %+v %v", resolved, err)
+	}
+	if resolved.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared || resolved.Manifest.AllowedServiceCallers == nil || len(*resolved.Manifest.AllowedServiceCallers) != 0 || resolved.Manifest.BuildDockerfile != "Reviewed.Dockerfile" {
+		t.Fatal("guest projection discarded frozen application policy or build inputs")
 	}
 	manifest := api.AppManifest{Entrypoint: []string{"./image-command"}, Port: 8080, Ports: []api.WorkloadPort{{Name: "image", Port: 8080}}, Env: map[string]string{"IMAGE_VALUE": "keep"}}
 	manifest = applyAppStartCommand(manifest, resolved)
@@ -40,8 +45,9 @@ func TestEnvironmentWorkloadFrozenManifestProjection(t *testing.T) {
 		t.Fatalf("effective frozen guest manifest: %+v %v", manifest, err)
 	}
 	resolved.Manifest.ServiceReplicas.Desired = 1
+	*resolved.Manifest.AllowedServiceCallers = []string{"unexpected-caller"}
 	resolvedAgain, err := state.AppForDeploymentRuntime(app, dep)
-	if err != nil || resolvedAgain.Manifest.ServiceReplicas.Desired != 2 || app.StartCommand != "./changed-after-review" || app.Manifest.ExecutionMode != api.ExecutionModeRequest {
+	if err != nil || resolvedAgain.Manifest.ServiceReplicas.Desired != 2 || len(*resolvedAgain.Manifest.AllowedServiceCallers) != 0 || app.StartCommand != "./changed-after-review" || app.Manifest.ExecutionMode != api.ExecutionModeRequest {
 		t.Fatal("projection aliased immutable inputs or the shared app")
 	}
 	dep.Scope = "staging"

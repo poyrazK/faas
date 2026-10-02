@@ -33,9 +33,10 @@ type EnvironmentWorkloadIntentStore interface {
 type environmentWorkloadIntentKey struct{ AppID, EnvironmentID string }
 
 type gitOpsSourceBaseline struct {
-	ID    string         `json:"id"`
-	Kind  DeploymentKind `json:"kind"`
-	Image string         `json:"image"`
+	ID     string                              `json:"id"`
+	Kind   DeploymentKind                      `json:"kind"`
+	Image  string                              `json:"image"`
+	Inputs EnvironmentWorkloadDeploymentInputs `json:"inputs"`
 }
 
 func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {

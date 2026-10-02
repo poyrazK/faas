@@ -2029,9 +2029,25 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 
 const createEnvironmentGitOpsImageCandidate = `-- name: CreateEnvironmentGitOpsImageCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
- revision,environment_workload_runtime)
+ revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
+ override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
+ full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
+ rollback_on_5xx)
 VALUES($1::uuid,$2::text,'image',$3::text,$4::text,'pending',0,true,
- (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$5::jsonb)
+ (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$5::jsonb,
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'override_entrypoint','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'override_cmd','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ $5::jsonb->'deployment_inputs'->'override_env',$5::jsonb->'deployment_inputs'->'override_env_secrets',
+ ($5::jsonb->'deployment_inputs'->>'override_port')::integer,
+ $5::jsonb->'deployment_inputs'->'override_healthcheck',$5::jsonb->'deployment_inputs'->'override_liveness_probe',
+ $5::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($5::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
+ coalesce($5::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($5::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
+ coalesce(($5::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($5::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce(($5::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
+ (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($5::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
+ coalesce(($5::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
+ coalesce(($5::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
+ coalesce(($5::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
 RETURNING id
 `
 
@@ -17775,7 +17791,7 @@ SELECT jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
-        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest) ORDER BY d.id) FROM deployments d
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,'inputs',environment_workload_deployment_inputs(d)) ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,

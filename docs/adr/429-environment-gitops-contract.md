@@ -72,8 +72,9 @@
    apps keep their IDs; creation must be idempotent under the current approved
    generation. Existing build owners and scheduler admission remain authoritative.
    Immutable image candidates now capture scoped inputs and commit a durable
-   imaging handoff. Source/archive builders, new workload creation and runtime-only
-   ownership inheriting an unmanaged source still need their preparation adapters.
+   imaging handoff, including runtime-only ownership that inherits a reviewed
+   immutable live image. Source/archive builders and new workload creation still
+   need their preparation adapters.
 2. Prepare the dependency graph using immutable source artifacts and durable
    deployment/effect identities. Qualify API and worker candidates before release
    activation. Retry and crash recovery resume the journaled operation; an older
@@ -146,6 +147,37 @@ Imaging consumes frozen settings, preserves exact guest duration values and appl
 explicit scoped fields after image inference and deployment overrides. Changes to
 the shared app after review invalidate a new preparation but cannot alter an
 existing candidate's build inputs.
+
+Runtime-only ownership can now prepare that same held candidate without importing
+source intent or transferring source ownership. Preparation captures every live
+deployment identity in the exact scope and requires a consistent immutable image
+and consistent inherited deployment settings. The review includes commands,
+non-secret deployment env, secret reference names, probes, startup dependencies,
+sealed sidecar env, workflows, full-rootfs policy, replica floor, release command,
+startup CPU opt-out and automatic rollback policy. The candidate copies these
+inputs before applying explicit Git runtime fields. Sealed sidecar values stay
+sealed; decrypted values never enter observation. OCI-derived reload signals and
+artifact/runtime receipts remain separate from these inputs.
+
+PostgreSQL serializes live input changes with preparation under the original
+source and application locks. Inserting a candidate checks the complete live
+identity set, copied inputs and current scoped intent in the same transaction.
+A changed baseline requires a new reviewed plan; an already prepared candidate
+retains its original inputs. Unmanaged source settings remain editable. Conflicting
+live inputs or a mutable/missing inherited image leave preparation unavailable;
+the complete graph remains unqualified. Replay retains frozen inputs and the
+execution hold, including for candidates created before this input projection.
+Frozen app projection also preserves state-only caller authorization and build
+metadata while applying the guest runtime fields; it does not reduce the captured
+app manifest to the guest schema.
+
+Shared memory/PostgreSQL checks cover runtime-only preparation, unchanged source
+ownership, copied inputs, retry identity, stale review rejection and unavailable
+mutable/missing/conflicting baselines. PostgreSQL rejects raw changes to captured
+candidate inputs while permitting OCI-derived reload metadata. Imaging projection
+and populated migration replay pass. Routed API/CLI and main's clone/JSON receipt
+checks pass on the integrated tree. These are local unit and PostgreSQL checks;
+graph qualification, activation and native serving acceptance remain outstanding.
 
 These candidates are held artifacts, not qualified deployments. The current
 implementation deliberately supplies no path to lift the hold. Ordinary imaging
