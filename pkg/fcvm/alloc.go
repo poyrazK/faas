@@ -200,6 +200,26 @@ func NewAllocator() *Allocator {
 	return &Allocator{free: free, byInstance: make(map[string]int)}
 }
 
+// pristine and quarantine are startup-only: quarantine removes observed slots
+// from the free pool without inventing a Lease or making Release legal.
+func (a *Allocator) pristine() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.free) == MaxSlots && len(a.byInstance) == 0 && len(a.reserved) == 0
+}
+
+func (a *Allocator) quarantine(slots map[int]struct{}) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	free := a.free[:0]
+	for _, slot := range a.free {
+		if _, held := slots[slot]; !held {
+			free = append(free, slot)
+		}
+	}
+	a.free = free
+}
+
 // InUse reports how many slots are currently leased.
 func (a *Allocator) InUse() int {
 	a.mu.Lock()

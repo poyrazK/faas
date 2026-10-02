@@ -31,6 +31,10 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 	bootCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.restartQuarantine[instance]; held {
+		flight.cancel()
+		return nil, nil, fmt.Errorf("boot %s: %w", instance, ErrRestartQuarantine)
+	}
 	if m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil {
 		flight.cancel()
 		return nil, nil, fmt.Errorf("manager: boot %s: teardown pending", instance)
@@ -57,6 +61,10 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 	operationCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, held := m.restartQuarantine[instance]; held {
+		flight.cancel()
+		return nil, nil, nil, fmt.Errorf("operate on %s: %w", instance, ErrRestartQuarantine)
+	}
 	if m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil {
 		flight.cancel()
 		return nil, nil, nil, fmt.Errorf("instance teardown pending")

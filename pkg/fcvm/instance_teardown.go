@@ -149,6 +149,12 @@ func networkRemoved(nc netns.Config) error {
 }
 
 func (m *Manager) joinForTeardown(ctx context.Context, instance string) error {
+	m.mu.Lock()
+	_, held := m.restartQuarantine[instance]
+	m.mu.Unlock()
+	if held {
+		return fmt.Errorf("stop %s: %w", instance, ErrRestartQuarantine)
+	}
 	if err := m.cancelInFlightInstance(ctx, instance); err != nil {
 		return err
 	}

@@ -772,6 +772,11 @@ type Manager struct {
 	// same mutex lets Wake fail closed instead of registering a dead
 	// instance. Entries are consumed by Wake or cleared by cleanup.
 	pendingProcessExits map[string]int
+	// ADR-398: observed restart survivors have no reconstructed lifecycle
+	// owner. Their slots and IDs stay quarantined; they are never live-map
+	// entries, cleanup identities or permission to replay a failure report.
+	restartQuarantine    map[string]struct{}
+	restartInventoryDone bool
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not

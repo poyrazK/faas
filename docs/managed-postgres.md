@@ -500,6 +500,19 @@ Committed reports survive process exit. A recovered report with unknown Manager
 ownership stays pending until guest inventory is reconciled; do not delete the
 spool or treat a cold instance row as fleet teardown proof.
 
+Linux vmmd now inventories surviving Firecracker/jailer processes, links,
+namespaces and jails before allocating prepared networks or serving RPCs. It
+quarantines observed allocator slots and rejects boot/stop/resume requests for
+their instance IDs ([ADR-398](adr/398-managed-postgres-restart-resource-quarantine.md)).
+Startup logs report the observed slot, instance and process counts. An incomplete
+required inventory fails startup. Quarantine persists for that Manager's lifetime;
+even a later orphan sweep does not release those slots. Reattachment, durable
+resource cleanup and resumed report delivery remain pending. Investigate through
+the owning vmmd and scheduler; an observed quarantine is not a drain receipt.
+The internal nested-node [diagnostics](ops/evidence/20261002-managed-postgres-restart-quarantine/README.md)
+cover real guests with UUID, builder-prefixed and compact IDs; supported native
+lifecycle acceptance remains pending.
+
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

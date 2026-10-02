@@ -41,8 +41,15 @@ and workload OOM reports now persist on vmmd and retry until schedd confirms
 application; replay with unknown guest ownership stays pending
 ([ADR-397](adr/397-managed-postgres-failure-report-redelivery.md)). Its nested-node
 [diagnostics](ops/evidence/20261002-managed-postgres-failure-reports/README.md) passed
-34 top-level checks and three leak checks. Admission
-fencing and local teardown do not yet provide durable all-node drain proof. Customer cutover
+34 top-level checks and three leak checks. Restart admission
+now quarantines observed guest slots and instance IDs before
+prepared-network allocation or RPC service; unowned boots/stops are rejected
+([ADR-398](adr/398-managed-postgres-restart-resource-quarantine.md)). This protects
+surviving identities but does not reattach guests or resume recovered reports.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-restart-quarantine/README.md)
+passed 13 selected top-level metal tests and three leak checks, including real
+guests with UUID, builder-prefixed and compact IDs. Admission fencing and local
+teardown do not yet provide durable all-node drain proof. Customer cutover
 activation remains disabled, and supported native lifecycle acceptance remains
 pending.
 

@@ -1,4 +1,5 @@
 // Tests for cmd/vmmd/readiness.go (issue #571 PR-A2).
+// adr: 398 — run the portable readiness checks on the internal KVM host.
 //
 // The /readyz probe is constructed at vmmd boot and exposed
 // via ControlMuxLite on the metrics mux. These tests pin the
@@ -105,17 +106,10 @@ func TestGrpcBoundSignal_MarkBoundIdempotent(t *testing.T) {
 // agrees with the platform state.
 func kvmAndFCReady(t *testing.T) bool {
 	t.Helper()
-	p, _ := BuildReadinessProbe()
-	// /readyz body must surface the OR-folded reason when not
-	// ready; pin the reason string contains "kvm" or
-	// "firecracker" so a future refactor that drops the signal
-	// also fails this test.
-	_, reason := p.All()
-	if reason == "" {
-		return true
-	}
-	// Some signal failed. The probe still folds correctly — we
-	// just report false so the calling test asserts the 503
-	// code path.
-	return false
+	p, bound := BuildReadinessProbe()
+	// Isolate the host checks: a fresh probe's unbound gRPC signal otherwise
+	// makes this helper report false even on a working KVM/Firecracker host.
+	bound.MarkBound()
+	ready, _ := p.All()
+	return ready
 }
