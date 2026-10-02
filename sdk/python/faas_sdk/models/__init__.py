@@ -313,6 +313,7 @@ from .capabilities_response_plan import CapabilitiesResponsePlan
 from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
+from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -2343,6 +2344,7 @@ __all__ = (
     "CapabilityStatus",
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
+    "CapabilityStatusUnavailableReason",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",

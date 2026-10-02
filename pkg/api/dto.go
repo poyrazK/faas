@@ -3505,6 +3505,10 @@ type CapabilityStatus struct {
 	DocsURL     string             `json:"docs_url"`
 	Acceptance  string             `json:"acceptance"`
 	Enabled     bool               `json:"enabled"`
+	// UnavailableReason is a stable code for automation. Both explanation
+	// fields are omitted when enabled; older servers may omit them entirely.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped response from
