@@ -42,6 +42,13 @@ type Exchange struct {
 	StreamingStatus api.StreamingStatus `json:"streaming_status,omitempty"`
 	HTTPStatus      int                 `json:"-"`
 	AuthChallenge   string              `json:"-"`
+	RejectedTools   []RejectedTool      `json:"rejected_tools,omitempty"`
+}
+
+// RejectedTool makes incomplete discovery visible without hiding valid tools.
+type RejectedTool struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type Tool struct {
@@ -300,7 +307,9 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 				return nil, first, fmt.Errorf("invalid or duplicate MCP tool name")
 			}
 			if _, err := parameterHeaders(tool.InputSchema, nil); err != nil {
-				return nil, first, fmt.Errorf("tool %q: %w", tool.Name, err)
+				first.RejectedTools = append(first.RejectedTools, RejectedTool{Name: tool.Name, Reason: err.Error()})
+				seen["tool:"+tool.Name] = true
+				continue
 			}
 			seen["tool:"+tool.Name] = true
 			tools = append(tools, tool)

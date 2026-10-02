@@ -571,7 +571,10 @@ WITH pending AS MATERIALIZED (
     SET rollup_counted = true
     FROM pending
     WHERE result.id = pending.id
-    RETURNING result.*
+    RETURNING
+        result.mirror_rule_id, result.app_id, result.completed_at,
+        result.status_diff, result.schema_diff, result.body_diff,
+        result.crashed, result.latency_ms
 )
 INSERT INTO mirror_invocation_summary (
     rule_id, app_id, hour_bucket, total_invocations,

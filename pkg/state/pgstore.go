@@ -31167,7 +31167,8 @@ const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+       admission_failure_reason, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -31234,7 +31235,8 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete,
+		&r.AdmissionFailureReason, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -31571,21 +31573,23 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
 		    body_hash, source_body_hash, schema_hash, source_schema_hash,
-		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+		    admission_failure_reason, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-		    $16, $17, $18, $19, $20, $21, $22
+		    $16, $17, $18, $19, $20, $21, $22, $23
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete,
+		r.AdmissionFailureReason, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -31603,7 +31607,7 @@ func (s *PgStore) ListMirrorResults(ctx context.Context, ruleID string, since ti
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2
 		order by completed_at desc
-		limit $3`,
+		limit case when $3 > 0 then $3 else null end`,
 		ruleID, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("state: list mirror_invocation_results for rule %s: %w", ruleID, err)
@@ -31637,6 +31641,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
 			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_timeout' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_rejected' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_error' then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -31648,7 +31655,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount,
+		&s2.SchedulerAdmissionTimeoutCount, &s2.SchedulerAdmissionRejectedCount, &s2.SchedulerAdmissionErrorCount,
+		&meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {
