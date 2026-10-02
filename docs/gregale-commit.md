@@ -55,8 +55,10 @@ implemented. Customer-supplied tenant payload fields must never confer identity.
    rollback invisibility, and checked for duplicate work after scheduler restart.
 2. Verify metrics and source-health behavior under sustained production outages;
    configure operational alerts and audit bounded history and cleanup settings.
-3. Extend the combined HTTP consumer scenario to competing relays, relay
-   checkpoint interruption, and poison events. Producer
+3. Qualify the extended combined HTTP consumer scenario, including competing
+   relays, relay checkpoint interruption, and poison-event repair/replay.
+   The strict process gate requires these assertions; passing the gate in an
+   isolated environment does not qualify sustained production behavior. Producer
    death, producer rollback, consumer crashes before and after its business
    commit, source database outages, credential rotation, lost HTTP responses,
    scheduler restart, and concurrent consumer

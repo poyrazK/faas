@@ -531,6 +531,7 @@ Register a fixed app destination
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
+| `--operation-policy <NAME>` | account-scoped queue policy | required |
 
 ### commit connection
 
@@ -551,6 +552,28 @@ Resume new acceptance
 ### commit info
 
 Inspect source health and pending/blocked work
+
+### commit doctor
+
+Read-only source diagnostics and optional local database checks
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | local TLS PostgreSQL credential file; never uploaded |  |
+
+### commit inspect
+
+Inspect event acceptance, retained execution and blocked observations
+
+### commit wait
+
+Wait without cancelling durable work on timeout
+
+| Flag | Meaning | |
+|---|---|---|
+| `--until <STATE>` | accepted or completed |  |
+| `--timeout <D>` | maximum wait (default 2m) |  |
+| `--interval <D>` | poll interval (default 1s) |  |
 
 ### commit blocked
 
