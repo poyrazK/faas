@@ -8014,6 +8014,19 @@ CREATE TABLE public.mirror_rules (
 
 
 --
+-- Name: mirror_slot_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mirror_slot_leases (
+    lease_id uuid NOT NULL,
+    mirror_rule_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mirror_slot_leases_expiry_after_creation CHECK ((expires_at > created_at))
+);
+
+
+--
 -- Name: node_join_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13009,6 +13022,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 
 --
+-- Name: mirror_slot_leases mirror_slot_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_slot_leases
+    ADD CONSTRAINT mirror_slot_leases_pkey PRIMARY KEY (lease_id);
+
+
+--
 -- Name: node_join_jobs node_join_jobs_node_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17361,6 +17382,13 @@ CREATE INDEX mirror_rules_app_idx ON public.mirror_rules USING btree (app_id) WH
 --
 
 CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_deployment_id) WHERE enabled;
+
+
+--
+-- Name: mirror_slot_leases_rule_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_slot_leases_rule_expiry_idx ON public.mirror_slot_leases USING btree (mirror_rule_id, expires_at);
 
 
 --
@@ -22405,6 +22433,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_rules
     ADD CONSTRAINT mirror_rules_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_slot_leases mirror_slot_leases_mirror_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_slot_leases
+    ADD CONSTRAINT mirror_slot_leases_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
 
 
 --

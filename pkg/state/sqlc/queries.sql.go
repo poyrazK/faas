@@ -1058,6 +1058,19 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const countActiveMirrorSlotLeases = `-- name: CountActiveMirrorSlotLeases :one
+SELECT count(*)::bigint FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND expires_at > clock_timestamp()
+`
+
+func (q *Queries) CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countActiveMirrorSlotLeases, ruleID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
   and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)
@@ -1685,6 +1698,29 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 	return i, err
 }
 
+const createMirrorSlotLease = `-- name: CreateMirrorSlotLease :one
+INSERT INTO mirror_slot_leases (lease_id, mirror_rule_id, expires_at)
+VALUES (
+    $1::uuid,
+    $2::uuid,
+    clock_timestamp() + $3::bigint * interval '1 millisecond'
+)
+RETURNING lease_id::text
+`
+
+type CreateMirrorSlotLeaseParams struct {
+	LeaseID   pgtype.UUID
+	RuleID    pgtype.UUID
+	TtlMillis int64
+}
+
+func (q *Queries) CreateMirrorSlotLease(ctx context.Context, db DBTX, arg CreateMirrorSlotLeaseParams) (string, error) {
+	row := db.QueryRow(ctx, createMirrorSlotLease, arg.LeaseID, arg.RuleID, arg.TtlMillis)
+	var lease_id string
+	err := row.Scan(&lease_id)
+	return lease_id, err
+}
+
 const createOrg = `-- name: CreateOrg :one
 
 insert into orgs (
@@ -2300,6 +2336,20 @@ type DeleteEventSubscriptionParams struct {
 func (q *Queries) DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error {
 	_, err := db.Exec(ctx, deleteEventSubscription, arg.ID, arg.AccountID, arg.AppID)
 	return err
+}
+
+const deleteExpiredMirrorSlotLeases = `-- name: DeleteExpiredMirrorSlotLeases :execrows
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND expires_at <= clock_timestamp()
+`
+
+func (q *Queries) DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteExpiredMirrorSlotLeases, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
@@ -11992,6 +12042,20 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const lockMirrorRuleForSlotLease = `-- name: LockMirrorRuleForSlotLease :one
+SELECT id::text FROM mirror_rules
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+// Serializes reservation attempts for one rule across every gateway replica.
+func (q *Queries) LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockMirrorRuleForSlotLease, ruleID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockOwnedInvoiceSnapshot = `-- name: LockOwnedInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -16319,6 +16383,22 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const releaseMirrorSlotLease = `-- name: ReleaseMirrorSlotLease :exec
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND lease_id = $2::uuid
+`
+
+type ReleaseMirrorSlotLeaseParams struct {
+	RuleID  pgtype.UUID
+	LeaseID pgtype.UUID
+}
+
+func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
+	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
+	return err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
