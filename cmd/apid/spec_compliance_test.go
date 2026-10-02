@@ -72,7 +72,7 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
-	applicationStandardsFile         = "application_standards.go"       // ADR-429 immutable application standards
+	applicationStandardsFile         = "application_standards.go"       // ADR-430 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 	executionCapabilitiesFile        = "execution_capabilities.go"    // ADR-171 — Runs preflight capability DTOs
 	executionArtifactGrantsFile      = "execution_artifact_grants.go" // ADR-171 — one-time cross-agent artifact capabilities

@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 429
+// adr: 430
 
-// ADR-429: exercise the production RegistryClient and real P256 verifier as
+// ADR-430: exercise the production RegistryClient and real P256 verifier as
 // one deploy admission path. A signed index covers only its digest-verified
 // selected child; mutable tags and registry headers cannot substitute content.
 

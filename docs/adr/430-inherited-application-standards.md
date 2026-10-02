@@ -1,4 +1,4 @@
-# ADR-429 · Versioned inherited application standards
+# ADR-430 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -18,9 +18,13 @@ Already committed migration comments retain their original citation; the
 migration files remain immutable.
 
 It subsequently used ADR-393 on this branch. Latest-main integration assigned
-ADR-393 to managed exclusive operations, so this decision is now ADR-429.
+ADR-393 to managed exclusive operations, and this decision moved to ADR-429.
 Historical migration comments retain the numbers originally issued; no applied
 or committed migration contents are changed during renumbering.
+
+Upstream then assigned ADR-429 to handled internal service request evidence.
+This decision is now ADR-430. Frozen SQL migration bytes and historical
+migration citations remain unchanged.
 
 ## Contract
 

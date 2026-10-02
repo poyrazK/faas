@@ -1,6 +1,6 @@
 package state
 
-// adr: 429. Store and native authority tests do not claim physical-byte ACKs.
+// adr: 430. Store and native authority tests do not claim physical-byte ACKs.
 
 import (
 	"encoding/json"

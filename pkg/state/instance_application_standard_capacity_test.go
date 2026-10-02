@@ -1,6 +1,6 @@
 package state
 
-// adr: 429/422 — standards compose with ordinary lifecycle and capacity checks.
+// adr: 430/422 — standards compose with ordinary lifecycle and capacity checks.
 
 import (
 	"errors"
@@ -103,7 +103,7 @@ func standardNativeCapacityFixture(t *testing.T, s standardRuntimeCaptureTestSto
 	return f, peer.ID
 }
 
-// ADR-429/422: a native receipt cannot consume protected recovery headroom.
+// ADR-430/422: a native receipt cannot consume protected recovery headroom.
 // This simulates the native consumer and does not claim a guest boot or policy ACK.
 func standardNativeBootCapacity(t *testing.T, s standardRuntimeCaptureTestStore, assertNoReceipt func(string)) {
 	t.Helper()

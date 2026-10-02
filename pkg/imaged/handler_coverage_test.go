@@ -1,6 +1,6 @@
 package imaged
 
-// ADR-429: signature attachment errors preserve missing/invalid/unavailable
+// ADR-430: signature attachment errors preserve missing/invalid/unavailable
 // distinctions and the exact scoped transport evidence.
 
 // handler_coverage_test.go: covers 11 zero-coverage helpers on

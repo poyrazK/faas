@@ -1,4 +1,4 @@
--- adr: 429. Administrative migration evidence never creates runtime authority.
+-- adr: 430. Administrative migration evidence never creates runtime authority.
 
 -- name: ReadMigrationRecoveryLedger :many
 SELECT id,version_id,is_applied,tstamp FROM goose_db_version ORDER BY id;

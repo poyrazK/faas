@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 429. Real PostgreSQL producer renewal and immutable legacy handoff.
+// adr: 430. Real PostgreSQL producer renewal and immutable legacy handoff.
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-// adr: 429 — additive native boot capability; never manufacture a receipt.
+// adr: 430 — additive native boot capability; never manufacture a receipt.
 package vmmdgrpc
 
 import (

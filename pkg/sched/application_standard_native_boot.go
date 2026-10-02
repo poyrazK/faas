@@ -1,4 +1,4 @@
-// adr: 429 — persist exact grants before native boot; publish only its receipt.
+// adr: 430 — persist exact grants before native boot; publish only its receipt.
 package sched
 
 import (
