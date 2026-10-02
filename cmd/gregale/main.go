@@ -397,6 +397,8 @@ func run(args []string) (status int) {
 		// deploy-diff engine uses — exits non-zero on BREAKING
 		// rows so CI can pin a contract across a service bump.
 		return cmdOpenapi(args[1:])
+	case "routes":
+		return cmdRoutes(args[1:])
 	case "cors":
 		// CORS improvements D5: thin shim over the typed SDK
 		// helper CreateCORSEdgeRule. Sub-commands live in

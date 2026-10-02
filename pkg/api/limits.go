@@ -6118,6 +6118,49 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
 
+// RouteRequirementsMaxBytes and RouteRequirementsMaxRoutes bound local,
+// customer-owned requirements documents and read-only evaluation work. These
+// are input safety bounds, not a new hosting-plan quota (ADR-436).
+const (
+	RouteRequirementsMaxBytes = 1 << 20
+	// Keep revision counters exactly representable by JSON/JavaScript clients.
+	RouteRequirementsMaxRevision      int64 = 1<<53 - 1
+	RouteRequirementsMaxRoutes              = 500
+	RouteCoverageMaxGroups                  = 100
+	RouteCoverageMaxInventoryRoutes         = 2000
+	RouteCoverageMaxRules                   = 1000
+	RouteCoverageMaxFindings                = 10000
+	RouteCoverageMaxNodes                   = 1000000
+	RouteCoverageMaxSegments                = 64
+	RouteCoverageMaxPathBytes               = 2048
+	RouteCoverageMaxNameBytes               = 128
+	RouteCoverageMaxReasonBytes             = 1024
+	RouteCoverageMaxMetadataBytes           = 4096
+	RouteCoverageMaxWorkBytes               = 16 << 20
+	RoutePolicyRequestMaxBytes              = 2 << 20
+	RoutePolicyArtifactMaxBytes             = 16 << 20
+	RoutePolicyIdempotencyKeyMaxBytes       = 200
+	// Automatic checks retain a bounded latest result and history (ADR-449/405).
+	RouteCheckMaxResultBytes = 16 << 20
+	RouteCheckBatchSize      = 4
+	RouteCheckMaxAttempts    = 32
+	RouteCheckPollInterval   = 2 * time.Second
+	RouteCheckClaimLease     = 2 * time.Minute
+	RouteCheckTimeout        = 30 * time.Second
+	RouteCheckRetryMax       = 5 * time.Minute
+	RouteCheckMaxWait        = 10 * time.Minute
+	// History is bounded per deployment by both entries and encoded storage.
+	RouteCheckHistoryEntryMaxBytes = 2 * RouteCheckMaxResultBytes
+	RouteCheckHistoryMaxEntries    = 20
+	RouteCheckHistoryMaxBytes      = 64 << 20
+	RouteCheckHistoryPageSize      = 5
+	RouteCheckHistoryMaxPage       = 10
+	RouteCheckChangesMaxBytes      = 2 << 20
+	// RoutePlanPriorityMax mirrors the existing edge-rule API priority ceiling.
+	// Planning does not introduce a new priority range or plan allowance.
+	RoutePlanPriorityMax = 10000
+)
+
 // WarmSnapshotEnabled reports whether the plan's default for the
 // per-app two-tier snapshot flag is on. Pro/Scale return true; Free /
 // Hobby return false. The accessor is fail-closed — an unknown plan
@@ -7914,6 +7957,57 @@ const (
 // ServiceCapacityMinimumHosts is the minimum fleet for one-host compute recovery (ADR-422).
 const ServiceCapacityMinimumHosts = 2
 
+// Local route impact analysis bounds. Exceeding these bounds fails analysis;
+// reports must never present truncated source or import graphs as complete.
+const (
+	RouteImpactMaxPaths           = 20000
+	RouteImpactMaxPythonFiles     = 1000
+	RouteImpactFileMaxBytes       = 1 << 20
+	RouteImpactSourceMaxBytes     = 16 << 20
+	RouteImpactGitOutputMaxBytes  = 32 << 20
+	RouteImpactASTOutputMaxBytes  = 16 << 20
+	RouteImpactMaxRoutes          = 1000
+	RouteImpactMaxIssues          = 500
+	RouteImpactMaxImportEdges     = 10000
+	RouteImpactMaxSymbols         = 10000
+	RouteImpactMaxSymbolEdges     = 20000
+	RouteImpactMaxSymbolIssues    = 2000
+	RouteImpactMaxGraphDepth      = 64
+	RouteImpactMaxEvidence        = 5000
+	RouteImpactEvidenceMaxBytes   = 4 << 20
+	RouteImpactTimeout            = 60 * time.Second
+	RouteImpactParserTimeout      = 15 * time.Second
+	RouteImpactReportMaxBytes     = 64 << 20
+	RouteImpactReportJSONMaxDepth = 64
+	RouteImpactMetadataMaxBytes   = 4096
+	RouteImpactIdentityMaxBytes   = 2048
+	RouteImpactMaxComparedRoutes  = 2 * RouteImpactMaxRoutes
+	RouteImpactMaxReportIssues    = 2 * (RouteImpactMaxPaths + RouteImpactMaxIssues + RouteImpactMaxSymbolIssues)
+)
+
+// Request contract comparison bounds. Aggregate work/output exhaustion returns
+// no partial comparison. Invalid individual metadata remains an unknown finding.
+const (
+	RequestCompatibilityMaxRoutes        = 2000
+	RequestCompatibilityMaxDepth         = 64
+	RequestCompatibilityMaxNodes         = 50000
+	RequestCompatibilityMaxFindings      = 5000
+	RequestCompatibilityMaxEnumValues    = 1000
+	RequestCompatibilityMaxMetadataBytes = 4096
+	RequestCompatibilityMaxWorkBytes     = 16 << 20
+)
+
+// Declared security comparison has an independent budget. Implication checks
+// charge every alternative pair and credential/scope visit to the node cap.
+const (
+	SecurityCompatibilityMaxRoutes        = 2000
+	SecurityCompatibilityMaxDepth         = 64
+	SecurityCompatibilityMaxNodes         = 50000
+	SecurityCompatibilityMaxFindings      = 5000
+	SecurityCompatibilityMaxMetadataBytes = 4096
+	SecurityCompatibilityMaxWorkBytes     = 16 << 20
+)
+
 // Versioned work-policy wire bounds; plan retry/task/concurrency limits still
 // apply independently to every execution admitted under one of these policies.
 const (
@@ -7921,3 +8015,45 @@ const (
 	WorkPolicyMaxRules                = 64
 	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
 )
+
+// RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
+const RouteGroupPlanMaxChanges = 32
+
+// RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
+const (
+	RouteHealthMaxRoutes               = 20
+	RouteHealthMaxPathBytes            = 240 // reserves method prefix within telemetry's 256-byte label
+	RouteHealthRequestMaxBytes         = 16 << 10
+	RouteHealthWindow                  = time.Minute
+	RouteHealthIngestionLag            = 30 * time.Second
+	RouteHealthWindows                 = 2
+	RouteHealthMinRequests       int64 = 20
+	RouteHealthMinErrors         int64 = 2
+	RouteHealthErrorRateFloor          = 0.05
+	RouteHealthErrorRateDelta          = 0.05
+	RouteHealthErrorRateFactor         = 3.0
+	RouteHealthComparisonEpsilon       = 1e-12
+)
+
+// RouteHealth latency is selected independently of the existing 5xx comparison.
+const (
+	RouteHealthMinLatencyRequests int64 = 100
+	RouteHealthMaxP95BudgetMS     int64 = 86_400_000
+	RouteHealthLatencyQuantile          = 0.95
+	RouteHealthLatencyFactor            = 1.5
+	RouteHealthLatencyDeltaMS           = 100.0
+)
+
+// RouteHealth history retains bounded immutable decision evidence (ADR-456).
+const (
+	RouteHealthHistoryVersion       = 1
+	RouteHealthEvaluationVersion    = 1
+	RouteHealthHistoryEntryMaxBytes = 64 << 10
+	RouteHealthHistoryMaxEntries    = 100
+	RouteHealthHistoryMaxBytes      = 4 << 20
+	RouteHealthHistoryPageSize      = 5
+	RouteHealthHistoryMaxPage       = 10
+)
+
+// Route health transition payload version (ADR-457).
+const RouteHealthTransitionVersion = 1

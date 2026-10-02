@@ -798,6 +798,40 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one
+WITH candidate AS (
+    SELECT j.deployment_id FROM automatic_route_checks j
+    JOIN apps a ON a.id = j.app_id AND a.account_id = j.account_id
+    JOIN deployments d ON d.id = j.deployment_id AND d.app_id = a.id
+    JOIN saved_route_requirements s ON s.app_id = a.id AND s.account_id = a.account_id
+    WHERE a.status <> 'deleted' AND j.completed_request_id IS DISTINCT FROM j.request_id
+      AND j.next_attempt_at <= now() AND (j.lease_until IS NULL OR j.lease_until <= now())
+    ORDER BY j.next_attempt_at, j.queued_at, j.deployment_id
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1
+), claimed AS (
+    UPDATE automatic_route_checks j SET claimed_request_id = j.request_id,
+        lease_token = $1::text::uuid,
+        lease_until = now() + $2::bigint * interval '1 millisecond',
+        attempts = LEAST(j.attempts + 1, $3::integer)
+    FROM candidate WHERE j.deployment_id = candidate.deployment_id
+    RETURNING j.deployment_id, j.app_id, j.account_id, j.request_id, j.completed_request_id, j.claimed_request_id, j.lease_token, j.lease_until, j.attempts, j.last_error_code, j.queued_at, j.next_attempt_at, j.checked_at, j.capture_sha256, j.capture_truncated, j.latest_check, j.safety_state, j.finding_baseline, j.latest_changes
+)
+SELECT jsonb_build_object('deployment_id', deployment_id, 'app_id', app_id, 'account_id', account_id, 'request_id', request_id, 'lease_token', lease_token, 'lease_until', lease_until, 'attempts', attempts) AS claim FROM claimed
+`
+
+type ClaimAutomaticRouteCheckParams struct {
+	LeaseToken  string
+	LeaseMs     int64
+	MaxAttempts int32
+}
+
+func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error) {
+	row := db.QueryRow(ctx, claimAutomaticRouteCheck, arg.LeaseToken, arg.LeaseMs, arg.MaxAttempts)
+	var claim []byte
+	err := row.Scan(&claim)
+	return claim, err
+}
+
 const claimServiceRecovery = `-- name: ClaimServiceRecovery :one
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,
@@ -1374,6 +1408,60 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.OldestPendingAt,
 	)
 	return i, err
+}
+
+const completeAutomaticRouteCheck = `-- name: CompleteAutomaticRouteCheck :execrows
+UPDATE automatic_route_checks SET latest_check = $1::jsonb,
+    latest_changes = $2::jsonb, finding_baseline = $3::jsonb,
+    safety_state = CASE WHEN $4::boolean
+        AND $1::jsonb->'report'->>'status' IN ('satisfied', 'violated')
+        AND EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+            WHERE d.id = automatic_route_checks.deployment_id AND d.app_id = automatic_route_checks.app_id
+                AND d.status = 'live' AND a.account_id = automatic_route_checks.account_id AND a.status <> 'deleted')
+        THEN $1::jsonb->'report'->>'status' ELSE safety_state END,
+    capture_sha256 = $5, capture_truncated = $6,
+    checked_at = $7::timestamptz, completed_request_id = request_id,
+    claimed_request_id = NULL, lease_token = NULL, lease_until = NULL,
+    attempts = 0, last_error_code = ''
+WHERE deployment_id = $8::text::uuid AND app_id = $9::text::uuid AND account_id = $10::text::uuid
+    AND request_id = $11::text::uuid AND claimed_request_id = request_id
+    AND lease_token = $12::text::uuid AND lease_until > clock_timestamp()
+`
+
+type CompleteAutomaticRouteCheckParams struct {
+	LatestCheck         []byte
+	LatestChanges       []byte
+	FindingBaseline     []byte
+	NotificationAllowed bool
+	CaptureSha256       string
+	CaptureTruncated    bool
+	CheckedAt           pgtype.Timestamptz
+	DeploymentID        string
+	AppID               string
+	AccountID           string
+	RequestID           string
+	LeaseToken          string
+}
+
+func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, completeAutomaticRouteCheck,
+		arg.LatestCheck,
+		arg.LatestChanges,
+		arg.FindingBaseline,
+		arg.NotificationAllowed,
+		arg.CaptureSha256,
+		arg.CaptureTruncated,
+		arg.CheckedAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.RequestID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const completeServiceRecovery = `-- name: CompleteServiceRecovery :execrows
@@ -2157,6 +2245,38 @@ func (q *Queries) CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const createRoutePolicyRule = `-- name: CreateRoutePolicyRule :exec
+INSERT INTO edge_rules (id, account_id, app_id, match_host, match_path, match_methods, priority, enabled, kind, action)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6, $7, true, $8, $9)
+`
+
+type CreateRoutePolicyRuleParams struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	MatchHost    string
+	MatchPath    string
+	MatchMethods []string
+	Priority     int16
+	Kind         string
+	Action       []byte
+}
+
+func (q *Queries) CreateRoutePolicyRule(ctx context.Context, db DBTX, arg CreateRoutePolicyRuleParams) error {
+	_, err := db.Exec(ctx, createRoutePolicyRule,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.MatchHost,
+		arg.MatchPath,
+		arg.MatchMethods,
+		arg.Priority,
+		arg.Kind,
+		arg.Action,
+	)
+	return err
 }
 
 const createSession = `-- name: CreateSession :one
@@ -3015,6 +3135,36 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.EnvironmentID,
 	)
 	return i, err
+}
+
+const enqueueRouteHealthNotification = `-- name: EnqueueRouteHealthNotification :exec
+WITH recipients AS (
+ SELECT array_agg(id ORDER BY id) AS ids FROM app_webhooks
+ WHERE app_id = $2::text::uuid AND account_id = $1::text::uuid AND scope = 'app' AND enabled
+ AND (cardinality(event_filter) = 0 OR $3::text = ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+SELECT $1::text::uuid, $2::text::uuid, $3, $4::text::uuid, $5::jsonb, ids
+FROM recipients WHERE cardinality(ids) > 0 ON CONFLICT (event, source_id) DO NOTHING
+`
+
+type EnqueueRouteHealthNotificationParams struct {
+	AccountID  string
+	AppID      string
+	Event      string
+	DecisionID string
+	Payload    []byte
+}
+
+func (q *Queries) EnqueueRouteHealthNotification(ctx context.Context, db DBTX, arg EnqueueRouteHealthNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueRouteHealthNotification,
+		arg.AccountID,
+		arg.AppID,
+		arg.Event,
+		arg.DecisionID,
+		arg.Payload,
+	)
+	return err
 }
 
 const ensureExclusiveWorkKey = `-- name: EnsureExclusiveWorkKey :one
@@ -5075,6 +5225,38 @@ func (q *Queries) ExpireUploadSession(ctx context.Context, db DBTX, id string) e
 	return err
 }
 
+const failAutomaticRouteCheck = `-- name: FailAutomaticRouteCheck :execrows
+UPDATE automatic_route_checks SET claimed_request_id = NULL, lease_token = NULL, lease_until = NULL,
+    last_error_code = 'check_failed', next_attempt_at = now() + $1::bigint * interval '1 millisecond'
+WHERE deployment_id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid
+    AND request_id = $5::text::uuid AND claimed_request_id = request_id
+    AND lease_token = $6::text::uuid AND lease_until > now()
+`
+
+type FailAutomaticRouteCheckParams struct {
+	RetryMs      int64
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	RequestID    string
+	LeaseToken   string
+}
+
+func (q *Queries) FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, failAutomaticRouteCheck,
+		arg.RetryMs,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.RequestID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = $1::uuid AND id = $2::uuid) AS owned
@@ -6720,6 +6902,104 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestPeakRssMb,
 		arg.GuestResourceUsageAvailable,
 		arg.FlagEvidenceJson,
+	)
+	return err
+}
+
+const insertRouteCheckHistory = `-- name: InsertRouteCheckHistory :exec
+INSERT INTO route_check_history(id, deployment_id, app_id, account_id, checked_at, encoded_bytes, entry)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4::text::uuid, $5, $6, $7::jsonb)
+`
+
+type InsertRouteCheckHistoryParams struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	CheckedAt    pgtype.Timestamptz
+	EncodedBytes int32
+	Entry        []byte
+}
+
+func (q *Queries) InsertRouteCheckHistory(ctx context.Context, db DBTX, arg InsertRouteCheckHistoryParams) error {
+	_, err := db.Exec(ctx, insertRouteCheckHistory,
+		arg.ID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.CheckedAt,
+		arg.EncodedBytes,
+		arg.Entry,
+	)
+	return err
+}
+
+const insertRouteHealthHistory = `-- name: InsertRouteHealthHistory :one
+WITH inserted AS (
+ INSERT INTO route_health_history(id, deployment_id, app_id, account_id, decision_key, checked_at, encoded_bytes, entry)
+ VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4::text::uuid,
+  $5, $6, $7, $8::jsonb)
+ ON CONFLICT (deployment_id, decision_key) DO NOTHING RETURNING id
+)
+SELECT id::text FROM inserted
+UNION ALL
+SELECT id::text FROM route_health_history
+ WHERE deployment_id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid
+ AND decision_key = $5 AND NOT EXISTS (SELECT 1 FROM inserted)
+LIMIT 1
+`
+
+type InsertRouteHealthHistoryParams struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	DecisionKey  string
+	CheckedAt    pgtype.Timestamptz
+	EncodedBytes int32
+	Entry        []byte
+}
+
+// AdvanceCanary holds the same app lock for inserts and pruning. Retries do
+// not mutate the original evidence or its checked_at.
+func (q *Queries) InsertRouteHealthHistory(ctx context.Context, db DBTX, arg InsertRouteHealthHistoryParams) (string, error) {
+	row := db.QueryRow(ctx, insertRouteHealthHistory,
+		arg.ID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.DecisionKey,
+		arg.CheckedAt,
+		arg.EncodedBytes,
+		arg.Entry,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertRoutePolicyReceipt = `-- name: InsertRoutePolicyReceipt :exec
+INSERT INTO route_policy_receipts (id, account_id, app_id, idempotency_key, request_sha256, receipt)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4, $5, $6)
+`
+
+type InsertRoutePolicyReceiptParams struct {
+	ID             string
+	AccountID      string
+	AppID          string
+	IdempotencyKey string
+	RequestSha256  string
+	Receipt        []byte
+}
+
+func (q *Queries) InsertRoutePolicyReceipt(ctx context.Context, db DBTX, arg InsertRoutePolicyReceiptParams) error {
+	_, err := db.Exec(ctx, insertRoutePolicyReceipt,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.IdempotencyKey,
+		arg.RequestSha256,
+		arg.Receipt,
 	)
 	return err
 }
@@ -12013,6 +12293,94 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 	return items, nil
 }
 
+const listRouteCheckHistory = `-- name: ListRouteCheckHistory :many
+SELECT jsonb_build_object('version', 1, 'id', h.id, 'checked_at', h.checked_at,
+    'status', entry->'check'->'report'->>'status',
+    'requirements_revision', entry->'check'->'requirements_revision',
+    'requirements_sha256', entry->'check'->>'requirements_sha256',
+    'comparison_status', entry->'changes'->>'status', 'summary', entry->'changes'->'summary')
+FROM route_check_history h
+WHERE deployment_id = $1::text::uuid AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+    AND ($4::text = '' OR (checked_at, id) < (SELECT c.checked_at, c.id FROM route_check_history c WHERE c.id = NULLIF($4::text, '')::uuid AND c.deployment_id = h.deployment_id AND c.app_id = h.app_id AND c.account_id = h.account_id))
+ORDER BY checked_at DESC, id DESC LIMIT $5::integer
+`
+
+type ListRouteCheckHistoryParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	BeforeID     string
+	PageLimit    int32
+}
+
+func (q *Queries) ListRouteCheckHistory(ctx context.Context, db DBTX, arg ListRouteCheckHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listRouteCheckHistory,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var jsonb_build_object []byte
+		if err := rows.Scan(&jsonb_build_object); err != nil {
+			return nil, err
+		}
+		items = append(items, jsonb_build_object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRouteHealthHistory = `-- name: ListRouteHealthHistory :many
+SELECT h.entry FROM route_health_history h
+ WHERE deployment_id = $1::text::uuid AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+ AND ($4::text = '' OR (checked_at, id) < (SELECT c.checked_at, c.id FROM route_health_history c
+  WHERE c.id = NULLIF($4::text, '')::uuid AND c.deployment_id = h.deployment_id AND c.app_id = h.app_id AND c.account_id = h.account_id))
+ ORDER BY checked_at DESC, id DESC LIMIT $5::integer
+`
+
+type ListRouteHealthHistoryParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	BeforeID     string
+	PageLimit    int32
+}
+
+func (q *Queries) ListRouteHealthHistory(ctx context.Context, db DBTX, arg ListRouteHealthHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listRouteHealthHistory,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
 LEFT JOIN service_recovery r ON r.app_id = a.id
@@ -12380,6 +12748,17 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const lockCanaryRouteGateApp = `-- name: LockCanaryRouteGateApp :one
+SELECT account_id::text FROM apps WHERE id = $1::text::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCanaryRouteGateApp(ctx context.Context, db DBTX, appID string) (string, error) {
+	row := db.QueryRow(ctx, lockCanaryRouteGateApp, appID)
+	var account_id string
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `
@@ -12620,6 +12999,258 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
+SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot
+FROM accounts WHERE id = $1::text::uuid FOR NO KEY UPDATE
+`
+
+// Parent locks serialize configuration edits while remaining compatible with
+// the FK key-share locks taken by captures, rules and webhook event inserts.
+func (q *Queries) LockRouteCheckCompletionAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error) {
+	row := db.QueryRow(ctx, lockRouteCheckCompletionAccount, accountID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const lockRouteCheckCompletionApp = `-- name: LockRouteCheckCompletionApp :one
+SELECT id::text FROM apps WHERE id = $1::text::uuid
+    AND account_id = $2::text::uuid AND status <> 'deleted' FOR NO KEY UPDATE
+`
+
+type LockRouteCheckCompletionAppParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) LockRouteCheckCompletionApp(ctx context.Context, db DBTX, arg LockRouteCheckCompletionAppParams) (string, error) {
+	row := db.QueryRow(ctx, lockRouteCheckCompletionApp, arg.AppID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRouteFindingBaseline = `-- name: LockRouteFindingBaseline :one
+SELECT finding_baseline FROM automatic_route_checks
+WHERE deployment_id = $1::text::uuid AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+    AND request_id = $4::text::uuid AND claimed_request_id = request_id
+    AND lease_token = $5::text::uuid AND lease_until > clock_timestamp()
+FOR UPDATE
+`
+
+type LockRouteFindingBaselineParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+	RequestID    string
+	LeaseToken   string
+}
+
+func (q *Queries) LockRouteFindingBaseline(ctx context.Context, db DBTX, arg LockRouteFindingBaselineParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockRouteFindingBaseline,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.RequestID,
+		arg.LeaseToken,
+	)
+	var finding_baseline []byte
+	err := row.Scan(&finding_baseline)
+	return finding_baseline, err
+}
+
+const lockRouteHealthRecoveryCandidate = `-- name: LockRouteHealthRecoveryCandidate :one
+SELECT id::text AS id, app_id::text AS app_id, status::text AS status, commit_sha,
+       traffic_percent, canary_step, canary_total_steps, canary_step_started_at,
+       rollout_state, coalesce(scope, '')::text AS scope, created_at
+FROM deployments WHERE id = $1::text::uuid AND app_id = $2::text::uuid FOR UPDATE
+`
+
+type LockRouteHealthRecoveryCandidateParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+type LockRouteHealthRecoveryCandidateRow struct {
+	ID                  string
+	AppID               string
+	Status              string
+	CommitSha           pgtype.Text
+	TrafficPercent      int32
+	CanaryStep          int32
+	CanaryTotalSteps    int32
+	CanaryStepStartedAt pgtype.Timestamptz
+	RolloutState        string
+	Scope               string
+	CreatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) LockRouteHealthRecoveryCandidate(ctx context.Context, db DBTX, arg LockRouteHealthRecoveryCandidateParams) (LockRouteHealthRecoveryCandidateRow, error) {
+	row := db.QueryRow(ctx, lockRouteHealthRecoveryCandidate, arg.DeploymentID, arg.AppID)
+	var i LockRouteHealthRecoveryCandidateRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Status,
+		&i.CommitSha,
+		&i.TrafficPercent,
+		&i.CanaryStep,
+		&i.CanaryTotalSteps,
+		&i.CanaryStepStartedAt,
+		&i.RolloutState,
+		&i.Scope,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockRouteHealthRecoveryLease = `-- name: LockRouteHealthRecoveryLease :one
+SELECT expires_at FROM safe_release_worker_lease WHERE singleton = true FOR UPDATE
+`
+
+func (q *Queries) LockRouteHealthRecoveryLease(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lockRouteHealthRecoveryLease)
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
+const lockRouteHealthRecoverySiblings = `-- name: LockRouteHealthRecoverySiblings :many
+SELECT id::text AS id, created_at, canary_total_steps, rollout_state
+FROM deployments WHERE app_id = $1::text::uuid AND id <> $2::text::uuid
+ AND status = 'live' AND traffic_percent > 0
+ AND coalesce(nullif(scope, ''), 'default') = coalesce(nullif($3::text, ''), 'default')
+ORDER BY id FOR UPDATE
+`
+
+type LockRouteHealthRecoverySiblingsParams struct {
+	AppID        string
+	DeploymentID string
+	Scope        string
+}
+
+type LockRouteHealthRecoverySiblingsRow struct {
+	ID               string
+	CreatedAt        pgtype.Timestamptz
+	CanaryTotalSteps int32
+	RolloutState     string
+}
+
+func (q *Queries) LockRouteHealthRecoverySiblings(ctx context.Context, db DBTX, arg LockRouteHealthRecoverySiblingsParams) ([]LockRouteHealthRecoverySiblingsRow, error) {
+	rows, err := db.Query(ctx, lockRouteHealthRecoverySiblings, arg.AppID, arg.DeploymentID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockRouteHealthRecoverySiblingsRow{}
+	for rows.Next() {
+		var i LockRouteHealthRecoverySiblingsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.CanaryTotalSteps,
+			&i.RolloutState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
+SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot FROM accounts WHERE id = $1::text::uuid FOR UPDATE
+`
+
+func (q *Queries) LockRoutePolicyAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error) {
+	row := db.QueryRow(ctx, lockRoutePolicyAccount, accountID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const lockRoutePolicyApp = `-- name: LockRoutePolicyApp :one
+SELECT jsonb_build_object('ID', id, 'AccountID', account_id, 'Slug', slug, 'Type', type, 'Status', status, 'RAMMB', ram_mb, 'CPUMillicores', cpu_millicores, 'MaxConcurrency', max_concurrency, 'RequestRateLimitRPS', request_rate_limit_rps, 'RequestRateLimitBurst', request_rate_limit_burst, 'ConsumerAuthMode', consumer_auth_mode, 'MaintenanceMode', maintenance_mode, 'Manifest', manifest, 'ScalingPolicy', scaling_policy) AS snapshot FROM apps WHERE id = $1::text::uuid AND account_id = $2::text::uuid AND status <> 'deleted' FOR UPDATE
+`
+
+type LockRoutePolicyAppParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) LockRoutePolicyApp(ctx context.Context, db DBTX, arg LockRoutePolicyAppParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockRoutePolicyApp, arg.AppID, arg.AccountID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const lockRoutePolicyContract = `-- name: LockRoutePolicyContract :one
+SELECT doc, doc_sha256, truncated FROM deployment_openapi_docs WHERE deployment_id = $1::text::uuid AND account_id = $2::text::uuid AND app_id = $3::text::uuid FOR UPDATE
+`
+
+type LockRoutePolicyContractParams struct {
+	DeploymentID string
+	AccountID    string
+	AppID        string
+}
+
+type LockRoutePolicyContractRow struct {
+	Doc       []byte
+	DocSha256 []byte
+	Truncated bool
+}
+
+func (q *Queries) LockRoutePolicyContract(ctx context.Context, db DBTX, arg LockRoutePolicyContractParams) (LockRoutePolicyContractRow, error) {
+	row := db.QueryRow(ctx, lockRoutePolicyContract, arg.DeploymentID, arg.AccountID, arg.AppID)
+	var i LockRoutePolicyContractRow
+	err := row.Scan(&i.Doc, &i.DocSha256, &i.Truncated)
+	return i, err
+}
+
+const lockRoutePolicyDeployment = `-- name: LockRoutePolicyDeployment :one
+SELECT id::text FROM deployments WHERE id = $1::text::uuid AND app_id = $2::text::uuid FOR UPDATE
+`
+
+type LockRoutePolicyDeploymentParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+func (q *Queries) LockRoutePolicyDeployment(ctx context.Context, db DBTX, arg LockRoutePolicyDeploymentParams) (string, error) {
+	row := db.QueryRow(ctx, lockRoutePolicyDeployment, arg.DeploymentID, arg.AppID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRoutePolicyRules = `-- name: LockRoutePolicyRules :many
+SELECT jsonb_build_object('id', id, 'account_id', account_id, 'app_id', app_id, 'match_host', match_host, 'match_path', match_path, 'match_methods', match_methods, 'match_headers', match_headers, 'priority', priority, 'enabled', enabled, 'kind', kind, 'validate_mode', validate_mode, 'action', action, 'created_at', created_at, 'updated_at', updated_at) AS snapshot FROM edge_rules WHERE app_id = $1::text::uuid ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockRoutePolicyRules(ctx context.Context, db DBTX, appID string) ([][]byte, error) {
+	rows, err := db.Query(ctx, lockRoutePolicyRules, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var snapshot []byte
+		if err := rows.Scan(&snapshot); err != nil {
+			return nil, err
+		}
+		items = append(items, snapshot)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -13413,6 +14044,15 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const notifyRouteHealthRecovery = `-- name: NotifyRouteHealthRecovery :exec
+SELECT pg_notify('deployment_changed', $1::text)
+`
+
+func (q *Queries) NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error {
+	_, err := db.Exec(ctx, notifyRouteHealthRecovery, payload)
+	return err
 }
 
 const objectBucketAccessCheck = `-- name: ObjectBucketAccessCheck :one
@@ -16188,6 +16828,48 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
+DELETE FROM route_check_history WHERE id IN (
+    SELECT id FROM (
+        SELECT id, row_number() OVER (ORDER BY checked_at DESC, id DESC) AS position,
+            sum(encoded_bytes) OVER (ORDER BY checked_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
+        FROM route_check_history WHERE deployment_id = $1::text::uuid
+    ) retained WHERE position > $2::integer OR total_bytes > $3::bigint
+)
+`
+
+type PruneRouteCheckHistoryParams struct {
+	DeploymentID string
+	MaxEntries   int32
+	MaxBytes     int64
+}
+
+func (q *Queries) PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error {
+	_, err := db.Exec(ctx, pruneRouteCheckHistory, arg.DeploymentID, arg.MaxEntries, arg.MaxBytes)
+	return err
+}
+
+const pruneRouteHealthHistory = `-- name: PruneRouteHealthHistory :exec
+DELETE FROM route_health_history WHERE id IN (
+ SELECT id FROM (
+  SELECT id, row_number() OVER (ORDER BY checked_at DESC, id DESC) AS position,
+   sum(encoded_bytes) OVER (ORDER BY checked_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS total_bytes
+  FROM route_health_history WHERE deployment_id = $1::text::uuid
+ ) retained WHERE position > $2::integer OR total_bytes > $3::bigint
+)
+`
+
+type PruneRouteHealthHistoryParams struct {
+	DeploymentID string
+	MaxEntries   int32
+	MaxBytes     int64
+}
+
+func (q *Queries) PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error {
+	_, err := db.Exec(ctx, pruneRouteHealthHistory, arg.DeploymentID, arg.MaxEntries, arg.MaxBytes)
+	return err
+}
+
 const pruneTCPListenerTLSObservations = `-- name: PruneTCPListenerTLSObservations :execrows
 DELETE FROM app_tcp_listener_tls_observations
 WHERE observed_at <= $1::timestamptz
@@ -16243,6 +16925,20 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const queueAutomaticRouteCheck = `-- name: QueueAutomaticRouteCheck :exec
+SELECT enqueue_automatic_route_check($1::text::uuid, $2::text::uuid, false)
+`
+
+type QueueAutomaticRouteCheckParams struct {
+	AppID        string
+	DeploymentID string
+}
+
+func (q *Queries) QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg QueueAutomaticRouteCheckParams) error {
+	_, err := db.Exec(ctx, queueAutomaticRouteCheck, arg.AppID, arg.DeploymentID)
+	return err
+}
+
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
        coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,
@@ -16269,6 +16965,68 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
+	return i, err
+}
+
+const readAutomaticRouteCheck = `-- name: ReadAutomaticRouteCheck :one
+SELECT jsonb_build_object('version', 1, 'app', a.slug, 'app_id', j.app_id, 'deployment_id', j.deployment_id,
+    'state', CASE WHEN j.completed_request_id = j.request_id THEN 'complete' WHEN j.lease_until > now() THEN 'running' WHEN j.last_error_code <> '' THEN 'retrying' ELSE 'pending' END,
+    'freshness', 'unavailable', 'stale_reasons', '[]'::jsonb, 'attempts', j.attempts,
+    'last_error_code', j.last_error_code, 'queued_at', j.queued_at,
+    'next_attempt_at', CASE WHEN j.completed_request_id = j.request_id THEN NULL ELSE j.next_attempt_at END,
+    'checked_at', j.checked_at, 'check', j.latest_check, 'check_id', j.completed_request_id, 'changes', j.latest_changes,
+    'input_capture_sha256', j.capture_sha256, 'input_capture_truncated', j.capture_truncated) AS result
+FROM automatic_route_checks j JOIN apps a ON a.id = j.app_id AND a.account_id = j.account_id
+JOIN deployments d ON d.id = j.deployment_id AND d.app_id = a.id
+WHERE j.deployment_id = $1::text::uuid AND j.app_id = $2::text::uuid AND j.account_id = $3::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadAutomaticRouteCheckParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+func (q *Queries) ReadAutomaticRouteCheck(ctx context.Context, db DBTX, arg ReadAutomaticRouteCheckParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readAutomaticRouteCheck, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var result []byte
+	err := row.Scan(&result)
+	return result, err
+}
+
+const readCanaryRouteGate = `-- name: ReadCanaryRouteGate :one
+SELECT jsonb_build_object('app_id', a.id, 'mode', coalesce(g.mode, 'report'), 'revision', coalesce(g.revision, 0), 'updated_at', g.updated_at) AS gate
+FROM apps a LEFT JOIN canary_route_gates g ON g.app_id = a.id AND g.account_id = a.account_id
+WHERE a.id = $1::text::uuid AND a.account_id = $2::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadCanaryRouteGateParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadCanaryRouteGate(ctx context.Context, db DBTX, arg ReadCanaryRouteGateParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCanaryRouteGate, arg.AppID, arg.AccountID)
+	var gate []byte
+	err := row.Scan(&gate)
+	return gate, err
+}
+
+const readCanaryRouteGateOwner = `-- name: ReadCanaryRouteGateOwner :one
+SELECT a.id::text AS app_id, a.account_id::text AS account_id FROM apps a
+JOIN deployments d ON d.app_id = a.id
+WHERE d.id = $1::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadCanaryRouteGateOwnerRow struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploymentID string) (ReadCanaryRouteGateOwnerRow, error) {
+	row := db.QueryRow(ctx, readCanaryRouteGateOwner, deploymentID)
+	var i ReadCanaryRouteGateOwnerRow
+	err := row.Scan(&i.AppID, &i.AccountID)
 	return i, err
 }
 
@@ -16443,6 +17201,289 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	var release []byte
 	err := row.Scan(&release)
 	return release, err
+}
+
+const readRouteCheckHistoryEntry = `-- name: ReadRouteCheckHistoryEntry :one
+SELECT entry FROM route_check_history
+WHERE id = $1::text::uuid AND deployment_id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid
+`
+
+type ReadRouteCheckHistoryEntryParams struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+func (q *Queries) ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteCheckHistoryEntry,
+		arg.ID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var entry []byte
+	err := row.Scan(&entry)
+	return entry, err
+}
+
+const readRouteHealthDeployment = `-- name: ReadRouteHealthDeployment :one
+SELECT d.id::text AS id, d.app_id::text AS app_id, d.commit_sha, d.status::text AS status, d.traffic_percent,
+ d.canary_step, d.canary_total_steps, d.canary_step_started_at, coalesce(d.scope, '')::text AS scope
+FROM deployments d WHERE d.id = $1::text::uuid AND d.app_id = $2::text::uuid
+`
+
+type ReadRouteHealthDeploymentParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+type ReadRouteHealthDeploymentRow struct {
+	ID                  string
+	AppID               string
+	CommitSha           pgtype.Text
+	Status              string
+	TrafficPercent      int32
+	CanaryStep          int32
+	CanaryTotalSteps    int32
+	CanaryStepStartedAt pgtype.Timestamptz
+	Scope               string
+}
+
+func (q *Queries) ReadRouteHealthDeployment(ctx context.Context, db DBTX, arg ReadRouteHealthDeploymentParams) (ReadRouteHealthDeploymentRow, error) {
+	row := db.QueryRow(ctx, readRouteHealthDeployment, arg.DeploymentID, arg.AppID)
+	var i ReadRouteHealthDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.CommitSha,
+		&i.Status,
+		&i.TrafficPercent,
+		&i.CanaryStep,
+		&i.CanaryTotalSteps,
+		&i.CanaryStepStartedAt,
+		&i.Scope,
+	)
+	return i, err
+}
+
+const readRouteHealthGate = `-- name: ReadRouteHealthGate :one
+SELECT jsonb_build_object('app_id', a.id, 'mode', coalesce(g.mode, 'report'), 'on_regression', coalesce(g.on_regression, 'hold'), 'revision', coalesce(g.revision, 0), 'routes', coalesce(g.routes, '[]'::jsonb), 'updated_at', g.updated_at) AS gate
+FROM apps a LEFT JOIN route_health_gates g ON g.app_id = a.id AND g.account_id = a.account_id
+WHERE a.id = $1::text::uuid AND a.account_id = $2::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadRouteHealthGateParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadRouteHealthGate(ctx context.Context, db DBTX, arg ReadRouteHealthGateParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteHealthGate, arg.AppID, arg.AccountID)
+	var gate []byte
+	err := row.Scan(&gate)
+	return gate, err
+}
+
+const readRouteHealthHistoryEntry = `-- name: ReadRouteHealthHistoryEntry :one
+SELECT entry FROM route_health_history
+ WHERE id = $1::text::uuid AND deployment_id = $2::text::uuid
+ AND app_id = $3::text::uuid AND account_id = $4::text::uuid
+`
+
+type ReadRouteHealthHistoryEntryParams struct {
+	ID           string
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+func (q *Queries) ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteHealthHistoryEntryParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRouteHealthHistoryEntry,
+		arg.ID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var entry []byte
+	err := row.Scan(&entry)
+	return entry, err
+}
+
+const readRouteHealthNotificationState = `-- name: ReadRouteHealthNotificationState :one
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+FROM route_health_notification_state WHERE deployment_id = $1::text::uuid
+ AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+`
+
+type ReadRouteHealthNotificationStateParams struct {
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+type ReadRouteHealthNotificationStateRow struct {
+	ContextKey        string
+	Status            string
+	BlockedDecisionID string
+}
+
+func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error) {
+	row := db.QueryRow(ctx, readRouteHealthNotificationState, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var i ReadRouteHealthNotificationStateRow
+	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
+	return i, err
+}
+
+const readRoutePolicyAccount = `-- name: ReadRoutePolicyAccount :one
+SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot FROM accounts WHERE id = $1::text::uuid
+`
+
+// Route policy snapshots, locked batches, and receipts (ADR-438).
+func (q *Queries) ReadRoutePolicyAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error) {
+	row := db.QueryRow(ctx, readRoutePolicyAccount, accountID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const readRoutePolicyApp = `-- name: ReadRoutePolicyApp :one
+SELECT jsonb_build_object('ID', id, 'AccountID', account_id, 'Slug', slug, 'Type', type, 'Status', status, 'RAMMB', ram_mb, 'CPUMillicores', cpu_millicores, 'MaxConcurrency', max_concurrency, 'RequestRateLimitRPS', request_rate_limit_rps, 'RequestRateLimitBurst', request_rate_limit_burst, 'ConsumerAuthMode', consumer_auth_mode, 'MaintenanceMode', maintenance_mode, 'Manifest', manifest, 'ScalingPolicy', scaling_policy) AS snapshot FROM apps WHERE id = $1::text::uuid AND account_id = $2::text::uuid AND status <> 'deleted'
+`
+
+type ReadRoutePolicyAppParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadRoutePolicyApp(ctx context.Context, db DBTX, arg ReadRoutePolicyAppParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRoutePolicyApp, arg.AppID, arg.AccountID)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
+}
+
+const readRoutePolicyContract = `-- name: ReadRoutePolicyContract :one
+SELECT doc, doc_sha256, truncated FROM deployment_openapi_docs WHERE deployment_id = $1::text::uuid AND account_id = $2::text::uuid AND app_id = $3::text::uuid
+`
+
+type ReadRoutePolicyContractParams struct {
+	DeploymentID string
+	AccountID    string
+	AppID        string
+}
+
+type ReadRoutePolicyContractRow struct {
+	Doc       []byte
+	DocSha256 []byte
+	Truncated bool
+}
+
+func (q *Queries) ReadRoutePolicyContract(ctx context.Context, db DBTX, arg ReadRoutePolicyContractParams) (ReadRoutePolicyContractRow, error) {
+	row := db.QueryRow(ctx, readRoutePolicyContract, arg.DeploymentID, arg.AccountID, arg.AppID)
+	var i ReadRoutePolicyContractRow
+	err := row.Scan(&i.Doc, &i.DocSha256, &i.Truncated)
+	return i, err
+}
+
+const readRoutePolicyDeployment = `-- name: ReadRoutePolicyDeployment :one
+SELECT id::text FROM deployments WHERE id = $1::text::uuid AND app_id = $2::text::uuid
+`
+
+type ReadRoutePolicyDeploymentParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+// Captured contract ownership and stability for group policy plans (ADR-446).
+func (q *Queries) ReadRoutePolicyDeployment(ctx context.Context, db DBTX, arg ReadRoutePolicyDeploymentParams) (string, error) {
+	row := db.QueryRow(ctx, readRoutePolicyDeployment, arg.DeploymentID, arg.AppID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const readRoutePolicyReceipt = `-- name: ReadRoutePolicyReceipt :one
+SELECT receipt FROM route_policy_receipts WHERE account_id = $1::text::uuid AND app_id = $2::text::uuid AND id = $3::text::uuid
+`
+
+type ReadRoutePolicyReceiptParams struct {
+	AccountID string
+	AppID     string
+	ID        string
+}
+
+func (q *Queries) ReadRoutePolicyReceipt(ctx context.Context, db DBTX, arg ReadRoutePolicyReceiptParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readRoutePolicyReceipt, arg.AccountID, arg.AppID, arg.ID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
+const readRoutePolicyReceiptByKey = `-- name: ReadRoutePolicyReceiptByKey :one
+SELECT request_sha256, receipt FROM route_policy_receipts
+WHERE account_id = $1::text::uuid AND app_id = $2::text::uuid AND idempotency_key = $3
+`
+
+type ReadRoutePolicyReceiptByKeyParams struct {
+	AccountID      string
+	AppID          string
+	IdempotencyKey string
+}
+
+type ReadRoutePolicyReceiptByKeyRow struct {
+	RequestSha256 string
+	Receipt       []byte
+}
+
+func (q *Queries) ReadRoutePolicyReceiptByKey(ctx context.Context, db DBTX, arg ReadRoutePolicyReceiptByKeyParams) (ReadRoutePolicyReceiptByKeyRow, error) {
+	row := db.QueryRow(ctx, readRoutePolicyReceiptByKey, arg.AccountID, arg.AppID, arg.IdempotencyKey)
+	var i ReadRoutePolicyReceiptByKeyRow
+	err := row.Scan(&i.RequestSha256, &i.Receipt)
+	return i, err
+}
+
+const readRoutePolicyRules = `-- name: ReadRoutePolicyRules :many
+SELECT jsonb_build_object('id', id, 'account_id', account_id, 'app_id', app_id, 'match_host', match_host, 'match_path', match_path, 'match_methods', match_methods, 'match_headers', match_headers, 'priority', priority, 'enabled', enabled, 'kind', kind, 'validate_mode', validate_mode, 'action', action, 'created_at', created_at, 'updated_at', updated_at) AS snapshot FROM edge_rules WHERE app_id = $1::text::uuid ORDER BY id
+`
+
+func (q *Queries) ReadRoutePolicyRules(ctx context.Context, db DBTX, appID string) ([][]byte, error) {
+	rows, err := db.Query(ctx, readRoutePolicyRules, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var snapshot []byte
+		if err := rows.Scan(&snapshot); err != nil {
+			return nil, err
+		}
+		items = append(items, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readSavedRouteRequirements = `-- name: ReadSavedRouteRequirements :one
+SELECT jsonb_build_object('app_id', saved.app_id, 'revision', saved.revision, 'sha256', saved.sha256, 'requirements', saved.requirements, 'updated_at', saved.updated_at) AS saved
+FROM saved_route_requirements AS saved JOIN apps AS a ON a.id = saved.app_id
+WHERE saved.app_id = $1::text::uuid AND saved.account_id = $2::text::uuid AND a.account_id = saved.account_id AND a.status <> 'deleted'
+`
+
+type ReadSavedRouteRequirementsParams struct {
+	AppID     string
+	AccountID string
+}
+
+// Saved route intent is read with the same app ownership filters (ADR-448).
+func (q *Queries) ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg ReadSavedRouteRequirementsParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readSavedRouteRequirements, arg.AppID, arg.AccountID)
+	var saved []byte
+	err := row.Scan(&saved)
+	return saved, err
 }
 
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
@@ -18544,6 +19585,134 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 	return result.RowsAffected(), nil
 }
 
+const routeHealthClock = `-- name: RouteHealthClock :one
+SELECT clock_timestamp()::timestamptz AS checked_at
+`
+
+func (q *Queries) RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, routeHealthClock)
+	var checked_at pgtype.Timestamptz
+	err := row.Scan(&checked_at)
+	return checked_at, err
+}
+
+const routeHealthObservation = `-- name: RouteHealthObservation :one
+WITH selected AS (
+ SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
+  (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
+ FROM jsonb_array_elements($3::jsonb)
+), windows AS (
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($4::jsonb)
+), observed AS MATERIALIZED (
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count
+ FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
+ ON t.app_id = $5::text::uuid AND t.account_id = $6::text::uuid
+ AND t.deployment_id IN ($1::text::uuid, $2::text::uuid)
+ AND t.method = s.method AND t.route = s.method || ' ' || s.path
+ AND t.received_at >= w.start AND t.received_at < w."end"
+ AND t.received_at >= $7::timestamptz AND t.received_at < $8::timestamptz
+), counts AS (
+ SELECT method, path, start, "end",
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid), 0)::bigint AS candidate_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid), 0)::bigint AS stable_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
+ FROM observed GROUP BY method, path, start, "end"
+), weighted AS (
+ SELECT method, path, start, deployment_id, latency_ms, sum(count::bigint) AS weight
+ FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL
+ GROUP BY method, path, start, deployment_id, latency_ms
+), ranked AS (
+ SELECT method, path, start, deployment_id, latency_ms,
+ sum(weight) OVER (PARTITION BY method, path, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
+ sum(weight) OVER (PARTITION BY method, path, start, deployment_id) AS total
+ FROM weighted
+), targets AS (
+ SELECT method, path, start, deployment_id, latency_ms, cumulative,
+ (total - 1)::numeric * $9::double precision::numeric AS rank
+ FROM ranked
+), values_at_rank AS (
+ SELECT method, path, start, deployment_id, rank,
+ min(latency_ms) FILTER (WHERE cumulative > floor(rank)) AS low,
+ min(latency_ms) FILTER (WHERE cumulative > ceil(rank)) AS high
+ FROM targets GROUP BY method, path, start, deployment_id, rank
+), percentiles AS (
+ SELECT method, path, start, deployment_id,
+ (low + (rank - floor(rank)) * (high - low))::double precision AS p95_ms
+ FROM values_at_rank
+)
+SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+FROM counts c
+LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $1::text::uuid
+LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $2::text::uuid
+`
+
+type RouteHealthObservationParams struct {
+	CandidateID     string
+	StableID        string
+	Routes          []byte
+	Windows         []byte
+	AppID           string
+	AccountID       string
+	Since           pgtype.Timestamptz
+	Until           pgtype.Timestamptz
+	LatencyQuantile float64
+}
+
+// Exact selected labels and shared windows. Aggregate publisher weights without
+// expanding requests. Percentile ranks interpolate bucket representatives, like
+// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+func (q *Queries) RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, routeHealthObservation,
+		arg.CandidateID,
+		arg.StableID,
+		arg.Routes,
+		arg.Windows,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.LatencyQuantile,
+	)
+	var observations []byte
+	err := row.Scan(&observations)
+	return observations, err
+}
+
+const routeHealthStableIDs = `-- name: RouteHealthStableIDs :many
+SELECT d.id::text FROM deployments d JOIN deployments c ON c.app_id = d.app_id
+WHERE c.id = $1::text::uuid AND c.app_id = $2::text::uuid
+ AND d.id <> c.id AND d.status = 'live' AND d.traffic_percent > 0 AND coalesce(nullif(d.scope, ''), 'default') = coalesce(nullif(c.scope, ''), 'default')
+ORDER BY d.id LIMIT 2
+`
+
+type RouteHealthStableIDsParams struct {
+	DeploymentID string
+	AppID        string
+}
+
+func (q *Queries) RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHealthStableIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, routeHealthStableIDs, arg.DeploymentID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var d_id string
+		if err := rows.Scan(&d_id); err != nil {
+			return nil, err
+		}
+		items = append(items, d_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
 SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile FROM runtime_snapshots
 WHERE catalog_key = $1
@@ -20041,6 +21210,33 @@ func (q *Queries) UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgSta
 	return err
 }
 
+const updateRoutePolicyRuleAction = `-- name: UpdateRoutePolicyRuleAction :execrows
+UPDATE edge_rules SET action = $1, updated_at = now()
+WHERE id = $2::text::uuid AND app_id = $3::text::uuid AND account_id = $4::text::uuid AND kind = $5
+`
+
+type UpdateRoutePolicyRuleActionParams struct {
+	Action    []byte
+	ID        string
+	AppID     string
+	AccountID string
+	Kind      string
+}
+
+func (q *Queries) UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg UpdateRoutePolicyRuleActionParams) (int64, error) {
+	result, err := db.Exec(ctx, updateRoutePolicyRuleAction,
+		arg.Action,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Kind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSpansSummary = `-- name: UpdateSpansSummary :exec
 update request_telemetry as target
    set spans_summary = (
@@ -20695,4 +21891,115 @@ func (q *Queries) UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthPar
 		return nil, err
 	}
 	return items, nil
+}
+
+const writeCanaryRouteGate = `-- name: WriteCanaryRouteGate :exec
+INSERT INTO canary_route_gates (app_id, account_id, mode, revision)
+VALUES ($1::text::uuid, $2::text::uuid, $3, $4)
+ON CONFLICT (app_id) DO UPDATE SET mode = EXCLUDED.mode, revision = EXCLUDED.revision, updated_at = now()
+WHERE canary_route_gates.account_id = EXCLUDED.account_id
+`
+
+type WriteCanaryRouteGateParams struct {
+	AppID     string
+	AccountID string
+	Mode      string
+	Revision  int64
+}
+
+func (q *Queries) WriteCanaryRouteGate(ctx context.Context, db DBTX, arg WriteCanaryRouteGateParams) error {
+	_, err := db.Exec(ctx, writeCanaryRouteGate,
+		arg.AppID,
+		arg.AccountID,
+		arg.Mode,
+		arg.Revision,
+	)
+	return err
+}
+
+const writeRouteHealthGate = `-- name: WriteRouteHealthGate :exec
+INSERT INTO route_health_gates (app_id, account_id, mode, on_regression, revision, routes, updated_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3, $4, $5, $6::jsonb, clock_timestamp())
+ON CONFLICT (app_id) DO UPDATE SET mode = EXCLUDED.mode, on_regression = EXCLUDED.on_regression, revision = EXCLUDED.revision, routes = EXCLUDED.routes, updated_at = clock_timestamp()
+WHERE route_health_gates.account_id = EXCLUDED.account_id
+`
+
+type WriteRouteHealthGateParams struct {
+	AppID        string
+	AccountID    string
+	Mode         string
+	OnRegression string
+	Revision     int64
+	Routes       []byte
+}
+
+func (q *Queries) WriteRouteHealthGate(ctx context.Context, db DBTX, arg WriteRouteHealthGateParams) error {
+	_, err := db.Exec(ctx, writeRouteHealthGate,
+		arg.AppID,
+		arg.AccountID,
+		arg.Mode,
+		arg.OnRegression,
+		arg.Revision,
+		arg.Routes,
+	)
+	return err
+}
+
+const writeRouteHealthNotificationState = `-- name: WriteRouteHealthNotificationState :exec
+INSERT INTO route_health_notification_state(deployment_id, app_id, account_id, context_key, status, blocked_decision_id, updated_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
+ $4, $5, NULLIF($6::text, '')::uuid, $7)
+ON CONFLICT (deployment_id) DO UPDATE SET app_id = EXCLUDED.app_id, account_id = EXCLUDED.account_id,
+ context_key = EXCLUDED.context_key, status = EXCLUDED.status, blocked_decision_id = EXCLUDED.blocked_decision_id, updated_at = EXCLUDED.updated_at
+`
+
+type WriteRouteHealthNotificationStateParams struct {
+	DeploymentID      string
+	AppID             string
+	AccountID         string
+	ContextKey        string
+	Status            string
+	BlockedDecisionID string
+	UpdatedAt         pgtype.Timestamptz
+}
+
+// Serialized by AdvanceCanary's owned parent app/deployment lock.
+func (q *Queries) WriteRouteHealthNotificationState(ctx context.Context, db DBTX, arg WriteRouteHealthNotificationStateParams) error {
+	_, err := db.Exec(ctx, writeRouteHealthNotificationState,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.ContextKey,
+		arg.Status,
+		arg.BlockedDecisionID,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const writeSavedRouteRequirements = `-- name: WriteSavedRouteRequirements :exec
+INSERT INTO saved_route_requirements (app_id, account_id, revision, sha256, requirements)
+VALUES ($1::text::uuid, $2::text::uuid, $3, $4, $5)
+ON CONFLICT (app_id) DO UPDATE SET revision = EXCLUDED.revision, sha256 = EXCLUDED.sha256, requirements = EXCLUDED.requirements, updated_at = now()
+WHERE saved_route_requirements.account_id = EXCLUDED.account_id
+`
+
+type WriteSavedRouteRequirementsParams struct {
+	AppID        string
+	AccountID    string
+	Revision     int64
+	Sha256       string
+	Requirements []byte
+}
+
+// Serialized by the owned app row lock, including the first insert.
+func (q *Queries) WriteSavedRouteRequirements(ctx context.Context, db DBTX, arg WriteSavedRouteRequirementsParams) error {
+	_, err := db.Exec(ctx, writeSavedRouteRequirements,
+		arg.AppID,
+		arg.AccountID,
+		arg.Revision,
+		arg.Sha256,
+		arg.Requirements,
+	)
+	return err
 }

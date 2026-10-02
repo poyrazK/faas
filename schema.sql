@@ -4902,7 +4902,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -24859,3 +24859,287 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+-- Route policy transaction receipts (ADR-438).
+
+CREATE TABLE route_policy_receipts (
+    id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+    request_sha256 text NOT NULL CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
+    receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt) = 'object'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (account_id, app_id, idempotency_key)
+);
+
+-- Saved current route intent with optimistic revision checks (ADR-448).
+CREATE TABLE saved_route_requirements (
+    app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+    sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    requirements jsonb NOT NULL CHECK (jsonb_typeof(requirements) = 'object' AND COALESCE(requirements->>'version', '') = '2' AND octet_length(requirements::text) <= 2097152),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE canary_route_gates (
+    app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    mode text NOT NULL CHECK (mode IN ('report', 'enforce')),
+    revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE automatic_route_checks (
+    deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    request_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    completed_request_id uuid,
+    claimed_request_id uuid,
+    lease_token uuid,
+    lease_until timestamptz,
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error_code text NOT NULL DEFAULT '' CHECK (last_error_code IN ('', 'check_failed')),
+    queued_at timestamptz NOT NULL DEFAULT now(),
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
+    checked_at timestamptz,
+    capture_sha256 text NOT NULL DEFAULT '' CHECK (capture_sha256 = '' OR capture_sha256 ~ '^[0-9a-f]{64}$'),
+    capture_truncated boolean NOT NULL DEFAULT false,
+    latest_check jsonb CHECK (latest_check IS NULL OR (jsonb_typeof(latest_check) = 'object' AND COALESCE(latest_check->>'version', '') = '1' AND octet_length(latest_check::text) <= 33554432)),
+    CHECK ((lease_token IS NULL AND lease_until IS NULL AND claimed_request_id IS NULL) OR (lease_token IS NOT NULL AND lease_until IS NOT NULL AND claimed_request_id IS NOT NULL)),
+    CHECK ((latest_check IS NULL AND checked_at IS NULL AND completed_request_id IS NULL) OR (latest_check IS NOT NULL AND checked_at IS NOT NULL AND completed_request_id IS NOT NULL))
+);
+CREATE INDEX automatic_route_checks_ready_idx ON automatic_route_checks (next_attempt_at, queued_at, deployment_id) WHERE completed_request_id IS DISTINCT FROM request_id;
+CREATE INDEX automatic_route_checks_app_idx ON automatic_route_checks (app_id);
+
+-- Capture/intent writes and their queue handoff commit together. Explicit
+-- refresh coalesces with already pending work; changed inputs supersede leases.
+CREATE FUNCTION enqueue_automatic_route_check(p_app uuid, p_deployment uuid DEFAULT NULL, p_force boolean DEFAULT true) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO automatic_route_checks (deployment_id, app_id, account_id)
+    SELECT d.id, a.id, a.account_id FROM deployments d
+    JOIN apps a ON a.id = d.app_id
+    JOIN saved_route_requirements s ON s.app_id = a.id AND s.account_id = a.account_id
+    WHERE a.id = p_app AND a.status <> 'deleted'
+      AND (p_deployment IS NULL OR d.id = p_deployment)
+      AND (p_deployment IS NOT NULL OR EXISTS (SELECT 1 FROM deployment_openapi_docs c WHERE c.deployment_id = d.id AND c.app_id = a.id AND c.account_id = a.account_id) OR EXISTS (SELECT 1 FROM automatic_route_checks j WHERE j.deployment_id = d.id))
+    ORDER BY d.id
+    ON CONFLICT (deployment_id) DO UPDATE SET
+        request_id = gen_random_uuid(), queued_at = now(), next_attempt_at = now(),
+        attempts = 0, last_error_code = '', lease_token = NULL, lease_until = NULL, claimed_request_id = NULL
+    WHERE p_force OR automatic_route_checks.completed_request_id = automatic_route_checks.request_id OR automatic_route_checks.last_error_code <> '';
+END;
+$$;
+CREATE FUNCTION automatic_route_check_capture_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM enqueue_automatic_route_check(OLD.app_id, OLD.deployment_id);
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' OR NEW.doc_sha256 IS DISTINCT FROM OLD.doc_sha256 OR NEW.truncated IS DISTINCT FROM OLD.truncated THEN
+        PERFORM enqueue_automatic_route_check(NEW.app_id, NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER automatic_route_check_capture_changed AFTER INSERT OR UPDATE OR DELETE ON deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION automatic_route_check_capture_changed();
+CREATE FUNCTION automatic_route_check_intent_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.sha256 IS DISTINCT FROM OLD.sha256 THEN
+        PERFORM enqueue_automatic_route_check(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER automatic_route_check_intent_changed AFTER INSERT OR UPDATE ON saved_route_requirements FOR EACH ROW EXECUTE FUNCTION automatic_route_check_intent_changed();
+-- Existing saved intent receives an initial check for each retained capture.
+SELECT enqueue_automatic_route_check(app_id) FROM saved_route_requirements;
+
+ALTER TABLE automatic_route_checks ADD COLUMN safety_state text NOT NULL DEFAULT 'unknown' CHECK (safety_state IN ('unknown', 'satisfied', 'violated'));
+
+CREATE FUNCTION enqueue_route_policy_checks(p_app uuid) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE target uuid;
+BEGIN
+    FOR target IN SELECT d.id FROM deployments d JOIN apps a ON a.id = d.app_id
+        JOIN saved_route_requirements s ON s.app_id = a.id AND s.account_id = a.account_id
+        WHERE a.id = p_app AND a.status <> 'deleted' AND d.status = 'live'
+          AND (EXISTS (SELECT 1 FROM deployment_openapi_docs c WHERE c.deployment_id = d.id AND c.app_id = a.id AND c.account_id = a.account_id)
+            OR EXISTS (SELECT 1 FROM automatic_route_checks j WHERE j.deployment_id = d.id))
+        ORDER BY d.id
+    LOOP
+        PERFORM enqueue_automatic_route_check(p_app, target, true);
+    END LOOP;
+END;
+$$;
+CREATE FUNCTION route_policy_rule_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM enqueue_route_policy_checks(OLD.app_id);
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'INSERT' OR ROW(NEW.app_id, NEW.account_id, NEW.match_host, NEW.match_path, NEW.match_methods, NEW.match_headers, NEW.priority, NEW.enabled, NEW.kind, NEW.action, NEW.validate_mode)
+        IS DISTINCT FROM ROW(OLD.app_id, OLD.account_id, OLD.match_host, OLD.match_path, OLD.match_methods, OLD.match_headers, OLD.priority, OLD.enabled, OLD.kind, OLD.action, OLD.validate_mode) THEN
+        IF TG_OP = 'UPDATE' AND NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+            PERFORM enqueue_route_policy_checks(OLD.app_id);
+        END IF;
+        PERFORM enqueue_route_policy_checks(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_policy_rule_changed AFTER INSERT OR UPDATE OR DELETE ON edge_rules FOR EACH ROW EXECUTE FUNCTION route_policy_rule_changed();
+CREATE FUNCTION route_policy_app_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.slug, NEW.type, NEW.consumer_auth_mode, NEW.maintenance_mode, NEW.manifest->'request_timeout_s', NEW.request_rate_limit_rps, NEW.request_rate_limit_burst, NEW.ram_mb, NEW.cpu_millicores, NEW.max_concurrency, NEW.scaling_policy)
+        IS DISTINCT FROM ROW(OLD.slug, OLD.type, OLD.consumer_auth_mode, OLD.maintenance_mode, OLD.manifest->'request_timeout_s', OLD.request_rate_limit_rps, OLD.request_rate_limit_burst, OLD.ram_mb, OLD.cpu_millicores, OLD.max_concurrency, OLD.scaling_policy) THEN
+        PERFORM enqueue_route_policy_checks(NEW.id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_policy_app_changed AFTER UPDATE ON apps FOR EACH ROW EXECUTE FUNCTION route_policy_app_changed();
+CREATE FUNCTION route_policy_account_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE target uuid;
+BEGIN
+    IF ROW(NEW.plan, NEW.status, NEW.abuse_hold_at IS NULL) IS DISTINCT FROM ROW(OLD.plan, OLD.status, OLD.abuse_hold_at IS NULL) THEN
+        FOR target IN SELECT id FROM apps WHERE account_id = NEW.id AND status <> 'deleted' ORDER BY id LOOP
+            PERFORM enqueue_route_policy_checks(target);
+        END LOOP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_policy_account_changed AFTER UPDATE ON accounts FOR EACH ROW EXECUTE FUNCTION route_policy_account_changed();
+CREATE FUNCTION route_policy_deployment_live() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status = 'live' AND OLD.status IS DISTINCT FROM NEW.status THEN
+        PERFORM enqueue_route_policy_checks(NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_policy_deployment_live AFTER UPDATE OF status ON deployments FOR EACH ROW EXECUTE FUNCTION route_policy_deployment_live();
+
+CREATE FUNCTION route_requirements_safety_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE event_name text; recipients uuid[]; event_payload jsonb; app_slug text;
+BEGIN
+    IF NEW.safety_state = 'violated' THEN
+        event_name := 'routes.requirements.violated';
+    ELSIF NEW.safety_state = 'satisfied' AND OLD.safety_state = 'violated' THEN
+        event_name := 'routes.requirements.recovered';
+    ELSE
+        RETURN NEW;
+    END IF;
+    SELECT a.slug INTO app_slug FROM apps a JOIN deployments d ON d.app_id = a.id
+        WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+          AND d.id = NEW.deployment_id AND d.status = 'live';
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+        WHERE h.scope = 'app' AND h.app_id = NEW.app_id AND h.account_id = NEW.account_id AND h.enabled
+          AND (cardinality(h.event_filter) = 0 OR event_name = ANY(h.event_filter));
+    IF recipients IS NULL THEN RETURN NEW; END IF;
+    event_payload := jsonb_build_object(
+        'app_id', NEW.app_id, 'deployment_id', NEW.deployment_id,
+        'status', NEW.safety_state, 'previous_status', OLD.safety_state,
+        'transition_id', NEW.completed_request_id, 'checked_at', NEW.checked_at,
+        'requirements_revision', NEW.latest_check->'requirements_revision',
+        'requirements_sha256', NEW.latest_check->>'requirements_sha256',
+        'configuration_sha256', NEW.latest_check->>'configuration_sha256',
+        'capture_sha256', NEW.capture_sha256,
+        'result_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text);
+    INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+        VALUES (NEW.account_id, NEW.app_id, event_name, NEW.completed_request_id, event_payload, recipients)
+        ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_requirements_safety_changed AFTER UPDATE OF safety_state ON automatic_route_checks
+    FOR EACH ROW WHEN (OLD.safety_state IS DISTINCT FROM NEW.safety_state) EXECUTE FUNCTION route_requirements_safety_changed();
+
+ALTER TABLE automatic_route_checks
+    ADD COLUMN finding_baseline jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(finding_baseline) = 'object' AND octet_length(finding_baseline::text) <= 33554432),
+    ADD COLUMN latest_changes jsonb CHECK (latest_changes IS NULL OR (jsonb_typeof(latest_changes) = 'object' AND octet_length(latest_changes::text) <= 4194304));
+CREATE TABLE route_check_history (
+    id uuid PRIMARY KEY,
+    deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    checked_at timestamptz NOT NULL,
+    encoded_bytes integer NOT NULL CHECK (encoded_bytes BETWEEN 1 AND 33554432),
+    entry jsonb NOT NULL CHECK (jsonb_typeof(entry) = 'object' AND entry->>'version' = '1' AND octet_length(entry::text) <= 67108864)
+);
+CREATE INDEX route_check_history_deployment_idx ON route_check_history(deployment_id, checked_at DESC, id DESC);
+CREATE FUNCTION route_requirements_findings_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE recipients uuid[]; app_slug text;
+BEGIN
+    IF OLD.safety_state <> 'violated' OR NEW.latest_changes->>'status' <> 'comparable'
+        OR COALESCE((NEW.latest_changes->'summary'->>'newly_violated')::integer, 0) = 0 THEN
+        RETURN NEW;
+    END IF;
+    SELECT a.slug INTO app_slug FROM apps a JOIN deployments d ON d.app_id = a.id
+        WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+          AND d.id = NEW.deployment_id AND d.status = 'live';
+    IF NOT FOUND THEN RETURN NEW; END IF;
+    SELECT array_agg(h.id ORDER BY h.id) INTO recipients FROM app_webhooks h
+        WHERE h.scope = 'app' AND h.app_id = NEW.app_id AND h.account_id = NEW.account_id AND h.enabled
+          AND (cardinality(h.event_filter) = 0 OR 'routes.requirements.changed' = ANY(h.event_filter));
+    IF recipients IS NULL THEN RETURN NEW; END IF;
+    INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+    VALUES (NEW.account_id, NEW.app_id, 'routes.requirements.changed', NEW.completed_request_id,
+        jsonb_build_object('app_id', NEW.app_id, 'deployment_id', NEW.deployment_id,
+            'status', NEW.latest_check->'report'->>'status', 'transition_id', NEW.completed_request_id,
+            'checked_at', NEW.checked_at, 'requirements_revision', NEW.latest_check->'requirements_revision',
+            'requirements_sha256', NEW.latest_check->>'requirements_sha256',
+            'configuration_sha256', NEW.latest_check->>'configuration_sha256', 'capture_sha256', NEW.capture_sha256,
+            'summary', NEW.latest_changes->'summary', 'comparison_status', NEW.latest_changes->>'status',
+            'result_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text,
+            'history_path', '/v1/apps/' || app_slug || '/route-requirements/checks/' || NEW.deployment_id::text || '/history/' || NEW.completed_request_id::text), recipients)
+    ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER route_requirements_findings_changed AFTER UPDATE OF completed_request_id ON automatic_route_checks
+    FOR EACH ROW WHEN (OLD.completed_request_id IS DISTINCT FROM NEW.completed_request_id) EXECUTE FUNCTION route_requirements_findings_changed();
+
+CREATE TABLE route_health_gates (
+ app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ mode text NOT NULL CHECK (mode IN ('report', 'enforce')),
+ on_regression text NOT NULL DEFAULT 'hold' CHECK (on_regression IN ('hold', 'abort')),
+ revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+ routes jsonb NOT NULL CHECK (jsonb_typeof(routes) = 'array' AND jsonb_array_length(routes) <= 20 AND octet_length(routes::text) <= 16384),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE route_health_history (
+    id uuid PRIMARY KEY,
+    deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    decision_key text NOT NULL CHECK (decision_key ~ '^[0-9a-f]{64}$'),
+    checked_at timestamptz NOT NULL CHECK (isfinite(checked_at)),
+    encoded_bytes integer NOT NULL CHECK (encoded_bytes BETWEEN 1 AND 65536),
+    entry jsonb NOT NULL CHECK (
+        jsonb_typeof(entry) = 'object' AND entry->>'version' = '1'
+        AND entry ?& ARRAY['id', 'report', 'decision', 'policy', 'checked_at', 'source']
+        AND entry->>'id' = id::text
+        AND entry->'report'->>'app_id' = app_id::text
+        AND entry->'report'->>'deployment_id' = deployment_id::text
+        AND octet_length(entry::text) <= 131072
+    ),
+    UNIQUE (deployment_id, decision_key)
+);
+CREATE INDEX route_health_history_deployment_idx ON route_health_history(deployment_id, checked_at DESC, id DESC);
+
+CREATE TABLE route_health_notification_state (
+    deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    context_key text NOT NULL CHECK (context_key ~ '^[0-9a-f]{64}$'),
+    status text NOT NULL CHECK (status IN ('clear', 'blocked_unknown', 'blocked_regressed', 'aborted')),
+    blocked_decision_id uuid,
+    updated_at timestamptz NOT NULL CHECK (isfinite(updated_at)),
+    CHECK ((status IN ('clear', 'aborted') AND blocked_decision_id IS NULL) OR (status IN ('blocked_unknown', 'blocked_regressed') AND blocked_decision_id IS NOT NULL))
+);

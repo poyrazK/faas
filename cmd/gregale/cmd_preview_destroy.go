@@ -31,12 +31,14 @@ func cmdPreview(args []string) int {
 		return cmdPreviewList(args[1:])
 	case "show":
 		return cmdPreviewShow(args[1:])
+	case "report":
+		return cmdPreviewReport(args[1:])
 	case "wait":
 		return cmdPreviewWait(args[1:])
 	case "destroy":
 		return cmdPreviewDestroy(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: create, list, show, wait, destroy)\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown preview subcommand %q (try: create, list, show, report, wait, destroy)\n", args[0])
 		return 1
 	}
 }

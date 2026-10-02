@@ -363,6 +363,9 @@ type CanaryAdvanceParams struct {
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
 	Audit                     DeploymentAudit
+	RouteCheckFingerprint     RouteCheckFingerprinter
+	RouteGateDecision         *api.RouteGateDecision
+	RouteHealthDecision       *api.RouteHealthDecision
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test

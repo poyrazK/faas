@@ -7752,6 +7752,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 	}
 
+	snapshot, err := pgLockCanaryRouteSnapshot(ctx, tx, id)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		   from deployments where id = $1 for update`, id))
@@ -7815,6 +7820,42 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if params.RequireCanaryStageElapsed && (dep.CanaryStepStartedAt == nil ||
 		now.Sub(*dep.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
+	}
+
+	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params); err != nil {
+		var blocked *RouteGateBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit blocked canary check request: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+
+	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+		var blocked *RouteHealthBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit held canary health evidence: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+	if err := stampRouteHealthAudit(&params); err != nil {
+		return Deployment{}, 0, err
+	}
+	// A telemetry query must not carry an expired worker lease into a traffic write.
+	transitionClock, err := (&sqlc.Queries{}).RouteHealthClock(ctx, tx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("read canary transition clock after health checks: %w", err)
+	}
+	now = transitionClock.Time
+	if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
+		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+	}
+
+	if err := stampRouteGateAudit(&params); err != nil {
+		return Deployment{}, 0, err
 	}
 
 	newStep := params.ExpectedStep + 1
@@ -8499,6 +8540,22 @@ func (s *PgStore) AbortCanaryOnExpiredWorkerLease(ctx context.Context, appID, de
 }
 
 func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration) (Deployment, int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, deploymentID, expectedPredecessorID, action, reason, emergencyGrace, nil)
+	if err != nil {
+		return updated, auditID, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
+	}
+	return updated, auditID, nil
+}
+
+func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit) (Deployment, int64, error) {
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8511,11 +8568,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	// the recovery itself. Normalize once, here.
 	reason = normalizeRolloutReason(reason)
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
 	if emergencyGrace != nil {
 		var expiresAt time.Time
 		if err := tx.QueryRow(ctx, `select expires_at from safe_release_worker_lease where singleton = true for update`).Scan(&expiresAt); err != nil {
@@ -8534,12 +8586,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			return Deployment{}, 0, ErrSafeReleaseLeaseNotExpired
 		}
 	}
-	if deploymentID != "" {
+	{
 		// Deployment creation already serializes on the app row. Taking the
 		// same lock prevents a new release from changing the candidate or its
 		// predecessor between the health decision and this transaction.
-		var lockedAppID string
-		if err := tx.QueryRow(ctx, `select id from apps where id = $1 for update`, appID).Scan(&lockedAppID); err != nil {
+		if _, err := (&sqlc.Queries{}).LockCanaryRouteGateApp(ctx, tx, appID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Deployment{}, 0, ErrNotFound
 			}
@@ -8572,6 +8623,26 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	}
 	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
 		return dep, 0, ErrRolloutStateInvalid
+	}
+	if action != "abort" && dep.CanaryTotalSteps > 0 {
+		owner, err := (&sqlc.Queries{}).ReadCanaryRouteGateOwner(ctx, tx, dep.ID)
+		if err != nil {
+			return dep, 0, routePolicyReadError(err)
+		}
+		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+			return dep, 0, err
+		}
+		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+			return dep, 0, err
+		}
 	}
 	if emergencyGrace != nil {
 		rolloutState := NormalizeRolloutState(dep.RolloutState)
@@ -8698,9 +8769,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, dep.ID))
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort readback: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort commit: %w", err)
 		}
 		return updated, auditID, nil
 	}
@@ -8902,6 +8970,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
+	var auditAccountID *uuid.UUID
+	if auditOverride != nil {
+		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
+		auditAccountID = auditOverride.AccountID
+	}
 	var auditID int64
 	if err := tx.QueryRow(ctx,
 		`insert into deployment_audit
@@ -8909,7 +8982,7 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
 		 returning id`,
 		dep.ID,
-		nil, // account_id is nullable; actor records the operator or APID fallback
+		auditAccountID, // nullable for existing operator and emergency recoveries
 		string(auditKind),
 		actor,
 		now,
@@ -8940,9 +9013,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyDeploymentChanged, string(payload)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: emergency recovery notify deployment changed: %w", err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
 	}
 	return updated, auditID, nil
 }

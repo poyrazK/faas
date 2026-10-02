@@ -427,3 +427,30 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## API hosting verification decisions
 
 - [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
+
+## Route review and release protection
+
+- [ADR-435: Read-only preview route change reports](435-preview-route-change-reports.md)
+- [ADR-436: Customer-owned route requirements in preview reports](436-route-requirements.md)
+- [ADR-437: Read-only route policy patch planning](437-route-policy-plans.md)
+- [ADR-438: Transactional application of reviewed route policy plans](438-transactional-route-policy-apply.md)
+- [ADR-439: Static FastAPI route impact between Git source revisions](439-static-fastapi-route-impact.md)
+- [ADR-440: Function references and semantic source changes for route impact](440-function-level-route-impact.md)
+- [ADR-441: Source impact joins and priorities in preview reviews](441-source-impact-preview-reviews.md)
+- [ADR-442: Directional request compatibility in preview reports](442-request-input-compatibility.md)
+- [ADR-443: Validation bounds and nullable request unions](443-request-validation-compatibility.md)
+- [ADR-444: Captured route authentication comparison](444-declared-route-security-comparison.md)
+- [ADR-445: Preview route-family policy coverage](445-preview-route-family-policy-coverage.md)
+- [ADR-446: Route-group policy plans and captured impact](446-route-group-policy-planning.md)
+- [ADR-447: Opt-in route-group budget consolidation](447-route-group-budget-consolidation.md)
+- [ADR-448: Saved app route requirements and snapshot checks](448-saved-route-requirements.md)
+- [ADR-449: Durable automatic route checks and freshness](449-automatic-route-checks.md)
+- [ADR-450: Opt-in route safety gates for canary advancement](450-canary-route-safety-gates.md)
+- [ADR-451: Continuous route policy checks and safety transition events](451-continuous-route-policy-monitoring.md)
+- [ADR-452: Repair plans bound to saved route intent](452-saved-route-policy-repairs.md)
+- [ADR-453: Retained route checks and finding regressions](453-route-finding-history.md)
+- [ADR-454: Observed route health gates for canary progression](454-observed-route-canary-health.md)
+- [ADR-455: Critical route p95 latency budgets during canaries](455-critical-route-canary-latency.md)
+- [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
+- [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
+- [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)

@@ -424,7 +424,14 @@ type MemStore struct {
 	// insert in CreateEdgeRuleIfUnderQuota; no separate TOCTOU fence
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
-	edgeRules map[string]EdgeRule
+	edgeRules                map[string]EdgeRule
+	routePolicyReceipts      map[string]routePolicyStoredReceipt
+	savedRouteRequirements   map[string]api.SavedRouteRequirements
+	automaticRouteChecks     map[string]memAutomaticRouteCheck
+	canaryRouteGates         map[string]api.CanaryRouteGate
+	routeHealthGates         map[string]api.RouteHealthGate
+	routeHealthHistory       map[string][]routeHealthStoredDecision
+	routeHealthNotifications map[string]routeHealthNotificationState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -1375,7 +1382,7 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 	}
 	now := time.Now().UTC()
 	a := Account{ID: newID(), Email: email, Plan: plan, Status: AccountActive, CreatedAt: now, EmailVerifiedAt: &now}
-	m.accounts[a.ID] = a
+	m.storeRouteCheckAccountLocked(a.ID, a)
 	return a, nil
 }
 
@@ -1408,7 +1415,7 @@ func (m *MemStore) CreateAccountWithPersonalOrg(_ context.Context, params Create
 		verifiedAt := now
 		acct.EmailVerifiedAt = &verifiedAt
 	}
-	m.accounts[acct.ID] = acct
+	m.storeRouteCheckAccountLocked(acct.ID, acct)
 
 	// 2. Personal org uniqueness probe — mirrors the SQL partial
 	//    unique orgs_one_personal_per_account_uniq.
@@ -1854,7 +1861,7 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 		}
 	}
 	a.Plan = plan
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
@@ -1881,7 +1888,7 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 		a.DeletionRequestedAt = nil
 	}
 	delete(m.freeQuotaSuspended, id)
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	m.syncPersonalOrgStatusLocked(id, status)
 	return nil
 }
@@ -1907,7 +1914,7 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	}
 	a.Status = AccountSuspended
 	a.PastDueAt = nil
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
 	return true, nil
@@ -1922,7 +1929,7 @@ func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountActive
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	delete(m.freeQuotaSuspended, id)
 	m.syncPersonalOrgStatusLocked(id, AccountActive)
 	return true, nil
@@ -1974,7 +1981,7 @@ func (m *MemStore) ConsumeRecoveryCode(_ context.Context, id string, presented [
 	next = append(next, a.MFARecoveryCodesHash[:matchedIdx]...)
 	next = append(next, a.MFARecoveryCodesHash[matchedIdx+1:]...)
 	a.MFARecoveryCodesHash = next
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return true, lastCode, len(next), nil
 }
 
@@ -2025,7 +2032,7 @@ func (m *MemStore) SetMFASecret(_ context.Context, id string, encrypted []byte, 
 	for i, h := range recoveryHashes {
 		a.MFARecoveryCodesHash[i] = slices.Clone(h)
 	}
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -2041,7 +2048,7 @@ func (m *MemStore) MarkMFAEnrolled(_ context.Context, id string) error {
 	now := time.Now().UTC()
 	a.MFAEnrolledAt = &now
 	a.MFARequired = false
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -2059,7 +2066,7 @@ func (m *MemStore) ClearMFA(_ context.Context, id string) error {
 	a.MFASecretEncrypted = nil
 	a.MFARecoveryCodesHash = nil
 	a.MFAEnrolledAt = nil
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -2077,7 +2084,7 @@ func (m *MemStore) SetMFARequired(_ context.Context, id string, required bool) (
 		return false, nil
 	}
 	a.MFARequired = required
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return true, nil
 }
 
@@ -2136,7 +2143,7 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 		return ErrNotFound
 	}
 	a.ProviderCustomerID = providerCustomerID
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
 			org.ProviderCustomerID = providerCustomerID
@@ -2179,7 +2186,7 @@ func (m *MemStore) UpdateAccountBillingInfo(_ context.Context, id, businessName,
 	a.BusinessName = businessName
 	a.BillingAddress = billingAddress
 	a.TaxID = taxID
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return a, nil
 }
 
@@ -2206,7 +2213,7 @@ func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, su
 		return ErrNotFound
 	}
 	a.StripeSubscriptionItem = subItem
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
 			org.StripeSubscriptionItem = subItem
@@ -2696,7 +2703,7 @@ func (m *MemStore) SetAccountKeyGraceWindow(_ context.Context, accountID string,
 		return ErrNotFound
 	}
 	a.KeyGraceWindowDays = days
-	m.accounts[accountID] = a
+	m.storeRouteCheckAccountLocked(accountID, a)
 	return nil
 }
 
@@ -2728,7 +2735,7 @@ func (m *MemStore) SetAccountEgressAllowlistExtra(_ context.Context, accountID s
 		return ErrNotFound
 	}
 	a.EgressAllowlistExtra = n
-	m.accounts[accountID] = a
+	m.storeRouteCheckAccountLocked(accountID, a)
 	return nil
 }
 
@@ -3842,6 +3849,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			out.Added = append(out.Added, app)
 		case "update":
 			app := m.apps[mutation.App.ID]
+			before := app
 			app.RootDir = mutation.App.RootDir
 			app.WorkloadName = mutation.App.WorkloadName
 			app.WorkloadClass = mutation.App.WorkloadClass
@@ -3851,6 +3859,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
 			}
 			m.apps[app.ID] = app
+			if routeCheckAppInputsChanged(before, app) {
+				m.enqueueRoutePolicyChecksLocked(app.ID)
+			}
 			out.Changed = append(out.Changed, app)
 		case "remove":
 			app := m.apps[mutation.App.ID]
@@ -4788,6 +4799,19 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary deployment id %q: %w", d.ID, err)
 	}
+	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
+		return Deployment{}, 0, err
+	}
+	healthRecord, healthNotification, err := m.checkRouteHealthLocked(d, params)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+	if err := stampRouteHealthAudit(&params); err != nil {
+		return Deployment{}, 0, err
+	}
+	if err := stampRouteGateAudit(&params); err != nil {
+		return Deployment{}, 0, err
+	}
 
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
@@ -4860,6 +4884,8 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 		return Deployment{}, 0, fmt.Errorf("state: append canary audit: %w", err)
 	}
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
+	m.appendRouteHealthHistoryLocked(id, healthRecord)
+	m.publishRouteHealthNotificationLocked(id, healthNotification)
 	return d, auditID, nil
 }
 
@@ -6094,6 +6120,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 		return App{}, err
 	}
 	m.apps[id] = a
+	if routeCheckAppInputsChanged(before, a) {
+		m.enqueueRoutePolicyChecksLocked(id)
+	}
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
 	}
@@ -6362,6 +6391,14 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.privateNetworkAttachments, id)
+	delete(m.savedRouteRequirements, id)
+	delete(m.canaryRouteGates, id)
+	delete(m.routeHealthGates, id)
+	for deploymentID, item := range m.automaticRouteChecks {
+		if item.Claim.AppID == id {
+			delete(m.automaticRouteChecks, deploymentID)
+		}
+	}
 	for key, v := range m.secrets {
 		if v.AppID == id {
 			delete(m.secrets, key)
@@ -7528,6 +7565,22 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	}
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
+	}
+	if action != "abort" && target.CanaryTotalSteps > 0 {
+		gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
+		if err != nil {
+			return *target, 0, err
+		}
+		if err := legacyCanaryRouteGate(gate, *target, action); err != nil {
+			return *target, 0, err
+		}
+		healthGate, err := m.routeHealthGateLocked(m.apps[appID].AccountID, appID)
+		if err != nil {
+			return *target, 0, err
+		}
+		if err := legacyRouteHealth(healthGate, *target, action); err != nil {
+			return *target, 0, err
+		}
 	}
 	if expectedPredecessorID != "" {
 		if IsServiceRollout(*target) {
@@ -9788,7 +9841,12 @@ func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 		row.CapturedAt = now
 		row.UpdatedAt = now
 	}
+	previous, existed := m.openAPIDocs[deploymentID]
 	m.openAPIDocs[deploymentID] = row
+	// Content/truncation changes supersede an old lease; source-only retries do not.
+	if !existed || string(previous.DocSHA256) != string(row.DocSHA256) || previous.Truncated != row.Truncated {
+		m.enqueueAutomaticRouteCheckLocked(row.AppID, deploymentID, true)
+	}
 	return nil
 }
 
@@ -9804,6 +9862,7 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 		return ErrNotFound
 	}
 	delete(m.openAPIDocs, deploymentID)
+	m.enqueueAutomaticRouteCheckLocked(row.AppID, deploymentID, true)
 	return nil
 }
 
@@ -18850,7 +18909,7 @@ func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []
 	m.emailVerificationTokens[string(tokenHash)] = tok
 	if acct.EmailVerifiedAt == nil {
 		acct.EmailVerifiedAt = &now
-		m.accounts[acct.ID] = acct
+		m.storeRouteCheckAccountLocked(acct.ID, acct)
 	}
 	return tok.AccountID, nil
 }
@@ -18868,7 +18927,7 @@ func (m *MemStore) MarkAccountEmailVerified(_ context.Context, accountID string)
 	if acct.EmailVerifiedAt == nil {
 		now := time.Now().UTC()
 		acct.EmailVerifiedAt = &now
-		m.accounts[accountID] = acct
+		m.storeRouteCheckAccountLocked(accountID, acct)
 	}
 	return nil
 }
@@ -20863,6 +20922,14 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
 			delete(m.apps, aid)
+			delete(m.savedRouteRequirements, aid)
+			delete(m.canaryRouteGates, aid)
+			delete(m.routeHealthGates, aid)
+			for deploymentID, item := range m.automaticRouteChecks {
+				if item.Claim.AppID == aid {
+					delete(m.automaticRouteChecks, deploymentID)
+				}
+			}
 			delete(m.githubBindings, aid)
 		}
 	}
@@ -21520,6 +21587,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
+	m.enqueueRoutePolicyChecksLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -21640,6 +21708,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
+	m.enqueueRoutePolicyChecksLocked(r.AppID)
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22169,6 +22238,7 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	before := r
 	if p.MatchHost != nil {
 		r.MatchHost = *p.MatchHost
 	}
@@ -22205,6 +22275,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[id] = stored
+	if routeCheckRuleInputsChanged(before, stored) {
+		m.enqueueRoutePolicyChecksLocked(r.AppID)
+	}
 	r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	return r, nil
 }
@@ -22212,10 +22285,12 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 func (m *MemStore) DeleteEdgeRule(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.edgeRules[id]; !ok {
+	rule, ok := m.edgeRules[id]
+	if !ok {
 		return ErrNotFound
 	}
 	delete(m.edgeRules, id)
+	m.enqueueRoutePolicyChecksLocked(rule.AppID)
 	return nil
 }
 
@@ -22684,7 +22759,7 @@ func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string) erro
 	if a.DeletionRequestedAt == nil {
 		a.DeletionRequestedAt = &now
 	}
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -22706,7 +22781,7 @@ func (m *MemStore) RestoreAccount(_ context.Context, id string) error {
 	}
 	a.Status = AccountActive
 	a.DeletionRequestedAt = nil
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -22878,7 +22953,7 @@ func (m *MemStore) LoadAndStampLastQuotaWarning(_ context.Context, id string, da
 		return true, nil
 	}
 	a.LastQuotaWarningAt = &dayStart
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return false, nil
 }
 
@@ -22892,7 +22967,7 @@ func (m *MemStore) ClearQuotaWarning(_ context.Context, id string) error {
 		return nil
 	}
 	a.LastQuotaWarningAt = nil
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -22925,7 +23000,7 @@ func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to Accoun
 		a.DeletionRequestedAt = &now
 	}
 	delete(m.freeQuotaSuspended, id)
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -23023,7 +23098,7 @@ func (m *MemStore) SetPastDueAtForTest(id string, at time.Time) error {
 	}
 	stamp := at.UTC()
 	a.PastDueAt = &stamp
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 
@@ -23041,7 +23116,7 @@ func (m *MemStore) SetDeletionRequestedAtForTest(id string, at time.Time) error 
 	}
 	stamp := at.UTC()
 	a.DeletionRequestedAt = &stamp
-	m.accounts[id] = a
+	m.storeRouteCheckAccountLocked(id, a)
 	return nil
 }
 

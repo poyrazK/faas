@@ -32,7 +32,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
-| [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
+| [`deployment`](#deployment) | Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
@@ -45,6 +45,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
+| [`routes`](#routes) | Analyze source changes and plan or apply route policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals (slug defaults to linked context) |
@@ -1668,7 +1669,7 @@ Remove an alias without deleting its deployment
 
 ## deployment
 
-Get, summarize, or wait for one deployment (&lt;id&gt; | summary &lt;id&gt; | wait &lt;id&gt; | set-min-instances &lt;id&gt;)
+Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances
 
 `gregale deployment [<subcommand>] <id|vN> [--app <SLUG>] [--show-scan] [--min <N>]`
 
@@ -1683,6 +1684,22 @@ Examples:
 ```sh
 gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
+```
+
+### deployment advance
+
+Advance a canary by one stage with route enforcement
+
+`gregale deployment advance <ID> --expected-step <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-step <N>` | observed current canary step | required |
+
+Examples:
+
+```sh
+gregale deployment advance DEPLOYMENT_UUID --expected-step 1
 ```
 
 ### deployment summary
@@ -2280,6 +2297,36 @@ Examples:
 gregale preview show pr-42-my-api
 ```
 
+### preview report
+
+Review deployment route changes, current policy, and available test/traffic evidence
+
+`gregale preview report <preview-slug> [--format <FORMAT>] [--since <DURATION>] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--format <FORMAT>` | report format: text or markdown (or use --json) |  |
+| `--since <DURATION>` | traffic lookback duration (default 24h) |  |
+| `--baseline-deployment <ID>` | explicit parent deployment ID |  |
+| `--test-report <PATH>` | JSON receipts from gregale test |  |
+| `--source-impact <PATH>` | version 2 JSON report from gregale routes impact |  |
+| `--requirements <PATH>` | versioned route requirements YAML or JSON file |  |
+| `--fail-on-breaking` | exit 1 for known response-contract breaks |  |
+| `--fail-on-request-breaking` | exit 1 for known request-contract restrictions |  |
+| `--fail-on-security-regression` | exit 1 for known reductions in declared authentication requirements |  |
+| `--fail-on-incomplete` | exit 1 when evidence is missing or needs review |  |
+| `--fail-on-requirements` | exit 1 for violated or unknown route requirements |  |
+
+Examples:
+
+```sh
+gregale preview report pr-42-my-api
+gregale preview report pr-42-my-api --format markdown --fail-on-breaking
+gregale preview report pr-42-my-api --test-report results.json --json
+gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown
+gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown
+```
+
 ### preview wait
 
 Wait for a preview deployment to become ready
@@ -2599,6 +2646,236 @@ Plan or apply generated validation edge rules
 ### openapi rm
 
 Remove the imported app OpenAPI document
+
+
+## routes
+
+Analyze source changes and plan or apply route policies
+
+`gregale routes [<subcommand>] [<slug>]`
+
+### routes requirements
+
+Save or read versioned route requirements for an app
+
+#### routes requirements set
+
+Save version 2 route intent after comparing the current revision
+
+`gregale routes requirements set <slug> --requirements <PATH> --expected-revision <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--requirements <PATH>` | version 2 requirements YAML or JSON file | required |
+| `--expected-revision <N>` | current saved revision; use 0 for the first save | required |
+
+Examples:
+
+```sh
+gregale routes requirements set my-api --requirements gregale-routes.yaml --expected-revision 0
+```
+
+#### routes requirements get
+
+Read current route intent and optionally export requirements for planning
+
+`gregale routes requirements get <slug> [--out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--out <PATH>` | export normalized requirements JSON to a new file |  |
+
+### routes health
+
+Compare critical route errors and optional p95 latency to gate canary progression
+
+#### routes health get
+
+Read selected routes, mode and revision
+
+`gregale routes health get <slug>`
+
+#### routes health set
+
+Save exact normalized telemetry route selectors
+
+`gregale routes health set <slug> --routes <PATH> --mode <MODE> [--on-regression <ACTION>] --expected-revision <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--routes <PATH>` | JSON array of method/path selectors with optional latency checks | required |
+| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
+| `--expected-revision <N>` | current revision; 0 initially | required |
+
+#### routes health report
+
+Read candidate/stable counts, selected p95 checks and route verdicts
+
+`gregale routes health report <slug> --deployment <ID> [--fail-on-unhealthy]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--fail-on-unhealthy` | exit nonzero unless every selected route is healthy |  |
+
+#### routes health explain
+
+Explain saved canary health decisions and their evidence timeline
+
+`gregale routes health explain <slug> --deployment <ID> [--decision <ID>] [--limit <N>] [--before <ID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--decision <ID>` | read one saved decision UUID |  |
+| `--limit <N>` | timeline page size (default 5; maximum 10) |  |
+| `--before <ID>` | page before a retained decision UUID |  |
+
+### routes gate
+
+Read or change the canary route enforcement mode
+
+#### routes gate get
+
+Read the current gate mode and revision
+
+`gregale routes gate get <slug>`
+
+Examples:
+
+```sh
+gregale routes gate get my-api --json
+```
+
+#### routes gate set
+
+Change report or enforce mode using the current gate revision
+
+`gregale routes gate set <slug> --mode <MODE> --expected-revision <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
+| `--expected-revision <N>` | current gate revision; 0 initially | required |
+
+Examples:
+
+```sh
+gregale routes gate set my-api --mode enforce --expected-revision 0
+```
+
+### routes results
+
+Read the latest automatic check with current freshness
+
+`gregale routes results <slug> [--changes] --deployment <ID> [--expected-revision <N>] [--refresh] [--wait] [--timeout <DURATION>] [--out <PATH>] [--fail-on-requirements]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--changes` | show finding changes against prior known evidence |  |
+| `--deployment <ID>` | app-owned deployment UUID | required |
+| `--expected-revision <N>` | require this current saved intent revision |  |
+| `--refresh` | queue a new check of current configuration |  |
+| `--wait` | wait for pending work to complete |  |
+| `--timeout <DURATION>` | maximum wait duration (default 2m; at most 10m) |  |
+| `--out <PATH>` | export the result to a new JSON file |  |
+| `--fail-on-requirements` | require completed, current and satisfied evidence |  |
+
+Examples:
+
+```sh
+gregale routes results my-api --deployment DEPLOYMENT_ID --wait --fail-on-requirements --json
+gregale routes results my-api --deployment DEPLOYMENT_ID --refresh --wait
+```
+
+### routes check
+
+Check saved requirements against a captured deployment and current app policy
+
+`gregale routes check <slug> --deployment <ID> [--expected-revision <N>] [--format <FORMAT>] [--out <PATH>] [--fail-on-requirements]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | app-owned captured deployment UUID | required |
+| `--expected-revision <N>` | fail if the saved revision differs |  |
+| `--format <FORMAT>` | human or markdown |  |
+| `--out <PATH>` | save the JSON check to a new file |  |
+| `--fail-on-requirements` | exit 1 for violations or incomplete inventory evidence |  |
+
+Examples:
+
+```sh
+gregale routes check my-api --deployment DEPLOYMENT_ID --expected-revision 1 --fail-on-requirements --json
+```
+
+### routes plan
+
+Plan throttle and budget patches with concrete or captured-family coverage
+
+`gregale routes plan <slug> [--requirements <PATH>] [--saved] [--expected-revision <N>] [--out <PATH>] [--throttle-burst <N>] [--deployment <ID>] [--consolidate-budgets] [--fail-on-unresolved]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--requirements <PATH>` | versioned route requirements YAML or JSON; mutually exclusive with --saved |  |
+| `--saved` | use the app&#39;s saved requirements and bind their revision |  |
+| `--expected-revision <N>` | require this saved requirements revision; requires --saved |  |
+| `--out <PATH>` | save JSON plan to a new owner-readable file |  |
+| `--throttle-burst <N>` | burst for new throttles without an existing policy |  |
+| `--deployment <ID>` | captured deployment UUID required for version 2 groups |  |
+| `--consolidate-budgets` | combine compatible budgets within declared group prefixes, including uncaptured paths |  |
+| `--fail-on-unresolved` | exit 1 when requirements remain unresolved after proposed changes |  |
+
+Examples:
+
+```sh
+gregale routes plan my-api --requirements gregale-routes.yaml --out route-plan.json
+gregale routes plan my-api --saved --deployment DEPLOYMENT_ID --expected-revision 1 --out repair.json
+gregale routes plan pr-42-api --requirements gregale-routes.yaml --throttle-burst 20 --fail-on-unresolved --json
+```
+
+### routes apply
+
+Atomically apply a reviewed server plan and recover its durable receipt
+
+`gregale routes apply <slug> --plan <PATH> --confirm <value> [--idempotency-key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed version 2 or 3 server plan JSON file | required |
+| `--confirm <value>` | confirm application of every reviewed change | required |
+| `--idempotency-key <KEY>` | stable retry key, defaults to plan SHA-256 |  |
+
+Examples:
+
+```sh
+gregale routes apply my-api --plan route-plan.json --confirm
+```
+
+### routes impact
+
+Explain FastAPI route impact between a Git baseline and candidate source
+
+`gregale routes impact [<slug>] --base <REF> [--head <REF>] [--path <DIR>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--base <REF>` | baseline Git revision | required |
+| `--head <REF>` | candidate Git revision (defaults to working tree) |  |
+| `--path <DIR>` | application source directory inside the repository |  |
+| `--entrypoint <MODULE:VARIABLE>` | FastAPI module:variable (inferred when exactly one exists) |  |
+| `--format <text|markdown>` | report format | one of `text` · `markdown` |
+| `--out <PATH>` | save JSON report to a new owner-readable file |  |
+| `--fail-on-impact` | exit 1 when routes were added, removed, or may be affected |  |
+| `--fail-on-incomplete` | exit 1 when static analysis is incomplete |  |
+
+Examples:
+
+```sh
+gregale routes impact my-api --base origin/main --path . --entrypoint main:app
+gregale routes impact --base HEAD~1 --head HEAD --format markdown
+gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json
+```
 
 
 ## env
