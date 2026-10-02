@@ -114,6 +114,7 @@ type Querier interface {
 	ClaimProductionLegacyQueueInvocations(ctx context.Context, db DBTX, arg ClaimProductionLegacyQueueInvocationsParams) ([]ClaimProductionLegacyQueueInvocationsRow, error)
 	ClaimProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ClaimProductionQueueTriggerInvocationParams) (Invocation, error)
 	ClaimProjectEnvironmentCloneInProject(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentCloneInProjectParams) (ClaimProjectEnvironmentCloneInProjectRow, error)
+	ClaimProjectEnvironmentClonePostgresCopyTargetRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresCopyTargetRequestParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRequestParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
@@ -552,6 +553,7 @@ type Querier interface {
 	InsertProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestHeaderParams) error
 	InsertProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error)
 	InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error
+	InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error
 	InsertProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
@@ -1268,6 +1270,7 @@ type Querier interface {
 	// after the index scan.
 	PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg PerAccountRateLimitAggregateParams) ([]PerAccountRateLimitAggregateRow, error)
 	PinProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg PinProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error)
+	PinProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg PinProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	// Retention purge. The meterd cron calls this
@@ -1343,6 +1346,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingLedgerParams) (ProjectEnvironmentClonePostgresBinding, error)
 	ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.Context, db DBTX, managedPostgresBindingID pgtype.UUID) ([]AppSecret, error)
 	ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error)
+	ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	// Empty scope means that an active graph has an invalid or missing member.
@@ -1451,6 +1455,7 @@ type Querier interface {
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
+	RecordProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
@@ -1558,6 +1563,8 @@ type Querier interface {
 	RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg RetainProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	RetainedLayerBytesWithClonePins(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error)
+	RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
 	RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error)
 	RetryProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg RetryProductionQueueTriggerInvocationsParams) error
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)

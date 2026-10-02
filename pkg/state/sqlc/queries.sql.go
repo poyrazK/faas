@@ -354,7 +354,8 @@ WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
   -- Native forks must first be adopted or retired by a qualified lifecycle.
   -- Until that lifecycle is available, preserve capture/compensation authority.
   AND ($1::text IN ('capturing','compensating')
-    OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=project_environment_clone_operations.id AND r.state<>'deleted'))
+    OR (NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=project_environment_clone_operations.id AND r.state<>'deleted')
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=project_environment_clone_operations.id AND c.state<>'retired')))
   AND ($1::text NOT IN ('failed','compensated')
     OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=project_environment_clone_operations.id AND s.state<>'deleted'))
   AND ($1::text IN ('capturing', 'compensating')
@@ -838,7 +839,8 @@ const beginProjectEnvironmentClonePostgresSnapshotRestoreCleanup = `-- name: Beg
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleting',deletion_started_at=coalesce(r.deletion_started_at,clock_timestamp()),updated_at=clock_timestamp()
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state<>'deleted'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp())
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
 `
 
 type BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams struct {
@@ -1320,7 +1322,8 @@ UPDATE managed_postgres_databases SET state='deleting',lease_token=$1::text,
     attempt_count=CASE WHEN state<>'deleting' THEN 1 ELSE least(attempt_count+1,30) END,
     last_error_code=CASE WHEN state<>'deleting' THEN NULL ELSE last_error_code END,retry_at=$3::timestamptz
 WHERE account_id=$4::uuid AND id=$5::uuid AND clone_resource_role='target'
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, environment_clone_operation_id, data_resource_id, clone_resource_role
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, environment_clone_operation_id, data_resource_id, clone_resource_role
 `
 
 type ClaimManagedPostgresLifecycleDeleteParams struct {
@@ -1382,7 +1385,8 @@ UPDATE managed_postgres_databases SET state='provisioning',lease_token=$1::text,
     retry_at=$3::timestamptz
 WHERE account_id=$4::uuid AND id=$5::uuid AND clone_resource_role='target' AND state IN ('provisioning','failed')
     AND (lease_until IS NULL OR lease_until<=$3::timestamptz) AND retry_at<=$3::timestamptz
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, environment_clone_operation_id, data_resource_id, clone_resource_role
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, environment_clone_operation_id, data_resource_id, clone_resource_role
 `
 
 type ClaimManagedPostgresLifecycleProvisionParams struct {
@@ -1680,6 +1684,47 @@ func (q *Queries) ClaimProjectEnvironmentCloneInProject(ctx context.Context, db 
 	)
 	var i ClaimProjectEnvironmentCloneInProjectRow
 	err := row.Scan(&i.OperationID, &i.LeaseUntil, &i.AttemptCount)
+	return i, err
+}
+
+const claimProjectEnvironmentClonePostgresCopyTargetRequest = `-- name: ClaimProjectEnvironmentClonePostgresCopyTargetRequest :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state='requested',request_started_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at
+`
+
+type ClaimProjectEnvironmentClonePostgresCopyTargetRequestParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) ClaimProjectEnvironmentClonePostgresCopyTargetRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresCopyTargetRequestParams) (ProjectEnvironmentClonePostgresCopyTarget, error) {
+	row := db.QueryRow(ctx, claimProjectEnvironmentClonePostgresCopyTargetRequest,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresCopyTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.CaptureDatabaseID,
+		&i.TargetDatabaseID,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.ObservedAt,
+		&i.PreparedAt,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -4124,6 +4169,7 @@ SELECT id, account_id, name, region, postgres_major, service_class, availability
 WHERE clone_resource_role='target' AND (state='deleting' OR ($1::boolean AND state IN ('provisioning','failed')))
     AND retry_at<=$2::timestamptz AND (lease_until IS NULL OR lease_until<=$2::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
 ORDER BY retry_at,id LIMIT $3::integer
 `
 
@@ -7064,7 +7110,8 @@ UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleted
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='deleting'
     AND (r.request_started_at IS NULL OR (r.target_provider_resource_id=$3::text AND jsonb_array_length(r.delete_operation_ids)>0 AND r.delete_operation_ids=$4::jsonb))
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp())
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
 `
 
 type FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams struct {
@@ -7446,7 +7493,8 @@ func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUI
 
 const getManagedPostgresCustomerDatabase = `-- name: GetManagedPostgresCustomerDatabase :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -9120,6 +9168,47 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresBindingLedger(ctx context
 		arg.ReservationHash,
 	)
 	return err
+}
+
+const insertProjectEnvironmentClonePostgresCopyTarget = `-- name: InsertProjectEnvironmentClonePostgresCopyTarget :one
+INSERT INTO project_environment_clone_postgres_copy_targets(operation_id,source_database_id,account_id,capture_database_id,target_database_id)
+VALUES($1,$2,$3,$4,$5) RETURNING operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at
+`
+
+type InsertProjectEnvironmentClonePostgresCopyTargetParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	AccountID         pgtype.UUID
+	CaptureDatabaseID pgtype.UUID
+	TargetDatabaseID  pgtype.UUID
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresCopyTarget,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.AccountID,
+		arg.CaptureDatabaseID,
+		arg.TargetDatabaseID,
+	)
+	var i ProjectEnvironmentClonePostgresCopyTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.CaptureDatabaseID,
+		&i.TargetDatabaseID,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.ObservedAt,
+		&i.PreparedAt,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertProjectEnvironmentClonePostgresSecret = `-- name: InsertProjectEnvironmentClonePostgresSecret :exec
@@ -14282,7 +14371,8 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 
 const listManagedPostgresCustomerDatabases = `-- name: ListManagedPostgresCustomerDatabases :many
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -16265,7 +16355,8 @@ func (q *Queries) LockLegacyInvocationReceiptFence(ctx context.Context, db DBTX,
 
 const lockManagedPostgresCustomerDatabase = `-- name: LockManagedPostgresCustomerDatabase :one
 SELECT d.id FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -21712,6 +21803,69 @@ func (q *Queries) PinProjectEnvironmentCloneNativeForkDatabase(ctx context.Conte
 	return i, err
 }
 
+const pinProjectEnvironmentClonePostgresCopyTargetDatabase = `-- name: PinProjectEnvironmentClonePostgresCopyTargetDatabase :one
+UPDATE managed_postgres_databases d SET provider_resource_id=$1::text,updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets c,project_environment_clone_operations o
+WHERE c.operation_id=$2::uuid AND c.source_database_id=$3::uuid AND c.state IN ('requested','preparing','prepared')
+    AND d.id=c.target_database_id AND d.account_id=c.account_id AND d.environment_clone_operation_id=c.operation_id AND d.restore_source_database_id=c.source_database_id
+    AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+    AND d.lease_token IS NULL AND d.lease_until IS NULL AND (d.provider_resource_id IS NULL OR d.provider_resource_id=$1::text)
+    AND o.id=c.operation_id AND o.status='capturing' AND o.revision=$4::bigint
+    AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role
+`
+
+type PinProjectEnvironmentClonePostgresCopyTargetDatabaseParams struct {
+	ProviderResourceID string
+	OperationID        pgtype.UUID
+	SourceDatabaseID   pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        string
+}
+
+func (q *Queries) PinProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg PinProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, pinProjectEnvironmentClonePostgresCopyTargetDatabase,
+		arg.ProviderResourceID,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+	)
+	return i, err
+}
+
 const projectEnvironmentCloneSecretTargetExists = `-- name: ProjectEnvironmentCloneSecretTargetExists :one
 SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean
 `
@@ -22457,7 +22611,8 @@ const readManagedPostgresLifecycleDependants = `-- name: ReadManagedPostgresLife
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
     EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted'
-        UNION ALL SELECT 1 FROM project_environment_clone_postgres_snapshot_restores WHERE adopted_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds,
+        UNION ALL SELECT 1 FROM project_environment_clone_postgres_snapshot_restores WHERE adopted_database_id=$1 AND state<>'deleted'
+        UNION ALL SELECT 1 FROM project_environment_clone_postgres_copy_targets WHERE (target_database_id=$1 OR capture_database_id=$1) AND state<>'retired') AS has_clone_snapshot_holds,
     EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE source_database_id=$1 AND state<>'released') AS has_clone_write_fence_holds
 `
 
@@ -23636,6 +23791,37 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresBindings(ctx context.Contex
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentClonePostgresCopyTarget = `-- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
+SELECT operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresCopyTargetParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresCopyTarget, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresCopyTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.CaptureDatabaseID,
+		&i.TargetDatabaseID,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.ObservedAt,
+		&i.PreparedAt,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const readProjectEnvironmentClonePostgresSnapshot = `-- name: ReadProjectEnvironmentClonePostgresSnapshot :one
@@ -25313,6 +25499,57 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordProjectEnvironmentClonePostgresCopyTarget = `-- name: RecordProjectEnvironmentClonePostgresCopyTarget :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state=CASE WHEN $1::boolean THEN 'prepared' ELSE 'preparing' END,
+    provider_resource_id=$2::text,provider_created_at=$3::timestamptz,
+    observed_at=clock_timestamp(),prepared_at=CASE WHEN $1::boolean THEN coalesce(c.prepared_at,clock_timestamp()) ELSE NULL END,updated_at=clock_timestamp()
+WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.state IN ('requested','preparing','prepared')
+    AND (c.state<>'prepared' OR $1::boolean) AND $3::timestamptz<=clock_timestamp()
+    AND (c.provider_resource_id IS NULL OR (c.provider_resource_id=$2::text AND c.provider_created_at=$3::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+        AND o.revision=$6::bigint AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at
+`
+
+type RecordProjectEnvironmentClonePostgresCopyTargetParams struct {
+	Prepared           bool
+	ProviderResourceID string
+	ProviderCreatedAt  pgtype.Timestamptz
+	OperationID        pgtype.UUID
+	SourceDatabaseID   pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresCopyTarget,
+		arg.Prepared,
+		arg.ProviderResourceID,
+		arg.ProviderCreatedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresCopyTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.CaptureDatabaseID,
+		&i.TargetDatabaseID,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.ObservedAt,
+		&i.PreparedAt,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const recordProjectEnvironmentClonePostgresSnapshotCleanupIdentity = `-- name: RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity :one
@@ -27561,7 +27798,8 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='del
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
     AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$3::bigint
-    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role
 `
 
 type RetireProjectEnvironmentCloneNativeForkDatabaseParams struct {
@@ -27573,6 +27811,111 @@ type RetireProjectEnvironmentCloneNativeForkDatabaseParams struct {
 
 func (q *Queries) RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error) {
 	row := db.QueryRow(ctx, retireProjectEnvironmentCloneNativeForkDatabase,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+	)
+	return i, err
+}
+
+const retireUndispatchedProjectEnvironmentClonePostgresCopyTarget = `-- name: RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state='retired',retired_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved' AND c.request_started_at IS NULL
+    AND EXISTS(SELECT 1 FROM managed_postgres_databases d WHERE d.id=c.target_database_id AND d.state='deleted' AND d.deleted_at IS NOT NULL AND d.provider_resource_id IS NULL)
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at
+`
+
+type RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error) {
+	row := db.QueryRow(ctx, retireUndispatchedProjectEnvironmentClonePostgresCopyTarget,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresCopyTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.CaptureDatabaseID,
+		&i.TargetDatabaseID,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.ProviderResourceID,
+		&i.ProviderCreatedAt,
+		&i.ObservedAt,
+		&i.PreparedAt,
+		&i.RetiredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const retireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase = `-- name: RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase :one
+UPDATE managed_postgres_databases d SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets c,project_environment_clone_operations o
+WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved' AND c.request_started_at IS NULL
+    AND d.id=c.target_database_id AND d.account_id=c.account_id AND d.environment_clone_operation_id=c.operation_id AND d.restore_source_database_id=c.source_database_id
+    AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0
+    AND d.provider_resource_id IS NULL AND d.data_resource_id IS NULL AND d.lease_token IS NULL AND d.lease_until IS NULL
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
+    AND o.id=c.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role
+`
+
+type RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, retireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase,
 		arg.OperationID,
 		arg.SourceDatabaseID,
 		arg.ExpectedRevision,

@@ -3823,3 +3823,70 @@ EXISTS over the two hold sources. Disk exhaustion interrupted intermediate
 state/API runs; only verified inactive task test databases were removed before
 the final passing sequential runs. Full repository, live-provider and native
 acceptance remain unverified.
+
+### Independent PostgreSQL copy target preparation (2026-10-03)
+
+An adopted native capture can now reserve a separate, still-private final
+database owner during the capturing phase. The transaction authenticates the
+frozen source, retained snapshot, adopted capture and catalogue identities,
+then reserves quota and the deterministic final target name together. It does
+not consult live source PITR or desired settings. Source, native capture and
+independent target each retain their own quota charge until qualified retirement.
+A foreign or legacy reservation cannot be adopted into this protocol.
+
+The independent target has its own durable first-dispatch marker. Unknown create
+outcomes use discovery without another POST; known provider IDs and creation
+times remain pinned. Observed provider identity commits with the unready
+catalogue row. Preparation completion is separate from database data readiness:
+the row remains provisioning, with observed generation zero, no qualified data
+identity, no credentials or customer publication authority. Generic PITR
+provisioning, reconciliation, deletion and customer reads cannot claim it.
+
+The Neon implementation authenticates the exact native capture and snapshot
+with read-only API calls, then creates a separately configured provider project.
+It never finalizes the source restore or edits its project. Creation copies the
+frozen managed PostgreSQL specification. Independent observations check project
+name/organization/region/version/creation time, root branch, endpoint ownership,
+actual and default compute settings, storage quota and history retention, and
+operation status. Search follows every bounded page, rejects duplicate owner
+matches, cycles and unavailable/incomplete project lists. A creation reply is
+followed by independent reads, including when the reply claims completion.
+Pinned missing projects cannot trigger replacement creation. See the
+[project creation API](https://api-docs.neon.tech/reference/createproject) and
+[project listing API](https://api-docs.neon.tech/reference/listprojects).
+
+Active copy targets hold their native input and capture-phase authority. An
+undispatched reservation can retire locally under the compensation lease,
+atomically retiring its catalogue owner and releasing only that charge. A
+dispatched project cannot use this shortcut. Its verified remote retirement
+protocol is still required. Downgrade refuses to erase any target ownership.
+
+The private worker prepares targets with renewed clone leases, durable admission
+and dispatch receipts, and exact discovery after failures or handoff. It does
+not advance the operation, publish a stage, release source writers, or place the
+intermediate capture in the stage resource map. This helper remains separate
+from public data capture until independently verified import/export, copied SQL
+and background-resource isolation, dispatched-project retirement and successful
+capture disposal are qualified. Configuration independence alone does not prove
+a complete data copy. Object/common-point consistency, full configuration
+coverage, promotion/rollback and provider/native acceptance also remain open.
+
+Verification: all 24 selected state contracts pass against the private migrated
+PostgreSQL harness (35.550 s, no skips), including the four new independent
+reservation/dispatch/observation/retirement contracts, metadata substitution,
+confirmed account/receipt/catalogue lock waits with expired leases, and native
+snapshot/fork/schema regressions. All 24 selected API contracts pass (21.794 s,
+no skips), including the two independent target worker contracts, original
+native capture/adoption/cleanup, coordinator and ordinary PITR worker regressions.
+External AST overlays retain all 527 state and 444 API production files and
+select only original test declarations. All seven service/Neon HTTP contracts
+pass (0.546 s and 0.668 s); their provider observations are metadata fixtures,
+not independent data/configuration qualification against Neon. Independent SQLC
+regeneration matches both packages byte-for-byte (nine files). State/API and
+managed PostgreSQL/Neon vet, whitespace checks and a rolled-back empty private
+schema Down/Up round trip pass. Tests caught and fixed a shadowed reservation
+error; a target-creation fixture was also corrected to report its actual time
+instead of a future timestamp that the store correctly rejected. Disk exhaustion
+interrupted intermediate setup, provider builds and one state run. Only verified
+inactive task test databases were removed. Full repository, live-provider,
+complete clone and native acceptance remain unverified.

@@ -10530,6 +10530,34 @@ CREATE TABLE public.project_environment_clone_postgres_bindings (
 
 
 --
+-- Name: project_environment_clone_postgres_copy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_targets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    provider_resource_id text,
+    provider_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    prepared_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_c_provider_resource_id_check CHECK (((provider_resource_id IS NULL) OR ((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check CHECK (((target_database_id <> capture_database_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check1 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check2 CHECK (((prepared_at IS NULL) OR (prepared_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check3 CHECK (((observed_at IS NULL) OR (observed_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'preparing'::text, 'prepared'::text, 'retired'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15420,6 +15448,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 
 --
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy__target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snap_adopted_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19892,6 +19936,13 @@ CREATE INDEX project_environment_clone_object_uncopied_idx ON public.project_env
 --
 
 CREATE INDEX project_environment_clone_operations_status_idx ON public.project_environment_clone_operations USING btree (status, updated_at) WHERE (status <> ALL (ARRAY['ready'::text, 'failed'::text]));
+
+
+--
+-- Name: project_environment_clone_postgres_copy_capture_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_copy_capture_holds ON public.project_environment_clone_postgres_copy_targets USING btree (capture_database_id) WHERE (state <> 'retired'::text);
 
 
 --
@@ -25809,6 +25860,14 @@ ALTER TABLE ONLY public.project_environment_clone_operations
 
 
 --
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey1 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25830,6 +25889,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_cop_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_cop_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
 
 
 --

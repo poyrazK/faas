@@ -35,6 +35,7 @@ type projectSettings struct {
 
 type project struct {
 	ID                      string           `json:"id"`
+	CreatedAt               string           `json:"created_at"`
 	OrganizationID          string           `json:"org_id"`
 	Name                    string           `json:"name"`
 	RegionID                string           `json:"region_id"`

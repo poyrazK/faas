@@ -5423,7 +5423,8 @@ WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::u
   -- Native forks must first be adopted or retired by a qualified lifecycle.
   -- Until that lifecycle is available, preserve capture/compensation authority.
   AND (sqlc.arg(next_status)::text IN ('capturing','compensating')
-    OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=project_environment_clone_operations.id AND r.state<>'deleted'))
+    OR (NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=project_environment_clone_operations.id AND r.state<>'deleted')
+      AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=project_environment_clone_operations.id AND c.state<>'retired')))
   AND (sqlc.arg(next_status)::text NOT IN ('failed','compensated')
     OR NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=project_environment_clone_operations.id AND s.state<>'deleted'))
   AND (sqlc.arg(next_status)::text IN ('capturing', 'compensating')
@@ -5593,7 +5594,8 @@ FOR UPDATE OF b;
 
 -- name: GetManagedPostgresCustomerDatabase :one
 SELECT d.* FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -5605,7 +5607,8 @@ WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target' AND (
 
 -- name: ListManagedPostgresCustomerDatabases :many
 SELECT d.* FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -5618,7 +5621,8 @@ ORDER BY d.created_at,d.id;
 
 -- name: LockManagedPostgresCustomerDatabase :one
 SELECT d.id FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target' AND (
+WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
+  AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
         WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
@@ -7694,6 +7698,7 @@ SELECT * FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND state IN ('provisioning','failed')))
     AND retry_at<=sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired')
 ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
@@ -7716,7 +7721,8 @@ UPDATE managed_postgres_databases SET state='provisioning',lease_token=sqlc.arg(
     retry_at=sqlc.arg(at)::timestamptz
 WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND clone_resource_role='target' AND state IN ('provisioning','failed')
     AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz) AND retry_at<=sqlc.arg(at)::timestamptz
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted') RETURNING *;
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING *;
 
 -- name: ExistsManagedPostgresLifecycleDatabase :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_databases WHERE account_id=$1 AND id=$2);
@@ -7728,7 +7734,8 @@ SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDAT
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
     EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted'
-        UNION ALL SELECT 1 FROM project_environment_clone_postgres_snapshot_restores WHERE adopted_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds,
+        UNION ALL SELECT 1 FROM project_environment_clone_postgres_snapshot_restores WHERE adopted_database_id=$1 AND state<>'deleted'
+        UNION ALL SELECT 1 FROM project_environment_clone_postgres_copy_targets WHERE (target_database_id=$1 OR capture_database_id=$1) AND state<>'retired') AS has_clone_snapshot_holds,
     EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE source_database_id=$1 AND state<>'released') AS has_clone_write_fence_holds;
 
 -- name: ClaimManagedPostgresLifecycleDelete :one
@@ -7737,7 +7744,8 @@ UPDATE managed_postgres_databases SET state='deleting',lease_token=sqlc.arg(leas
     attempt_count=CASE WHEN state<>'deleting' THEN 1 ELSE least(attempt_count+1,30) END,
     last_error_code=CASE WHEN state<>'deleting' THEN NULL ELSE last_error_code END,retry_at=sqlc.arg(at)::timestamptz
 WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND clone_resource_role='target'
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted') RETURNING *;
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING *;
 
 -- name: RecordManagedPostgresLifecycleResource :execrows
 UPDATE managed_postgres_databases SET provider_resource_id=sqlc.arg(provider_resource_id)::text,updated_at=sqlc.arg(at)::timestamptz
@@ -7877,7 +7885,8 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleting',deletion_started_at=coalesce(r.deletion_started_at,clock_timestamp()),updated_at=clock_timestamp()
 WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid AND r.state<>'deleted'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING r.*;
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.*;
 
 -- name: RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET target_provider_resource_id=sqlc.arg(target_provider_resource_id)::text,
@@ -7901,7 +7910,8 @@ UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleted
 WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.arg(source_database_id)::uuid AND r.state='deleting'
     AND (r.request_started_at IS NULL OR (r.target_provider_resource_id=sqlc.arg(target_provider_resource_id)::text AND jsonb_array_length(r.delete_operation_ids)>0 AND r.delete_operation_ids=sqlc.arg(delete_operation_ids)::jsonb))
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING r.*;
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.*;
 
 -- ADR-375: these statements run after ObjectBucketMutationLock in one
 -- transaction. Separate statements are necessary for a fresh READ COMMITTED
@@ -8101,4 +8111,58 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
     AND o.id=r.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+    AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING d.*;
+
+
+-- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
+SELECT * FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresCopyTarget :one
+INSERT INTO project_environment_clone_postgres_copy_targets(operation_id,source_database_id,account_id,capture_database_id,target_database_id)
+VALUES($1,$2,$3,$4,$5) RETURNING *;
+
+-- name: ClaimProjectEnvironmentClonePostgresCopyTargetRequest :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state='requested',request_started_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state='reserved'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING c.*;
+
+-- name: PinProjectEnvironmentClonePostgresCopyTargetDatabase :one
+UPDATE managed_postgres_databases d SET provider_resource_id=sqlc.arg(provider_resource_id)::text,updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets c,project_environment_clone_operations o
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state IN ('requested','preparing','prepared')
+    AND d.id=c.target_database_id AND d.account_id=c.account_id AND d.environment_clone_operation_id=c.operation_id AND d.restore_source_database_id=c.source_database_id
+    AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+    AND d.lease_token IS NULL AND d.lease_until IS NULL AND (d.provider_resource_id IS NULL OR d.provider_resource_id=sqlc.arg(provider_resource_id)::text)
+    AND o.id=c.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
     AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp() RETURNING d.*;
+
+-- name: RecordProjectEnvironmentClonePostgresCopyTarget :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state=CASE WHEN sqlc.arg(prepared)::boolean THEN 'prepared' ELSE 'preparing' END,
+    provider_resource_id=sqlc.arg(provider_resource_id)::text,provider_created_at=sqlc.arg(provider_created_at)::timestamptz,
+    observed_at=clock_timestamp(),prepared_at=CASE WHEN sqlc.arg(prepared)::boolean THEN coalesce(c.prepared_at,clock_timestamp()) ELSE NULL END,updated_at=clock_timestamp()
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state IN ('requested','preparing','prepared')
+    AND (c.state<>'prepared' OR sqlc.arg(prepared)::boolean) AND sqlc.arg(provider_created_at)::timestamptz<=clock_timestamp()
+    AND (c.provider_resource_id IS NULL OR (c.provider_resource_id=sqlc.arg(provider_resource_id)::text AND c.provider_created_at=sqlc.arg(provider_created_at)::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING c.*;
+
+-- name: RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase :one
+UPDATE managed_postgres_databases d SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets c,project_environment_clone_operations o
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state='reserved' AND c.request_started_at IS NULL
+    AND d.id=c.target_database_id AND d.account_id=c.account_id AND d.environment_clone_operation_id=c.operation_id AND d.restore_source_database_id=c.source_database_id
+    AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0
+    AND d.provider_resource_id IS NULL AND d.data_resource_id IS NULL AND d.lease_token IS NULL AND d.lease_until IS NULL
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
+    AND o.id=c.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+    AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp() RETURNING d.*;
+
+-- name: RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget :one
+UPDATE project_environment_clone_postgres_copy_targets c SET state='retired',retired_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE c.operation_id=sqlc.arg(operation_id)::uuid AND c.source_database_id=sqlc.arg(source_database_id)::uuid AND c.state='reserved' AND c.request_started_at IS NULL
+    AND EXISTS(SELECT 1 FROM managed_postgres_databases d WHERE d.id=c.target_database_id AND d.state='deleted' AND d.deleted_at IS NOT NULL AND d.provider_resource_id IS NULL)
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING c.*;
