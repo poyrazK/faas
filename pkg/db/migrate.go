@@ -136,12 +136,13 @@ func (e *SchemaDriftError) Error() string {
 		"schema/ledger drift: this migration creates a %s that already exists (SQLSTATE %s). "+
 			"The database schema is AHEAD of goose_db_version — DDL was applied outside goose "+
 			"(manual psql, restored dump, or a partially-applied deploy), so goose is replaying "+
-			"work that is already done. This is NOT a bug in the migration: it applies cleanly to "+
-			"a fresh database, which is why CI is green. "+
-			"Reconcile the ledger on the target database rather than editing the migration "+
-			"(migrations are append-only). Inspect with `migrate -status`, then record the "+
-			"already-applied version with `goose -no-versioning` or a direct INSERT INTO "+
-			"goose_db_version. Underlying error: %v",
+			"DDL whose objects already exist. Verify the complete schema and data postconditions "+
+			"before reconciling the ledger on the target database; do not edit the migration "+
+			"(migrations are append-only). Inspect with `migrate -status`. Frozen standards "+
+			"migrations require the explicit `migrate -prepare-ledger-recovery`, "+
+			"`migrate -ledger-recovery-plan` and reviewed `migrate -ledger-recovery-apply HASH` "+
+			"workflow, which verifies the expanded schema and backfills before recording "+
+			"current recovery events. Underlying error: %v",
 		e.Kind, e.SQLState, e.Err)
 }
 

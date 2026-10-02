@@ -28,3 +28,17 @@ sql:
         emit_empty_slices: true
         rename:
           id: "ID"
+  - engine: "postgresql"
+    queries: "pkg/db/migration_recovery_queries.sql"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "migrationsqlc"
+        out: "pkg/db/migrationsqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        rename:
+          id: "ID"

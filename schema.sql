@@ -628,6 +628,20 @@ $$;
 
 
 --
+-- Name: application_standard_ledger_recovery_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_ledger_recovery_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'ledger recovery evidence is immutable'
+  USING ERRCODE='23514',CONSTRAINT='application_standard_ledger_recovery_immutable';
+END;
+$$;
+
+
+--
 -- Name: application_standard_lock_native_boot(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6947,6 +6961,31 @@ CREATE TABLE public.application_standard_control_bindings (
     physical_id text NOT NULL,
     CONSTRAINT application_standard_control_bindings_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text]))),
     CONSTRAINT application_standard_control_bindings_physical_id_check CHECK (((octet_length(physical_id) >= 1) AND (octet_length(physical_id) <= 128)))
+);
+
+
+--
+-- Name: application_standard_ledger_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_ledger_recoveries (
+    approval_hash text NOT NULL,
+    target_hash text NOT NULL,
+    schema_hash text NOT NULL,
+    source_hash text NOT NULL,
+    ledger_hash text NOT NULL,
+    actor text DEFAULT CURRENT_USER NOT NULL,
+    plan jsonb NOT NULL,
+    repaired_versions bigint[] NOT NULL,
+    recovered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_ledger_recoveries_actor_check CHECK ((actor <> ''::text)),
+    CONSTRAINT application_standard_ledger_recoveries_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_ledger_hash_check CHECK ((ledger_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_repaired_versions_check CHECK ((cardinality(repaired_versions) > 0)),
+    CONSTRAINT application_standard_ledger_recoveries_schema_hash_check CHECK ((schema_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_target_hash_check CHECK ((target_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -14346,6 +14385,14 @@ ALTER TABLE ONLY public.application_standard_control_bindings
 
 ALTER TABLE ONLY public.application_standard_control_bindings
     ADD CONSTRAINT application_standard_control_bindings_pkey PRIMARY KEY (app_id, field, resource_id);
+
+
+--
+-- Name: application_standard_ledger_recoveries application_standard_ledger_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_ledger_recoveries
+    ADD CONSTRAINT application_standard_ledger_recoveries_pkey PRIMARY KEY (approval_hash);
 
 
 --
@@ -22537,6 +22584,13 @@ CREATE TRIGGER application_standard_identity_immutable BEFORE DELETE OR UPDATE O
 --
 
 CREATE TRIGGER application_standard_instance_input_guard BEFORE INSERT OR DELETE OR UPDATE OF deployment_id, state, terminal_at ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: application_standard_ledger_recoveries application_standard_ledger_recovery_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_ledger_recovery_immutable BEFORE DELETE OR UPDATE ON public.application_standard_ledger_recoveries FOR EACH ROW EXECUTE FUNCTION public.application_standard_ledger_recovery_immutable();
 
 
 --

@@ -929,6 +929,18 @@ type ApplicationStandardControlBinding struct {
 	PhysicalID string
 }
 
+type ApplicationStandardLedgerRecovery struct {
+	ApprovalHash     string
+	TargetHash       string
+	SchemaHash       string
+	SourceHash       string
+	LedgerHash       string
+	Actor            string
+	Plan             []byte
+	RepairedVersions []int64
+	RecoveredAt      pgtype.Timestamptz
+}
+
 type ApplicationStandardLogDestination struct {
 	ID               pgtype.UUID
 	OrgID            pgtype.UUID

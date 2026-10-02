@@ -35,11 +35,13 @@
 //	DATABASE_URL=... migrate -leader                 # fleet bootstrap
 //	DATABASE_URL=... migrate -wait-for-migrations    # non-leader boxes
 //	DATABASE_URL=... migrate -leader -status         # report + log "leader"
+//	DATABASE_URL=... migrate -prepare-ledger-recovery # audit schema only
+//	DATABASE_URL=... migrate -ledger-recovery-plan    # verified repair preview
+//	DATABASE_URL=... migrate -ledger-recovery-apply HASH # exact approved repair
 package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -55,43 +57,17 @@ func main() {
 }
 
 func run() error {
-	// -status reports what `migrate` WOULD apply and exits without applying.
-	// The deploy runs it before the real apply so the CI log always records
-	// the box's before-state; when a migration then fails, "was the box where
-	// we thought it was?" is answerable from the log instead of an SSH
-	// session.
-	statusOnly := flag.Bool("status", false,
-		"report current DB version and pending migrations, then exit without applying")
-	// -leader marks this run as the cluster's migration leader. The
-	// behaviour is identical to the default mode (apply every pending
-	// migration synchronously); the flag exists so the operator's
-	// intent is captured in the log and in any monitoring that
-	// greps for "mode=leader". A leader IS NOT REQUIRED in a
-	// single-box install; the advisory lock from PR-1 alone is
-	// sufficient. -leader is the preferred multi-host boot order.
-	leader := flag.Bool("leader", false,
-		"apply pending migrations as the cluster's leader; non-leader daemons should pass -wait-for-migrations")
-	// -wait-for-migrations blocks until the leader has applied every
-	// embedded migration, then exits. Mutually exclusive with -status
-	// (a CI -status run should not block). Mutually exclusive with
-	// -leader (one process is either a leader or a waiter, never both).
-	waitForMigrations := flag.Bool("wait-for-migrations", false,
-		"block until the cluster's migration leader has applied every embedded migration, then exit (does not apply)")
-	flag.Parse()
-
-	if *leader && *waitForMigrations {
-		return fmt.Errorf("migrate: -leader and -wait-for-migrations are mutually exclusive")
-	}
-	if *waitForMigrations && *statusOnly {
-		return fmt.Errorf("migrate: -wait-for-migrations and -status are mutually exclusive")
+	options, err := parseMigrationOptions(os.Args[1:], os.Stderr)
+	if err != nil {
+		return err
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	mode := "apply"
-	if *leader {
+	if options.Leader {
 		mode = "leader"
 	}
-	if *waitForMigrations {
+	if options.Wait {
 		mode = "wait-for-migrations"
 	}
 	log = log.With("mode", mode)
@@ -103,6 +79,9 @@ func run() error {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer pool.Close()
+	if options.Recovery != "" {
+		return runLedgerRecovery(ctx, pool, options, os.Stdout)
+	}
 
 	st, err := db.Status(ctx, pool)
 	if err != nil {
@@ -115,7 +94,7 @@ func run() error {
 		"pending_count", len(st.Pending),
 		"pending", st.Pending,
 	)
-	if *statusOnly {
+	if options.Status {
 		return nil
 	}
 
@@ -127,7 +106,7 @@ func run() error {
 	// ledger is current. The daemon's own MigrateUp runs after
 	// this helper returns, gated by the advisory lock if another
 	// box is somehow mid-migration.
-	if *waitForMigrations {
+	if options.Wait {
 		log.Info("migrate: blocking on leader")
 		if err := WaitForMigrationsApplied(ctx, pool, st.EmbeddedVersions, log); err != nil {
 			return fmt.Errorf("wait-for-migrations: %w", err)

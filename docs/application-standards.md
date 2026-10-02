@@ -245,11 +245,16 @@ preserved; ownership, controls, artifacts, current account eligibility and
 capacity checks remain in force. A new boot still rejects stale plan inputs.
 Managed services retain the strict plan fence for boot and promotion.
 
-Fresh installation and ordinary database upgrade pass. Recovery from missing
-migration ledger entries is still an acceptance gap: the frozen initial standards
-migration fails if its tables already exist. Existing migration files remain
-immutable. Public activation requires a verified recovery path as well as native
-consumer acceptance.
+Fresh installation and ordinary database upgrade pass. An explicit local
+PostgreSQL 16 [reviewed ledger recovery](runbooks/application-standard-ledger-recovery.md)
+verifies the complete expanded schema, immutable migration bytes and backfill
+coverage before appending current recovery events and an immutable receipt.
+It preserves application configuration, rollout and native admission history.
+Normal daemon startup does not invoke this operation. The unmodified
+full-feature replay gate still fails at the frozen initial standards migration
+when its tables already exist; explicit recovery does not resolve that gate.
+Existing migration files remain immutable. Public activation still requires
+complete recovery acceptance and native consumer acceptance.
 
 ## Automatic onboarding and repair
 

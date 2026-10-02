@@ -40,4 +40,11 @@ valid UTC timestamps for every new file.
   turn incompatible DDL into compatible DDL.
 - Regenerate `schema.sql` and sqlc output when the schema shape changes.
 
+`schema-dump` also writes `schema.sql.migrations.sha256`, binding the canonical
+schema snapshot to the exact embedded SQL source bytes. Regenerate the snapshot
+and this digest after every new migration, including a data-only migration.
+The application-standard ledger recovery command refuses a stale binding; normal
+daemon migration behavior remains unchanged. Its explicit review/apply workflow
+is documented in [the recovery runbook](../docs/runbooks/application-standard-ledger-recovery.md).
+
 See ADR-142 for the cutover and runtime safety rules.

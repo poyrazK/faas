@@ -41,6 +41,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -165,8 +166,22 @@ func run(outPath string, r runner) error {
 	if err := os.WriteFile(outPath, filtered, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", outPath, err)
 	}
+	if err := writeSourceDigest(outPath); err != nil {
+		return err
+	}
 	lines := bytes.Count(filtered, []byte{'\n'}) + 1
 	fmt.Fprintf(os.Stderr, "schema-dump: %s regenerated (%d lines)\n", outPath, lines)
+	return nil
+}
+
+func writeSourceDigest(outPath string) error {
+	digest, err := migrations.SourceDigest()
+	if err != nil {
+		return fmt.Errorf("migration source digest: %w", err)
+	}
+	if err := os.WriteFile(outPath+".migrations.sha256", []byte(digest+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write migration source digest: %w", err)
+	}
 	return nil
 }
 
