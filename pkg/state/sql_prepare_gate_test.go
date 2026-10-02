@@ -39,6 +39,29 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	}
 	defer conn.Release()
 
+	// ADR-430: Commit's relay SQL belongs to a customer's independent
+	// database. Platform migrations must never install its public tables.
+	var customerTablesInPlatform bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
+		t.Fatal(err)
+	}
+	if customerTablesInPlatform {
+		t.Fatal("platform migrations installed customer-owned Commit tables")
+	}
+	customerPool := pgtest.OpenDatabase(t)
+	customerSchema, err := os.ReadFile("../../pkg/commit/schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customerPool.Exec(ctx, string(customerSchema)); err != nil {
+		t.Fatal(err)
+	}
+	customerConn, err := customerPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer customerConn.Release()
+
 	stmts := literalSQLStatements(t, "../../pkg", "../../cmd")
 	if len(stmts) < 500 {
 		t.Fatalf("found only %d SQL literals; the source walk is broken", len(stmts))
@@ -61,20 +84,34 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42P10": true, // invalid_column_reference
 		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
+	var customerStatements int
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
+		target := conn
+		query := strings.ReplaceAll(s.sql, "public.", "")
+		pos := filepath.ToSlash(s.pos)
+		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
+			target = customerConn
+			query = s.sql
+			customerStatements++
+		}
 		// pgtest isolates each test in its own schema, which stands in for
 		// public; a few statements qualify public.<table> deliberately.
-		_, err := conn.Conn().Prepare(ctx, name, strings.ReplaceAll(s.sql, "public.", ""))
+		// Customer SQL keeps its exact public qualification in its own DB.
+		_, err := target.Conn().Prepare(ctx, name, query)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && definitive[pgErr.Code] {
 			t.Errorf("%s: %s %s\n%s", s.pos, pgErr.Code, pgErr.Message, s.sql)
 			continue
 		}
 		if err == nil {
-			_ = conn.Conn().Deallocate(ctx, name)
+			_ = target.Conn().Deallocate(ctx, name)
 		}
 	}
+	if customerStatements == 0 {
+		t.Fatal("customer Commit SQL was absent from the source walk")
+	}
+	t.Logf("validated %d platform and %d customer SQL literals", len(stmts)-customerStatements, customerStatements)
 }
 
 type sqlLiteral struct {
