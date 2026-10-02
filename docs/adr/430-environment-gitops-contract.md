@@ -78,8 +78,11 @@
    inherited non-image source provenance still need preparation adapters.
 2. Prepare the dependency graph using immutable source artifacts and durable
    deployment/effect identities. Qualify API and worker candidates before release
-   activation. Retry and crash recovery resume the journaled operation; an older
-   generation cannot activate a replacement approved graph. Release coordination
+   activation. The preparation journal now captures every reviewed workload,
+   candidate, retained live identity, original queue binding and private consumer.
+   Its prepared phase records completed artifacts and grants no execution or
+   activation authority. Retry and crash recovery resume the journaled operation;
+   an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
    Host lifecycle consumers must use the same frozen contract as the guest.
    Ordinary console deployment, retry and rollback paths must respect the current
@@ -993,6 +996,37 @@ The merged checkpoint includes main through `46c33b276`. Focused Go checks for
 the above packages plus gateway, MCP hosting, CLI and gatewayd-internal pass;
 the Node MCP starter's 33 tests also pass. SQLC output, the embedded OpenAPI
 copy and ADR number uniqueness remain consistent.
+
+## Durable graph preparation journal
+
+Candidate publication now atomically records one complete reviewed workload
+cohort. The journal binds the approved definition digest, original source and
+environment UUIDs, generation, intent version, reviewed plan hash, mapped app
+IDs, candidate deployment IDs, retained live deployment IDs and observed resource
+identities. Queue bindings retain their original IDs and private consumer
+namespaces. Journal identity and inputs cannot be rewritten or ordinarily deleted.
+Deletion of the original source or environment releases the journal through the
+existing project/account purge transaction.
+
+The current lease reconciles artifact progress across the entire cohort. One
+finished image cannot mark a graph prepared while another image or source build
+is incomplete. Preparation is durable and idempotent; retry preserves the cohort
+and its preparation timestamp. A failed member stops the graph. Superseded source
+authority cannot advance its old journal. A failed graph write rolls back all
+candidate, build and durable imaging publication in the transaction.
+
+Prepared means every managed candidate has its rootfs artifact in the expected
+preparation phase. It is separate from qualification, release commands, instance
+admission, queue delivery, activation and serving convergence. All execution holds
+remain in place, and preparation alone cannot advance the applied revision.
+The next graph stage must introduce separately fenced qualification and activation
+authority while preserving frozen inputs across scheduler and runtime consumers.
+
+Local memory/PostgreSQL checks cover a reviewed API/worker/queue cohort, artifact
+completion, retry identity, rollback of durable handoffs, SQL input/phase/deletion
+fences, substituted queue/consumer IDs, supersession, populated migration replay
+and project/account purges. Native Linux KVM lifecycle acceptance remains required
+for the complete feature; the approved-intent executor remains disabled.
 
 ## Review and control workflow
 

@@ -6713,6 +6713,22 @@ SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=sqlc
 SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
 FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid AND environment_workload_runtime IS NOT NULL;
 
+-- name: CreateEnvironmentWorkloadGraph :exec
+INSERT INTO environment_workload_graphs(source_id,environment_id,revision_id,generation,intent_version,plan_hash,definition_digest,members,resource_ids)
+VALUES(sqlc.arg(source_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(revision_id)::uuid,sqlc.arg(generation)::bigint,
+ sqlc.arg(intent_version)::bigint,sqlc.arg(plan_hash)::text,sqlc.arg(definition_digest)::text,sqlc.arg(members)::jsonb,sqlc.arg(resource_ids)::jsonb)
+ON CONFLICT(source_id,generation,plan_hash) DO NOTHING;
+
+-- name: EnvironmentWorkloadGraphForPreparation :one
+SELECT * FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid
+ AND generation=sqlc.arg(generation)::bigint AND plan_hash=sqlc.arg(plan_hash)::text FOR UPDATE;
+
+-- name: AdvanceEnvironmentWorkloadGraphPreparation :one
+UPDATE environment_workload_graphs SET phase=sqlc.arg(phase)::text,error_code=sqlc.arg(error_code)::text,
+ prepared_at=CASE WHEN sqlc.arg(phase)::text='prepared' THEN coalesce(prepared_at,now()) ELSE NULL END
+WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
+RETURNING *;
+
 -- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
  source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,

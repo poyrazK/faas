@@ -15,28 +15,28 @@ import (
 
 var _ EnvironmentGitOpsPreparationStore = (*PgStore)(nil)
 
-func (s *PgStore) environmentCandidateInputsTx(ctx context.Context, tx pgx.Tx, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]Deployment, gitOpsIntentSnapshot, error) {
+func (s *PgStore) environmentCandidateInputsTx(ctx context.Context, tx pgx.Tx, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]Deployment, gitOpsIntentSnapshot, EnvironmentDesiredRevision, error) {
 	q := sqlc.New()
 	if _, err := q.LockEnvironmentGitOpsCandidateApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
-		return nil, gitOpsIntentSnapshot{}, mapErr(err)
+		return nil, gitOpsIntentSnapshot{}, EnvironmentDesiredRevision{}, mapErr(err)
 	}
 	source, revision, desired, err := lockApprovedEnvironmentGitOps(ctx, tx, lease.Source.AccountID, lease.Source.ID)
 	if err != nil {
-		return nil, gitOpsIntentSnapshot{}, err
+		return nil, gitOpsIntentSnapshot{}, revision, err
 	}
 	observed, snapshot, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
 	if err != nil {
-		return nil, gitOpsIntentSnapshot{}, err
+		return nil, gitOpsIntentSnapshot{}, revision, err
 	}
 	plan, err := environmentGitOpsPlan(source, revision, desired, observed, false)
 	if err != nil || plan.Hash != reviewed.Hash {
-		return nil, gitOpsIntentSnapshot{}, ErrConflict
+		return nil, gitOpsIntentSnapshot{}, revision, ErrConflict
 	}
 	inputs, err := workloadCandidateInputs(source, revision, desired, snapshot, plan)
 	if err != nil {
-		return nil, gitOpsIntentSnapshot{}, err
+		return nil, gitOpsIntentSnapshot{}, revision, err
 	}
-	return inputs, snapshot, nil
+	return inputs, snapshot, revision, nil
 }
 
 func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
@@ -50,7 +50,7 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	inputs, snapshot, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
+	inputs, snapshot, revision, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +89,18 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), BuildID: dep.BuildID, AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
 			Status: DeploymentStatus(dep.Status), HasRootfs: dep.RootfsPath != "" || dep.RootfsKey != ""})
 	}
+	graph, err := preparationGraph(snapshot, revision, lease.Source.Generation, reviewed.Hash, out)
+	if err != nil {
+		return nil, err
+	}
+	members, _ := json.Marshal(graph.Members)
+	resourceIDs, _ := json.Marshal(graph.ResourceIDs)
+	if err := q.CreateEnvironmentWorkloadGraph(ctx, tx, sqlc.CreateEnvironmentWorkloadGraphParams{
+		SourceID: mustPgUUID(graph.SourceID), EnvironmentID: mustPgUUID(graph.EnvironmentID), RevisionID: mustPgUUID(graph.RevisionID),
+		Generation: graph.Generation, IntentVersion: graph.IntentVersion, PlanHash: graph.PlanHash, DefinitionDigest: graph.DefinitionDigest,
+		Members: members, ResourceIds: resourceIDs}); err != nil {
+		return nil, mapErr(err)
+	}
 	// A long preparation must not commit after its issued lease expires.
 	if err := lockEnvironmentGitOps(ctx, tx, lease, time.Now()); err != nil {
 		return nil, err
@@ -102,7 +114,7 @@ func (s *PgStore) EnvironmentGitOpsSourceRequests(ctx context.Context, lease Env
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	inputs, _, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
+	inputs, _, _, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {
 		return nil, err
 	}

@@ -129,5 +129,10 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 			return err
 		}
 	}
+	if graphStore, ok := b.intent.(state.EnvironmentGitOpsGraphPreparationStore); ok {
+		if _, err := graphStore.ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan); err != nil {
+			return err
+		}
+	}
 	return nil
 }

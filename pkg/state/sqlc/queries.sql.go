@@ -395,6 +395,41 @@ func (q *Queries) AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, d
 	return i, err
 }
 
+const advanceEnvironmentWorkloadGraphPreparation = `-- name: AdvanceEnvironmentWorkloadGraphPreparation :one
+UPDATE environment_workload_graphs SET phase=$1::text,error_code=$2::text,
+ prepared_at=CASE WHEN $1::text='prepared' THEN coalesce(prepared_at,now()) ELSE NULL END
+WHERE id=$3::uuid AND phase<>'failed'
+RETURNING id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at
+`
+
+type AdvanceEnvironmentWorkloadGraphPreparationParams struct {
+	Phase     string
+	ErrorCode string
+	ID        pgtype.UUID
+}
+
+func (q *Queries) AdvanceEnvironmentWorkloadGraphPreparation(ctx context.Context, db DBTX, arg AdvanceEnvironmentWorkloadGraphPreparationParams) (EnvironmentWorkloadGraph, error) {
+	row := db.QueryRow(ctx, advanceEnvironmentWorkloadGraphPreparation, arg.Phase, arg.ErrorCode, arg.ID)
+	var i EnvironmentWorkloadGraph
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EnvironmentID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.DefinitionDigest,
+		&i.Members,
+		&i.ResourceIds,
+		&i.Phase,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
 const appByID = `-- name: AppByID :one
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -2185,6 +2220,40 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 	return i, err
 }
 
+const createEnvironmentWorkloadGraph = `-- name: CreateEnvironmentWorkloadGraph :exec
+INSERT INTO environment_workload_graphs(source_id,environment_id,revision_id,generation,intent_version,plan_hash,definition_digest,members,resource_ids)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,
+ $5::bigint,$6::text,$7::text,$8::jsonb,$9::jsonb)
+ON CONFLICT(source_id,generation,plan_hash) DO NOTHING
+`
+
+type CreateEnvironmentWorkloadGraphParams struct {
+	SourceID         pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	RevisionID       pgtype.UUID
+	Generation       int64
+	IntentVersion    int64
+	PlanHash         string
+	DefinitionDigest string
+	Members          []byte
+	ResourceIds      []byte
+}
+
+func (q *Queries) CreateEnvironmentWorkloadGraph(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadGraphParams) error {
+	_, err := db.Exec(ctx, createEnvironmentWorkloadGraph,
+		arg.SourceID,
+		arg.EnvironmentID,
+		arg.RevisionID,
+		arg.Generation,
+		arg.IntentVersion,
+		arg.PlanHash,
+		arg.DefinitionDigest,
+		arg.Members,
+		arg.ResourceIds,
+	)
+	return err
+}
+
 const createInstance = `-- name: CreateInstance :one
 insert into instances (id, app_id, deployment_id, state, ram_mb)
 values (gen_random_uuid(), $1, $2, $3, $4)
@@ -3798,6 +3867,39 @@ func (q *Queries) EnvironmentSecretReferenceWriteOwned(ctx context.Context, db D
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const environmentWorkloadGraphForPreparation = `-- name: EnvironmentWorkloadGraphForPreparation :one
+SELECT id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at FROM environment_workload_graphs WHERE source_id=$1::uuid
+ AND generation=$2::bigint AND plan_hash=$3::text FOR UPDATE
+`
+
+type EnvironmentWorkloadGraphForPreparationParams struct {
+	SourceID   pgtype.UUID
+	Generation int64
+	PlanHash   string
+}
+
+func (q *Queries) EnvironmentWorkloadGraphForPreparation(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForPreparationParams) (EnvironmentWorkloadGraph, error) {
+	row := db.QueryRow(ctx, environmentWorkloadGraphForPreparation, arg.SourceID, arg.Generation, arg.PlanHash)
+	var i EnvironmentWorkloadGraph
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EnvironmentID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.DefinitionDigest,
+		&i.Members,
+		&i.ResourceIds,
+		&i.Phase,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.PreparedAt,
+	)
+	return i, err
 }
 
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one

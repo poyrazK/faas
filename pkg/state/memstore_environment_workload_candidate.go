@@ -63,13 +63,30 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 			buildIDs[inputs[i].BuildID] = true
 		}
 	}
+	// Allocate identities before publication so graph validation cannot leave
+	// an in-memory candidate or build without its preparation cohort.
+	prospective := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
+	for i, input := range inputs {
+		frozen := candidateFrozenInputs(input)
+		candidate := m.environmentCandidateLocked(frozen)
+		if candidate.ID == "" {
+			inputs[i].ID = newID()
+			candidate = inputs[i]
+		}
+		prospective = append(prospective, EnvironmentWorkloadCandidate{DeploymentID: candidate.ID, AppID: candidate.AppID, Resource: frozen.Resource})
+	}
+	memory := m.environmentGitOps[lease.Source.ID]
+	graph, err := preparationGraph(snapshot, memory.revisions[memory.source.ApprovedRevisionID], memory.source.Generation, reviewed.Hash, prospective)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
 	for _, input := range inputs {
 		frozen := candidateFrozenInputs(input)
 		candidate := m.environmentCandidateLocked(frozen)
 		if candidate.ID == "" {
 			// All fallible validation was completed before writing any row.
-			input.ID, input.Status, input.CreatedAt = newID(), DeployPending, time.Now().UTC()
+			input.Status, input.CreatedAt = DeployPending, time.Now().UTC()
 			input.Revision = m.nextDeploymentRevisionLocked(input.AppID)
 			input.TrafficPercentExplicit = true
 			input.CanaryPreset, input.RolloutState = "none", "pending"
@@ -84,6 +101,14 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 		}
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: candidate.ID, BuildID: candidate.BuildID, AppID: candidate.AppID, Resource: frozen.Resource,
 			Status: candidate.Status, HasRootfs: candidate.RootfsPath != "" || candidate.RootfsKey != ""})
+	}
+	if memory.graphs == nil {
+		memory.graphs = map[string]EnvironmentWorkloadGraph{}
+	}
+	key := preparationGraphKey(graph.Generation, graph.PlanHash)
+	if _, exists := memory.graphs[key]; !exists {
+		graph.ID, graph.CreatedAt = newID(), time.Now().UTC()
+		memory.graphs[key] = clonePreparationGraph(graph)
 	}
 	return out, nil
 }

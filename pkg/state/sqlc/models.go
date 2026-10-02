@@ -1802,6 +1802,23 @@ type EnvironmentManagementOverride struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type EnvironmentWorkloadGraph struct {
+	ID               pgtype.UUID
+	SourceID         pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	RevisionID       pgtype.UUID
+	Generation       int64
+	IntentVersion    int64
+	PlanHash         string
+	DefinitionDigest string
+	Members          []byte
+	ResourceIds      []byte
+	Phase            string
+	ErrorCode        string
+	CreatedAt        pgtype.Timestamptz
+	PreparedAt       pgtype.Timestamptz
+}
+
 type Event struct {
 	ID             int64
 	At             pgtype.Timestamptz

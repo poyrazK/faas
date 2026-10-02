@@ -23,6 +23,7 @@ type environmentGitOpsMemory struct {
 	overrides map[string]environmentsync.Override
 	effects   map[string]EnvironmentGitOpsEffect
 	runtime   map[string]EnvironmentGitOpsRuntimeEffect
+	graphs    map[string]EnvironmentWorkloadGraph
 	poll      environmentGitSourcePoll
 	approvals map[string]EnvironmentGitRevisionApproval
 }
