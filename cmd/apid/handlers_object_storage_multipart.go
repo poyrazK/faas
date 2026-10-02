@@ -53,6 +53,7 @@ func viewMultipartUpload(upload state.ObjectMultipartUpload) api.ObjectMultipart
 		ID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes, PartSizeBytes: upload.PartSizeBytes,
 		PartCount: upload.PartCount, ContentType: upload.ContentType, State: upload.State,
 		ExpiresAt: upload.ExpiresAt, CreatedAt: upload.CreatedAt, CompletionErrorCode: upload.CompletionErrorCode,
+		ETag: upload.CompletionETag, VersionID: upload.CompletionVersionID,
 	}
 }
 
@@ -330,7 +331,7 @@ func (s *server) completeObjectMultipartUpload(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if upload.State == state.ObjectMultipartCompleted {
-		writeJSON(w, http.StatusOK, viewMultipartUpload(upload))
+		writeCompletedMultipartReplay(w, upload, req.Parts)
 		return
 	}
 	if upload.State == state.ObjectMultipartAborted || upload.State == state.ObjectMultipartAborting {
@@ -350,8 +351,20 @@ func (s *server) completeObjectMultipartUpload(w http.ResponseWriter, r *http.Re
 		bucketProblem(w, err)
 		return
 	}
-	claimed.State = state.ObjectMultipartCompleted
-	writeJSON(w, http.StatusOK, viewMultipartUpload(claimed))
+	completed, err := store.GetObjectMultipartUpload(r.Context(), acct.ID, bucket.AppID, bucket.ID, upload.ID)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, viewMultipartUpload(completed))
+}
+
+func writeCompletedMultipartReplay(w http.ResponseWriter, upload state.ObjectMultipartUpload, parts []api.ObjectMultipartCompletedPart) {
+	if !slices.Equal(upload.Parts, parts) {
+		bucketProblem(w, state.ErrConflict)
+		return
+	}
+	writeJSON(w, http.StatusOK, viewMultipartUpload(upload))
 }
 
 func (s *server) abortObjectMultipartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -396,7 +409,7 @@ func (s *server) abortObjectMultipartUpload(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) executeObjectMultipartOperation(ctx context.Context, store state.ObjectMultipartUploadStore, bucket state.ObjectBucket, upload state.ObjectMultipartUpload) error {
-	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, api.ObjectMultipartOperationTimeout)
 	defer cancel()
 	backend, err := s.objectStorage.Resolve(bucket.BackendID, bucket.BackendFingerprint)
 	if err != nil {
@@ -419,6 +432,9 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 				})
 			}
 		case state.ObjectMultipartCompleting, state.ObjectMultipartCompletingConditional:
+			if _, capable := backend.Provider.(objectstorage.MultipartResultCompleter); capable {
+				return s.executeObjectMultipartResult(callCtx, store, bucket, upload, backend.Provider)
+			}
 			parts := make([]objectstorage.CompletedPart, 0, len(upload.Parts))
 			for _, part := range upload.Parts {
 				parts = append(parts, objectstorage.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag})
@@ -469,14 +485,14 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 }
 
 func finishObjectMultipartOperation(ctx context.Context, finish func(context.Context) error) error {
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectUploadSettlementTimeout)
 	defer cancel()
 	return finish(finishCtx)
 }
 
 func (s *server) retryObjectMultipartOperation(ctx context.Context, store state.ObjectMultipartUploadStore, upload state.ObjectMultipartUpload, cause error) error {
 	code, delay := objectRetryPolicy(cause, upload.AttemptCount)
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectUploadSettlementTimeout)
 	defer cancel()
 	if err := store.RetryObjectMultipartUpload(finishCtx, upload.ID, upload.LeaseToken, code, delay); err != nil {
 		return err

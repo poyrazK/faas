@@ -235,6 +235,7 @@ func TestS3MultipartProtocolAndCompletionRecovery(t *testing.T) {
 			_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>true</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker><Part><PartNumber>2</PartNumber><ETag>&quot;etag-2&quot;</ETag><Size>10</Size><LastModified>2026-09-05T00:00:00Z</LastModified></Part></ListPartsResult>`)
 		case r.Method == http.MethodHead:
 			w.Header().Set("Content-Length", "10")
+			w.Header().Set("ETag", `"actual"`)
 			w.Header().Set("X-Amz-Meta-Gregale-Upload-Id", "session-1")
 		case r.Method == http.MethodDelete && r.URL.Query().Get("uploadId") == "provider-id":
 			abortCalls++

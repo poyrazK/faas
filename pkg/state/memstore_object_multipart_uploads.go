@@ -24,7 +24,7 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 	bucket, ok := m.objectBuckets[upload.BucketID]
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
-	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 {
+	if !ok || bucket.AccountID != upload.AccountID || bucket.AppID != upload.AppID || bucket.State != "ready" || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	count := 0
@@ -188,7 +188,7 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
 	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted || upload.State == ObjectMultipartAborting && next == ObjectMultipartAborted
-	if !ok || token == "" || upload.LeaseToken != token || !valid {
+	if !ok || token == "" || upload.LeaseToken != token || !valid || next == ObjectMultipartCompleted && upload.CompletionDispatched {
 		return ErrConflict
 	}
 	upload.State, upload.LeaseToken, upload.LeaseUntil = next, "", time.Time{}

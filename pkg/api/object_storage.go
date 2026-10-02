@@ -56,6 +56,8 @@ type ObjectMultipartUpload struct {
 	ContentType         string    `json:"content_type"`
 	State               string    `json:"state"`
 	CompletionErrorCode string    `json:"completion_error_code,omitempty"`
+	ETag                string    `json:"etag,omitempty"`
+	VersionID           string    `json:"version_id,omitempty"`
 	ExpiresAt           time.Time `json:"expires_at"`
 	CreatedAt           time.Time `json:"created_at"`
 }

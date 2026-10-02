@@ -28,9 +28,9 @@ func TestS3ConditionalMultipartProtocolAndRecovery(t *testing.T) {
 		{"lost-response", "NoSuchUpload", "session", 404, 200, 10, ObjectWriteConditions{IfNoneMatch: "*"}, nil},
 		{"lost-response-condition", "PreconditionFailed", "session", 412, 200, 10, ObjectWriteConditions{IfMatch: `"old"`}, nil},
 		{"lost-response-race", "ConditionalRequestConflict", "session", 409, 200, 10, ObjectWriteConditions{IfNoneMatch: "*"}, nil},
-		{"wrong-size", "NoSuchUpload", "session", 404, 200, 11, ObjectWriteConditions{IfNoneMatch: "*"}, ErrConditionalConflict},
-		{"wrong-session", "NoSuchUpload", "other", 404, 200, 10, ObjectWriteConditions{IfNoneMatch: "*"}, ErrConditionalConflict},
-		{"missing-upload-and-object", "NoSuchUpload", "", 404, 404, 0, ObjectWriteConditions{IfNoneMatch: "*"}, ErrConditionalConflict},
+		{"wrong-size", "PreconditionFailed", "session", 412, 200, 11, ObjectWriteConditions{IfNoneMatch: "*"}, ErrPreconditionFailed},
+		{"wrong-session", "PreconditionFailed", "other", 412, 200, 10, ObjectWriteConditions{IfNoneMatch: "*"}, ErrPreconditionFailed},
+		{"missing-upload-and-object", "PreconditionFailed", "", 412, 404, 0, ObjectWriteConditions{IfNoneMatch: "*"}, ErrPreconditionFailed},
 		{"unavailable-proof", "PreconditionFailed", "", 412, 403, 0, ObjectWriteConditions{IfNoneMatch: "*"}, ErrUnavailable},
 		{"transient", "SlowDown", "", 503, 0, 0, ObjectWriteConditions{IfNoneMatch: "*"}, ErrUnavailable},
 		{"missing-bucket", "NoSuchBucket", "", 404, 0, 0, ObjectWriteConditions{IfNoneMatch: "*"}, ErrNotFound},
@@ -43,6 +43,7 @@ func TestS3ConditionalMultipartProtocolAndRecovery(t *testing.T) {
 					heads++
 					w.Header().Set("Content-Length", strconv.FormatInt(test.size, 10))
 					w.Header().Set("X-Amz-Meta-Gregale-Upload-Id", test.session)
+					w.Header().Set("ETag", `"done"`)
 					w.WriteHeader(test.headStatus)
 					return
 				}

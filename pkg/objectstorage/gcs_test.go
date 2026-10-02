@@ -327,7 +327,7 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	store := &fakeGCSStore{object: gcsObjectState{Size: 10, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
+	store := &fakeGCSStore{object: gcsObjectState{Size: 10, ETag: `"actual"`, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
 	p := testGCS(upstream.URL, store)
 	p.httpClient = upstream.Client()
 

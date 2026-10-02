@@ -260,7 +260,8 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 }
 
 func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (gcsObjectState, error) {
-	attr, err := s.client.Bucket(bucket).Object(key).Attrs(ctx)
+	// Proof and admission callers meter each attempt; defer retries to them.
+	attr, err := s.client.Bucket(bucket).Object(key).Retryer(storage.WithPolicy(storage.RetryNever)).Attrs(ctx)
 	if err != nil {
 		return gcsObjectState{}, err
 	}
@@ -847,37 +848,67 @@ func (p *GCS) ListMultipartParts(ctx context.Context, bucket string, r Multipart
 }
 
 func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {
-	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || len(r.Parts) < 1 || len(r.Parts) > 10000 {
-		return ErrInvalid
+	_, err := p.CompleteMultipartWithResult(ctx, bucket, r, ObjectWriteConditions{})
+	return err
+}
+
+var _ MultipartResultCompleter = (*GCS)(nil)
+
+func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
+	result := MultipartCompletionResult{}
+	if !c.Valid() {
+		return result, ErrInvalid
+	}
+	if !c.Empty() {
+		return result, ErrUnsupported
+	}
+
+	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || r.RecoveryCursor != "" || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
+		return result, ErrInvalid
 	}
 	body := gcsCompleteMultipartUpload{Parts: make([]gcsCompletedPart, 0, len(r.Parts))}
 	var previousPart int32
 	for _, part := range r.Parts {
-		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" || len(part.ETag) > 256 {
-			return ErrInvalid
+		if part.PartNumber < 1 || part.PartNumber > api.MaxMultipartParts || part.PartNumber <= previousPart || !validUploadETag(part.ETag) {
+			return result, ErrInvalid
 		}
 		previousPart = part.PartNumber
 		body.Parts = append(body.Parts, gcsCompletedPart(part))
 	}
 	payload, err := xml.Marshal(body)
 	if err != nil {
-		return ErrUnavailable
+		return result, ErrUnavailable
 	}
-	err = p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploadId": {r.ProviderUploadID}}, http.Header{"Content-Type": {"application/xml"}}, payload, nil)
+	if err = multipartBeforeRequest(ctx, r); err != nil {
+		return result, err
+	}
+	var out struct {
+		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
+		ETag    string   `xml:"ETag"`
+	}
+	err = p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploadId": {r.ProviderUploadID}}, http.Header{"Content-Type": {"application/xml"}}, payload, &out)
 	if err == nil {
-		return nil
+		if !validUploadETag(out.ETag) {
+			return result, ErrUnavailable
+		}
+		result.ETag = out.ETag
+		return result, nil
 	}
 	if !errors.Is(normalizeGCS(err), ErrNotFound) {
-		return normalizeGCS(err)
+		return result, normalizeGCS(err)
+	}
+	if err = multipartBeforeRequest(ctx, r); err != nil {
+		return result, err
 	}
 	object, attrErr := p.store.ObjectState(ctx, bucket, r.Key)
 	if attrErr != nil {
-		return normalizeGCS(attrErr)
+		return result, normalizeGCS(attrErr)
 	}
-	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID {
-		return ErrConflict
+	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID || !validUploadETag(object.ETag) {
+		return result, ErrConflict
 	}
-	return nil
+	result.ETag = object.ETag
+	return result, nil
 }
 
 func (p *GCS) AbortMultipartUpload(ctx context.Context, bucket string, r MultipartAbortRequest) error {

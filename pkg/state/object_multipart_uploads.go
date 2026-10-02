@@ -45,6 +45,11 @@ type ObjectMultipartUpload struct {
 	Parts                           []api.ObjectMultipartCompletedPart
 	CompletionConditions            api.ObjectWriteConditions
 	CompletionErrorCode             string
+	CompletionETag                  string
+	CompletionVersionID             string
+	CompletionRecoveryCursor        string `json:"-"`
+	CompletionVersionsObserved      bool   `json:"-"`
+	CompletionDispatched            bool   `json:"-"`
 	State                           string
 	ExpiresAt, CreatedAt, UpdatedAt time.Time
 	LeaseToken                      string
@@ -63,6 +68,23 @@ type ObjectMultipartUploadStore interface {
 	FinishObjectMultipartUpload(context.Context, string, string, string) error
 	RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error
 	DueObjectMultipartUploads(context.Context, int32) ([]ObjectMultipartUpload, error)
+}
+
+// ObjectMultipartCompletionStore atomically commits the actual result and its
+// public version mapping before releasing reservations. Recovery cursors and
+// observed native history survive owner restart; dispatch is a sticky latch.
+type ObjectMultipartCompletionStore interface {
+	DispatchObjectMultipartCompletion(context.Context, ObjectMultipartUpload) error
+	FinishObjectMultipartCompletion(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult) (ObjectMultipartUpload, error)
+	RetryObjectMultipartCompletion(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult, string, time.Duration) error
+	RejectObjectMultipartCompletionResult(context.Context, ObjectMultipartUpload, ObjectMultipartCompletionResult, string) error
+}
+
+type ObjectMultipartCompletionResult struct {
+	ETag              string
+	ProviderVersionID string `json:"-"`
+	RecoveryCursor    string `json:"-"`
+	VersionsObserved  bool   `json:"-"`
 }
 
 func validObjectMultipartOperation(operation string) bool {

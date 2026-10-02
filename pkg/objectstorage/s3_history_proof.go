@@ -31,7 +31,11 @@ type s3HistoryCursor struct {
 }
 
 func historyBinding(bucket string, r ObjectHistoryProofRequest) string {
-	sum := sha256.Sum256([]byte(bucket + "\x00" + r.Key + "\x00" + r.Receipt + "\x00" + strconv.FormatInt(r.SizeBytes, 10)))
+	identity := bucket + "\x00" + r.Key + "\x00" + r.Receipt + "\x00" + strconv.FormatInt(r.SizeBytes, 10)
+	if r.MultipartSession {
+		identity += "\x00multipart"
+	}
+	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -72,7 +76,11 @@ func decodeHistoryCursor(bucket string, r ObjectHistoryProofRequest) (s3HistoryC
 // or delete markers. Missing history remains uncertain, including a full sweep.
 func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r ObjectHistoryProofRequest) (ObjectHistoryProofPage, error) {
 	page := ObjectHistoryProofPage{Cursor: r.Cursor}
-	if _, err := uuid.Parse(r.Receipt); err != nil || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.BeforeRequest == nil {
+	maxBytes := api.MaxObjectSinglePutBytes
+	if r.MultipartSession {
+		maxBytes = api.MaxObjectUploadBytes
+	}
+	if _, err := uuid.Parse(r.Receipt); err != nil || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > maxBytes || r.BeforeRequest == nil {
 		return page, ErrInvalid
 	}
 	c, err := decodeHistoryCursor(bucket, r)
@@ -187,10 +195,17 @@ func (p *S3) confirmTrackedVersion(ctx context.Context, bucket string, r ObjectH
 	if err != nil {
 		return UploadResult{}, normalizeVersionHistoryError(err)
 	}
-	if out == nil || out.ContentLength == nil || aws.ToString(out.VersionId) != version || aws.ToBool(out.DeleteMarker) || !validUploadETag(aws.ToString(out.ETag)) {
+	if out == nil || out.ContentLength == nil || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), version) || aws.ToBool(out.DeleteMarker) || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrUnavailable
 	}
-	if *out.ContentLength != r.SizeBytes || out.Metadata[ReservedUploadReceiptMetadataKey] != r.Receipt {
+	metadataKey := ReservedUploadReceiptMetadataKey
+	if r.MultipartSession {
+		metadataKey = ReservedMultipartSessionMetadataKey
+	}
+	if !validTrackedProofHeaders(out.ResultMetadata, metadataKey) {
+		return UploadResult{}, ErrUnavailable
+	}
+	if *out.ContentLength != r.SizeBytes || out.Metadata[metadataKey] != r.Receipt {
 		return UploadResult{}, ErrConflict
 	}
 	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: version}, nil

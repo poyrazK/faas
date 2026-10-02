@@ -8009,12 +8009,21 @@ CREATE TABLE public.object_storage_multipart_uploads (
     completion_if_match text DEFAULT ''::text NOT NULL,
     completion_if_none_match text DEFAULT ''::text NOT NULL,
     completion_error_code text DEFAULT ''::text NOT NULL,
-    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[\x01-\x1f\x7f]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    completion_etag text DEFAULT ''::text NOT NULL,
+    completion_version_id text DEFAULT ''::text NOT NULL,
+    completion_recovery_cursor text DEFAULT ''::text NOT NULL,
+    completion_versions_observed boolean DEFAULT false NOT NULL,
+    completion_dispatched boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
+    CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
+    CONSTRAINT object_storage_multipart_uploads_completion_etag_check CHECK (((octet_length(completion_etag) <= 256) AND (completion_etag !~ '[\x01-\x1f\x7f]'::text) AND ((completion_etag = ''::text) OR (btrim(completion_etag) <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploads_completion_parts_check CHECK ((jsonb_typeof(completion_parts) = 'array'::text)),
+    CONSTRAINT object_storage_multipart_uploads_completion_version_id_check CHECK (((completion_version_id = ''::text) OR (completion_version_id = 'null'::text) OR (completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT object_storage_multipart_uploads_content_type_check CHECK ((length(content_type) <= 255)),
     CONSTRAINT object_storage_multipart_uploads_last_error_code_check CHECK ((length(last_error_code) <= 32)),
     CONSTRAINT object_storage_multipart_uploads_layout_check CHECK ((((size_bytes = 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes > 0) AND (part_count > 0)))),
@@ -23156,7 +23165,7 @@ CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger
     AS $$
 DECLARE versioned boolean;
 BEGIN
- versioned:=OLD.inventory_scope='all_versions' OR (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=NEW.bucket_id AND versions_observed));
+ versioned:=OLD.inventory_scope='all_versions' OR (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=NEW.bucket_id AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=NEW.bucket_id AND completion_versions_observed));
  IF OLD.inventory_scope='all_versions' AND NEW.inventory_scope<>'all_versions' THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version accounting cannot revert to current-object inventory';
  END IF;
@@ -23232,7 +23241,7 @@ BEGIN
   IF TG_TABLE_NAME='object_storage_write_admissions' THEN
    IF NEW.native_version THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before version admission'; END IF;
   END IF;
-  IF (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=bid AND versions_observed)) THEN
+  IF (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=bid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=bid AND completion_versions_observed)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before new writes';
   END IF;
  END IF;
@@ -23320,3 +23329,35 @@ CREATE TRIGGER object_version_reference_identity BEFORE DELETE OR UPDATE ON publ
 
 ALTER TABLE ONLY public.object_version_references
     ADD CONSTRAINT object_version_references_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+CREATE FUNCTION public.protect_object_multipart_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.completion_etag<>'' OR NEW.completion_version_id<>'' OR NEW.completion_recovery_cursor<>'' OR NEW.completion_dispatched OR NEW.completion_versions_observed THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart result requires a dispatched completion';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF OLD.completion_dispatched AND NOT NEW.completion_dispatched THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart dispatch cannot be forgotten';
+ END IF;
+ IF NOT OLD.completion_dispatched AND NEW.completion_dispatched
+  AND NOT (OLD.state IN ('completing','completing_conditional') AND NEW.state=OLD.state) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart dispatch requires a completing intent';
+ END IF;
+ IF (NEW.completion_etag IS DISTINCT FROM OLD.completion_etag OR NEW.completion_version_id IS DISTINCT FROM OLD.completion_version_id)
+  AND NOT (OLD.state IN ('completing','completing_conditional') AND NEW.state='completed' AND OLD.completion_dispatched) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart result is immutable';
+ END IF;
+ IF NEW.completion_version_id<>'' AND NOT EXISTS(SELECT 1 FROM object_version_references v WHERE v.bucket_id=NEW.bucket_id AND v.object_key=NEW.object_key
+  AND ((NEW.completion_version_id='null' AND v.native_version_id='null') OR (v.id::text=NEW.completion_version_id AND v.native_version_id<>'null'))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart version must belong to its bucket and key';
+ END IF;
+ NEW.completion_versions_observed:=OLD.completion_versions_observed OR NEW.completion_versions_observed;
+ RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_multipart_result_immutable BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_result();

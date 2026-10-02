@@ -456,9 +456,11 @@ output.txt`. Read permissions and credential revocation still apply on every
 request. Exact-version reads preserve ranges, conditions, metadata and available
 checksums. A current delete marker returns 404; requesting that marker by ID
 returns 405 with `x-amz-delete-marker: true` and Last-Modified. Successful ordinary
-PUT, CopyObject and current GET/HEAD also return customer x-amz-version-id when
-the provider supplies a native ID. Multipart completion headers and
-version-specific tagging remain open.
+PUT, CopyObject, CompleteMultipartUpload and current GET/HEAD also return customer
+x-amz-version-id when the provider supplies a native ID. Multipart completion
+returns the actual provider ETag and durably stores its public version ID;
+repeating the same completion returns that result even after later overwrites
+without another provider request. Version-specific tagging remains open.
 
 Observing a non-null native version or any delete marker activates the retained
 version accounting fence. Reads and listings continue under ordinary read
@@ -905,7 +907,9 @@ its granted buckets in the bucket list; a management principal sees all buckets.
 - `POST /{bucket-id}/multipart-uploads/{upload-id}/complete`: send every ETag in
   ascending order as `{ "parts": [{"part_number":1,"etag":"..."}] }`.
   `GET /{bucket-id}/multipart-uploads/{upload-id}` recovers session state after a
-  lost API response. `DELETE` on that path aborts an unfinished session.
+  lost API response. Complete/get/list responses include the stored final `etag`
+  and public `version_id` when available. `DELETE` on that path aborts an
+  unfinished session.
 
 Use ordinary fetch/HTTP for signed URLs, **not** the authenticated Gregale client.
 Never forward Gregale Authorization/cookies. Browsers set Content-Length from
@@ -918,8 +922,14 @@ Multipart sessions reserve the declared final size before upstream initiation
 and use the same `storage:write` scope plus bucket write grant as ordinary PUT.
 Only one live session exists per bucket/key; retry creation with the same key,
 size and content type to recover its Gregale ID. A different shape conflicts.
-Gregale never exposes the provider upload ID. Completion ETags are durably stored
-before the upstream call, making completion restart-safe. Sessions expire after
+Gregale never exposes the provider upload ID. Part ETags and completion predicates
+are durably stored before the upstream call. The actual final ETag and public
+version ID are committed atomically with successful completion. An uncertain
+S3 completion can recover an exact session receipt from retained versions after
+an overwrite or delete marker, with bounded pages and persisted continuation.
+A missing upload or history proof keeps its reservations; it cannot establish
+failure. See [ADR-402](adr/402-durable-s3-multipart-completion-identities.md).
+Sessions expire after
 24 hours; the recovery worker aborts expired upstream parts even while new
 object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.

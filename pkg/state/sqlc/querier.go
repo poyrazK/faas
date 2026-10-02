@@ -989,8 +989,10 @@ type Querier interface {
 	ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectMultipartClaimParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartClearTransfers(ctx context.Context, db DBTX, uploadID pgtype.UUID) error
 	ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
+	ObjectMultipartDispatch(ctx context.Context, db DBTX, arg ObjectMultipartDispatchParams) (int64, error)
 	ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit int32) ([]ObjectStorageMultipartUpload, error)
 	ObjectMultipartFinish(ctx context.Context, db DBTX, arg ObjectMultipartFinishParams) (int64, error)
+	ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMultipartGetParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMultipartListParams) ([]ObjectStorageMultipartUpload, error)
@@ -1003,8 +1005,11 @@ type Querier interface {
 	ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadID pgtype.UUID) (int64, error)
 	ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg ObjectMultipartPartTransferParams) (ObjectMultipartPartTransferRow, error)
 	ObjectMultipartRejectCompletion(ctx context.Context, db DBTX, arg ObjectMultipartRejectCompletionParams) (int64, error)
+	ObjectMultipartRejectResult(ctx context.Context, db DBTX, arg ObjectMultipartRejectResultParams) (int64, error)
 	ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBTX, uploadID pgtype.UUID) error
+	ObjectMultipartResultLock(ctx context.Context, db DBTX, arg ObjectMultipartResultLockParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
+	ObjectMultipartRetryResult(ctx context.Context, db DBTX, arg ObjectMultipartRetryResultParams) (int64, error)
 	ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error)
 	ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error)
 	ObjectRouteWriteSettle(ctx context.Context, db DBTX, arg ObjectRouteWriteSettleParams) (int64, error)

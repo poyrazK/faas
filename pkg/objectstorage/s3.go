@@ -674,74 +674,8 @@ func (p *S3) CompleteConditionalMultipartUpload(ctx context.Context, bucket stri
 }
 
 func (p *S3) completeMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) error {
-	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || len(r.Parts) < 1 || len(r.Parts) > 10000 {
-		return ErrInvalid
-	}
-	parts := make([]types.CompletedPart, 0, len(r.Parts))
-	var previousPart int32
-	for _, part := range r.Parts {
-		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" {
-			return ErrInvalid
-		}
-		previousPart = part.PartNumber
-		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(part.PartNumber), ETag: aws.String(part.ETag)})
-	}
-	var options []func(*s3.Options)
-	if !c.Empty() {
-		// The durable owner handles retries. A conditional 409 needs a new MPU.
-		options = append(options, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
-	}
-	_, err := p.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
-		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
-		IfMatch:         stringPtrOrNil(c.IfMatch), IfNoneMatch: stringPtrOrNil(c.IfNoneMatch),
-	}, options...)
-	if err == nil {
-		return nil
-	}
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) {
-		return normalize(err)
-	}
-	if c.Empty() {
-		if apiErr.ErrorCode() != "NoSuchUpload" {
-			return normalize(err)
-		}
-		return p.recoverMultipartCompletion(ctx, bucket, r, nil)
-	}
-	var rejected error
-	switch apiErr.ErrorCode() {
-	case "PreconditionFailed":
-		rejected = ErrPreconditionFailed
-	case "ConditionalRequestConflict":
-		rejected = ErrConditionalConflict
-	case "NoSuchKey", "NotFound":
-		rejected = ErrConditionalNotFound
-	case "NoSuchUpload":
-		rejected = ErrConditionalConflict
-	default:
-		return normalize(err)
-	}
-	// A successful completion with a lost response can produce a condition
-	// failure on replay. Only this session's metadata and exact size prove it.
-	return p.recoverMultipartCompletion(ctx, bucket, r, rejected)
-}
-
-func (p *S3) recoverMultipartCompletion(ctx context.Context, bucket string, r MultipartCompleteRequest, rejected error) error {
-	head, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(r.Key)})
-	if err != nil {
-		if rejected != nil && errors.Is(normalize(err), ErrNotFound) {
-			return rejected
-		}
-		return normalize(err)
-	}
-	if aws.ToInt64(head.ContentLength) == r.SizeBytes && head.Metadata[ReservedMultipartSessionMetadataKey] == r.SessionID {
-		return nil
-	}
-	if rejected != nil {
-		return rejected
-	}
-	return ErrConflict
+	_, err := p.CompleteMultipartWithResult(ctx, bucket, r, c)
+	return err
 }
 
 func (p *S3) AbortMultipartUpload(ctx context.Context, bucket string, r MultipartAbortRequest) error {

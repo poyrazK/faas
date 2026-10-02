@@ -145,15 +145,19 @@ func (h *Handler) multipartCompletionSize(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) executeMultipartCompletion(w http.ResponseWriter, r *http.Request, req requestContext, store state.ObjectMultipartUploadStore, transfers state.ObjectMultipartTransferStore, u state.ObjectMultipartUpload) {
+	if _, capable := req.provider.(objectstorage.MultipartResultCompleter); capable {
+		h.executeMultipartResult(w, r, req, store, u)
+		return
+	}
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	callCtx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	callCtx, cancel := context.WithTimeout(r.Context(), api.ObjectMultipartOperationTimeout)
 	defer cancel()
 	err := objectstorage.CompleteMultipart(callCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 		SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts),
 	}, u.CompletionConditions)
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err != nil {
 		code := objectstorage.MultipartCompletionFailureCode(err)
@@ -192,5 +196,12 @@ func (h *Handler) writeMultipartCompletionFailure(w http.ResponseWriter, r *http
 }
 
 func writeMultipartCompleted(w http.ResponseWriter, req requestContext, u state.ObjectMultipartUpload) {
-	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: u.Key, ETag: multipartETag(u.Parts), UploadID: u.ID})
+	etag := u.CompletionETag
+	if etag == "" {
+		etag = multipartETag(u.Parts)
+	}
+	if u.CompletionVersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", u.CompletionVersionID)
+	}
+	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: u.Key, ETag: etag, UploadID: u.ID})
 }

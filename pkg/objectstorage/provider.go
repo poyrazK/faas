@@ -131,6 +131,7 @@ type HistoricalObjectWriteConfirmer interface {
 type ObjectHistoryProofRequest struct {
 	Key, Receipt, Cursor string
 	SizeBytes            int64
+	MultipartSession     bool `json:"-"`
 	BeforeRequest        func(context.Context) error
 }
 
@@ -226,6 +227,33 @@ type ConditionalObjectPresigner interface {
 // atomic completion. Recovery must replay the identical conditions.
 type ConditionalMultipartCompleter interface {
 	CompleteConditionalMultipartUpload(context.Context, string, MultipartCompleteRequest, ObjectWriteConditions) error
+}
+
+// MultipartResultCompleter returns the actual committed identity or a bounded
+// recovery cursor. A missing historical proof never proves write failure.
+type MultipartResultCompleter interface {
+	CompleteMultipartWithResult(context.Context, string, MultipartCompleteRequest, ObjectWriteConditions) (MultipartCompletionResult, error)
+}
+
+type MultipartCompletionResult struct {
+	UploadResult
+	RecoveryCursor   string `json:"-"`
+	VersionsObserved bool   `json:"-"`
+}
+
+func CompleteMultipartWithResult(ctx context.Context, p Provider, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
+	if !c.Valid() {
+		return MultipartCompletionResult{}, ErrInvalid
+	}
+	if completer, ok := p.(MultipartResultCompleter); ok {
+		return completer.CompleteMultipartWithResult(ctx, bucket, r, c)
+	}
+	if r.BeforeRequest != nil {
+		if err := r.BeforeRequest(ctx); err != nil {
+			return MultipartCompletionResult{}, err
+		}
+	}
+	return MultipartCompletionResult{}, CompleteMultipart(ctx, p, bucket, r, c)
 }
 
 func CompleteMultipart(ctx context.Context, p Provider, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) error {
@@ -466,6 +494,9 @@ type CompletedPart struct {
 }
 
 type MultipartCompleteRequest struct {
+	Recovering       bool                        `json:"-"`
+	RecoveryCursor   string                      `json:"-"`
+	BeforeRequest    func(context.Context) error `json:"-"`
 	SessionID        string
 	Key              string
 	ProviderUploadID string

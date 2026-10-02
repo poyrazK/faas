@@ -147,6 +147,7 @@ const (
 	ObjectUploadHistoryCursorMaxBytes         = 8192
 	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
+	ObjectMultipartOperationTimeout           = 90 * time.Second
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
 	ObjectWriteReceiptCursorMaxBytes          = 512

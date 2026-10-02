@@ -23,6 +23,8 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 		LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time, RetryAt: row.RetryAt.Time,
 		AttemptCount: row.AttemptCount, LastErrorCode: row.LastErrorCode,
 		CompletionConditions: api.ObjectWriteConditions{IfMatch: row.CompletionIfMatch, IfNoneMatch: row.CompletionIfNoneMatch}, CompletionErrorCode: row.CompletionErrorCode,
+		CompletionETag: row.CompletionEtag, CompletionVersionID: row.CompletionVersionID,
+		CompletionRecoveryCursor: row.CompletionRecoveryCursor, CompletionVersionsObserved: row.CompletionVersionsObserved, CompletionDispatched: row.CompletionDispatched,
 	}
 	if err := json.Unmarshal(row.ObjectMetadata, &upload.Metadata); err != nil {
 		return ObjectMultipartUpload{}, err
@@ -50,7 +52,7 @@ func multipartMetadataJSON(metadata ObjectMultipartMetadata) ([]byte, error) {
 func (s *PgStore) ReserveObjectMultipartUpload(ctx context.Context, upload ObjectMultipartUpload, limit int) (ObjectMultipartUpload, error) {
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
-	if upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 {
+	if upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	tx, err := s.pool.Begin(ctx)

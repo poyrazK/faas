@@ -3956,6 +3956,7 @@ AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
 AND u.inventory_scope='current'
 AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
 AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed)
 AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'));
 
 -- name: ObjectInventorySample :exec
@@ -4024,7 +4025,7 @@ WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state IN ('completing','completing_conditional') AND $3='completed') OR (state='aborting' AND $3='aborted'));
+((state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched) OR (state='aborting' AND $3='aborted'));
 
 -- name: ObjectMultipartSetSize :execrows
 UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
@@ -4041,6 +4042,30 @@ WHERE (((state IN ('initiating','completing','completing_conditional','aborting'
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ObjectMultipartResultLock :one
+SELECT * FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE;
+
+-- name: ObjectMultipartDispatch :execrows
+UPDATE object_storage_multipart_uploads SET completion_dispatched=true,updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
+
+-- name: ObjectMultipartFinishResult :one
+UPDATE object_storage_multipart_uploads SET state='completed',completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING *;
+
+-- name: ObjectMultipartRetryResult :execrows
+UPDATE object_storage_multipart_uploads SET completion_recovery_cursor=sqlc.arg(cursor),completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,last_error_code=sqlc.arg(code),retry_at=now()+(sqlc.arg(delay_seconds)::int * interval '1 second'),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional');
+
+-- name: ObjectMultipartRejectResult :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=sqlc.arg(code),completion_recovery_cursor='',
+ completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
+ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=sqlc.arg(code),retry_at=now(),updated_at=now()
+WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state='completing_conditional';
 
 -- name: ObjectS3CredentialLockBucket :one
 SELECT id FROM object_buckets
@@ -5144,7 +5169,7 @@ SELECT
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
- (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions;
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions')) AS versions;
 
 -- name: ObjectCapacityActive :one
 SELECT * FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning');
@@ -5247,7 +5272,7 @@ SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bu
 
 -- name: ObjectVersionAccountingStatus :one
 SELECT coalesce(u.inventory_scope,'current')::text AS inventory_scope,
- EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed UNION ALL SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed) AS versions_observed,
+ EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed UNION ALL SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed UNION ALL SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed) AS versions_observed,
  EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=b.id AND inventory_scope='all_versions' AND state IN ('waiting','scanning')) AS native_scan_active
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id WHERE b.id=$1 AND b.account_id=$2;
 

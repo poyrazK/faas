@@ -17,6 +17,9 @@ func (m *MemStore) versionAccountingStatusLocked(bucket string) ObjectVersionAcc
 	for _, c := range m.objectUploadCompletions {
 		s.VersionsObserved = s.VersionsObserved || c.BucketID == bucket && c.RecoveryVersionsObserved
 	}
+	for _, u := range m.objectMultipartUploads {
+		s.VersionsObserved = s.VersionsObserved || u.BucketID == bucket && u.CompletionVersionsObserved
+	}
 	s.VersionsObserved = s.VersionsObserved || m.objectVersionObservations[bucket]
 	for _, j := range m.objectCapacityJobs {
 		s.NativeScanActive = s.NativeScanActive || j.BucketID == bucket && j.InventoryScope == ObjectInventoryAllVersions && objectCapacityActive(j.State)

@@ -109,11 +109,11 @@ func (p *fakeObjectProvider) AbortMultipartUpload(_ context.Context, b string, r
 	return p.multipartErr
 }
 
-func objectRegistry(t *testing.T, a, b *fakeObjectProvider, defaultID string) *objectstorage.Registry {
+func objectRegistry(t *testing.T, a, b objectstorage.Provider, defaultID string) *objectstorage.Registry {
 	return objectRegistryWithFeed(t, a, b, defaultID, true)
 }
 
-func objectRegistryWithFeed(t *testing.T, a, b *fakeObjectProvider, defaultID string, feed bool) *objectstorage.Registry {
+func objectRegistryWithFeed(t *testing.T, a, b objectstorage.Provider, defaultID string, feed bool) *objectstorage.Registry {
 	t.Helper()
 	backends := []objectstorage.BackendConfig{}
 	for _, id := range []string{"external", "ceph"} {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -17,7 +18,15 @@ import (
 var _ TrackedObjectWriter = (*S3)(nil)
 
 func validUploadETag(etag string) bool {
-	return strings.TrimSpace(etag) != "" && len(etag) <= api.MaxObjectWriteETagBytes && !strings.ContainsAny(etag, "\r\n")
+	if strings.TrimSpace(etag) == "" || len(etag) > api.MaxObjectWriteETagBytes || !utf8.ValidString(etag) {
+		return false
+	}
+	for _, c := range etag {
+		if c < 32 || c == 127 {
+			return false
+		}
+	}
+	return true
 }
 func (p *S3) WriteTrackedObject(ctx context.Context, bucket, key, receipt string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
 	if ctx.Err() != nil {

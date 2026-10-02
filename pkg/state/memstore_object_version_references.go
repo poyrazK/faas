@@ -19,6 +19,10 @@ func (m *MemStore) RecordObjectVersions(_ context.Context, account, bucket strin
 	if !ok || b.AccountID != account || b.State != "ready" {
 		return nil, ErrNotFound
 	}
+	return m.recordObjectVersionsLocked(bucket, items), nil
+}
+
+func (m *MemStore) recordObjectVersionsLocked(bucket string, items []ObjectVersionIdentity) []ObjectVersionIdentity {
 	if m.objectVersionReferences == nil {
 		m.objectVersionReferences = map[string]ObjectVersionIdentity{}
 		m.objectVersionReferenceIDs = map[string]string{}
@@ -40,7 +44,7 @@ func (m *MemStore) RecordObjectVersions(_ context.Context, account, bucket strin
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return out
 }
 
 func (m *MemStore) ResolveObjectVersion(_ context.Context, account, bucket, key, id string) (string, error) {

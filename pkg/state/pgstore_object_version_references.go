@@ -32,6 +32,15 @@ func (s *PgStore) RecordObjectVersions(ctx context.Context, account, bucket stri
 	if _, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account)}); err != nil {
 		return nil, mapErr(err)
 	}
+	out, err := recordObjectVersionsTx(ctx, tx, bucket, items)
+	if err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func recordObjectVersionsTx(ctx context.Context, transaction sqlc.DBTX, bucket string, items []ObjectVersionIdentity) ([]ObjectVersionIdentity, error) {
+	q := sqlc.New()
 	// Marshal a private database input rather than making native IDs serializable
 	// on the shared reference type.
 	wire := make([]objectVersionReferenceInput, 0, len(items))
@@ -42,7 +51,7 @@ func (s *PgStore) RecordObjectVersions(ctx context.Context, account, bucket stri
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.ObjectVersionReferencesRecord(ctx, tx, sqlc.ObjectVersionReferencesRecordParams{BucketID: mustPgUUID(bucket), Items: raw})
+	rows, err := q.ObjectVersionReferencesRecord(ctx, transaction, sqlc.ObjectVersionReferencesRecordParams{BucketID: mustPgUUID(bucket), Items: raw})
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -61,7 +70,7 @@ func (s *PgStore) RecordObjectVersions(ctx context.Context, account, bucket stri
 		}
 		out = append(out, v)
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 
 func (s *PgStore) ResolveObjectVersion(ctx context.Context, account, bucket, key, id string) (string, error) {
