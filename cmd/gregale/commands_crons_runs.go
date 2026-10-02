@@ -52,21 +52,21 @@ func cmdCronsRuns(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]")
+		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] (1 <= N <= 100)")
+		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] (1 <= N <= 100)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]")
+		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if *runID != "" {
 		if !fireNowRequestIDPattern.MatchString(*runID) || *before != "" || *limit != 10 {
-			fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> --run <task-id>")
+			printCommandValidation(os.Stderr, "usage: gregale crons runs <id> --run <task-id>\n")
 			return 1
 		}
 	}
@@ -111,16 +111,16 @@ func cmdCronsOccurrences(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]")
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N] (1 <= N <= 200)")
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N] (1 <= N <= 200)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]")
+		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]\n")
 		return 1
 	}
 	client, err := authedClient()

@@ -70,7 +70,7 @@ func cmdAuditEvents(args []string) int {
 	case "get":
 		return cmdAuditEventsGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown audit-events subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown audit-events subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -92,7 +92,7 @@ func cmdAuditEventsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]")
+		printCommandValidation(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
 		return 2
 	}
 	if *since != "" {

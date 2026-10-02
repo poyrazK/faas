@@ -87,7 +87,7 @@ func cmdDebug(args []string) int {
 	case "bundle":
 		return cmdDebugBundle(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
 	return 1
 }
 
@@ -180,7 +180,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
 }
 

@@ -35,7 +35,7 @@ func cmdBillingRetry(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale billing retry\n")
+		printCommandValidation(os.Stderr, "usage: gregale billing retry\n")
 		return 1
 	}
 
