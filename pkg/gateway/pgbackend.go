@@ -228,10 +228,11 @@ func (s *targetSet) routableCount() int {
 //     schedd returns a fresh instance, merged by RefreshLiveTargets when
 //     an out-of-band RUNNING notification publishes a service replica, and
 //     mutated by EvictInstance when an instance_changed notification says
-//     a specific instance parked.
+//     a specific instance parked. Production's independent placement repair
+//     also replaces membership from bounded current-state snapshots.
 //     Pick is the ctx-less hot path, so it must be a pure in-memory read —
-//     the notify loop + the admit path keep it fresh rather than per-request
-//     DB hits.
+//     the notify/admit paths and independent repair keep it fresh without
+//     per-request DB hits.
 //
 // Phase 2 / Gate A: schedd resolution is per-app (apps.node_id).
 // The PGBackend exposes WithAppResolver + WithClientForApp hooks so
@@ -332,7 +333,11 @@ type PGBackend struct {
 	// app-level capacity but this gateway just restarted and missed the
 	// original Admit notification. The narrow hook keeps gateway independent
 	// of pkg/state.
-	liveTargetLoader func(ctx context.Context, appID string) ([]Target, error)
+	liveTargetLoader   func(ctx context.Context, appID string) ([]Target, error)
+	placementLoader    TargetPlacementLoader
+	placementRefreshMu sync.Mutex
+	placementCursor    string
+	placementLast      atomic.Pointer[TargetPlacementRefreshStatus]
 	// deploymentSmokeTargetLoader reads an unpromoted RUNNING candidate for
 	// authenticated verification only. It must not populate the ordinary
 	// picker, whose weights represent customer-routable live deployments.
@@ -912,6 +917,7 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 // targetSet instances live inside sets and are protected by their own
 // mu (b.tgtMu).
 type appPicker struct {
+	placementGeneration  uint64 // membership, placement, quarantine and weight changes
 	weights              []deploymentWeight
 	weightsAuthoritative bool
 	cum                  []int // cum[i] = Σ_{j≤i} weights[j].Percent; cum[len-1] = 100
@@ -1547,7 +1553,20 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	if len(picker.weights) == 0 {
 		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
+	if b.placementLoader != nil && target.PlacementVerifiedUntil.IsZero() {
+		// A scheduler publication starts a bounded lease. Replaying a cached
+		// identity cannot renew verification or clear a prior repair failure.
+		target.PlacementVerifiedUntil = time.Now().Add(api.TrafficPlacementLease)
+		for _, old := range set.entries {
+			if sameTargetPlacement(old, target) {
+				target.PlacementVerifiedUntil = old.PlacementVerifiedUntil
+				target.PlacementUnavailable = old.PlacementUnavailable
+				break
+			}
+		}
+	}
 	set.add(target)
+	picker.placementGeneration++
 }
 
 // SetInstanceReadiness retains the legacy unscoped readiness update surface.
@@ -1996,6 +2015,7 @@ func (b *PGBackend) evictTargetLifetime(captured Target, matchWake, matchNode bo
 	picker := b.appsPicker[captured.AppID]
 	removed, remaining := false, 0
 	if picker != nil {
+		picker.placementGeneration++
 		for _, set := range picker.sets {
 			for _, target := range set.entries {
 				if target.InstanceID != captured.InstanceID || (matchWake && target.WakeID != captured.WakeID) || (matchNode && target.NodeID != captured.NodeID) {
@@ -2026,6 +2046,9 @@ func (b *PGBackend) evictTargetLifetime(captured Target, matchWake, matchNode bo
 }
 
 func (b *PGBackend) quarantineTargetLocked(target Target, now time.Time) {
+	if b.staleTargets == nil {
+		b.staleTargets = make(map[string]time.Time)
+	}
 	key := staleTargetKey(target.AppID, target.InstanceID)
 	if target.WakeID != "" {
 		key = staleTargetLifetimeKey(target.AppID, target.InstanceID, target.WakeID, target.NodeID)
@@ -2136,6 +2159,7 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 		b.appsPicker[appID] = picker
 	}
 	setPickerWeights(picker, next)
+	picker.placementGeneration++
 	picker.weightsAuthoritative = true
 	// Existing per-deployment targetSets in picker.sets are
 	// preserved — instances stay routable through the picker.

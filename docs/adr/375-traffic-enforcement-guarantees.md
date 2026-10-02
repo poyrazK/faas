@@ -1379,6 +1379,51 @@ notifications, repair all stale database snapshots, or prove native migration,
 pool/restore clock and entropy behavior, firewall or leak freedom. Native x86_64
 Linux KVM and deployed recovery/load/staging acceptance remain required.
 
+### Follow-up: authoritative repair of cached placement
+
+The internal gateway owns a second cancellable, joined worker, independent of
+LISTEN and request activity. A bounded SQLC statement reads current RUNNING
+placements for rotating batches of at most 16 known picker apps. Each app returns
+at most 128 candidates plus an overflow sentinel. Each cycle scans the current
+known roster in serialized batches, without adding a tick delay between batches.
+Missing/deleted apps and
+ineligible/deleted deployments return an explicit empty snapshot. The projection
+contains app/instance/deployment/wake/node identity, live/retired status, durable
+node/deployment provenance and the scheduler's canonical runtime-port inputs.
+It excludes historical terminal instances and unrelated manifest, environment,
+image settings and credential data.
+
+A complete snapshot removes absent targets, repairs moved/woken/port-changed
+targets and discovers missed starts in live deployments. Known RUNNING residents
+in retained superseded revision cohorts remain available to separately validated
+pins, without discovering new retired cohorts or changing deployment weights.
+An app generation and picker identity discard reads captured before concurrent
+admission, eviction, quarantine, weight changes or picker replacement. Newer
+readiness notifications survive a placement read; fresh identities read their own
+readiness requirements and observations before eligibility. Unknown readiness
+keeps capacity reserved. The gateway remains a reader of scheduler-owned rows.
+
+The combined snapshot/readiness read has a one-second deadline and runs on a
+one-second tick. Verified placements receive a 30-second local lease. Read
+failure, missing/mismatched results, invalid rows or per-app truncation refuse
+routing while retaining the cached resident count; incomplete data cannot prove
+absence. A normal scheduler publication starts a bounded lease. Replaying its
+unchanged identity and successful hot requests cannot renew the lease or clear a
+failed verification. Public picks and managed endpoint validation share this
+eligibility check, including deployments without readiness probes.
+
+Qualification uses actual PostgreSQL placement/readiness queries against two
+independent caches without notification subscribers, including private-database
+table-lock timeout and recovery. Daemon startup-error qualification proves the
+worker's query is canceled and joined. Membership transitions, guest execution,
+native networking and deployed fleet recovery remain separate acceptance scopes.
+Repair covers known picker apps. Completely unknown apps and a picker explicitly
+removed by invalidation still depend on normal hydration/lookup paths. The legacy
+live-target loader remains additive and loads historical rows on its existing
+request/notification paths. Large or slow scan backlogs can fail closed at lease
+expiry. This is bounded convergence from a statement snapshot, not instantaneous
+validation of every dispatched request or termination of already admitted work.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

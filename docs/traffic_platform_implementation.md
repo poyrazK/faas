@@ -3564,3 +3564,104 @@ Actual migration/pool/initial sidecar readiness, clock/entropy behavior, VM and
 probe process death, networking/firewall/restore/leak acceptance require native
 Linux x86_64 KVM execution. No dedicated host is available; no further host request
 is needed until availability changes. The broad implementation goal remains active.
+
+## Authoritative cached placement repair — 2026-10-02
+
+The gateway now repairs known picker apps from current PostgreSQL instance rows,
+independently of notification delivery and request activity. A SQLC statement
+returns running placements, eligible live/superseded deployment ownership,
+node/wake identity, canonical runtime-port inputs and durable provenance. It
+projects only the inferred-profile version/port and function-handler discriminator,
+rather than whole profiles or deployment configuration. Missing/deleted apps and
+deleted/ineligible deployments produce explicit complete empty snapshots.
+
+The worker scans the initial known roster in serialized sixteen-app batches
+each cycle, without a tick delay between batches. Each batch shares a one-second
+placement/readiness deadline. The reader returns at most 128 targets per app;
+one extra sentinel detects truncation. Complete snapshots remove confirmed
+absent/stopped/parked residents, update moved node/wake/port, and add missed live
+starts. Only already-known superseded instance/deployment pairs are retained;
+the repair does not discover new retired cohorts or rewrite rollout weights.
+Fresh durable region, commit, deployment tag/time and image digest accompany
+repaired targets. Current exact lifetimes retain activity and newer readiness.
+
+Read failures, deadlines, invalid owners/identities and incomplete snapshots
+withdraw public and managed routing while retaining resident capacity. A
+thirty-second placement lease also expires independently of hot requests.
+Replaying the same cached identity cannot renew that lease or clear a failure.
+Only complete current state proves absence; truncation cannot evict residents.
+Picker identity and topology generations reject reads overtaken by admission,
+eviction, recreation or weight changes. Confirmed removal fences the retired
+wake/node without blocking a known fresh lifetime. Partial readiness results
+returned with an error cannot certify routing. The daemon cancels and joins the
+placement worker on startup failure and shutdown. All bounds live in
+`pkg/api/limits.go`; customer quotas are unchanged. ADR 375 and the traffic policy
+runbook describe the contract and its limits.
+
+Verification against the 12,545-file executed source freeze:
+
+- The complete fourteen-package unit scope passes in 191.663 s: 11,393 accepted
+  named results and 1,515 guarded/skipped results. Raw output contains 11,440
+  passes and 1,468 skips; 47 all-guarded parent passes are classified as guarded.
+- The additive PostgreSQL selector retains the previous selector and all fourteen
+  packages: 290 named passes, zero skips, 135.857 s. Thirty-four actual database
+  fixture roots account for 53 named results; the other 237 are memory/transport
+  checks. New database fixtures verify exact 128/129-row completeness, exclusion
+  of 2,000 parked historical rows, bounded owner/port/profile projections, and
+  two independently cached gateway backend objects repairing stopped, moved and
+  missed-start rows without LISTEN delivery. Actual readiness events, SQL table
+  lock timeouts and recovery are exercised. Row transitions and guest execution
+  are fixtures; these objects are not a deployed daemon fleet.
+- Deduplicated acceptance is 11,443 named passes, with 1,479 guarded results
+  without acceptance. Portable regressions cover stale-read races, failed and
+  missing/partial snapshots, current versus retired cohorts, newer readiness,
+  fair rotation, whole-roster scans without per-batch tick delay, independent
+  lease expiry, hot activity, worker cancellation and daemon startup cleanup.
+- Lint v2.4.0 checks all fourteen complete packages with tests: zero reported
+  issues, 218.722 s. Linux amd64 lint checks complete vmmd/fcvm packages with
+  tests: zero reported issues, 116.056 s. Linux amd64 vmmd and Firecracker `metal`
+  test binaries compile in 130.416 s and 44.659 s. Both are verified ELF x86-64
+  binaries and were not executed. Metal coverage is compilation only.
+- SQLC v1.31.1 reproduces all four generated files byte for byte. SQL, encoding,
+  quoting and ADR-number gates pass in 26.836 s; the 71 pre-existing ADR-number
+  duplicates remain at baseline. The source PostgreSQL public schema stays empty
+  with fsync, synchronous_commit and full_page_writes enabled.
+
+Whole failed/preliminary runs are preserved and excluded from acceptance. The
+first focused fixture lacked destination-node admission resources. Final builds
+were interrupted by SSD exhaustion; one serial attempt also could not write its
+group/runner receipts. Its actual member exits and missing receipts are recorded
+as an incomplete failure, not reconstructed success. After owned jobs terminated,
+6,169 older files from this task's Go cache were removed (5,121,880,064 physical
+bytes); a later older-file selection found nothing eligible. The task's temporary
+two-GiB RAM disk was detached after preserving its failure evidence and checking
+that no jobs or files remained in use. No sibling cache, process or volume was
+changed. A storage preflight now guards build launch and subsequent phases; final
+heavy runs used serial package commands with unchanged scope and assertions.
+The owned PostgreSQL fixture server was restarted after the disk interruption.
+
+A full PostgreSQL run caught an unsupported `stable` tag in the new provenance
+fixture. It was corrected to the allowed `hotfix` tag with every provenance
+assertion retained, then focused and complete checks passed. The final SQLC check
+found two generated comments stale after the SQL projection comment changed.
+Those two comments were synchronized after all Go/lint jobs terminated; an exact
+single-comment byte replacement for each generated file proves program code is
+unchanged from the tested freeze. Generated files were then reproduced again.
+Only those two comments and this tracker changed after the successful heavy
+gates. No source exclusion, overlay, suppression, relaxed bound/assertion, push
+or PR. Failure, execution, comment-equivalence, artifact, staged/commit and
+durability evidence is under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-placement-repair-20261002/`.
+
+All six release requirements remain unchecked. This repairs known cached apps;
+unknown apps and removed pickers still depend on normal lookup/hydration, and
+the older additive live-target loader still reads historical instances. Large
+or slow rosters can exceed leases and fail closed; deployed fleet/load/restart/
+outage/recovery and customer/staging qualification remain open. A separate static
+review found bare `RecordTarget` publications in EnsureWarm and synthetic paths
+that do not first read durable readiness configuration. That first-publication
+coverage remains a reproduction and implementation task, not a closed guarantee.
+Native VM/probe death, actual restore/migration/pool readiness, networking,
+firewall, clock/entropy and leak evidence still require dedicated Linux x86_64
+KVM execution. No host is available; no repeated host request is needed. The
+broad implementation goal remains active.

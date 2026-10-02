@@ -5957,3 +5957,44 @@ SELECT DISTINCT ON (t.instance_id,
    AND (t.wake_id = '' OR COALESCE(e.data->>'node_id', '') = t.node_id)
    AND (e.kind <> 'wake.sidecar_health' OR COALESCE(e.data->>'sidecar_name', '') <> '')
  ORDER BY t.instance_id, source, e.at DESC, e.id DESC;
+
+
+-- name: RunningTrafficPlacements :many
+-- One statement snapshot, including an explicit empty result for every requested
+-- app. A per-app sentinel row detects truncation; incomplete apps cannot evict.
+-- Project routing identity, durable provenance and canonical runtime-port inputs.
+SELECT CAST(requested.app_id AS text) AS app_id,
+       CAST(COALESCE(candidate.instance_id, '') AS text) AS instance_id,
+       CAST(COALESCE(candidate.deployment_id, '') AS text) AS deployment_id,
+       CAST(COALESCE(candidate.node_id, '') AS text) AS node_id,
+       CAST(COALESCE(candidate.wake_id, '') AS text) AS wake_id,
+       CAST(COALESCE(candidate.deployment_live, false) AS boolean) AS deployment_live,
+       CAST(COALESCE(candidate.override_port, 0) AS integer) AS override_port,
+       CAST(COALESCE(candidate.function_handler, false) AS boolean) AS function_handler,
+       CAST(COALESCE(candidate.inferred_profile, '{}'::jsonb) AS jsonb) AS inferred_profile,
+       CAST(COALESCE(candidate.region, '') AS text) AS region,
+       CAST(COALESCE(candidate.commit_sha, '') AS text) AS commit_sha,
+       CAST(COALESCE(candidate.deployment_tag, '') AS text) AS deployment_tag,
+       candidate.deployment_created_at,
+       CAST(COALESCE(candidate.image_digest, '') AS text) AS image_digest
+FROM unnest(sqlc.arg(app_ids)::uuid[]) AS requested(app_id)
+LEFT JOIN LATERAL (
+    SELECT CAST(i.id AS text) AS instance_id, CAST(i.deployment_id AS text) AS deployment_id,
+           COALESCE(CAST(i.node_id AS text), '') AS node_id,
+           COALESCE(CAST(i.wake_id AS text), '') AS wake_id,
+           d.status = 'live' AS deployment_live, d.override_port,
+           COALESCE(d.handler, '') <> '' AS function_handler,
+           jsonb_build_object('version', d.inferred_profile->'version',
+                              'port', d.inferred_profile->'port') AS inferred_profile,
+           cn.region, d.commit_sha, d.tag AS deployment_tag,
+           d.created_at AS deployment_created_at, d.image_digest
+    FROM instances i
+    JOIN apps a ON a.id = i.app_id AND a.status <> 'deleted'
+    JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+                       AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded')
+    LEFT JOIN compute_nodes cn ON cn.id = i.node_id
+    WHERE i.app_id = requested.app_id AND i.state = 'running'
+    ORDER BY i.id
+    LIMIT sqlc.arg(max_rows)::integer
+) AS candidate ON true
+ORDER BY requested.app_id, candidate.instance_id;

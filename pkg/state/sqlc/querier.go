@@ -1268,6 +1268,10 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	// One statement snapshot, including an explicit empty result for every requested
+	// app. A per-app sentinel row detects truncation; incomplete apps cannot evict.
+	// Project routing identity, durable provenance and canonical runtime-port inputs.
+	RunningTrafficPlacements(ctx context.Context, db DBTX, arg RunningTrafficPlacementsParams) ([]RunningTrafficPlacementsRow, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
 	// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
 	// Publication is insert-only; retirement is the sole mutable transition.

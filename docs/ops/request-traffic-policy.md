@@ -989,3 +989,33 @@ These changes require native KVM VM/probe/restore/migration and leak acceptance.
 Local SQL, Unix listener and gRPC checks do not establish those results. Missing
 placement/lifecycle notification repair and deployed load/recovery/staging remain
 separate open qualification work.
+
+### Placement repair when lifecycle notifications are missed
+
+Updated gateways independently scan known picker apps every second, rotating
+through serialized batches of 16 apps across the current roster, without a tick
+delay between batches. The narrow current-state query returns up to 128
+RUNNING targets per app and detects overflow with an extra row. Complete results
+remove stopped/parked/missing placements, repair node/wake/port changes and add
+missed live-deployment starts. Known retained superseded revision residents remain
+cached for verified pins; ordinary deployment weights keep their separate policy.
+Current node region and deployment provenance are rebuilt from their durable rows.
+Probe-free and continuously active targets participate in this repair.
+
+The snapshot and readiness reads share a one-second deadline. Missing results,
+query failure, invalid identities and overflow withdraw new public and managed
+routing without freeing cached resident capacity. Placement verification expires
+after 30 seconds unless the worker renews it. Replayed publications and successful
+requests cannot renew that verification. Recovery restores eligible residents
+from current rows and their current readiness source tuple. Existing requests and
+streams keep their already admitted lifetime.
+
+Check the placement repair status's read start/completion, checked apps, removals,
+unavailable apps and discarded concurrent reads alongside resident count and
+readiness status. A large/slow backlog can exhaust leases and cause conservative
+refusals. Repair discovers starts only for known picker apps; unknown apps and
+explicitly removed pickers use the existing hydration paths. The legacy loader's
+request/notification reads are still additive and include historical rows.
+Local database/cache and startup/shutdown tests establish these boundaries;
+deployed overflow/reconnect, fleet load/recovery, staging and native VM/network
+acceptance remain required.

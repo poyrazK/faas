@@ -1371,6 +1371,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.responseCache = responseCache
 	backend := gateway.NewPGBackend(router, sched, log).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
+		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
 			if errors.Is(err, state.ErrNotFound) {
@@ -2287,7 +2288,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		repairCtx, stop := context.WithCancel(ctx)
 		stopped := make(chan struct{})
 		go func() { defer close(stopped); backend.RunTargetReadinessReconciler(repairCtx) }()
-		defer func() { stop(); <-stopped }()
+		placementStopped := make(chan struct{})
+		go func() { defer close(placementStopped); backend.RunTargetPlacementReconciler(repairCtx) }()
+		defer func() { stop(); <-stopped; <-placementStopped }()
 	}
 	cleanup := &gatewayShutdownBudget{}
 	cfg := deps.config

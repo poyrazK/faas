@@ -30,6 +30,13 @@ const (
 	TrafficReadinessReadTimeout       = time.Second
 	TrafficReadinessBatchSize         = 128
 	TrafficReadinessLease             = 30 * time.Second
+	// Current placement repair includes probe-free and hot targets. Per-app
+	// overflow is detected with a sentinel and never interpreted as absence.
+	TrafficPlacementReconcileInterval = time.Second
+	TrafficPlacementReadTimeout       = time.Second
+	TrafficPlacementAppBatchSize      = 16
+	TrafficPlacementTargetsPerApp     = 128
+	TrafficPlacementLease             = 30 * time.Second
 	// A transport-proven stale VM lifetime cannot be immediately reinserted.
 	TrafficStaleTargetQuarantine = 30 * time.Second
 	// Reusable bridges acknowledge exchange cleanup before node capacity is

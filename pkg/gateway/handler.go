@@ -667,6 +667,8 @@ type Target struct {
 	ReadinessUnavailable   bool
 	ReadinessVerifiedUntil time.Time
 	readinessGeneration    uint64
+	PlacementUnavailable   bool
+	PlacementVerifiedUntil time.Time
 }
 
 // ReadinessState is the latest reversible signal for one independently
@@ -685,6 +687,9 @@ type ReadinessGates struct {
 }
 
 func (t Target) routeReady() bool {
+	if t.PlacementUnavailable || (!t.PlacementVerifiedUntil.IsZero() && !time.Now().Before(t.PlacementVerifiedUntil)) {
+		return false
+	}
 	if t.ReadinessUnavailable || (!t.ReadinessVerifiedUntil.IsZero() && !time.Now().Before(t.ReadinessVerifiedUntil)) {
 		return false
 	}
