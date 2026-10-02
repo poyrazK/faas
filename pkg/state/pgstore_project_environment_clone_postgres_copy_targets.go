@@ -15,7 +15,8 @@ func clonePostgresCopyTargetFromSQL(r sqlc.ProjectEnvironmentClonePostgresCopyTa
 	return ProjectEnvironmentClonePostgresCopyTarget{OperationID: pgUUIDString(r.OperationID), SourceDatabaseID: pgUUIDString(r.SourceDatabaseID),
 		AccountID: pgUUIDString(r.AccountID), CaptureDatabaseID: pgUUIDString(r.CaptureDatabaseID), TargetDatabaseID: pgUUIDString(r.TargetDatabaseID),
 		State: r.State, ProviderResourceID: r.ProviderResourceID.String, RequestStartedAt: r.RequestStartedAt.Time,
-		ProviderCreatedAt: r.ProviderCreatedAt.Time, ObservedAt: r.ObservedAt.Time, PreparedAt: r.PreparedAt.Time, RetiredAt: r.RetiredAt.Time}
+		ProviderCreatedAt: r.ProviderCreatedAt.Time, ObservedAt: r.ObservedAt.Time, PreparedAt: r.PreparedAt.Time, RetiredAt: r.RetiredAt.Time,
+		DeletionStartedAt: r.DeletionStartedAt.Time, DeletionObservedAt: r.DeletionObservedAt.Time}
 }
 
 func clonePostgresCopyContextTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease, sourceID string) (ProjectEnvironmentCloneOperation, ProjectEnvironmentClonePostgresSnapshotRestore, ProjectEnvironmentClonePostgresBinding, ProjectEnvironmentCloneResource, time.Time, error) {
@@ -33,7 +34,7 @@ func clonePostgresCopyContextTx(ctx context.Context, tx pgx.Tx, lease ProjectEnv
 	if err != nil {
 		return op, capture, source, resource, point, err
 	}
-	// A retired undispatched target can replay after capture cleanup. Every
+	// A retired target can replay after capture cleanup. Every
 	// active target below still requires the adopted, retained native input.
 	if capture.State != "adopted" && op.Status != CloneOperationCompensating {
 		return op, capture, source, resource, point, ErrConflict
@@ -68,8 +69,10 @@ func readClonePostgresCopyTargetTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 	}
 	if receipt.State == "retired" {
 		// Reuse the complete frozen-target validator before checking the
-		// terminal catalogue shape. Only undispatched ownership retires here.
-		if actual.State != "deleted" || !actual.DeletedAt.Valid || receipt.ProviderResourceID != "" || !receipt.RequestStartedAt.IsZero() {
+		// terminal catalogue shape. Dispatched ownership also keeps the
+		// exact provider identity and authenticated deletion observation.
+		if actual.State != "deleted" || !actual.DeletedAt.Valid || receipt.RetiredAt.IsZero() ||
+			!receipt.RequestStartedAt.IsZero() && (receipt.ProviderResourceID == "" || receipt.DeletionStartedAt.IsZero() || receipt.DeletionObservedAt.IsZero()) {
 			return receipt, ErrConflict
 		}
 		actual.State, actual.DeletedAt = "provisioning", pgtype.Timestamptz{}

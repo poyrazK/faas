@@ -89,8 +89,9 @@ type projectResponse struct {
 }
 
 type projectsResponse struct {
-	Projects   []project `json:"projects"`
-	Pagination struct {
+	Projects              []project `json:"projects"`
+	UnavailableProjectIDs []string  `json:"unavailable_project_ids,omitempty"`
+	Pagination            struct {
 		Cursor string `json:"cursor"`
 	} `json:"pagination"`
 }

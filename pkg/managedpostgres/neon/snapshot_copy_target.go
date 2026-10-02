@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -83,45 +82,8 @@ func (p *Provider) snapshotCopyProjectName(owner string) string {
 }
 
 func (p *Provider) findSnapshotCopyProject(ctx context.Context, name string) (string, error) {
-	seen := map[string]bool{}
-	cursor, found := "", ""
-	for page := 0; page < maximumProjectSearchPages; page++ {
-		q := url.Values{"limit": {"400"}, "search": {name}, "org_id": {p.organizationID}}
-		if cursor != "" {
-			q.Set("cursor", cursor)
-		}
-		var response struct {
-			projectsResponse
-			Unavailable json.RawMessage `json:"unavailable"`
-		}
-		if err := p.doJSON(ctx, http.MethodGet, "/projects", q, nil, &response, http.StatusOK); err != nil {
-			return "", err
-		}
-		if response.Projects == nil || len(response.Unavailable) > 0 && string(response.Unavailable) != "null" && string(response.Unavailable) != "[]" && string(response.Unavailable) != "{}" {
-			return "", managedpostgres.ErrUnavailable
-		}
-		for _, candidate := range response.Projects {
-			if candidate.Name != name {
-				continue
-			}
-			if found != "" || !validProviderID.MatchString(candidate.ID) || candidate.OrganizationID != p.organizationID {
-				return "", managedpostgres.ErrConflict
-			}
-			found = candidate.ID
-		}
-		cursor = response.Pagination.Cursor
-		if cursor == "" {
-			if found == "" {
-				return "", managedpostgres.ErrNotFound
-			}
-			return found, nil
-		}
-		if seen[cursor] {
-			return "", managedpostgres.ErrUnavailable
-		}
-		seen[cursor] = true
-	}
-	return "", managedpostgres.ErrUnavailable
+	actual, err := p.findSnapshotCopyOwnedProject(ctx, name, false)
+	return actual.ID, err
 }
 
 func (p *Provider) observeSnapshotCopyProject(ctx context.Context, spec managedpostgres.Spec, r managedpostgres.SnapshotCopyTargetRequest, id, name string) (managedpostgres.SnapshotCopyTargetObservation, error) {

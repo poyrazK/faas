@@ -73,6 +73,9 @@ func (f *snapshotCopyFixture) serveHTTP(w http.ResponseWriter, r *http.Request) 
 		case "unavailable":
 			writeResponse(t, w, http.StatusOK, map[string]any{"projects": rows, "unavailable": []string{"missing-project"}})
 			return
+		case "unavailable_project_ids":
+			writeResponse(t, w, http.StatusOK, map[string]any{"projects": rows, "unavailable_project_ids": []string{"missing-project"}})
+			return
 		case "cycle":
 			cursor = "same-page"
 		case "duplicate":
@@ -209,7 +212,7 @@ func TestSnapshotCopyTargetRejectsChangedConfigOwnershipAndCapture(t *testing.T)
 }
 
 func TestSnapshotCopyTargetDiscoveryRejectsIncompleteListsAndNeverRecreatesPinnedProject(t *testing.T) {
-	for _, fault := range []string{"missing_list", "unavailable", "cycle", "duplicate", "pagination", "known_missing", "source_project"} {
+	for _, fault := range []string{"missing_list", "unavailable", "unavailable_project_ids", "cycle", "duplicate", "pagination", "known_missing", "source_project"} {
 		t.Run(fault, func(t *testing.T) {
 			f := newSnapshotCopyFixture(t)
 			f.exists = true

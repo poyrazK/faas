@@ -3816,6 +3816,8 @@ type ProjectEnvironmentClonePostgresCopyTarget struct {
 	RetiredAt          pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	DeletionStartedAt  pgtype.Timestamptz
+	DeletionObservedAt pgtype.Timestamptz
 }
 
 type ProjectEnvironmentClonePostgresSnapshot struct {

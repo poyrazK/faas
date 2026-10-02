@@ -3890,3 +3890,69 @@ instead of a future timestamp that the store correctly rejected. Disk exhaustion
 interrupted intermediate setup, provider builds and one state run. Only verified
 inactive task test databases were removed. Full repository, live-provider,
 complete clone and native acceptance remain unverified.
+
+### Independent PostgreSQL copy target retirement (2026-10-03)
+
+Compensation now retires independently owned copy projects before the adopted
+native capture and retained source snapshot. A committed cleanup intent precedes
+provider mutation. Dispatched targets retain their original request, provider
+identity, creation time and preparation metadata, and acquire separate deletion
+start/observation times. Receipt and catalogue retirement commit together after
+an exact terminal observation; source and capture quota remain reserved until
+their own cleanup completes. Undispatched targets keep the existing local-only
+retirement path. Generic lifecycle workers cannot take over active copy owners.
+
+Unknown creation outcomes require discovery of the original private owner across
+both active and recoverable-deleted provider project lists. Every page must be
+complete and unambiguous. The current Neon wire format reports incomplete lists
+with `unavailable_project_ids`; this is now checked in preparation and cleanup,
+alongside the older unavailable marker. Missing names, incomplete lists, duplicate
+owners or changing creation identities cannot authorize retirement or another
+project creation. Once pinned, cleanup uses the exact provider ID and creation
+time, with no name-based replacement. Cleanup authenticates frozen ownership and
+does not read or mutate the live source or native capture through provider APIs.
+Mutable compute/storage/retention drift does not prevent an otherwise exactly
+owned failed project from being cleaned up.
+
+The Neon adapter requires both a matching entry from
+[`GET /projects?recoverable=true`](https://api-docs.neon.tech/reference/listprojects)
+and absence of the exact active project, rechecked after reading the deleted
+descriptor. The entry must match the owner name, provider ID, organization,
+region, PostgreSQL major and creation time. A
+[project DELETE acknowledgement](https://api-docs.neon.tech/reference/deleteproject)
+is never terminal proof. A separate worker observation supplies retirement
+authority, including recovery after a lost DELETE reply. Recovery remains
+available when new provisioning is disabled. Uncertain observations retain the
+target charge, immutable input and operation recovery authority.
+
+The current official OpenAPI supplies no project-deletion operation action or
+deletion timestamp in the project descriptor. The adapter therefore does not
+reuse branch-deletion operations as project evidence or invent a deletion event
+time. Neon documents deleted projects as recoverable for seven days; after the
+descriptor expires, a bare 404 is insufficient and cleanup remains pending.
+Live qualification of the recoverable-list filter, exact active GET behavior,
+recovery races and repeated DELETE following fresh ownership authentication
+remains required before public admission. The reviewed
+[Neon OpenAPI](https://neon.com/api_spec/release/v2.json) had SHA-256
+`54dfd27c22f64fb31f100497885cb2465a512028aa3ca5e17ac574d554fb20e5`.
+
+Verification: all 27 focused state contracts pass on the private migrated
+PostgreSQL harness (32.885 s, no skips), including cleanup of an unknown dispatched
+owner, atomic identity/retirement, exact substitution rejection, preparation
+retention, replay after input cleanup, and confirmed receipt/catalogue lock waits
+with expired leases. All 27 focused API contracts pass (16.092 s, no skips),
+including lost intent/identity/DELETE/retirement replies, handoff, pending quota
+and input holds, undispatched retirement without provider IO, and coordinator
+cleanup ordering. Original snapshot/fork/schema, coordinator and ordinary PITR
+worker regressions remain in these runs. External test-only AST overlays retain
+all 528 state and 445 API production files. All ten service/Neon HTTP contracts
+pass (0.426 s and 0.686 s); these are metadata fixtures, not live-provider data
+qualification. Independent SQLC generation matches both packages byte-for-byte
+(nine files). State/API/service/Neon vet and whitespace checks pass. An empty
+private-schema Down/Up round trip, rolled back without changing the migration
+version, caught and fixed removal of a temporary constraint after its referenced
+columns; the passing round trip restores all sixteen receipt columns. Downgrade
+refuses rows with deletion intent or observation. Full repository, live-provider,
+independent SQL/data import, successful capture disposal, object/common-point
+consistency, full configuration coverage, promotion/rollback and native acceptance
+remain open. This increment does not enable complete stage cloning.

@@ -170,8 +170,9 @@ func TestPGClonePostgresSnapshotCopyTargetWorkerRecoversPrivateIndependentOwner(
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.copyDeletePending = true
 	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
-	if !errors.Is(err, state.ErrConflict) || p.forkDeletes != 0 || p.deletes != 0 {
+	if !errors.Is(err, errCloneCompensationUnavailable) || p.forkDeletes != 0 || p.deletes != 0 {
 		t.Fatalf("active copy target lost immutable input: %v", err)
 	}
 }

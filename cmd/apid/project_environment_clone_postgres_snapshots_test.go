@@ -51,28 +51,31 @@ func (s *cloneSnapshotFailureStore) FinishProjectEnvironmentClonePostgresSnapsho
 
 type cloneSnapshotProvider struct {
 	environmentClonePostgresProvider
-	actual                                  managedpostgres.DatabaseSnapshot
-	request                                 managedpostgres.SnapshotCaptureRequest
-	creates, finds, deletes                 int
-	loseCreation, pendingDelete             bool
-	deadlineMissing                         bool
-	forkActual                              managedpostgres.SnapshotRestoreObservation
-	forkRequest                             managedpostgres.SnapshotRestoreRequest
-	forkDefinition                          managedpostgres.RestoreSourceDefinition
-	forkCreates, forkFinds                  int
-	loseForkCreation, hideFork, forkPending bool
-	beforeForkCreate                        func(context.Context, managedpostgres.SnapshotRestoreRequest) error
-	forkDeleteRequest                       managedpostgres.SnapshotRestoreDeletionRequest
-	forkDeleteIssued, forkDeleteReady       bool
-	loseForkDelete, emptyForkDeleteReply    bool
-	forkDeletes, forkDeleteObservations     int
-	beforeForkDelete                        func(context.Context, managedpostgres.SnapshotRestoreDeletionRequest) error
-	copyActual                              managedpostgres.SnapshotCopyTargetObservation
-	copyRequest                             managedpostgres.SnapshotCopyTargetRequest
-	copyDefinition                          managedpostgres.RestoreSourceDefinition
-	copyCreates, copyFinds                  int
-	loseCopyCreation, hideCopy, copyPending bool
-	beforeCopyCreate                        func(context.Context, managedpostgres.SnapshotCopyTargetRequest) error
+	actual                                                  managedpostgres.DatabaseSnapshot
+	request                                                 managedpostgres.SnapshotCaptureRequest
+	creates, finds, deletes                                 int
+	loseCreation, pendingDelete                             bool
+	deadlineMissing                                         bool
+	forkActual                                              managedpostgres.SnapshotRestoreObservation
+	forkRequest                                             managedpostgres.SnapshotRestoreRequest
+	forkDefinition                                          managedpostgres.RestoreSourceDefinition
+	forkCreates, forkFinds                                  int
+	loseForkCreation, hideFork, forkPending                 bool
+	beforeForkCreate                                        func(context.Context, managedpostgres.SnapshotRestoreRequest) error
+	forkDeleteRequest                                       managedpostgres.SnapshotRestoreDeletionRequest
+	forkDeleteIssued, forkDeleteReady                       bool
+	loseForkDelete, emptyForkDeleteReply                    bool
+	forkDeletes, forkDeleteObservations                     int
+	beforeForkDelete                                        func(context.Context, managedpostgres.SnapshotRestoreDeletionRequest) error
+	copyActual                                              managedpostgres.SnapshotCopyTargetObservation
+	copyRequest                                             managedpostgres.SnapshotCopyTargetRequest
+	copyDefinition                                          managedpostgres.RestoreSourceDefinition
+	copyCreates, copyFinds                                  int
+	loseCopyCreation, hideCopy, copyPending                 bool
+	beforeCopyCreate                                        func(context.Context, managedpostgres.SnapshotCopyTargetRequest) error
+	copyCleanupFinds, copyDeletes, copyDeletionObservations int
+	copyDeletePending, copyDeleteIssued, loseCopyDelete     bool
+	beforeCopyDelete                                        func(context.Context, managedpostgres.SnapshotCopyTargetRequest) error
 }
 
 func (p *cloneSnapshotProvider) CaptureSnapshot(ctx context.Context, r managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {

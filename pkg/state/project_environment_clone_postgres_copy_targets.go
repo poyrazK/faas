@@ -11,6 +11,7 @@ type ProjectEnvironmentClonePostgresCopyTarget struct {
 	OperationID, SourceDatabaseID, AccountID, CaptureDatabaseID, TargetDatabaseID string
 	State, ProviderResourceID                                                     string
 	RequestStartedAt, ProviderCreatedAt, ObservedAt, PreparedAt, RetiredAt        time.Time
+	DeletionStartedAt, DeletionObservedAt                                         time.Time
 }
 
 type ProjectEnvironmentClonePostgresCopyTargetObservation struct {
@@ -29,3 +30,18 @@ type ProjectEnvironmentClonePostgresCopyTargetStore interface {
 }
 
 var _ ProjectEnvironmentClonePostgresCopyTargetStore = (*PgStore)(nil)
+
+type ProjectEnvironmentClonePostgresCopyTargetDeletion struct {
+	ProviderResourceID string
+	CreatedAt          time.Time
+	Done               bool
+}
+
+type ProjectEnvironmentClonePostgresCopyTargetCleanupStore interface {
+	ProjectEnvironmentClonePostgresCopyTargetStore
+	BeginProjectEnvironmentClonePostgresCopyTargetCleanup(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	RecordProjectEnvironmentClonePostgresCopyTargetCleanupIdentity(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentClonePostgresCopyTargetDeletion) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	FinishProjectEnvironmentClonePostgresCopyTargetCleanup(context.Context, ProjectEnvironmentCloneLease, string, ProjectEnvironmentClonePostgresCopyTargetDeletion) (ProjectEnvironmentClonePostgresCopyTarget, error)
+}
+
+var _ ProjectEnvironmentClonePostgresCopyTargetCleanupStore = (*PgStore)(nil)
