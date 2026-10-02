@@ -1,6 +1,6 @@
 package state
 
-// adr: 430. Private store evidence, not native scanner/VM acceptance.
+// adr: 431. Private store evidence, not native scanner/VM acceptance.
 
 import (
 	"context"

@@ -1177,6 +1177,56 @@ type ClusterSigningKey struct {
 	RetiredAt    pgtype.Timestamptz
 }
 
+type CommitBlockedEvent struct {
+	AccountID   pgtype.UUID
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	EventType   string
+	BlockedCode string
+	CreatedAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+}
+
+type CommitReceipt struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceID       pgtype.UUID
+	EventID        pgtype.UUID
+	EventType      string
+	Payload        []byte
+	InvocationID   pgtype.UUID
+	OperationState string
+	CompletedAt    pgtype.Timestamptz
+	AcceptedAt     pgtype.Timestamptz
+	OperationID    pgtype.UUID
+}
+
+type CommitReplayRequest struct {
+	AccountID   pgtype.UUID
+	SourceID    pgtype.UUID
+	EventID     pgtype.UUID
+	State       string
+	Generation  int64
+	RequestedAt pgtype.Timestamptz
+}
+
+type CommitSource struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Enabled            bool
+	SealedConnection   []byte
+	CredentialRevision int64
+	RelayStatus        string
+	LastCheckedAt      pgtype.Timestamptz
+	PendingEvents      pgtype.Int8
+	BlockedEvents      pgtype.Int8
+	OldestPendingAt    pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	OperationPolicy    pgtype.Text
+}
+
 type ComputeNode struct {
 	ID                 pgtype.UUID
 	Name               string
@@ -3014,6 +3064,13 @@ type MirrorRule struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	AllowUnsafeMethods bool
+}
+
+type MirrorSlotLease struct {
+	LeaseID      pgtype.UUID
+	MirrorRuleID pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
 }
 
 type NodeJoinJob struct {

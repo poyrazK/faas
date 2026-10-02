@@ -148,7 +148,7 @@ const readMigrationRecoveryLedger = `-- name: ReadMigrationRecoveryLedger :many
 SELECT id,version_id,is_applied,tstamp FROM goose_db_version ORDER BY id
 `
 
-// adr: 430. Administrative migration evidence never creates runtime authority.
+// adr: 431. Administrative migration evidence never creates runtime authority.
 func (q *Queries) ReadMigrationRecoveryLedger(ctx context.Context, db DBTX) ([]GooseDbVersion, error) {
 	rows, err := db.Query(ctx, readMigrationRecoveryLedger)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type exclusiveJobSubmissionKey struct{}
@@ -38,7 +39,7 @@ func writeExclusiveError(w http.ResponseWriter, err error) {
 	var p *api.Problem
 	switch {
 	case errors.Is(err, state.ErrExclusivePolicyInUse):
-		p = api.NewProblem(http.StatusConflict, "operation_policy_in_use", "Operation policy in use", "finish or cancel active operations and remove trigger bindings before retiring the policy")
+		p = api.NewProblem(http.StatusConflict, "operation_policy_in_use", "Operation policy in use", "finish or cancel active operations, remove trigger bindings, and pause Commit sources before retiring or changing their policy")
 	case errors.Is(err, exclusivework.ErrBusy):
 		p = api.NewProblem(http.StatusConflict, "operation_busy", "Operation busy", "an earlier operation owns or is waiting for this key")
 	case errors.Is(err, exclusivework.ErrIdentityConflict):
@@ -397,9 +398,32 @@ func (s *server) getExclusiveOperation(w http.ResponseWriter, r *http.Request, a
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	op, err := store.ExclusiveOperationByID(r.Context(), acct.ID, r.PathValue("id"))
+	if errors.Is(err, state.ErrNotFound) {
+		if _, supportsCommit := s.store.(state.CommitStore); supportsCommit {
+			s.getCommitOperation(w, r, acct)
+			return
+		}
+	}
 	if err != nil {
 		writeExclusiveError(w, err)
 		return
+	}
+	if commits, ok := s.store.(state.CommitStore); ok {
+		history, historyErr := commits.CommitOperationByID(r.Context(), acct.ID, op.ID)
+		if historyErr == nil {
+			writeJSON(w, http.StatusOK, struct {
+				state.ExclusiveOperation
+				ReceiptID  string    `json:"receipt_id"`
+				SourceID   string    `json:"source_id"`
+				EventID    string    `json:"event_id"`
+				AcceptedAt time.Time `json:"accepted_at"`
+			}{op, history.ReceiptID, history.SourceID, history.EventID, history.AcceptedAt})
+			return
+		}
+		if !errors.Is(historyErr, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("read Commit operation receipt"))
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, op)
 }

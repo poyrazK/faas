@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 )
@@ -24,7 +25,11 @@ func TestExclusivePolicyRetirement(t *testing.T) {
 			var owners ExclusiveWorkStore
 			var atomic exclusiveAtomic
 			if backend == "postgres" {
-				store := NewPgStore(pgtest.OpenMigrated(t))
+				pool := pgtest.OpenMigrated(t)
+				if err := db.MigrateUp(ctx, pool); err != nil {
+					t.Fatalf("MigrateUp: %v", err)
+				}
+				store := NewPgStore(pool)
 				base, owners, atomic = store, store, store.exclusiveAtomic
 			} else {
 				store := NewMemStore()

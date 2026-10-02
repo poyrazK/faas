@@ -207,6 +207,17 @@
       "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
     },
     {
+      "id": "gregale-commit",
+      "name": "Gregale Commit",
+      "category": "async",
+      "description": "Connect a committed PostgreSQL outbox event to durable Gregale work through a managed polling relay.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/gregale-commit",
+      "operator_flag": "FAAS_COMMIT_RELAY_ENABLED",
+      "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation"
+    },
+    {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",

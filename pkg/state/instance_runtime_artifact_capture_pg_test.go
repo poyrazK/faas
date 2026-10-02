@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 430. Real PostgreSQL enforces the producer cut below Go APIs.
+// adr: 431. Real PostgreSQL enforces the producer cut below Go APIs.
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-// adr: 430 — native boot clients validate backend receipts and complete payload bindings.
+// adr: 431 — native boot clients validate backend receipts and complete payload bindings.
 
 package sched_test
 

@@ -944,7 +944,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
-	// ADR-430: publish the same startup incarnation exposed by the native
+	// ADR-431: publish the same startup incarnation exposed by the native
 	// capability before accepting grants. Only this node's own registration is
 	// read/written here; inherited customer intent remains owned by apid/schedd.
 	if store != nil {
@@ -978,7 +978,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("vmmd: prepared network cleanup", "err", err)
 		}
 	}()
-	jailer.WithProcessExitSink(mgr.ProcessExited)
+	jailer.WithProcessExitAttemptSink(mgr.ProcessExitedAttempt)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The

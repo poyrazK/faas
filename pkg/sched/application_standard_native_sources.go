@@ -1,6 +1,6 @@
 package sched
 
-// adr: 430. Deliver the captured producer identities inside the hashed grant.
+// adr: 431. Deliver the captured producer identities inside the hashed grant.
 
 import (
 	"context"

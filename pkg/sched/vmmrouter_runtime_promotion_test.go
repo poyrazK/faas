@@ -1,4 +1,4 @@
-// adr: 430 — route fresh promotion authority without a legacy resume fallback.
+// adr: 431 — route fresh promotion authority without a legacy resume fallback.
 
 package sched
 

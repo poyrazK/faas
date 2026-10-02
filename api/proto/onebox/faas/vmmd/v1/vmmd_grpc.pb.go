@@ -427,7 +427,7 @@ type VmmdClient interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(ctx context.Context, in *MaterializeParentExt4Request, opts ...grpc.CallOption) (*MaterializeParentExt4Response, error)
-	// ADR-430: separate capability; old servers refuse instead of ignoring the
+	// ADR-431: separate capability; old servers refuse instead of ignoring the
 	// expected complete artifact identity. Receipt follows copy and cleanup.
 	MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
@@ -1415,7 +1415,7 @@ type VmmdServer interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error)
-	// ADR-430: separate capability; old servers refuse instead of ignoring the
+	// ADR-431: separate capability; old servers refuse instead of ignoring the
 	// expected complete artifact identity. Receipt follows copy and cleanup.
 	MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously

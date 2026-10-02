@@ -1,6 +1,6 @@
 package oci
 
-// adr: 430. Reference parsing is shared with private evidence storage.
+// adr: 431. Reference parsing is shared with private evidence storage.
 import "github.com/onebox-faas/faas/pkg/ociref"
 
 const (

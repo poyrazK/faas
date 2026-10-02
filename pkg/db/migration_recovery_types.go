@@ -1,6 +1,6 @@
 package db
 
-// adr: 430. Reviewed ledger recovery does not recreate customer or runtime history.
+// adr: 431. Reviewed ledger recovery does not recreate customer or runtime history.
 
 import (
 	"crypto/sha256"

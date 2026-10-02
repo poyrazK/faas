@@ -1260,6 +1260,314 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const commitManagedReceipt = `-- name: CommitManagedReceipt :one
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::text,$6::jsonb,
+ $7::text::uuid,$8::text,$9::timestamptz)
+RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at
+`
+
+type CommitManagedReceiptParams struct {
+	ID             string
+	AccountID      string
+	SourceID       string
+	EventID        string
+	EventType      string
+	Payload        []byte
+	OperationID    string
+	OperationState string
+	CompletedAt    pgtype.Timestamptz
+}
+
+type CommitManagedReceiptRow struct {
+	ID          string
+	SourceID    string
+	EventID     string
+	OperationID string
+	AcceptedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitManagedReceiptParams) (CommitManagedReceiptRow, error) {
+	row := db.QueryRow(ctx, commitManagedReceipt,
+		arg.ID,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+		arg.OperationID,
+		arg.OperationState,
+		arg.CompletedAt,
+	)
+	var i CommitManagedReceiptRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.OperationID,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
+const commitManagedReceiptReplay = `-- name: CommitManagedReceiptReplay :one
+SELECT id::text, source_id::text, event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id, accepted_at,
+ event_type=$1::text AND payload=$2::jsonb AS matches
+FROM commit_receipts WHERE account_id=$3::text::uuid
+ AND source_id=$4::text::uuid AND event_id=$5::text::uuid
+`
+
+type CommitManagedReceiptReplayParams struct {
+	EventType string
+	Payload   []byte
+	AccountID string
+	SourceID  string
+	EventID   string
+}
+
+type CommitManagedReceiptReplayRow struct {
+	ID           string
+	SourceID     string
+	EventID      string
+	InvocationID string
+	OperationID  string
+	AcceptedAt   pgtype.Timestamptz
+	Matches      pgtype.Bool
+}
+
+func (q *Queries) CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg CommitManagedReceiptReplayParams) (CommitManagedReceiptReplayRow, error) {
+	row := db.QueryRow(ctx, commitManagedReceiptReplay,
+		arg.EventType,
+		arg.Payload,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+	)
+	var i CommitManagedReceiptReplayRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.InvocationID,
+		&i.OperationID,
+		&i.AcceptedAt,
+		&i.Matches,
+	)
+	return i, err
+}
+
+const commitManagedSource = `-- name: CommitManagedSource :one
+INSERT INTO commit_sources(account_id,app_id,name,operation_policy)
+SELECT $1::text::uuid,id,$2::text,$3::text
+FROM apps WHERE id=$4::text::uuid AND account_id=$1::text::uuid
+ AND NOT platform_tenant_required AND status<>'deleted'
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
+RETURNING id::text, enabled
+`
+
+type CommitManagedSourceParams struct {
+	AccountID       string
+	Name            string
+	OperationPolicy string
+	AppID           string
+}
+
+type CommitManagedSourceRow struct {
+	ID      string
+	Enabled bool
+}
+
+func (q *Queries) CommitManagedSource(ctx context.Context, db DBTX, arg CommitManagedSourceParams) (CommitManagedSourceRow, error) {
+	row := db.QueryRow(ctx, commitManagedSource,
+		arg.AccountID,
+		arg.Name,
+		arg.OperationPolicy,
+		arg.AppID,
+	)
+	var i CommitManagedSourceRow
+	err := row.Scan(&i.ID, &i.Enabled)
+	return i, err
+}
+
+const commitOperationHistory = `-- name: CommitOperationHistory :one
+SELECT COALESCE(operation_id,invocation_id)::text AS operation_id,id::text AS receipt_id,
+ source_id::text,event_id::text,operation_state,accepted_at,completed_at
+FROM commit_receipts WHERE account_id=$1::text::uuid
+ AND COALESCE(operation_id,invocation_id)=$2::text::uuid
+`
+
+type CommitOperationHistoryParams struct {
+	AccountID   string
+	OperationID string
+}
+
+type CommitOperationHistoryRow struct {
+	OperationID    string
+	ReceiptID      string
+	SourceID       string
+	EventID        string
+	OperationState string
+	AcceptedAt     pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) CommitOperationHistory(ctx context.Context, db DBTX, arg CommitOperationHistoryParams) (CommitOperationHistoryRow, error) {
+	row := db.QueryRow(ctx, commitOperationHistory, arg.AccountID, arg.OperationID)
+	var i CommitOperationHistoryRow
+	err := row.Scan(
+		&i.OperationID,
+		&i.ReceiptID,
+		&i.SourceID,
+		&i.EventID,
+		&i.OperationState,
+		&i.AcceptedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const commitPolicyWouldInvalidateSource = `-- name: CommitPolicyWouldInvalidateSource :one
+SELECT EXISTS(SELECT 1 FROM commit_sources c
+ WHERE c.account_id=$1::text::uuid AND c.operation_policy=$2::text AND c.enabled
+ AND ($3::boolean OR $4::jsonb->>'scope'<>'account'
+ OR $4::jsonb->>'contention'<>'queue'
+ OR NOT COALESCE($4::jsonb->'member_app_ids' ? c.app_id::text,false))) AS incompatible
+`
+
+type CommitPolicyWouldInvalidateSourceParams struct {
+	AccountID     string
+	Name          string
+	Retired       bool
+	Configuration []byte
+}
+
+func (q *Queries) CommitPolicyWouldInvalidateSource(ctx context.Context, db DBTX, arg CommitPolicyWouldInvalidateSourceParams) (bool, error) {
+	row := db.QueryRow(ctx, commitPolicyWouldInvalidateSource,
+		arg.AccountID,
+		arg.Name,
+		arg.Retired,
+		arg.Configuration,
+	)
+	var incompatible bool
+	err := row.Scan(&incompatible)
+	return incompatible, err
+}
+
+const commitReceiptIdentity = `-- name: CommitReceiptIdentity :one
+SELECT id::text,source_id::text,event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+FROM commit_receipts WHERE account_id=$1::text::uuid
+ AND source_id=$2::text::uuid AND event_id=$3::text::uuid
+`
+
+type CommitReceiptIdentityParams struct {
+	AccountID string
+	SourceID  string
+	EventID   string
+}
+
+type CommitReceiptIdentityRow struct {
+	ID           string
+	SourceID     string
+	EventID      string
+	InvocationID string
+	OperationID  string
+	AcceptedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error) {
+	row := db.QueryRow(ctx, commitReceiptIdentity, arg.AccountID, arg.SourceID, arg.EventID)
+	var i CommitReceiptIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.InvocationID,
+		&i.OperationID,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
+const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
+SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
+ a.platform_tenant_required
+FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
+WHERE c.account_id=$1::text::uuid AND c.id=$2::text::uuid
+FOR UPDATE OF c FOR SHARE OF a
+`
+
+type CommitSourceForManagedAdmissionParams struct {
+	AccountID string
+	SourceID  string
+}
+
+type CommitSourceForManagedAdmissionRow struct {
+	CAppID                 string
+	Enabled                bool
+	OperationPolicy        string
+	PlatformTenantRequired bool
+}
+
+func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, arg CommitSourceForManagedAdmissionParams) (CommitSourceForManagedAdmissionRow, error) {
+	row := db.QueryRow(ctx, commitSourceForManagedAdmission, arg.AccountID, arg.SourceID)
+	var i CommitSourceForManagedAdmissionRow
+	err := row.Scan(
+		&i.CAppID,
+		&i.Enabled,
+		&i.OperationPolicy,
+		&i.PlatformTenantRequired,
+	)
+	return i, err
+}
+
+const commitSourceIdentity = `-- name: CommitSourceIdentity :one
+SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
+ relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
+`
+
+type CommitSourceIdentityParams struct {
+	AccountID string
+	SourceID  string
+}
+
+type CommitSourceIdentityRow struct {
+	ID              string
+	AppID           string
+	Name            string
+	Enabled         bool
+	OperationPolicy string
+	RelayStatus     string
+	LastCheckedAt   pgtype.Timestamptz
+	PendingEvents   pgtype.Int8
+	BlockedEvents   pgtype.Int8
+	OldestPendingAt pgtype.Timestamptz
+}
+
+func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error) {
+	row := db.QueryRow(ctx, commitSourceIdentity, arg.AccountID, arg.SourceID)
+	var i CommitSourceIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.OperationPolicy,
+		&i.RelayStatus,
+		&i.LastCheckedAt,
+		&i.PendingEvents,
+		&i.BlockedEvents,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const completeServiceRecovery = `-- name: CompleteServiceRecovery :execrows
 UPDATE service_recovery SET status = $1::text, failures = $2::integer,
  next_attempt_at = $3::timestamptz, updated_at = $4::timestamptz,
@@ -1289,6 +1597,19 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const countActiveMirrorSlotLeases = `-- name: CountActiveMirrorSlotLeases :one
+SELECT count(*)::bigint FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND expires_at > clock_timestamp()
+`
+
+func (q *Queries) CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countActiveMirrorSlotLeases, ruleID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countDeployedApps = `-- name: CountDeployedApps :one
@@ -2014,6 +2335,29 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 	return i, err
 }
 
+const createMirrorSlotLease = `-- name: CreateMirrorSlotLease :one
+INSERT INTO mirror_slot_leases (lease_id, mirror_rule_id, expires_at)
+VALUES (
+    $1::uuid,
+    $2::uuid,
+    clock_timestamp() + $3::bigint * interval '1 millisecond'
+)
+RETURNING lease_id::text
+`
+
+type CreateMirrorSlotLeaseParams struct {
+	LeaseID   pgtype.UUID
+	RuleID    pgtype.UUID
+	TtlMillis int64
+}
+
+func (q *Queries) CreateMirrorSlotLease(ctx context.Context, db DBTX, arg CreateMirrorSlotLeaseParams) (string, error) {
+	row := db.QueryRow(ctx, createMirrorSlotLease, arg.LeaseID, arg.RuleID, arg.TtlMillis)
+	var lease_id string
+	err := row.Scan(&lease_id)
+	return lease_id, err
+}
+
 const createOrg = `-- name: CreateOrg :one
 
 insert into orgs (
@@ -2631,6 +2975,20 @@ func (q *Queries) DeleteEventSubscription(ctx context.Context, db DBTX, arg Dele
 	return err
 }
 
+const deleteExpiredMirrorSlotLeases = `-- name: DeleteExpiredMirrorSlotLeases :execrows
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND expires_at <= clock_timestamp()
+`
+
+func (q *Queries) DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteExpiredMirrorSlotLeases, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -3064,6 +3422,10 @@ SELECT EXISTS (
 ) OR EXISTS (
     SELECT 1 FROM exclusive_work_trigger_bindings
     WHERE policy_id=$1::text::uuid
+) OR EXISTS (
+    SELECT 1 FROM commit_sources c JOIN exclusive_work_policies p
+    ON p.account_id=c.account_id AND p.name=c.operation_policy
+    WHERE p.id=$1::text::uuid AND c.enabled
 ) AS in_use
 `
 
@@ -14377,6 +14739,20 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const lockMirrorRuleForSlotLease = `-- name: LockMirrorRuleForSlotLease :one
+SELECT id::text FROM mirror_rules
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+// Serializes reservation attempts for one rule across every gateway replica.
+func (q *Queries) LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockMirrorRuleForSlotLease, ruleID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockOwnedInvoiceSnapshot = `-- name: LockOwnedInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -19090,6 +19466,22 @@ func (q *Queries) ReleaseApplicationStandardOperationWorker(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const releaseMirrorSlotLease = `-- name: ReleaseMirrorSlotLease :exec
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = $1::uuid
+  AND lease_id = $2::uuid
+`
+
+type ReleaseMirrorSlotLeaseParams struct {
+	RuleID  pgtype.UUID
+	LeaseID pgtype.UUID
+}
+
+func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
+	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
+	return err
+}
+
 const removeApplicationStandardUnselectedDrains = `-- name: RemoveApplicationStandardUnselectedDrains :exec
 DELETE FROM app_log_drains WHERE app_id = $1::uuid AND NOT (id = ANY($2::uuid[]))
 `
@@ -21234,6 +21626,22 @@ type SetAppManifestParams struct {
 
 func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error {
 	_, err := db.Exec(ctx, setAppManifest, arg.ID, arg.Manifest)
+	return err
+}
+
+const setCommitSourceEnabled = `-- name: SetCommitSourceEnabled :exec
+UPDATE commit_sources SET enabled=$1::boolean
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid
+`
+
+type SetCommitSourceEnabledParams struct {
+	Enabled   bool
+	AccountID string
+	SourceID  string
+}
+
+func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error {
+	_, err := db.Exec(ctx, setCommitSourceEnabled, arg.Enabled, arg.AccountID, arg.SourceID)
 	return err
 }
 

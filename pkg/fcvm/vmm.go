@@ -135,7 +135,8 @@ type JailerVMM struct {
 	// process has exited. Manager owns the lifecycle decision; the
 	// VMM only reports the reaped child. Kept outside the VMM
 	// interface so injected VMMs remain source-compatible.
-	processExitSink func(instance string, exitCode int)
+	processExitSink        func(instance string, exitCode int)
+	processExitAttemptSink func(instance string, generation uint64, exitCode int)
 	// materialisedTmp tracks tmp files materializeFromStorage created for
 	// each instance so Kill/DestroyWithExport can Remove them on teardown.
 	// Without this, the tmp files (in /tmp) outlive the chroot and leak
@@ -509,6 +510,17 @@ func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf
 func (v *JailerVMM) WithProcessExitSink(cb func(instance string, exitCode int)) *JailerVMM {
 	v.mu.Lock()
 	v.processExitSink = cb
+	v.processExitAttemptSink = nil
+	v.mu.Unlock()
+	return v
+}
+
+// WithProcessExitAttemptSink includes the process attempt in each notification,
+// so a late exit cannot terminate a replacement VM with the same instance ID.
+func (v *JailerVMM) WithProcessExitAttemptSink(cb func(string, uint64, int)) *JailerVMM {
+	v.mu.Lock()
+	v.processExitAttemptSink = cb
+	v.processExitSink = nil
 	v.mu.Unlock()
 	return v
 }
@@ -4651,6 +4663,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			exitCode = state.ExitCode()
 		}
 		var sink func(string, int)
+		var attemptSink func(string, uint64, int)
 		v.mu.Lock()
 		rec.exitCode = exitCode
 		// Remove the process from the liveness source of truth as
@@ -4660,12 +4673,15 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			delete(v.proc, l.Instance)
 			if !rec.isBuilder {
 				sink = v.processExitSink
+				attemptSink = v.processExitAttemptSink
 			}
 		}
 		rec.exited = true
 		close(rec.done)
 		v.mu.Unlock()
-		if sink != nil {
+		if attemptSink != nil {
+			attemptSink(l.Instance, l.processGeneration, exitCode)
+		} else if sink != nil {
 			sink(l.Instance, exitCode)
 		}
 	}()

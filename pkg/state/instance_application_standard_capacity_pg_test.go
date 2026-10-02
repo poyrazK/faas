@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 430/422 — standards compose with ordinary lifecycle and capacity checks.
+// adr: 431/422 — standards compose with ordinary lifecycle and capacity checks.
 
 import "testing"
 

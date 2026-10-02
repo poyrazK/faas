@@ -1,7 +1,7 @@
-// adr: 430
+// adr: 431
 package gateway
 
-// ADR-430: the gateway forwarding fake implements the expanded generated
+// ADR-431: the gateway forwarding fake implements the expanded generated
 // client without granting privileged admission authority or inventing native
 // receipts. A mistaken call to these capabilities must refuse explicitly.
 
@@ -28,6 +28,10 @@ func (*stubVmmdClient) PromoteAdmittedRuntime(context.Context, *vmmdpb.PromoteAd
 
 func (*stubVmmdClient) UpdateAppEgressPolicy(context.Context, *vmmdpb.UpdateAppEgressPolicyRequest, ...grpc.CallOption) (*vmmdpb.UpdateAppEgressPolicyAck, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not install runtime egress policies")
+}
+
+func (*stubVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.MaterializeVerifiedParentExt4Request, ...grpc.CallOption) (*vmmdpb.MaterializeVerifiedParentExt4Response, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not materialize verified parents")
 }
 
 var _ vmmdpb.VmmdClient = (*stubVmmdClient)(nil)

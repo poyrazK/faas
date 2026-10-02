@@ -72,7 +72,7 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
-	applicationStandardsFile         = "application_standards.go"       // ADR-430 immutable application standards
+	applicationStandardsFile         = "application_standards.go"       // ADR-431 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 	executionCapabilitiesFile        = "execution_capabilities.go"    // ADR-171 — Runs preflight capability DTOs
 	executionArtifactGrantsFile      = "execution_artifact_grants.go" // ADR-171 — one-time cross-agent artifact capabilities
@@ -1001,6 +1001,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),

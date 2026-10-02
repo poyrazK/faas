@@ -11,6 +11,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
+| [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
 | [`events`](#events) | Preview routing, publish events, inspect deliveries and routing history, and replay failures |
 | [`send`](#send) | Reliably send work to another Gregale application |
 | [`deliver`](#deliver) | Reliably deliver an event to a registered webhook |
@@ -514,6 +515,57 @@ List audit events
 ### audit-events get
 
 Show one audit event
+
+
+## commit
+
+Manage transactional PostgreSQL outbox sources (internal)
+
+`gregale commit [<subcommand>]`
+
+### commit add
+
+Register a fixed app destination
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | account source name | required |
+
+### commit connection
+
+Seal database credentials from a file
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | connection URL file | required |
+
+### commit pause
+
+Pause new acceptance
+
+### commit resume
+
+Resume new acceptance
+
+### commit info
+
+Inspect source health and pending/blocked work
+
+### commit blocked
+
+Inspect the bounded blocked-event snapshot
+
+### commit replay
+
+Request durable replay after correcting an unaccepted event
+
+### commit receipt
+
+Recover a source event acceptance receipt
+
+### commit operation
+
+Inspect durable execution status
 
 
 ## events

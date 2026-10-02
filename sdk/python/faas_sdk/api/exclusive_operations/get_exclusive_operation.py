@@ -7,6 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.commit_operation_response import CommitOperationResponse
 from ...models.exclusive_operation_record import ExclusiveOperationRecord
 from ...models.problem import Problem
 from ...types import Response
@@ -28,9 +29,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ExclusiveOperationRecord | Problem | None:
+) -> CommitOperationResponse | ExclusiveOperationRecord | Problem | None:
     if response.status_code == 200:
-        response_200 = ExclusiveOperationRecord.from_dict(response.json())
+
+        def _parse_response_200(data: object) -> CommitOperationResponse | ExclusiveOperationRecord:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_200_type_0 = ExclusiveOperationRecord.from_dict(data)
+
+                return response_200_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_200_type_1 = CommitOperationResponse.from_dict(data)
+
+            return response_200_type_1
+
+        response_200 = _parse_response_200(response.json())
 
         return response_200
 
@@ -57,7 +74,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ExclusiveOperationRecord | Problem]:
+) -> Response[CommitOperationResponse | ExclusiveOperationRecord | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -70,7 +87,7 @@ def sync_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ExclusiveOperationRecord | Problem]:
+) -> Response[CommitOperationResponse | ExclusiveOperationRecord | Problem]:
     """Read an account-owned operation and its committed result.
 
     Args:
@@ -81,7 +98,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ExclusiveOperationRecord | Problem]
+        Response[CommitOperationResponse | ExclusiveOperationRecord | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -99,7 +116,7 @@ def sync(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> ExclusiveOperationRecord | Problem | None:
+) -> CommitOperationResponse | ExclusiveOperationRecord | Problem | None:
     """Read an account-owned operation and its committed result.
 
     Args:
@@ -110,7 +127,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ExclusiveOperationRecord | Problem
+        CommitOperationResponse | ExclusiveOperationRecord | Problem
     """
 
     return sync_detailed(
@@ -123,7 +140,7 @@ async def asyncio_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ExclusiveOperationRecord | Problem]:
+) -> Response[CommitOperationResponse | ExclusiveOperationRecord | Problem]:
     """Read an account-owned operation and its committed result.
 
     Args:
@@ -134,7 +151,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ExclusiveOperationRecord | Problem]
+        Response[CommitOperationResponse | ExclusiveOperationRecord | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -150,7 +167,7 @@ async def asyncio(
     id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> ExclusiveOperationRecord | Problem | None:
+) -> CommitOperationResponse | ExclusiveOperationRecord | Problem | None:
     """Read an account-owned operation and its committed result.
 
     Args:
@@ -161,7 +178,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ExclusiveOperationRecord | Problem
+        CommitOperationResponse | ExclusiveOperationRecord | Problem
     """
 
     return (

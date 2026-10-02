@@ -192,7 +192,7 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	return ins, nil
 }
 
-// ADR-430: native receipts authorize standards publication, while the common
+// ADR-431: native receipts authorize standards publication, while the common
 // capacity and exclusive-owner guards still govern every lifecycle commit.
 // Capacity preflight has no side effects; ownership can change only once all
 // refusal checks have passed and the caller has no fallible work remaining.

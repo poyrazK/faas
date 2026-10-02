@@ -1,6 +1,6 @@
 package state
 
-// adr: 430. Stable private byte inputs are separate from renewable approval.
+// adr: 431. Stable private byte inputs are separate from renewable approval.
 
 import (
 	"context"

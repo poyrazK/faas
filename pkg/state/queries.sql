@@ -603,6 +603,36 @@ ON CONFLICT (rule_id, hour_bucket) DO UPDATE SET
 DELETE FROM mirror_invocation_results
 WHERE completed_at < sqlc.arg(cutoff)::timestamptz AND rollup_counted;
 
+-- name: LockMirrorRuleForSlotLease :one
+-- Serializes reservation attempts for one rule across every gateway replica.
+SELECT id::text FROM mirror_rules
+WHERE id = sqlc.arg(rule_id)::uuid
+FOR UPDATE;
+
+-- name: DeleteExpiredMirrorSlotLeases :execrows
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND expires_at <= clock_timestamp();
+
+-- name: CountActiveMirrorSlotLeases :one
+SELECT count(*)::bigint FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND expires_at > clock_timestamp();
+
+-- name: CreateMirrorSlotLease :one
+INSERT INTO mirror_slot_leases (lease_id, mirror_rule_id, expires_at)
+VALUES (
+    sqlc.arg(lease_id)::uuid,
+    sqlc.arg(rule_id)::uuid,
+    clock_timestamp() + sqlc.arg(ttl_millis)::bigint * interval '1 millisecond'
+)
+RETURNING lease_id::text;
+
+-- name: ReleaseMirrorSlotLease :exec
+DELETE FROM mirror_slot_leases
+WHERE mirror_rule_id = sqlc.arg(rule_id)::uuid
+  AND lease_id = sqlc.arg(lease_id)::uuid;
+
 -- name: CreateAccount :one
 insert into accounts (id, email, plan, status, provider_customer_id)
 values (gen_random_uuid(), $1, $2, $3, null)
@@ -6129,6 +6159,10 @@ SELECT EXISTS (
 ) OR EXISTS (
     SELECT 1 FROM exclusive_work_trigger_bindings
     WHERE policy_id=sqlc.arg(policy_id)::text::uuid
+) OR EXISTS (
+    SELECT 1 FROM commit_sources c JOIN exclusive_work_policies p
+    ON p.account_id=c.account_id AND p.name=c.operation_policy
+    WHERE p.id=sqlc.arg(policy_id)::text::uuid AND c.enabled
 ) AS in_use;
 
 -- name: EnsureExclusiveWorkKey :one
@@ -6266,3 +6300,63 @@ SELECT last_poll_at, last_success_at, last_error_at, last_error,
        lag_messages, lag_age_seconds
 FROM trigger_consumer_health
 WHERE trigger_id = sqlc.arg(trigger_id)::uuid;
+
+-- name: CommitSourceForManagedAdmission :one
+SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
+ a.platform_tenant_required
+FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
+WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.id=sqlc.arg(source_id)::text::uuid
+FOR UPDATE OF c FOR SHARE OF a;
+
+-- name: CommitManagedSource :one
+INSERT INTO commit_sources(account_id,app_id,name,operation_policy)
+SELECT sqlc.arg(account_id)::text::uuid,id,sqlc.arg(name)::text,sqlc.arg(operation_policy)::text
+FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND NOT platform_tenant_required AND status<>'deleted'
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
+RETURNING id::text, enabled;
+
+-- name: CommitManagedReceiptReplay :one
+SELECT id::text, source_id::text, event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id, accepted_at,
+ event_type=sqlc.arg(event_type)::text AND payload=sqlc.arg(payload)::jsonb AS matches
+FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND source_id=sqlc.arg(source_id)::text::uuid AND event_id=sqlc.arg(event_id)::text::uuid;
+
+-- name: CommitManagedReceipt :one
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(source_id)::text::uuid,
+ sqlc.arg(event_id)::text::uuid,sqlc.arg(event_type)::text,sqlc.arg(payload)::jsonb,
+ sqlc.arg(operation_id)::text::uuid,sqlc.arg(operation_state)::text,sqlc.narg(completed_at)::timestamptz)
+RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at;
+
+-- name: CommitReceiptIdentity :one
+SELECT id::text,source_id::text,event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND source_id=sqlc.arg(source_id)::text::uuid AND event_id=sqlc.arg(event_id)::text::uuid;
+
+-- name: CommitOperationHistory :one
+SELECT COALESCE(operation_id,invocation_id)::text AS operation_id,id::text AS receipt_id,
+ source_id::text,event_id::text,operation_state,accepted_at,completed_at
+FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
+ AND COALESCE(operation_id,invocation_id)=sqlc.arg(operation_id)::text::uuid;
+
+-- name: CommitSourceIdentity :one
+SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
+ relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+FROM commit_sources WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
+
+-- name: SetCommitSourceEnabled :exec
+UPDATE commit_sources SET enabled=sqlc.arg(enabled)::boolean
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
+
+-- name: CommitPolicyWouldInvalidateSource :one
+SELECT EXISTS(SELECT 1 FROM commit_sources c
+ WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.operation_policy=sqlc.arg(name)::text AND c.enabled
+ AND (sqlc.arg(retired)::boolean OR sqlc.arg(configuration)::jsonb->>'scope'<>'account'
+ OR sqlc.arg(configuration)::jsonb->>'contention'<>'queue'
+ OR NOT COALESCE(sqlc.arg(configuration)::jsonb->'member_app_ids' ? c.app_id::text,false))) AS incompatible;

@@ -19,7 +19,7 @@ type Querier interface {
 	LockMigrationRecoveryLedger(ctx context.Context, db DBTX) error
 	ReadMigrationRecoveryCluster(ctx context.Context, db DBTX) (string, error)
 	ReadMigrationRecoveryIdentity(ctx context.Context, db DBTX) (ReadMigrationRecoveryIdentityRow, error)
-	// adr: 430. Administrative migration evidence never creates runtime authority.
+	// adr: 431. Administrative migration evidence never creates runtime authority.
 	ReadMigrationRecoveryLedger(ctx context.Context, db DBTX) ([]GooseDbVersion, error)
 	RecordMigrationRecoveryReceipt(ctx context.Context, db DBTX, arg RecordMigrationRecoveryReceiptParams) (ApplicationStandardLedgerRecovery, error)
 	RecordRecoveredMigrationVersion(ctx context.Context, db DBTX, versionID int64) (GooseDbVersion, error)

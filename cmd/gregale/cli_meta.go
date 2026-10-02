@@ -432,6 +432,20 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[<id>]"},
 	},
 	{
+		Name: "commit", DocSlug: "commit", Short: "Manage transactional PostgreSQL outbox sources (internal)",
+		Subcommands: []cliSub{
+			{Name: "add", Short: "Register a fixed app destination", Flags: []cliFlag{{Name: "name", Short: "account source name", Req: true, Value: "NAME"}}},
+			{Name: "connection", Short: "Seal database credentials from a file", Flags: []cliFlag{{Name: "file", Short: "connection URL file", Req: true, Value: "PATH"}}},
+			{Name: "pause", Short: "Pause new acceptance"},
+			{Name: "resume", Short: "Resume new acceptance"},
+			{Name: "info", Short: "Inspect source health and pending/blocked work"},
+			{Name: "blocked", Short: "Inspect the bounded blocked-event snapshot"},
+			{Name: "replay", Short: "Request durable replay after correcting an unaccepted event"},
+			{Name: "receipt", Short: "Recover a source event acceptance receipt"},
+			{Name: "operation", Short: "Inspect durable execution status"},
+		},
+	},
+	{
 		Name:    "events",
 		DocSlug: "events",
 		Short:   "Preview routing, publish events, inspect deliveries and routing history, and replay failures",

@@ -1,4 +1,4 @@
-// adr: 430 — warm promotion uses fresh authority and cleanup cannot destroy a winner.
+// adr: 431 — warm promotion uses fresh authority and cleanup cannot destroy a winner.
 
 package sched
 

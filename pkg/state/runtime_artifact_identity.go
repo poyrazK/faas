@@ -1,6 +1,6 @@
 package state
 
-// adr: 430. Producer identity is immutable; approval remains a fresh check.
+// adr: 431. Producer identity is immutable; approval remains a fresh check.
 
 import (
 	"encoding/json"

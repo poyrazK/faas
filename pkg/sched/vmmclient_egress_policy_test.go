@@ -1,4 +1,4 @@
-// adr: 430 — verify the exact node acknowledgment of a complete policy.
+// adr: 431 — verify the exact node acknowledgment of a complete policy.
 package sched_test
 
 import (

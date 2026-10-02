@@ -1,4 +1,4 @@
-// adr: 430 — missing runtime capability cannot satisfy durable convergence.
+// adr: 431 — missing runtime capability cannot satisfy durable convergence.
 package sched
 
 import (

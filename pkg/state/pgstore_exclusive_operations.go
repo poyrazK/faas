@@ -164,6 +164,15 @@ func (tx *exclusivePostgresTx) savePolicy(p ExclusiveWorkPolicy) (ExclusiveWorkP
 	if err != nil {
 		return ExclusiveWorkPolicy{}, err
 	}
+	incompatible, err := tx.q.CommitPolicyWouldInvalidateSource(tx.ctx, tx.db, sqlc.CommitPolicyWouldInvalidateSourceParams{
+		AccountID: p.AccountID, Name: p.Policy.Name, Configuration: config, Retired: p.Retired,
+	})
+	if err != nil {
+		return ExclusiveWorkPolicy{}, err
+	}
+	if incompatible {
+		return ExclusiveWorkPolicy{}, ErrExclusivePolicyInUse
+	}
 	row, err := tx.q.SaveExclusiveWorkPolicy(tx.ctx, tx.db, sqlc.SaveExclusiveWorkPolicyParams{ID: p.ID, AccountID: p.AccountID, Name: p.Policy.Name, Configuration: config, Retired: p.Retired})
 	if err != nil {
 		return ExclusiveWorkPolicy{}, err

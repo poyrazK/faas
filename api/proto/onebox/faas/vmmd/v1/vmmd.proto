@@ -409,7 +409,7 @@ service Vmmd {
   // a missing storage key is NotFound.
   rpc MaterializeParentExt4(MaterializeParentExt4Request) returns (MaterializeParentExt4Response);
 
-  // ADR-430: separate capability; old servers refuse instead of ignoring the
+  // ADR-431: separate capability; old servers refuse instead of ignoring the
   // expected complete artifact identity. Receipt follows copy and cleanup.
   rpc MaterializeVerifiedParentExt4(MaterializeVerifiedParentExt4Request) returns (MaterializeVerifiedParentExt4Response);
 
