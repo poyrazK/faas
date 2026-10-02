@@ -173,7 +173,7 @@ func TestEnvironmentGitOpsQualificationCohortChangeRevokesAllMembers(t *testing.
 	for _, change := range []string{"artifact", "failure", "inherited_manifest"} {
 		t.Run(change, func(t *testing.T) {
 			stores(t, func(t *testing.T, basic gitOpsTestStore) {
-				_, _, requests := preparedQualificationFixture(t, basic)
+				lease, plan, requests := preparedQualificationFixture(t, basic)
 				qualifier := basic.(state.EnvironmentGitOpsQualificationStore)
 				worker, err := qualifier.ClaimEnvironmentWorkloadQualification(t.Context(), requests[1].ID, "worker-scheduler", time.Minute)
 				if err != nil {
@@ -196,6 +196,9 @@ func TestEnvironmentGitOpsQualificationCohortChangeRevokesAllMembers(t *testing.
 				}
 				if err := qualifier.ValidateEnvironmentWorkloadQualification(t.Context(), worker); !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("%s change in API retained worker authority: %v", change, err)
+				}
+				if _, err := qualifier.QueueEnvironmentGitOpsQualification(t.Context(), lease, plan); err == nil {
+					t.Fatalf("%s change in API allowed stale cohort republication: %v", change, err)
 				}
 			})
 		})

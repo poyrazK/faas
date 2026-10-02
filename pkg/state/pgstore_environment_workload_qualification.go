@@ -50,10 +50,12 @@ func (s *PgStore) QueueEnvironmentGitOpsQualification(ctx context.Context, lease
 	}
 	graph := workloadGraphFromSQL(row)
 	fresh := map[string]bool{}
+	expected := 0
 	for _, member := range graph.Members {
 		if member.CandidateDeploymentID == "" {
 			continue
 		}
+		expected++
 		count, err := q.CreateEnvironmentWorkloadQualification(ctx, tx, sqlc.CreateEnvironmentWorkloadQualificationParams{
 			GraphID: row.ID, DeploymentID: mustPgUUID(member.CandidateDeploymentID), Resource: member.Resource})
 		if err != nil {
@@ -64,6 +66,18 @@ func (s *PgStore) QueueEnvironmentGitOpsQualification(ctx context.Context, lease
 	rows, err := q.EnvironmentWorkloadQualificationsByGraph(ctx, tx, row.ID)
 	if err != nil {
 		return nil, mapErr(err)
+	}
+	if len(rows) != expected {
+		return nil, ErrConflict
+	}
+	if len(rows) > 0 {
+		current, err := q.EnvironmentWorkloadQualificationArtifactCurrent(ctx, tx, rows[0].ID)
+		if err != nil {
+			return nil, mapErr(err)
+		}
+		if !current {
+			return nil, ErrConflict
+		}
 	}
 	requests := make([]EnvironmentWorkloadQualificationRequest, 0, len(rows))
 	for _, row := range rows {
