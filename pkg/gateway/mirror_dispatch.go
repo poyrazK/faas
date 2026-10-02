@@ -203,7 +203,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	releaseSlotAfterReturn := true
 	defer func() {
 		if releaseSlotAfterReturn {
-			releaseSlot()
+			releaseSlot(ctx)
 		}
 	}()
 	// 1. Schedule the mirror VM and retain its complete forwarding target.
@@ -774,7 +774,7 @@ func (h *Handler) tryAcquireMirrorSlot(ruleID string) bool {
 // falls back to the process-local counter for test/development handlers. The
 // returned release callback is idempotent and uses a detached cleanup context
 // because it runs after the mirror's five-second request context may expire.
-func (h *Handler) acquireMirrorSlot(ctx context.Context, ruleID string) (func(), bool, error) {
+func (h *Handler) acquireMirrorSlot(ctx context.Context, ruleID string) (func(context.Context), bool, error) {
 	if h == nil {
 		return nil, false, nil
 	}
@@ -786,18 +786,18 @@ func (h *Handler) acquireMirrorSlot(ctx context.Context, ruleID string) (func(),
 		if !h.tryAcquireMirrorSlot(ruleID) {
 			return nil, false, nil
 		}
-		return func() { h.releaseMirrorSlot(ruleID) }, true, nil
+		return func(context.Context) { h.releaseMirrorSlot(ruleID) }, true, nil
 	}
 	leaseID, acquired, err := h.mirrorSlotLeaseStore.TryAcquireMirrorSlotLease(ctx, ruleID, int(cap), mirrorSlotLeaseTTL)
 	if err != nil || !acquired {
 		return nil, acquired, err
 	}
 	var once sync.Once
-	release := func() {
+	release := func(releaseCtx context.Context) {
 		once.Do(func() {
-			releaseCtx, cancel := context.WithTimeout(context.Background(), mirrorSlotReleaseTimeout)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(releaseCtx), mirrorSlotReleaseTimeout)
 			defer cancel()
-			if err := h.mirrorSlotLeaseStore.ReleaseMirrorSlotLease(releaseCtx, ruleID, leaseID); err != nil && h.log != nil {
+			if err := h.mirrorSlotLeaseStore.ReleaseMirrorSlotLease(cleanupCtx, ruleID, leaseID); err != nil && h.log != nil {
 				h.log.Error("mirror: release shared slot reservation failed", "rule_id", ruleID, "lease_id", leaseID, "err", err)
 			}
 		})

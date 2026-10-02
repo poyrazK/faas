@@ -67,14 +67,14 @@ func TestMirrorSlotLeaseCoordinatesHandlers(t *testing.T) {
 	if release, acquired, err := second.acquireMirrorSlot(context.Background(), "rule-1"); err != nil || acquired || release != nil {
 		t.Fatalf("second handler acquire: acquired=%v err=%v, want no permit", acquired, err)
 	}
-	releaseFirst()
-	releaseFirst() // deferred release is safe to retry
+	releaseFirst(context.Background())
+	releaseFirst(context.Background()) // deferred release is safe to retry
 
 	releaseSecond, acquired, err := second.acquireMirrorSlot(context.Background(), "rule-1")
 	if err != nil || !acquired {
 		t.Fatalf("acquire after release = (%v, %v), want (true, nil)", acquired, err)
 	}
-	releaseSecond()
+	releaseSecond(context.Background())
 }
 
 func TestMirrorSlotLeaseStoreFailureDoesNotFallBackToLocalCap(t *testing.T) {
