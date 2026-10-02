@@ -1,6 +1,7 @@
 package builderd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,9 +15,66 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type lostReviewedSourceHandoff struct{ fakeNotifier }
+
+func (n *lostReviewedSourceHandoff) Notify(ctx context.Context, channel, payload string) error {
+	_ = n.fakeNotifier.Notify(ctx, channel, payload)
+	return errors.New("notification connection lost")
+}
+
+func TestEnvironmentWorkloadSourceBuildCompletionRetainsRecoverableHold(t *testing.T) {
+	for _, kind := range []string{"source", "dockerfile"} {
+		t.Run(kind, func(t *testing.T) {
+			store, dep, _ := heldSourceBuild(t, kind)
+			t.Setenv("FAAS_DEPLOY_BASE_REF_NODE22", "registry.example/node@sha256:"+strings.Repeat("1", 64))
+			artifactPath := filepath.Join(t.TempDir(), "reviewed-image.tar")
+			if err := os.WriteFile(artifactPath, []byte("completed build artifact"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			vm := &fakeVM{out: BuildOutcome{OCIImage: artifactPath, ExitCode: 0}}
+			notifier := &lostReviewedSourceHandoff{}
+			builder := New(store, notifier, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{BuildTimeoutSeconds: 30, SourceSpoolDir: filepath.Dir(dep.SourcePath)}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			result, err := builder.ProcessOne(t.Context(), dep.BuildID)
+			if err != nil || result.BuildID != dep.BuildID || vm.spawnCalls != 1 {
+				t.Fatalf("build completion: %+v %v", result, err)
+			}
+			build, err := store.BuildByID(t.Context(), dep.BuildID)
+			if err != nil || build.Status != state.BuildSucceeded {
+				t.Fatalf("lost notification lost the build: %+v %v", build, err)
+			}
+			provenance, err := store.BuildProvenanceByBuildID(t.Context(), dep.BuildID)
+			if err != nil || provenance.CommitSHA != dep.CommitSHA || provenance.SourceSHA256 != dep.SourceSHA256 || provenance.SourceURL != dep.SourceURL {
+				t.Fatalf("reviewed provenance changed: %+v %v", provenance, err)
+			}
+			work, err := store.ListBuildsAwaitingImage(t.Context(), "", 10)
+			if err != nil || len(work) != 1 || work[0].DeploymentID != dep.ID {
+				t.Fatalf("durable image handoff: %+v %v", work, err)
+			}
+			stored, err := store.DeploymentByID(t.Context(), dep.ID)
+			if err != nil || !stored.EnvironmentWorkloadHeld() || stored.Status == state.DeployLive || stored.RootfsPath == "" {
+				t.Fatalf("artifact escaped graph hold: %+v %v", stored, err)
+			}
+			handoffs := 0
+			for _, call := range notifier.calls {
+				switch call.channel {
+				case db.NotifySnapshotBoot:
+					handoffs++
+				case db.NotifyBuildLog:
+				default:
+					t.Fatalf("build emitted unexpected work on %s", call.channel)
+				}
+			}
+			if handoffs != 1 {
+				t.Fatalf("image handoffs = %d, want one", handoffs)
+			}
+		})
+	}
+}
 
 func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployment, state.App) {
 	t.Helper()

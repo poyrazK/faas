@@ -982,9 +982,17 @@ approved-intent executor.
 Source preparation qualification covers the HTTP review/adoption/build flow,
 commit-only drift, substituted archives, retry without another download,
 frozen builder runtime/Dockerfile inputs, PostgreSQL queue rollback and raw SQL
-mutation fences. The selected Git definition, builder, source transport, API,
+mutation fences. Successful source and Dockerfile builds preserve the frozen
+inputs, provenance and execution hold; a lost imaging notification is recovered
+from committed build/artifact records in both memory and PostgreSQL.
+The selected Git definition, builder, source transport, API,
 PostgreSQL integration, migration replay, imaged and scheduler tests pass on
 macOS. These checks do not substitute for native KVM serving qualification.
+
+The merged checkpoint includes main through `46c33b276`. Focused Go checks for
+the above packages plus gateway, MCP hosting, CLI and gatewayd-internal pass;
+the Node MCP starter's 33 tests also pass. SQLC output, the embedded OpenAPI
+copy and ADR number uniqueness remain consistent.
 
 ## Review and control workflow
 

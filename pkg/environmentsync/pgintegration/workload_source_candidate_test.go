@@ -105,6 +105,26 @@ func TestEnvironmentGitOpsSourceCandidatesAreAtomicPinnedAndHeld(t *testing.T) {
 				if err != nil || len(retry) != 1 || retry[0].DeploymentID != dep.ID || retry[0].BuildID != build.ID {
 					t.Fatalf("retry duplicated durable work: %+v %v", retry, err)
 				}
+				claim, err := basic.(state.Store).ClaimQueuedBuild(t.Context(), build.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				provenance := state.BuildProvenance{BuildID: build.ID, SourceSHA256: artifact.SHA256, SourceURL: dep.SourceURL, CommitSHA: dep.CommitSHA,
+					Plan: "pro", BuilderNodeID: "source-builder", StartedAt: claim.StartedAt, FinishedAt: time.Now()}
+				if err := basic.(state.Store).CompleteBuild(t.Context(), claim, "/reviewed-image.tar", "reviewed-image-key", 512, provenance); err != nil {
+					t.Fatalf("frozen source prevented artifact completion: %v", err)
+				}
+				work, err := basic.(state.Store).ListBuildsAwaitingImage(t.Context(), "source-builder", 10)
+				if err != nil || len(work) != 1 || work[0].DeploymentID != dep.ID {
+					t.Fatalf("lost image notification is not recoverable: %+v %v", work, err)
+				}
+				completed, err := store.DeploymentByID(t.Context(), dep.ID)
+				if err != nil || completed.RootfsPath != "/reviewed-image.tar" || !completed.EnvironmentWorkloadHeld() || completed.Status != state.DeployBuilding {
+					t.Fatalf("artifact completion changed graph authority: %+v %v", completed, err)
+				}
+				if _, err := completed.ScopedWorkloadRuntime(); err != nil {
+					t.Fatalf("completion changed frozen inputs: %v", err)
+				}
 				if err := basic.(state.Store).MarkDeploymentLive(t.Context(), dep.ID); err == nil {
 					t.Fatal("unqualified source candidate became live")
 				}
