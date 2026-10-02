@@ -1961,7 +1961,20 @@ from .workload_dependency_condition import WorkloadDependencyCondition
 from .workload_port import WorkloadPort
 from .workload_port_protocol import WorkloadPortProtocol
 
+from .object_deletion import ObjectDeletion
+from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
+from .object_deletion_request import ObjectDeletionRequest
+from .object_deletion_request_version_id import ObjectDeletionRequestVersionId
+from .object_deletion_selector import ObjectDeletionSelector
+from .object_deletion_state import ObjectDeletionState
+
 __all__ = (
+    "ObjectDeletion",
+    "ObjectDeletionLastErrorCode",
+    "ObjectDeletionRequest",
+    "ObjectDeletionRequestVersionId",
+    "ObjectDeletionSelector",
+    "ObjectDeletionState",
     "AccountAbuseHold",
     "AccountAbuseHoldAction",
     "AccountAbuseHoldActionResponse",

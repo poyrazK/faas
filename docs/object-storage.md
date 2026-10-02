@@ -435,11 +435,12 @@ Rollback requires conditional completion or cleanup to be terminal. See
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
-provider response body. SigV4A/ECDSA authentication, bucket lifecycle APIs,
-mutable null-version deletion, marker creation, ACLs, and bucket
-create/delete through the S3 protocol remain
-explicit `NotImplemented` gaps. Bucket lifecycle remains on the authenticated
+provider response body. SigV4A/ECDSA authentication, object lifecycle rules,
+ACLs, and bucket create/delete through the S3 protocol remain explicit
+`NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
+Ordinary deletion and mutable null-version deletion use durable receipts and
+marker admission; see the deletion recovery limitations below.
 
 ## Reading retained S3 versions
 
@@ -1186,8 +1187,9 @@ pause immediately without changing reservations.
 uploads or untracked copies have conservative grants. `waiting/unsettled_writes` means a tracked request has
 no confirmed outcome. An expired URL or elapsed deadline cannot settle an
 uncertain write. Those cases retain capacity; this release does not offer a force
-refund. Use dedicated managed buckets with versioning disabled, ordered complete
-listings, and no independent provider writers or replication introducing objects.
+refund. Use dedicated managed buckets with ordered complete listings and no
+independent provider writers or replication introducing objects. Versioned
+buckets require the verified all-version accounting cutover described below.
 When recovery or an acknowledged tracked write detects retained native S3
 versions, reconciliation selects `inventory_scope=all_versions`. It counts all
 retained data versions and delete markers, including null versions. A marker
@@ -1201,11 +1203,11 @@ Periodic refreshes use the same native journal.
 New writes pause after native detection until a complete native baseline exists.
 Afterward each tracked PUT/application upload/copy or multipart completion reserves
 its full size and one additional entry even when overwriting the same key.
-Direct signed PUTs, legacy untracked writes/completion and current-object
-single/bulk DELETE return a conflict or NotImplemented in this mode until their
-replay/marker admission is implemented. Public bucket versioning configuration
-and immutable version deletion are implemented. Mutable null deletion and
-ordinary marker admission remain pending. Customer IDs, version listing,
+Direct signed PUTs and legacy untracked writes/completion return a conflict or
+NotImplemented in this mode until their replay admission is implemented.
+Current-object single/bulk DELETE and mutable null deletion use durable intents
+with marker admission (ADR-405). Public bucket versioning configuration and
+immutable version deletion are implemented. Customer IDs, version listing,
 exact reads and restoration by same-key selected-version copy are implemented
 (ADRs 400–401).
 See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
@@ -1246,8 +1248,9 @@ an empty bucket until adoption is verified. Unresolved legacy direct-write grant
 block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
 GCS configuration and unsupported provider endpoints return NotImplemented.
 See [ADR-403](adr/403-durable-bucket-versioning-configuration.md). Delete-marker
-admission, mutable null deletion, version tagging and replay-safe direct writes
-remain gaps.
+admission and mutable null deletion are implemented in
+[ADR-405](adr/405-durable-s3-mutable-deletion.md). Version tagging, replay-safe
+direct writes and recovery proof for uncertain mutable deletions remain gaps.
 
 
 ## Permanently deleting retained versions
@@ -1275,12 +1278,45 @@ public selectors fail before provider contact. Private provider IDs are never
 accepted or returned.
 
 DeleteObjects supports these selectors with per-entry success/error results;
-quiet mode suppresses successes and retains errors. Unsupported null/current
-entries do not prevent valid immutable entries from being deleted. Conditional
+quiet mode suppresses successes and retains errors. Pending mutable entries
+do not prevent valid immutable entries from being deleted. Conditional
 DELETE, MFA and retention-bypass directives fail explicitly. Mutable `null`
-deletion and ordinary DELETE creating a marker still require the pending durable
+deletion and ordinary DELETE creating a marker use the durable
 admission/recovery implementation, including coordination with versioning changes.
 
 Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
 start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
 See [ADR-404](adr/404-immutable-s3-version-deletion.md).
+
+Durable ordinary and null deletion uses `POST
+/v1/apps/{slug}/buckets/{bucket}/objects/deletions` with an `id` UUID, `key`, and
+optional `version_id: "null"`. Reuse the same ID and payload for retries; read
+progress with `GET .../objects/deletions/{id}`. The CLI exposes
+`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [null]`
+and `gregale bucket deletions status <app> <bucket-id> <request-id>`.
+S3 provider credentials must allow versioning discovery and deletion, plus
+version listing for Enabled marker preparation and recovery. See the
+[versioning API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html)
+and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html).
+
+S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
+invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
+Enabled deletion returns an owned marker version ID. A dispatched uncertain
+intent fences bucket writes, versioning and inventories. Recovery never resends
+DELETE. Enabled marker creation can recover from its persisted version baseline;
+preparation requires the exact key's history to fit in one complete provider
+response (at most 1000 versions/markers). A truncated history fails before
+mutation and releases the marker reservation. Reduce history with permanent
+immutable version deletion, then retry with a new request ID.
+Uncertain null/Suspended/unversioned deletion remains pending until a stronger
+completion-proof mechanism is available. A pending receipt never expires into
+success or a quota refund. Each ordinary versioned delete reserves one entry and
+the UTF-8 key bytes; verified all-version inventory reclaims removed capacity.
+A parsed provider AccessDenied response with HTTP 403 records a failed
+`provider_rejected` receipt and releases its fence/reservation. Unidentified
+errors and timeouts retain the uncertain intent. A failed receipt cannot resend
+the mutation; use a new ID after correcting provider permissions.
+For bulk deletion, the response header identifies the batch. Mutable-entry
+receipt IDs are UUIDv5 values using that UUID as namespace and `bulk-entry:N`
+as name, where N is the zero-based entry position. Retry the unchanged batch
+with the signed batch ID; the identity binds each position to its key/selector.

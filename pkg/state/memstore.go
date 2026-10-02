@@ -168,6 +168,7 @@ type MemStore struct {
 	objectWriteAdmissions     map[string]objectWriteAdmission
 	objectCapacityJobs        map[string]ObjectCapacityReconciliation
 	objectBucketVersioning    map[string]ObjectBucketVersioning
+	objectDeletions           map[string]ObjectDeletion
 	objectVersionReferences   map[string]ObjectVersionIdentity
 	objectVersionReferenceIDs map[string]string
 	objectVersionObservations map[string]bool

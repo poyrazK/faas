@@ -219,6 +219,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.reconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object upload recovery sweep failed")
 		}
+		if err := s.reconcileObjectDeletions(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object deletion recovery sweep failed")
+		}
 		if err := s.reconcileObjectBucketVersioning(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object bucket versioning recovery sweep failed")
 		}

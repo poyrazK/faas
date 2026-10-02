@@ -12,6 +12,9 @@ import (
 var _ ObjectCapacityStore = (*MemStore)(nil)
 
 func (m *MemStore) objectCapacityFencedLocked(bucket string) bool {
+	if m.activeDeletionLocked(bucket) {
+		return true
+	}
 	if j, ok := m.objectBucketVersioning[bucket]; ok && versioningActive(j) {
 		return true
 	}
@@ -64,6 +67,9 @@ func (m *MemStore) SettleObjectWrite(_ context.Context, account, bucket, token s
 	return nil
 }
 func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe, multipart, versions bool) {
+	if m.activeDeletionLocked(bucket) {
+		pending++
+	}
 	for _, c := range m.objectUploadCompletions {
 		versions = versions || c.BucketID == bucket && c.RecoveryVersionsObserved
 	}
@@ -93,6 +99,9 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.AppID != app {
 		return ObjectCapacityReconciliation{}, ErrNotFound
+	}
+	if m.activeDeletionLocked(bucket) {
+		return ObjectCapacityReconciliation{}, ErrConflict
 	}
 	if j, exists := m.objectBucketVersioning[bucket]; exists && versioningActive(j) {
 		return ObjectCapacityReconciliation{}, ErrConflict

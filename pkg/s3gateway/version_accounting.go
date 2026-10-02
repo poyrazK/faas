@@ -38,13 +38,3 @@ func (h *Handler) checkCopySource(w http.ResponseWriter, r *http.Request, req re
 	}
 	return true
 }
-
-// Current-object DELETE can create a retained marker. Decline it until marker
-// admission and version-specific deletion can account for that extra storage.
-func (h *Handler) allowCurrentObjectDelete(w http.ResponseWriter, r *http.Request, req requestContext, key string) bool {
-	if err := objectstorage.CheckCurrentObjectDelete(r.Context(), h.store, req.bucket); err != nil {
-		h.providerError(w, r, req, err, key)
-		return false
-	}
-	return true
-}

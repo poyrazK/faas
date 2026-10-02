@@ -37,7 +37,7 @@ func (m *MemStore) RequestObjectBucketVersioning(_ context.Context, account, app
 		return j, err
 	}
 	_, unsafe, _, _ := m.capacityReadinessLocked(bucket)
-	if unsafe {
+	if unsafe || m.activeDeletionLocked(bucket) {
 		return j, ErrConflict
 	}
 	if !versioningActive(j) && m.activeCapacityLocked(bucket) {

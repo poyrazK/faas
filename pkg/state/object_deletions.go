@@ -1,0 +1,110 @@
+package state
+
+import (
+	"context"
+	"encoding/hex"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+type ObjectDeletion struct {
+	api.ObjectDeletion
+	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string    `json:"-"`
+	Baseline                                                   []string  `json:"-"`
+	LeaseUntil, RetryAt                                        time.Time `json:"-"`
+	ReservedBytes                                              int64     `json:"-"`
+}
+
+type ObjectDeletionStore interface {
+	BeginObjectDeletion(context.Context, ObjectDeletion, api.ObjectStoragePolicy) (ObjectDeletion, bool, error)
+	GetObjectDeletion(context.Context, string, string, string) (ObjectDeletion, error)
+	DispatchObjectDeletion(context.Context, string, string, string, []string) (ObjectDeletion, error)
+	FinishObjectDeletion(context.Context, ObjectDeletion) (ObjectDeletion, error)
+	DueObjectDeletions(context.Context, int32) ([]ObjectDeletion, error)
+	ClaimObjectDeletion(context.Context, string, string) (ObjectDeletion, error)
+	RetryObjectDeletion(context.Context, string, string, string) error
+}
+
+func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
+	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token}
+}
+
+func deletionActive(j ObjectDeletion) bool { return j.State == "prepared" || j.State == "dispatched" }
+func cloneDeletion(j ObjectDeletion) ObjectDeletion {
+	j.Baseline = append([]string{}, j.Baseline...)
+	return j
+}
+func validDeletionIdentity(j ObjectDeletion) bool {
+	for _, id := range []string{j.ID, j.AccountID, j.AppID, j.BucketID} {
+		_, e := uuid.Parse(id)
+		if e != nil {
+			return false
+		}
+	}
+	return j.Key != "" && len(j.Key) <= api.MaxObjectS3ListTextBytes && utf8.ValidString(j.Key) && !strings.ContainsRune(j.Key, 0) && (j.Selector == "" || j.Selector == "null") && j.Token != "" && len(j.Token) <= 128
+}
+func validDeletionLease(j ObjectDeletion, token string, now time.Time) bool {
+	return deletionActive(j) && token != "" && j.Token == token && j.LeaseUntil.After(now)
+}
+func validDeletionBaseline(b []string) bool {
+	if len(b) > api.ObjectDeletionHistoryVersions {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, s := range b {
+		v, e := hex.DecodeString(s)
+		if e != nil || len(v) != 32 || strings.ToLower(s) != s || seen[s] {
+			return false
+		}
+		seen[s] = true
+	}
+	return true
+}
+func dispatchDeletion(j ObjectDeletion, token, status string, baseline []string, now time.Time) (ObjectDeletion, error) {
+	if !validDeletionLease(j, token, now) || j.State != "prepared" || status != "" && !ValidObjectBucketVersioningStatus(status) || !validDeletionBaseline(baseline) || status != "Enabled" && len(baseline) != 0 {
+		return j, ErrConflict
+	}
+	j.State = "dispatched"
+	j.ProviderStatus = status
+	j.Baseline = append([]string{}, baseline...)
+	j.UpdatedAt = now
+	return j, nil
+}
+func finishDeletion(j, result ObjectDeletion, now time.Time) (ObjectDeletion, error) {
+	if !validDeletionLease(j, result.Token, now) {
+		return j, ErrConflict
+	}
+	switch result.State {
+	case "failed":
+		prepared := j.State == "prepared" && (result.LastErrorCode == "preparation_failed" || result.LastErrorCode == "preparation_expired")
+		rejected := j.State == "dispatched" && result.LastErrorCode == "provider_rejected"
+		if !prepared && !rejected || result.ProviderVersionID != "" || result.VersionID != "" || result.DeleteMarker {
+			return j, ErrConflict
+		}
+	case "completed":
+		if j.State != "dispatched" || result.LastErrorCode != "" || result.VersionID != "" && !ValidObjectVersionID(result.VersionID) {
+			return j, ErrConflict
+		}
+		if j.Selector == "null" && (result.VersionID != "null" || result.ProviderVersionID != "null") || j.ProviderStatus == "Enabled" && j.Selector == "" && (!result.DeleteMarker || result.VersionID == "" || result.VersionID == "null" || result.ProviderVersionID == "") {
+			return j, ErrConflict
+		}
+		if j.Selector == "" && j.ProviderStatus == "Suspended" && (!result.DeleteMarker || result.VersionID != "null" || result.ProviderVersionID != "null") || j.Selector == "" && j.ProviderStatus == "" && (result.DeleteMarker || result.VersionID != "" || result.ProviderVersionID != "") {
+			return j, ErrConflict
+		}
+	default:
+		return j, ErrConflict
+	}
+	j.State = result.State
+	j.LastErrorCode = result.LastErrorCode
+	j.VersionID = result.VersionID
+	j.DeleteMarker = result.DeleteMarker
+	j.ProviderVersionID = result.ProviderVersionID
+	j.Token = ""
+	j.LeaseUntil = time.Time{}
+	j.UpdatedAt = now
+	return j, nil
+}

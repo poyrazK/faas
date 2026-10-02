@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"hash/crc32"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -32,6 +34,7 @@ const (
 )
 
 type gatewayTestStore struct {
+	state.ObjectDeletionStore
 	credential state.ObjectS3Credential
 	bucket     state.ObjectBucket
 	touched    int
@@ -116,6 +119,16 @@ func (p *gatewayTestProvider) CopyObject(_ context.Context, _ string, request ob
 func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key string) error {
 	p.deleted = append(p.deleted, key)
 	return p.deleteErrors[key]
+}
+func (p *gatewayTestProvider) DeleteMutableObject(ctx context.Context, bucket, key, selector string) (objectstorage.MutableDeleteResult, error) {
+	if selector != "" {
+		return objectstorage.MutableDeleteResult{}, objectstorage.ErrUnsupported
+	}
+	e := p.DeleteObject(ctx, bucket, key)
+	if errors.Is(e, objectstorage.ErrNotFound) {
+		e = nil
+	}
+	return objectstorage.MutableDeleteResult{}, e
 }
 func (p *gatewayTestProvider) Presign(_ context.Context, bucket string, request objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	p.presignRequests = append(p.presignRequests, request)
@@ -347,9 +360,28 @@ func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripF
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &gatewayTestStore{
-		credential: state.ObjectS3Credential{ID: "credential", AccountID: "account", BucketID: "bucket-id", AccessKeyID: testAccess, SecretSealed: []byte("sealed"), Permission: permission, Status: state.ObjectS3CredentialStatusActive},
-		bucket:     state.ObjectBucket{ID: "bucket-id", AccountID: "account", Name: "assets", PhysicalName: "gregale-physical", State: "ready", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, CreatedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+	journal := state.NewMemStore()
+	account, e := journal.CreateAccount(t.Context(), uuid.NewString()+"@example.test", api.PlanPro)
+	if e != nil {
+		t.Fatal(e)
+	}
+	app, e := journal.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "delete-fixture", Status: state.AppActive})
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, e := journal.ReserveObjectBucket(t.Context(), state.ObjectBucket{ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, Name: "assets", Scope: "default", Region: "us-east-1", PhysicalName: "gregale-physical", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}, 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = journal.ClaimObjectBucket(t.Context(), account.ID, app.ID, b.ID, "create", "provisioning"); e != nil {
+		t.Fatal(e)
+	}
+	if e = journal.FinishObjectBucket(t.Context(), b.ID, "create", "ready"); e != nil {
+		t.Fatal(e)
+	}
+	b.State = "ready"
+	store := &gatewayTestStore{ObjectDeletionStore: journal,
+		credential: state.ObjectS3Credential{ID: "credential", AccountID: account.ID, BucketID: b.ID, AccessKeyID: testAccess, SecretSealed: []byte("sealed"), Permission: permission, Status: state.ObjectS3CredentialStatusActive}, bucket: b,
 	}
 	handler, err := New(Config{
 		Registry: registry, Store: store, Host: "s3.gregale.dev", Region: "us-east-1", SpoolDir: t.TempDir(),

@@ -977,6 +977,11 @@ type Querier interface {
 	ObjectCapacityReadiness(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectCapacityReadinessRow, error)
 	ObjectCapacityRebase(ctx context.Context, db DBTX, arg ObjectCapacityRebaseParams) (int64, error)
 	ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCapacitySaveParams) error
+	ObjectDeletionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error)
+	ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
+	ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error)
+	ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error
+	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
 	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)

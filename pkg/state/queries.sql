@@ -5148,7 +5148,7 @@ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=no
 WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 
 -- name: ObjectCapacityFenced :one
-SELECT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
 
 -- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
@@ -5165,8 +5165,8 @@ ON CONFLICT(bucket_id,key_hash) DO UPDATE SET max_bytes=greatest(object_storage_
 
 -- name: ObjectCapacityReadiness :one
 SELECT
- (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
-  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted'))))::bigint AS pending,
+ ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
@@ -5325,3 +5325,19 @@ INSERT INTO object_storage_bucket_usage(bucket_id) VALUES($1) ON CONFLICT(bucket
 
 -- name: ObjectVersioningNow :one
 SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ObjectDeletionGet :one
+SELECT d.*,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1;
+
+-- name: ObjectDeletionActive :one
+SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active;
+
+-- name: ObjectDeletionInsert :exec
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9);
+
+-- name: ObjectDeletionSave :exec
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11 WHERE id=$1;
+
+-- name: ObjectDeletionDue :many
+SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;

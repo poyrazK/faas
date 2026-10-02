@@ -105,7 +105,11 @@ func (s *PgStore) RequestObjectBucketVersioning(ctx context.Context, account, ap
 		if err != nil {
 			return j, err
 		}
-		if ready.Unsafe {
+		active, e := sqlc.New().ObjectDeletionActive(ctx, tx, mustPgUUID(bucket))
+		if e != nil {
+			return j, e
+		}
+		if ready.Unsafe || active {
 			return j, ErrConflict
 		}
 		if !versioningActive(j) {

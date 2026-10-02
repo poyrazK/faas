@@ -510,24 +510,7 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		}
 		h.upload(w, r, req, key)
 	case http.MethodDelete:
-		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
-			return
-		}
-		if err := objectstorage.ValidateObjectDeleteRequest(r); err != nil {
-			h.providerError(w, r, req, err, key)
-			return
-		}
-		if !h.allowCurrentObjectDelete(w, r, req, key) {
-			return
-		}
-		if !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		if err := req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, key); err != nil && !errors.Is(err, objectstorage.ErrNotFound) {
-			h.providerError(w, r, req, err, key)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		h.deleteCurrentObject(w, r, req, key)
 	default:
 		h.unsupported(w, r, req.requestID)
 	}
@@ -598,9 +581,15 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 		return
 	}
 
+	id, err := deletionRequestID(r, req)
+	if err != nil {
+		h.providerError(w, r, req, err, "")
+		return
+	}
+	w.Header().Set("X-Gregale-Delete-Id", id)
 	result := deleteObjectsResult{XMLNS: s3XMLNamespace}
-	for _, object := range request.Objects {
-		deleted, err := h.deleteBulkTarget(r.Context(), req, object)
+	for index, object := range request.Objects {
+		deleted, err := h.deleteBulkTarget(r.Context(), req, object, bulkDeletionRequestID(id, index))
 		if err == nil {
 			if !request.Quiet {
 				result.Deleted = append(result.Deleted, deleted)

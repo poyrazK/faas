@@ -3,30 +3,26 @@ package s3gateway
 import (
 	"context"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (h *Handler) deleteBulkTarget(ctx context.Context, req requestContext, target deleteObjectTarget) (deletedObjectResult, error) {
+func (h *Handler) deleteBulkTarget(ctx context.Context, req requestContext, target deleteObjectTarget, id string) (deletedObjectResult, error) {
 	result := deletedObjectResult{Key: target.Key, VersionID: target.VersionID}
-	if target.VersionID != "" {
+	if target.VersionID != "" && target.VersionID != "null" {
 		out, err := h.deleteOwnedVersion(ctx, req, target.Key, target.VersionID)
 		result.DeleteMarker = out.DeleteMarker
-		return result, err
-	}
-	if err := objectstorage.CheckCurrentObjectDelete(ctx, h.store, req.bucket); err != nil {
-		return result, err
-	}
-	if h.requestMetrics != nil {
-		if err := h.requestMetrics.RecordObjectStorageProviderRequest(ctx, req.bucket.ID, h.now().UTC()); err != nil {
-			return result, err
+		if out.DeleteMarker {
+			result.DeleteMarkerVersionID = out.VersionID
 		}
+		return result, err
 	}
-	err := req.provider.DeleteObject(ctx, req.bucket.PhysicalName, target.Key)
-	if errors.Is(err, objectstorage.ErrNotFound) {
-		err = nil
+	j, err := h.deleteMutable(ctx, req, target.Key, target.VersionID, id)
+	result.DeleteMarker = j.DeleteMarker
+	if j.DeleteMarker {
+		result.DeleteMarkerVersionID = j.VersionID
 	}
 	return result, err
 }

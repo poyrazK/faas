@@ -18,7 +18,17 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, req requ
 		h.providerError(w, r, req, err, key)
 		return
 	}
-	result, err := h.deleteOwnedVersion(r.Context(), req, key, id)
+	var result api.ObjectVersionDeleteResult
+	var err error
+	if id == "null" {
+		var token string
+		result, token, err = h.deleteNullVersion(r.Context(), r, req, key)
+		if token != "" {
+			w.Header().Set("X-Gregale-Delete-Id", token)
+		}
+	} else {
+		result, err = h.deleteOwnedVersion(r.Context(), req, key, id)
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		writeS3Error(w, http.StatusNotFound, "NoSuchVersion", "The specified version does not exist.", r.URL.Path, req.requestID)
 		return

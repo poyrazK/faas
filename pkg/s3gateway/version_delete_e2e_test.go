@@ -154,7 +154,7 @@ func versionDeletionEndToEnd(t *testing.T, st multipartCopyIntegrationStore, res
 	if err != nil || len(batch.Deleted) != 2 || len(batch.Errors) != 4 || !aws.ToBool(batch.Deleted[0].DeleteMarker) || aws.ToString(batch.Deleted[0].VersionId) != marker || p.count() != 3 {
 		t.Fatal(batch, err, p.count())
 	}
-	for i, want := range []string{"NoSuchVersion", "NoSuchVersion", "NotImplemented", "NotImplemented"} {
+	for i, want := range []string{"NoSuchVersion", "NoSuchVersion", "ServiceUnavailable", "ServiceUnavailable"} {
 		if aws.ToString(batch.Errors[i].Code) != want {
 			t.Fatal(batch.Errors)
 		}

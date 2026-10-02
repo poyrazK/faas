@@ -7819,3 +7819,17 @@ const (
 )
 
 const ObjectBucketVersioningOperationTimeout = time.Minute
+
+// Deletion fences survive lease expiry; only pre-dispatch cancellation,
+// definitive provider rejection or completion proof releases them.
+const (
+	ObjectDeletionLease                  = 2 * time.Minute
+	ObjectDeletionOperationTimeout       = time.Minute
+	ObjectDeletionRetry                  = 30 * time.Second
+	ObjectDeletionBatch            int32 = 20
+	// Initial proof must not depend on a cursor invalidated by permanent deletion.
+	ObjectDeletionBaselinePages         = 1
+	ObjectDeletionHistoryPages          = 8
+	ObjectDeletionHistoryVersions       = 4096
+	MaxObjectDeletionBodyBytes    int64 = 8 << 10
+)

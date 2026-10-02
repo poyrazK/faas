@@ -14,7 +14,8 @@ type ObjectVersionDeleteResult struct {
 }
 
 // DeleteObjectBucketVersion removes an immutable public version. The mutable
-// null selector is unsupported. Capacity is reclaimed by verified inventory.
+// null selector uses a durable intent. Use CreateObjectDeletion for explicit
+// retry identity and progress. Capacity is reclaimed by verified inventory.
 func (c *Client) DeleteObjectBucketVersion(ctx context.Context, app, bucket, key, version string) (ObjectVersionDeleteResult, error) {
 	var out ObjectVersionDeleteResult
 	q := url.Values{"key": {key}, "version_id": {version}}

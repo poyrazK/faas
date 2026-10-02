@@ -19,6 +19,7 @@ import (
 
 var (
 	ErrWriteRejected       = errors.New("object storage write was rejected")
+	ErrDeletionRejected    = errors.New("object storage deletion was rejected")
 	ErrPreconditionFailed  = errors.New("object storage precondition failed")
 	ErrConditionalConflict = errors.New("object storage conditional completion requires a new upload")
 	ErrConditionalNotFound = errors.New("object storage conditional destination not found")

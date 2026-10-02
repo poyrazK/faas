@@ -14,6 +14,8 @@ import type { ObjectBucketList } from '../models/ObjectBucketList.js';
 import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
 import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
+import type { ObjectDeletion } from '../models/ObjectDeletion.js';
+import type { ObjectDeletionRequest } from '../models/ObjectDeletionRequest.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
@@ -633,7 +635,7 @@ export class StorageService {
   }
   /**
    * Permanently delete an immutable object version or delete marker
-   * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is unsupported. Quota is reclaimed only through verified capacity inventory.
+   * Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt API. Quota is reclaimed only through verified capacity inventory.
    * @returns ObjectVersionDeleteResult Deleted or already removed immutable version; Cache-Control no-store
    * @returns Problem Invalid or unowned version, unsupported provider, access denied or uncertain provider response
    * @throws ApiError
@@ -657,7 +659,7 @@ export class StorageService {
      */
     key: string,
     /**
-     * Owned public immutable version UUID; native provider IDs and null are not accepted.
+     * Owned public version UUID or the mutable null selector; native provider IDs are not accepted.
      */
     versionId: string,
   }): CancelablePromise<ObjectVersionDeleteResult | Problem> {
@@ -671,6 +673,74 @@ export class StorageService {
       query: {
         'key': key,
         'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Delete the current object or mutable null version with a durable receipt
+   * Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Each intent dispatches at most once. Enabled buckets create an accounted delete marker. Pending attempts fence bucket writes and configuration until positive proof; elapsed time and absence never settle a dispatched mutation.
+   * @returns ObjectDeletion Completed or failed receipt replay
+   * @returns Problem Invalid request, access denied, unavailable accounting or conflicting mutation
+   * @throws ApiError
+   */
+  public static createObjectDeletion({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the deletion.
+     */
+    bucket: string,
+    requestBody: ObjectDeletionRequest,
+  }): CancelablePromise<ObjectDeletion | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a durable deletion receipt
+   * Requires storage write scope and the bucket write grant. Returns only the bucket-owned receipt and public identities. Cache-Control no-store.
+   * @returns ObjectDeletion Persisted deletion state
+   * @returns Problem Access denied or receipt does not belong to this bucket
+   * @throws ApiError
+   */
+  public static getObjectDeletion({
+    slug,
+    bucket,
+    deletion,
+  }: {
+    /**
+     * App owning the logical bucket.
+     */
+    slug: string,
+    /**
+     * Logical bucket owning the deletion.
+     */
+    bucket: string,
+    /**
+     * Durable deletion request ID.
+     */
+    deletion: string,
+  }): CancelablePromise<ObjectDeletion | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'deletion': deletion,
       },
     });
   }

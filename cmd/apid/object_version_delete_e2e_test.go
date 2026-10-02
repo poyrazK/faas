@@ -83,7 +83,7 @@ func TestObjectVersionDeleteControlEndToEndPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != 501 || calls.Load() != 2 {
+	if response.StatusCode != 409 || calls.Load() != 2 {
 		t.Fatal("control DELETE bypassed native marker admission", response.StatusCode, calls.Load())
 	}
 	request.URL.Path += "/versions"

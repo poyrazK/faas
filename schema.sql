@@ -1995,6 +1995,30 @@ $$;
 
 
 --
+-- Name: fence_object_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid;
+BEGIN
+ IF TG_TABLE_NAME='object_buckets' THEN
+  IF TG_OP='DELETE' THEN bid:=OLD.id;
+  ELSE IF NEW.state=OLD.state OR NEW.state NOT IN ('deleting','deleted') THEN RETURN NEW; END IF; bid:=NEW.id; END IF;
+ ELSE
+  bid:=NEW.bucket_id;
+  IF TG_TABLE_NAME='object_bucket_versioning' THEN IF NEW.state='ready' THEN RETURN NEW; END IF; END IF;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Unsettled deletion fences mutation and inventory';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_multipart_completion_conditions(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7799,6 +7823,49 @@ CREATE TABLE public.object_buckets (
 
 
 --
+-- Name: object_deletions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_deletions (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    object_key text NOT NULL,
+    selector text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    provider_status text DEFAULT ''::text NOT NULL,
+    baseline jsonb DEFAULT '[]'::jsonb NOT NULL,
+    provider_version_id text DEFAULT ''::text NOT NULL,
+    version_id text DEFAULT ''::text NOT NULL,
+    delete_marker boolean DEFAULT false NOT NULL,
+    reserved_bytes bigint DEFAULT 0 NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_deletions_baseline_check CHECK (((jsonb_typeof(baseline) = 'array'::text) AND (jsonb_array_length(baseline) <= 4096) AND (octet_length((baseline)::text) <= 278530))),
+    CONSTRAINT object_deletions_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT object_deletions_check1 CHECK (((state = ANY (ARRAY['prepared'::text, 'dispatched'::text])) OR (lease_token = ''::text))),
+    CONSTRAINT object_deletions_check2 CHECK (((state <> 'failed'::text) OR (last_error_code = ANY (ARRAY['preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text])))),
+    CONSTRAINT object_deletions_check3 CHECK (((state <> 'completed'::text) OR (last_error_code = ''::text))),
+    CONSTRAINT object_deletions_check4 CHECK (((state <> 'completed'::text) OR (selector <> 'null'::text) OR (version_id = 'null'::text))),
+    CONSTRAINT object_deletions_check5 CHECK (((state <> 'completed'::text) OR (provider_status <> 'Enabled'::text) OR (selector <> ''::text) OR (delete_marker AND (version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_version_id <> ALL (ARRAY[''::text, 'null'::text]))))),
+    CONSTRAINT object_deletions_check6 CHECK (((reserved_bytes = 0) OR ((selector = ''::text) AND (provider_status <> ''::text)))),
+    CONSTRAINT object_deletions_check7 CHECK (((provider_status = 'Enabled'::text) OR (baseline = '[]'::jsonb))),
+    CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text]))),
+    CONSTRAINT object_deletions_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_deletions_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
+    CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
+    CONSTRAINT object_deletions_provider_version_id_check CHECK ((octet_length(provider_version_id) <= 1024)),
+    CONSTRAINT object_deletions_reserved_bytes_check CHECK (((reserved_bytes >= 0) AND (reserved_bytes <= 1024))),
+    CONSTRAINT object_deletions_selector_check CHECK ((selector = ANY (ARRAY[''::text, 'null'::text]))),
+    CONSTRAINT object_deletions_state_check CHECK ((state = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'completed'::text, 'failed'::text]))),
+    CONSTRAINT object_deletions_version_id_check CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)))
+);
+
+
+--
 -- Name: object_storage_access_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12568,6 +12635,14 @@ ALTER TABLE ONLY public.object_buckets
 
 
 --
+-- Name: object_deletions object_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_deletions
+    ADD CONSTRAINT object_deletions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: object_storage_access_grants object_storage_access_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16820,6 +16895,20 @@ CREATE UNIQUE INDEX object_buckets_public_serve_at_idx ON public.object_buckets 
 --
 
 CREATE INDEX object_buckets_recovery_idx ON public.object_buckets USING btree (retry_at, id) WHERE (state = ANY (ARRAY['provisioning'::text, 'deleting'::text]));
+
+
+--
+-- Name: object_deletions_active_bucket; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_deletions_active_bucket ON public.object_deletions USING btree (bucket_id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+
+
+--
+-- Name: object_deletions_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_deletions_due ON public.object_deletions USING btree (retry_at, id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
 
 
 --
@@ -21620,6 +21709,14 @@ ALTER TABLE ONLY public.object_buckets
 
 
 --
+-- Name: object_deletions object_deletions_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_deletions
+    ADD CONSTRAINT object_deletions_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: object_storage_access_grants object_storage_access_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23111,6 +23208,62 @@ CREATE TRIGGER object_bucket_capacity_fence BEFORE UPDATE ON public.object_bucke
 
 
 --
+-- Name: object_buckets object_deletion_bucket_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_bucket_fence BEFORE DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_storage_capacity_reconciliations object_deletion_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_capacity_fence BEFORE INSERT OR UPDATE ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_bucket_versioning object_deletion_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_configuration_fence BEFORE INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_storage_key_grants object_deletion_grant_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_storage_bucket_usage object_deletion_inventory_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_inventory_fence BEFORE UPDATE OF baseline_bytes, baseline_keys, observed_bytes, observed_keys, observed_at, inventory_scope ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_storage_multipart_uploads object_deletion_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_multipart_fence BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_deletions object_deletion_protected; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_protected BEFORE UPDATE ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.protect_object_deletion();
+
+
+--
+-- Name: object_storage_write_admissions object_deletion_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
 -- Name: object_storage_key_grants object_grant_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23248,6 +23401,25 @@ CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_
 
 CREATE TRIGGER object_native_version_key_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();
 
+
+
+--
+-- Name: protect_object_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.object_key<>OLD.object_key OR NEW.selector<>OLD.selector
+  OR NEW.created_at<>OLD.created_at OR NEW.provider_status<>OLD.provider_status OR NEW.reserved_bytes<>OLD.reserved_bytes
+  OR (OLD.state<>'prepared' AND NEW.baseline<>OLD.baseline)
+  OR (OLD.state='dispatched' AND NEW.state NOT IN ('dispatched','completed') AND NOT (NEW.state='failed' AND NEW.last_error_code='provider_rejected'))
+  OR OLD.state IN ('completed','failed') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Deletion identity and dispatched attempt are immutable';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --

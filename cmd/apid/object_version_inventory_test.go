@@ -19,6 +19,7 @@ import (
 )
 
 // adr: 398
+// adr: 405
 func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	var mu sync.Mutex
 	writes, lists, failedPages, deletes := 0, 0, 0, 0
@@ -127,8 +128,9 @@ func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")}); err == nil {
 		t.Fatal("unadmitted delete marker created")
 	}
-	if _, err = f.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{Bucket: aws.String("assets"), Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("key")}}}}); err == nil {
-		t.Fatal("bulk delete created unadmitted markers")
+	batch, err := f.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{Bucket: aws.String("assets"), Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: aws.String("key")}}}})
+	if err != nil || batch == nil || len(batch.Deleted) != 0 || len(batch.Errors) != 1 || aws.ToString(batch.Errors[0].Code) != "ServiceUnavailable" || aws.ToString(batch.Errors[0].Key) != "key" {
+		t.Fatal("bulk deletion did not preserve its per-entry accounting fence", batch, err)
 	}
 	snap, err = f.st.ObjectUsage(ctx, f.account.ID, time.Now())
 	usage := state.SummarizeObjectUsage(snap, f.policy, time.Now())

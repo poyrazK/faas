@@ -24,6 +24,7 @@ func TestS3VersionDeleteSingleAttemptAndIdentity(t *testing.T) {
 		{"wrong success status", "native/+%?", "false", "", 200, ErrUnavailable},
 		{"duplicate version", "duplicate", "false", "", 204, ErrUnavailable},
 		{"provider unavailable", "", "", "InternalError", 500, ErrUnavailable},
+		{"unsupported", "", "", "NotImplemented", 501, ErrUnsupported},
 		{"provider permission", "", "", "AccessDenied", 403, ErrConfiguration},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

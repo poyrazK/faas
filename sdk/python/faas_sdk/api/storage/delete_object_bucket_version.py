@@ -16,15 +16,14 @@ def _get_kwargs(
     bucket: UUID,
     *,
     key: str,
-    version_id: UUID,
+    version_id: str,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["key"] = key
 
-    json_version_id = str(version_id)
-    params["version_id"] = json_version_id
+    params["version_id"] = version_id
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -70,20 +69,21 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     key: str,
-    version_id: UUID,
+    version_id: str,
 ) -> Response[ObjectVersionDeleteResult | Problem]:
     """Permanently delete an immutable object version or delete marker
 
      Requires storage write scope and the bucket write grant. The public version ID must belong to this
     bucket and exact key. Retries address the same immutable version, including after restart or an
-    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is
-    unsupported. Quota is reclaimed only through verified capacity inventory.
+    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion
+    uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt
+    API. Quota is reclaimed only through verified capacity inventory.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
-        version_id (UUID):
+        version_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,20 +113,21 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     key: str,
-    version_id: UUID,
+    version_id: str,
 ) -> ObjectVersionDeleteResult | Problem | None:
     """Permanently delete an immutable object version or delete marker
 
      Requires storage write scope and the bucket write grant. The public version ID must belong to this
     bucket and exact key. Retries address the same immutable version, including after restart or an
-    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is
-    unsupported. Quota is reclaimed only through verified capacity inventory.
+    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion
+    uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt
+    API. Quota is reclaimed only through verified capacity inventory.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
-        version_id (UUID):
+        version_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,20 +152,21 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     key: str,
-    version_id: UUID,
+    version_id: str,
 ) -> Response[ObjectVersionDeleteResult | Problem]:
     """Permanently delete an immutable object version or delete marker
 
      Requires storage write scope and the bucket write grant. The public version ID must belong to this
     bucket and exact key. Retries address the same immutable version, including after restart or an
-    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is
-    unsupported. Quota is reclaimed only through verified capacity inventory.
+    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion
+    uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt
+    API. Quota is reclaimed only through verified capacity inventory.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
-        version_id (UUID):
+        version_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,20 +194,21 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     key: str,
-    version_id: UUID,
+    version_id: str,
 ) -> ObjectVersionDeleteResult | Problem | None:
     """Permanently delete an immutable object version or delete marker
 
      Requires storage write scope and the bucket write grant. The public version ID must belong to this
     bucket and exact key. Retries address the same immutable version, including after restart or an
-    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is
-    unsupported. Quota is reclaimed only through verified capacity inventory.
+    uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion
+    uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt
+    API. Quota is reclaimed only through verified capacity inventory.
 
     Args:
         slug (str):
         bucket (UUID):
         key (str):
-        version_id (UUID):
+        version_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

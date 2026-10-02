@@ -568,13 +568,22 @@ func (s *server) deleteBucketObject(w http.ResponseWriter, r *http.Request, acct
 		bucketProblem(w, err)
 		return
 	}
-	if err := objectstorage.CheckCurrentObjectDelete(r.Context(), s.store, b); err != nil {
+	id, err := controlDeletionID(r)
+	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	if err := provider.DeleteObject(r.Context(), b.PhysicalName, key); err != nil {
+	w.Header().Set("X-Gregale-Delete-Id", id)
+	j, err := s.deleteMutableBucketObject(r.Context(), b, provider, key, "", id)
+	if err != nil {
 		bucketProblem(w, err)
 		return
+	}
+	if j.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", j.VersionID)
+	}
+	if j.DeleteMarker {
+		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

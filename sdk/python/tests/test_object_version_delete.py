@@ -23,9 +23,9 @@ def test_owned_version_deletion() -> None:
 
     with httpx.Client(base_url="https://api.example.test", transport=httpx.MockTransport(handle)) as transport:
         client = AuthenticatedClient(base_url="https://api.example.test", token="token").set_httpx_client(transport)
-        result = delete_object_bucket_version.sync("demo", bucket, client=client, key=key, version_id=version)
+        result = delete_object_bucket_version.sync("demo", bucket, client=client, key=key, version_id=str(version))
         assert isinstance(result, ObjectVersionDeleteResult)
-        assert result.version_id == version
+        assert result.version_id == str(version)
         assert result.delete_marker is True
 
 

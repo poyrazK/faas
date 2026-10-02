@@ -11690,7 +11690,7 @@ func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) (
 }
 
 const objectCapacityFenced = `-- name: ObjectCapacityFenced :one
-SELECT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
+SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
 `
 
 func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
@@ -11894,8 +11894,8 @@ func (q *Queries) ObjectCapacityLockBucket(ctx context.Context, db DBTX, arg Obj
 
 const objectCapacityReadiness = `-- name: ObjectCapacityReadiness :one
 SELECT
- (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
-  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted'))))::bigint AS pending,
+ ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
@@ -11995,6 +11995,161 @@ func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCap
 		arg.ScannedPages,
 		arg.ScannedBytes,
 		arg.ScannedVersions,
+	)
+	return err
+}
+
+const objectDeletionActive = `-- name: ObjectDeletionActive :one
+SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active
+`
+
+func (q *Queries) ObjectDeletionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectDeletionActive, bucketID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
+const objectDeletionDue = `-- name: ObjectDeletionDue :many
+SELECT id FROM object_deletions WHERE state IN ('prepared','dispatched') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectDeletionDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectDeletionGet = `-- name: ObjectDeletionGet :one
+SELECT d.id, d.bucket_id, d.object_key, d.selector, d.state, d.provider_status, d.baseline, d.provider_version_id, d.version_id, d.delete_marker, d.reserved_bytes, d.lease_token, d.lease_until, d.retry_at, d.last_error_code, d.created_at, d.updated_at,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1
+`
+
+type ObjectDeletionGetRow struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	ObjectKey         string
+	Selector          string
+	State             string
+	ProviderStatus    string
+	Baseline          []byte
+	ProviderVersionID string
+	VersionID         string
+	DeleteMarker      bool
+	ReservedBytes     int64
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+}
+
+func (q *Queries) ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error) {
+	row := db.QueryRow(ctx, objectDeletionGet, id)
+	var i ObjectDeletionGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.ObjectKey,
+		&i.Selector,
+		&i.State,
+		&i.ProviderStatus,
+		&i.Baseline,
+		&i.ProviderVersionID,
+		&i.VersionID,
+		&i.DeleteMarker,
+		&i.ReservedBytes,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectDeletionInsert = `-- name: ObjectDeletionInsert :exec
+INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at)
+VALUES($1,$2,$3,$4,'prepared',$5,$6,$7,$8,$9,$9,$9)
+`
+
+type ObjectDeletionInsertParams struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	ObjectKey      string
+	Selector       string
+	ProviderStatus string
+	ReservedBytes  int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error {
+	_, err := db.Exec(ctx, objectDeletionInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.ObjectKey,
+		arg.Selector,
+		arg.ProviderStatus,
+		arg.ReservedBytes,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+	)
+	return err
+}
+
+const objectDeletionSave = `-- name: ObjectDeletionSave :exec
+UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11 WHERE id=$1
+`
+
+type ObjectDeletionSaveParams struct {
+	ID                pgtype.UUID
+	State             string
+	Baseline          []byte
+	ProviderVersionID string
+	VersionID         string
+	DeleteMarker      bool
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	LastErrorCode     string
+	UpdatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error {
+	_, err := db.Exec(ctx, objectDeletionSave,
+		arg.ID,
+		arg.State,
+		arg.Baseline,
+		arg.ProviderVersionID,
+		arg.VersionID,
+		arg.DeleteMarker,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
 	)
 	return err
 }

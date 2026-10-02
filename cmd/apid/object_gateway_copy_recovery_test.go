@@ -77,6 +77,10 @@ func (o *acceptedGatewayCopy) serve(t *testing.T, w http.ResponseWriter, r *http
 		w.WriteHeader(204)
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Query().Has("versioning") {
+			_, _ = io.WriteString(w, `<VersioningConfiguration/>`)
+			return
+		}
 		if o.source || o.destination {
 			t.Error("inventory ran before deletion")
 		}
@@ -88,6 +92,7 @@ func (o *acceptedGatewayCopy) serve(t *testing.T, w http.ResponseWriter, r *http
 }
 
 // adr: 394
+// adr: 405
 func TestGatewayCopyRecoveryPG(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(changed), func(t *testing.T) {
@@ -130,9 +135,17 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			}
 			f.enabled.Store(false)
 			pollGatewayWriteReceipt(t, f, "destination", id, "pending", 200)
-			// Recovery must use only the destination proof, even after source deletion.
-			if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("source")}); err != nil {
-				t.Fatal(err)
+			// Pending copies fence current deletion. Recovery still relies only on
+			// destination proof if the source disappears outside the gateway.
+			if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("source")}); err == nil {
+				t.Fatal("current deletion escaped an uncertain copy's fence")
+			}
+			object.mu.Lock()
+			sourceExists := object.source
+			object.source = false
+			object.mu.Unlock()
+			if !sourceExists {
+				t.Fatal("fenced deletion reached the provider")
 			}
 			if _, err = f.pool.Exec(ctx, `UPDATE object_upload_completions SET recovery_retry_at=now()-interval '1 second' WHERE id=$1`, id); err != nil {
 				t.Fatal(err)

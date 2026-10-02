@@ -79,6 +79,13 @@ func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, accou
 	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return ObjectCapacityReconciliation{}, mapErr(err)
 	}
+	deleting, e := q.ObjectDeletionActive(ctx, tx, mustPgUUID(bucket))
+	if e != nil {
+		return ObjectCapacityReconciliation{}, e
+	}
+	if deleting {
+		return ObjectCapacityReconciliation{}, ErrConflict
+	}
 	v, e := readObjectVersioning(ctx, tx, bucket)
 	if e == nil && versioningActive(v) {
 		return ObjectCapacityReconciliation{}, ErrConflict

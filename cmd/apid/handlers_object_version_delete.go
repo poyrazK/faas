@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -22,6 +23,10 @@ func (s *server) deleteBucketObjectVersion(w http.ResponseWriter, r *http.Reques
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
+	if q.Get("version_id") == "null" {
+		s.deleteNullBucketObjectVersion(w, r, b, provider, q.Get("key"))
+		return
+	}
 	st, _ := s.store.(state.ObjectVersionReferenceStore)
 	metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
 	if !ok {
@@ -34,4 +39,19 @@ func (s *server) deleteBucketObjectVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) deleteNullBucketObjectVersion(w http.ResponseWriter, r *http.Request, b state.ObjectBucket, p objectstorage.Provider, key string) {
+	id, e := controlDeletionID(r)
+	if e != nil {
+		bucketProblem(w, e)
+		return
+	}
+	w.Header().Set("X-Gregale-Delete-Id", id)
+	j, e := s.deleteMutableBucketObject(r.Context(), b, p, key, "null", id)
+	if e != nil {
+		bucketProblem(w, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ObjectVersionDeleteResult{VersionID: j.VersionID, DeleteMarker: j.DeleteMarker})
 }

@@ -1576,11 +1576,11 @@ paths:
     delete:
       operationId: deleteObjectBucketVersion
       summary: Permanently delete an immutable object version or delete marker
-      description: Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion is unsupported. Quota is reclaimed only through verified capacity inventory.
+      description: Requires storage write scope and the bucket write grant. The public version ID must belong to this bucket and exact key. Retries address the same immutable version, including after restart or an uncertain provider acknowledgment. Deleting a marker can reveal older data. Mutable null deletion uses a durable single-attempt intent; retry with X-Gregale-Delete-Id or use the deletion receipt API. Quota is reclaimed only through verified capacity inventory.
       tags: [storage]
       parameters:
         - { name: key, in: query, required: true, description: Exact key owning the selected version., schema: { type: string, minLength: 1, maxLength: 1024 } }
-        - { name: version_id, in: query, required: true, description: Owned public immutable version UUID; native provider IDs and null are not accepted., schema: { type: string, format: uuid } }
+        - { name: version_id, in: query, required: true, description: Owned public version UUID or the mutable null selector; native provider IDs are not accepted., schema: { type: string } }
       responses:
         '200':
           description: Deleted or already removed immutable version; Cache-Control no-store
@@ -1589,6 +1589,59 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectVersionDeleteResult' }
         default:
           description: Invalid or unowned version, unsupported provider, access denied or uncertain provider response
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects/deletions:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: { type: string, format: uuid } }
+    post:
+      operationId: createObjectDeletion
+      summary: Delete the current object or mutable null version with a durable receipt
+      description: Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Each intent dispatches at most once. Enabled buckets create an accounted delete marker. Pending attempts fence bucket writes and configuration until positive proof; elapsed time and absence never settle a dispatched mutation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectDeletionRequest' }
+      responses:
+        '200':
+          description: Completed or failed receipt replay
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectDeletion' }
+        '202':
+          description: Persisted deletion awaiting positive completion proof
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectDeletion' }
+        default:
+          description: Invalid request, access denied, unavailable accounting or conflicting mutation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the logical bucket., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: { type: string, format: uuid } }
+      - { name: deletion, in: path, required: true, description: Durable deletion request ID., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectDeletion
+      summary: Read a durable deletion receipt
+      description: Requires storage write scope and the bucket write grant. Returns only the bucket-owned receipt and public identities. Cache-Control no-store.
+      tags: [storage]
+      responses:
+        '200':
+          description: Persisted deletion state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectDeletion' }
+        default:
+          description: Access denied or receipt does not belong to this bucket
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -23241,12 +23294,35 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    ObjectDeletionRequest:
+      type: object
+      description: One durable mutation; reuse the ID for retries of the same key and selector.
+      required: [id, key]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        version_id: { type: string, enum: ['null'], description: Omit for ordinary deletion; null permanently removes the mutable null version. }
+    ObjectDeletion:
+      type: object
+      description: Durable deletion receipt; uncertain attempts retain their bucket fence.
+      required: [id, bucket_id, key, selector, state, delete_marker, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        key: { type: string }
+        selector: { type: string, enum: ['', 'null'] }
+        state: { type: string, enum: [prepared, dispatched, completed, failed] }
+        version_id: { type: string, description: Public marker UUID or null when acknowledged; private provider IDs are never exposed. }
+        delete_marker: { type: boolean }
+        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ObjectVersionDeleteResult:
       type: object
       description: Selected immutable public version and the acknowledged marker flag after permanent deletion.
       required: [version_id, delete_marker]
       properties:
-        version_id: { type: string, format: uuid }
+        version_id: { type: string, description: Public immutable version UUID or null. }
         delete_marker: { type: boolean, description: True when the acknowledged removal deleted a marker. A retry after removal can return false. }
     CreateDevBridgeRequest:
       type: object

@@ -800,6 +800,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/buckets/{bucket}/objects":                                             "ListBucketObjects",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects":                                          "DeleteBucketObject",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/objects/versions":                                 "DeleteObjectBucketVersion",
+	"POST /v1/apps/{slug}/buckets/{bucket}/objects/deletions":                                  "CreateObjectDeletion",
+	"GET /v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}":                        "GetObjectDeletion",
 	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url":                                         "SignBucketObject",
 	"GET /v1/apps/{slug}/buckets/{bucket}/write-receipts":                                      "ListObjectWriteReceipts",
 	"GET /v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}":                            "GetObjectWriteReceipt",

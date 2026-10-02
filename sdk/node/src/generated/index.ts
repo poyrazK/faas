@@ -571,6 +571,8 @@ export type { ObjectBucketList } from './models/ObjectBucketList.js';
 export type { ObjectBucketVersioning } from './models/ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './models/ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
+export type { ObjectDeletion } from './models/ObjectDeletion.js';
+export type { ObjectDeletionRequest } from './models/ObjectDeletionRequest.js';
 export type { ObjectMultipartCompletedPart } from './models/ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './models/ObjectMultipartPart.js';
 export type { ObjectMultipartPartList } from './models/ObjectMultipartPartList.js';
