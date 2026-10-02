@@ -44,9 +44,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
 )
 
 // MirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the seam the
@@ -176,7 +178,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: cap at max", "rule_id", rule.ID, "app_id", rule.AppID,
 				"source_instance_id", sourceInstanceID)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, "", requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, "", requestID, 0, nil, 0, sourceCapture, state.MirrorAdmissionFailureRejected)
 		return
 	}
 	defer h.releaseMirrorSlot(rule.ID)
@@ -216,6 +218,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			// Code too (PR-A3 code-review #5 fix).
 			resultLabel = "cap_at_max"
 		}
+		admissionFailure := classifyMirrorAdmissionFailure(err)
 		if h.metrics != nil {
 			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, resultLabel)
 		}
@@ -223,7 +226,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: schedule failed", "rule_id", rule.ID, "app_id", rule.AppID,
 				"err", err.Error(), "result", resultLabel, "source_instance_id", sourceInstanceID)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture, admissionFailure)
 		return
 	}
 	if instanceID != "" {
@@ -244,7 +247,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: build request failed", "rule_id", rule.ID, "err", buildErr.Error())
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 	applyMirrorTargetIdentity(mirrorReq, mirrorTarget, rule.AppID)
@@ -274,7 +277,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: round-trip failed", "rule_id", rule.ID, "err", err.Error())
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -287,7 +290,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: response body read failed", "rule_id", rule.ID, "err", readErr)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 
@@ -295,7 +298,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	// durable ledger row. This wait happens only in the detached goroutine.
 	statusDiff, _, bodyDiff, crashed := h.compareAndPersistMirror(
 		ctx, rule, sourceInstanceID, instanceID, requestID,
-		resp.StatusCode, mirrorBody, latency, sourceCapture, mirrorTruncated,
+		resp.StatusCode, mirrorBody, latency, sourceCapture, state.MirrorAdmissionFailureNone, mirrorTruncated,
 	)
 
 	// 5. Metric.
@@ -345,30 +348,39 @@ func (h *Handler) compareAndPersistMirror(
 	mirrorBody []byte,
 	mirrorLatency time.Duration,
 	sourceCapture *mirrorSourceCapture,
+	admissionFailure state.MirrorAdmissionFailureReason,
 	mirrorTruncated ...bool,
 ) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
 	source, sourceOK := sourceCapture.wait(ctx)
 	truncated := len(mirrorTruncated) > 0 && mirrorTruncated[0]
 	comparison := CompareMirrorResponses(source.StatusCode, source.Body, !sourceOK || source.Truncated, mirrorStatus, mirrorBody, truncated, rule.IncludeBody)
 	statusDiff, schemaDiff, bodyDiff, crashed = comparison.StatusDiff, comparison.SchemaDiff, comparison.BodyDiff, comparison.Crashed
+	if admissionFailure != state.MirrorAdmissionFailureNone {
+		// The scheduler did not return an admitted target, so no guest
+		// response exists to compare. Persist the admission outcome as an
+		// inconclusive comparison rather than a crash or response diff.
+		statusDiff, schemaDiff, bodyDiff, crashed = false, false, false, false
+		comparison.Incomplete = true
+	}
 
 	result := state.MirrorInvocationResult{
-		MirrorRuleID:         rule.ID,
-		AccountID:            rule.AccountID,
-		AppID:                rule.AppID,
-		SourceDeploymentID:   rule.SourceDeploymentID,
-		MirrorDeploymentID:   rule.MirrorDeploymentID,
-		InstanceID:           instanceID,
-		SourceInstanceID:     sourceInstanceID,
-		StatusCode:           mirrorStatus,
-		LatencyMs:            mirrorDurationMilliseconds(mirrorLatency),
-		StatusDiff:           statusDiff,
-		SchemaDiff:           schemaDiff,
-		BodyDiff:             bodyDiff,
-		Crashed:              crashed,
-		ComparisonIncomplete: comparison.Incomplete,
-		RequestID:            requestID,
-		CompletedAt:          time.Now().UTC(),
+		MirrorRuleID:           rule.ID,
+		AccountID:              rule.AccountID,
+		AppID:                  rule.AppID,
+		SourceDeploymentID:     rule.SourceDeploymentID,
+		MirrorDeploymentID:     rule.MirrorDeploymentID,
+		InstanceID:             instanceID,
+		SourceInstanceID:       sourceInstanceID,
+		StatusCode:             mirrorStatus,
+		LatencyMs:              mirrorDurationMilliseconds(mirrorLatency),
+		StatusDiff:             statusDiff,
+		SchemaDiff:             schemaDiff,
+		BodyDiff:               bodyDiff,
+		Crashed:                crashed,
+		ComparisonIncomplete:   comparison.Incomplete,
+		AdmissionFailureReason: admissionFailure,
+		RequestID:              requestID,
+		CompletedAt:            time.Now().UTC(),
 	}
 	if len(comparison.MirrorSchemaHash) > 0 {
 		result.SchemaHash = append([]byte(nil), comparison.MirrorSchemaHash...)
@@ -499,6 +511,31 @@ func isCapAtMaxCode(err error) bool {
 		return prob.Code == api.CodeMirrorSlotAtCapacity
 	}
 	return false
+}
+
+// classifyMirrorAdmissionFailure keeps scheduler outcomes out of the guest
+// crash signal. Mirror admission can fail before any VM exists, and a timeout
+// is ambiguous about whether schedd created a row before the caller deadline;
+// schedd owns cleanup for any late boot it accepted.
+func classifyMirrorAdmissionFailure(err error) state.MirrorAdmissionFailureReason {
+	if err == nil {
+		return state.MirrorAdmissionFailureNone
+	}
+	if errors.Is(err, sched.ErrMirrorSlotAtCapacity) || isCapAtMaxCode(err) {
+		return state.MirrorAdmissionFailureRejected
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) && problem != nil {
+		switch problem.Code {
+		case api.CodePlanLimitConcur, api.CodeCapacity, api.CodeServiceRecoveryCapacity,
+			api.CodeAdmissionRefused:
+			return state.MirrorAdmissionFailureRejected
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || grpcerr.IsCode(err, codes.DeadlineExceeded) {
+		return state.MirrorAdmissionFailureTimeout
+	}
+	return state.MirrorAdmissionFailureError
 }
 
 // buildMirrorRequest (issue #72 / ADR-124 PR-A3, code-review

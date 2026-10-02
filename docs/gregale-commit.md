@@ -74,7 +74,7 @@ delivery and Firecracker execution in an isolated qualification environment.
 
 ## Revision qualification
 
-The branch is based on main commit
+The native/process-qualified revision was based on main commit
 `a3e1800e37962a3341ef13703b28a3d3c628191b`. The current managed Operations
 qualification uses source archive SHA-256
 `33bfb31f41301ba90a8e160e8b9ddeb16a318870469fc0381daabeb6eada7703`.
@@ -119,6 +119,11 @@ the same invocation that started the unit. The snapshot cache used bounded
 qualify the reference SSD latency target. After testing, this summary was updated
 and one extra trailing newline was removed from the forward migration. All other
 runtime and client files still match the qualified manifest.
+Before publication, main commit
+`9de1907bd` was integrated to preserve the newer gateway, mirror and MCP
+contracts. The Commit decision was renumbered to ADR-430 because main had
+allocated ADR-428. PR checks cover the integrated revision; the archived
+native/process evidence continues to describe its original source manifest.
 Customer promotion remains gated by the production qualification work above.
 
 ## Scheduler configuration

@@ -115,13 +115,42 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "--token-env", "--stream-tool", "--arguments-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--force", "--token-env", "--stream-tool", "--arguments-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}
 	}
 	if cliHelpGroup(command) != "API" {
 		t.Fatal("MCP not discoverable with API commands")
+	}
+}
+
+func TestMCPDiscoveryReportsRejectedTools(t *testing.T) {
+	oldOut, oldJSON := osStdout, jsonOutput
+	var output bytes.Buffer
+	osStdout, jsonOutput = &output, true
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			w.WriteHeader(403)
+			return
+		}
+		var request struct {
+			ID int `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"bad","inputSchema":{"properties":{"x":{"type":"number","x-mcp-header":"X"}}}},{"name":"good","inputSchema":{"type":"object"}}]}}`, request.ID)
+	}))
+	defer s.Close()
+	for _, command := range []string{"tools", "doctor"} {
+		output.Reset()
+		if code := cmdMCP([]string{command, "--url", s.URL + "/mcp"}); code != 0 {
+			t.Fatalf("%s exit=%d: %s", command, code, output.String())
+		}
+		if !strings.Contains(output.String(), `"rejected_tools"`) || !strings.Contains(output.String(), `"good"`) || !strings.Contains(output.String(), `"reason"`) {
+			t.Fatalf("incomplete %s receipt: %s", command, output.String())
+		}
 	}
 }
 

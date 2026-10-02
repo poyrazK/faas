@@ -20,7 +20,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|call|config [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp init|deploy|doctor|tools|call|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -28,6 +28,10 @@ func cmdMCP(args []string) int {
 		return cmdMCPInit(args[1:])
 	case "deploy":
 		return cmdMCPDeploy(args[1:])
+	case "lock":
+		return cmdMCPLock(args[1:])
+	case "diff":
+		return cmdMCPDiff(args[1:])
 	case "doctor", "tools", "call", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
@@ -182,12 +186,16 @@ func runMCPRemote(ctx context.Context, command string, c *mcphosting.Client, leg
 	if err := c.Initialize(ctx); err != nil {
 		return printErr("MCP initialize", err)
 	}
-	tools, _, err := c.Tools(ctx)
+	tools, discovery, err := c.Tools(ctx)
 	if err != nil {
 		return printErr("MCP tool discovery", err)
 	}
 	if command == "tools" {
-		return jsonOut(writeJSON(map[string]any{"tools": tools}))
+		result := map[string]any{"tools": tools}
+		if len(discovery.RejectedTools) != 0 {
+			result["rejected_tools"] = discovery.RejectedTools
+		}
+		return jsonOut(writeJSON(result))
 	}
 	if tool == "" {
 		return printErr("MCP call", errors.New("--tool is required"))

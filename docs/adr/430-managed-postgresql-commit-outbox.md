@@ -1,4 +1,4 @@
-# ADR-428 · Managed PostgreSQL Commit outbox
+# ADR-430 · Managed PostgreSQL Commit outbox
 
 - **Status:** accepted; customer promotion remains gated
 - **Date:** 2026-10-02

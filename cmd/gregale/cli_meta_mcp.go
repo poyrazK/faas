@@ -21,5 +21,20 @@ func mcpCLICommand() cliCommand {
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
 		{Name: "call", Short: "Execute one discovered tool without automatic retries", Flags: remote, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`}},
 		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
+		{Name: "lock", Short: "Capture a complete tool contract without invoking tools", Flags: []cliFlag{
+			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
+			{Name: "app", Short: "resolve a Gregale app endpoint", Value: "SLUG"},
+			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
+			{Name: "token-env", Short: "environment variable containing a client token", Value: "ENV"},
+			{Name: "legacy", Short: "use protocol 2025-11-25"},
+			{Name: "out", Short: "snapshot destination (default gregale-mcp.lock.json)", Value: "PATH"},
+			{Name: "force", Short: "replace an existing regular snapshot file"},
+			{Name: "timeout", Short: "total discovery timeout (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp lock --app my-mcp --out baseline.json"}},
+		{Name: "diff", Short: "Compare local tool contracts and report changes needing review", Flags: []cliFlag{
+			{Name: "before", Short: "baseline MCP contract snapshot", Value: "PATH", Req: true},
+			{Name: "after", Short: "candidate MCP contract snapshot", Value: "PATH", Req: true},
+			{Name: "check", Short: "fail on breaking changes or changes needing review"},
+		}, Examples: []string{"gregale mcp diff --before baseline.json --after candidate.json --check --json"}},
 	}}
 }
