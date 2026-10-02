@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -7166,8 +7167,12 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 	var f io.ReadCloser
 	var err error
 	if s.sbomStorage != nil {
+		if err = artifactstorage.ValidateArtifactRoute(s.sbomStorage, sbomKey); err != nil {
+			api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
+			return
+		}
 		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
-	} else if s.sbomRoot != "" {
+	} else if s.sbomRoot != "" && !strings.HasPrefix(sbomKey, "regions/") {
 		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
 	} else {
 		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
@@ -7209,11 +7214,10 @@ func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Acco
 	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	clean := filepath.Clean(prov.SBOMStorageKey)
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+	if !region.ValidBuildSBOMKey(app.ComputeRegion, build.ID, prov.SBOMStorageKey) {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	return clean, nil
+	return prov.SBOMStorageKey, nil
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the

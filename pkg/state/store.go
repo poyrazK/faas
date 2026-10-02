@@ -3294,8 +3294,8 @@ type Store interface {
 	// row is created by builderd's recordProvenance — by the time
 	// imaged has the source tree to enumerate, the build is already
 	// marked succeeded and the provenance row is in place. Empty
-	// sbomKey clears the column (best-effort: a syft failure leaves
-	// the cell NULL). Returns ErrNotFound when no row exists for
+	// sbomKey preserves an existing reference when a retry scan/upload fails.
+	// Returns ErrNotFound when no row exists for
 	// buildID; the caller logs at WARN and continues.
 	UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKey string) error
 

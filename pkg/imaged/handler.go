@@ -4457,26 +4457,8 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 
 // --- F2/Issue #299 / ADR-038 Phase 3: SBOM populator seams -------------------
 
-// sbomStorageKeyForDeployment resolves the canonical CycloneDX storage
-// key for a deployment's source tree, or "" when no build row exists
-// for the deployment (issue #299 / ADR-038 Phase 3). The image-only
-// deploy path (app.Type == AppTypeApp on the legacy
-// handleDeployment arm) has no build — the OCI image comes straight
-// from the registry, and a build_provenance row would be empty. We
-// return "" rather than synthesising an empty-key stamp; the build
-// will populate the column on its first cache-hit (builderd calls
-// recordProvenance at every markSucceeded site).
-//
-// When the deployment's source has a build row, the storage key is
-// derived from its build_id:
-//
-//	sboms/<build_id>.cdx.json
-//
-// The convention mirrors BuildSBOMKey() in pkg/imaged/sbom.go (the
-// populator helper). Re-deriving here rather than importing
-// BuildSBOMKey avoids a tiny read-side alias across packages — the
-// field is private, but the key shape is the load-bearing contract
-// the apid GET handler reads back.
+// sbomStorageKeyForDeployment resolves the build's canonical key in its app's
+// immutable compute region. Image-only deployments have no build or SBOM key.
 func (h *Handler) sbomStorageKeyForDeployment(ctx context.Context, deploymentID string) string {
 	if deploymentID == "" {
 		return ""
@@ -4492,7 +4474,15 @@ func (h *Handler) sbomStorageKeyForDeployment(ctx context.Context, deploymentID 
 		}
 		return ""
 	}
-	return BuildSBOMKey(build.ID)
+	dep, err := h.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return ""
+	}
+	app, err := h.store.AppByID(ctx, dep.AppID)
+	if err != nil {
+		return ""
+	}
+	return region.BuildSBOMKey(app.ComputeRegion, build.ID)
 }
 
 // updateBuildProvenanceSBOM stamps the SBOM storage key onto the
@@ -4504,11 +4494,10 @@ func (h *Handler) sbomStorageKeyForDeployment(ctx context.Context, deploymentID 
 // The deployment may not have a build row yet (the image-only
 // arm of handleDeployment) — in that case sbomKey is "" and we
 // skip the lookup entirely. sbomKey == "" also covers the
-// syft-failure case: the build still succeeds, build_provenance
-// is stamped with empty sbom_storage_key, and the apid GET
-// returns 503 build_sbom_unavailable.
+// syft-failure case: the build still succeeds and retains any previously
+// published reference. A build with no successful SBOM returns 503 from apid.
 func (h *Handler) updateBuildProvenanceSBOM(ctx context.Context, deploymentID, sbomKey string) {
-	if deploymentID == "" {
+	if deploymentID == "" || sbomKey == "" {
 		return
 	}
 	build, err := h.store.BuildByDeployment(ctx, deploymentID)

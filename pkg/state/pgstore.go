@@ -11642,6 +11642,9 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 // nullString so an empty input maps to NULL (e.g. cache-hit builds
 // have empty buildkit_version / railpack_version / base_digest).
 func (s *PgStore) CreateBuildProvenance(ctx context.Context, prov BuildProvenance) error {
+	if err := s.validateBuildSBOMKey(ctx, prov.BuildID, prov.SBOMStorageKey); err != nil {
+		return err
+	}
 	return createBuildProvenance(ctx, s.pool, prov)
 }
 
@@ -11709,8 +11712,8 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 // The SBOM populator runs in imaged AFTER the row is created by
 // builderd's recordProvenance: by the time imaged has the source
 // tree to enumerate, the build is already marked succeeded and
-// the provenance row is in place. Empty sbomKey clears the
-// column (best-effort: a syft failure leaves the cell NULL).
+// the provenance row is in place. Empty sbomKey preserves the existing
+// reference so a failed scan or upload on retry cannot hide a published SBOM.
 //
 // Returns ErrNotFound when no row exists for buildID. The imaged
 // call site logs at WARN and continues — the apid GET renders
@@ -11719,13 +11722,18 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 // (a future builderd refactor that doesn't call
 // CreateBuildProvenance) by explicit RowsAffected check.
 func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKey string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update build_provenance set sbom_storage_key = $1 where build_id = $2`,
-		nullString(sbomKey), buildID)
+	if err := s.validateBuildSBOMKey(ctx, buildID, sbomKey); err != nil {
+		return err
+	}
+	id, err := parsePgUUID(buildID)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	changed, err := sqlc.New().PublishBuildSBOM(ctx, s.pool, sqlc.PublishBuildSBOMParams{BuildID: id, SbomKey: sbomKey})
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
 		return ErrNotFound
 	}
 	return nil

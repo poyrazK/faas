@@ -585,6 +585,10 @@ func (b *Builder) emitSBOM(ctx context.Context, in BuildInput, staging string) (
 		// rather than aborting the build — the SBOM is observational.
 		return "", nil
 	}
+
+	if err := storage.ValidateArtifactRoute(in.Storage, in.SBOMStorageKey); err != nil {
+		return "", nil //nolint:nilerr // SBOM publication is best effort; never bypass regional routing.
+	}
 	// SBOM emission is best-effort: a failed syft run, an empty
 	// payload, an invalid JSON document, or a transient storage write
 	// failure must NOT regress the build (the ext4 itself is the

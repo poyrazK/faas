@@ -694,6 +694,10 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 	if in.Storage == nil || in.SBOMStorageKey == "" {
 		return "", nil
 	}
+
+	if err := storage.ValidateArtifactRoute(in.Storage, in.SBOMStorageKey); err != nil {
+		return "", nil //nolint:nilerr // SBOM publication is best effort; never bypass regional routing.
+	}
 	body, _ := in.SBOMRun(ctx, staging) //nolint:nilerr
 	if !json.Valid(body) {
 		return "", nil

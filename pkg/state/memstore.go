@@ -10451,6 +10451,9 @@ func (m *MemStore) CreateBuildProvenance(_ context.Context, prov BuildProvenance
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.validateBuildSBOMKeyLocked(prov.BuildID, prov.SBOMStorageKey); err != nil {
+		return err
+	}
 	if prov.SBOMStorageKey == "" {
 		prov.SBOMStorageKey = m.buildProvenance[prov.BuildID].SBOMStorageKey
 	}
@@ -10481,7 +10484,12 @@ func (m *MemStore) UpdateBuildProvenanceSBOM(_ context.Context, buildID, sbomKey
 	if !ok {
 		return ErrNotFound
 	}
-	p.SBOMStorageKey = sbomKey
+	if err := m.validateBuildSBOMKeyLocked(buildID, sbomKey); err != nil {
+		return err
+	}
+	if sbomKey != "" {
+		p.SBOMStorageKey = sbomKey
+	}
 	m.buildProvenance[buildID] = p
 	return nil
 }

@@ -24408,3 +24408,79 @@ CREATE TRIGGER builds_regional_completion BEFORE INSERT OR UPDATE OF status ON p
 --
 
 CREATE TRIGGER deployments_build_artifact BEFORE INSERT OR UPDATE OF build_artifact_key, build_artifact_sha256, build_artifact_bytes, app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_deployment_build_artifact();
+
+--
+-- Name: enforce_build_sbom_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_build_sbom_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE selected_region text; expected_key text;
+BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.build_id IS NOT DISTINCT FROM OLD.build_id
+       AND NEW.sbom_storage_key IS NOT DISTINCT FROM OLD.sbom_storage_key THEN
+        RETURN NEW; -- Historical references survive unrelated provenance updates.
+    END IF;
+    IF coalesce(NEW.sbom_storage_key, '') = '' THEN
+        RETURN NEW;
+    END IF;
+    SELECT a.compute_region INTO selected_region
+      FROM builds b JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+     WHERE b.id = NEW.build_id FOR SHARE OF b, d, a;
+    expected_key := CASE WHEN selected_region = '' THEN '' ELSE 'regions/' || selected_region || '/' END
+                    || 'sboms/' || NEW.build_id::text || '.cdx.json';
+    IF (selected_region <> '' OR NEW.sbom_storage_key ~ '^regions(/|$)')
+       AND NEW.sbom_storage_key IS DISTINCT FROM expected_key THEN
+        RAISE EXCEPTION 'SBOM must match its build and app compute region'
+            USING ERRCODE = '23514', CONSTRAINT = 'build_provenance_sbom_region';
+    END IF;
+    RETURN NEW;
+END;
+$_$;
+
+--
+-- Name: enforce_regional_sbom_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_regional_sbom_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'builds' THEN
+        IF NEW.deployment_id IS DISTINCT FROM OLD.deployment_id AND EXISTS (
+            SELECT 1 FROM build_provenance p WHERE p.build_id = OLD.id AND p.sbom_storage_key LIKE 'regions/%'
+        ) THEN
+            RAISE EXCEPTION 'regional SBOM build identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'builds_sbom_identity_immutable';
+        END IF;
+    ELSE
+        IF NEW.app_id IS DISTINCT FROM OLD.app_id AND EXISTS (
+            SELECT 1 FROM builds b JOIN build_provenance p ON p.build_id = b.id
+             WHERE b.deployment_id = OLD.id AND p.sbom_storage_key LIKE 'regions/%'
+        ) THEN
+            RAISE EXCEPTION 'regional SBOM app identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'deployments_sbom_identity_immutable';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+--
+-- Name: build_provenance build_provenance_sbom_region; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER build_provenance_sbom_region BEFORE INSERT OR UPDATE OF build_id, sbom_storage_key ON public.build_provenance FOR EACH ROW EXECUTE FUNCTION public.enforce_build_sbom_region();
+
+--
+-- Name: builds builds_sbom_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER builds_sbom_identity BEFORE UPDATE OF deployment_id ON public.builds FOR EACH ROW EXECUTE FUNCTION public.enforce_regional_sbom_identity();
+
+--
+-- Name: deployments deployments_sbom_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_sbom_identity BEFORE UPDATE OF app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_regional_sbom_identity();

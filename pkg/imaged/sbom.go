@@ -9,9 +9,9 @@
 // imaged's role is narrower: on each successful layer write, run
 // syft over the layer's on-disk tree, marshal the resulting CycloneDX
 // 1.5 JSON to bytes, and Put it under the canonical
-// `sboms/<buildID>.cdx.json` storage key. builderd then writes that
-// key into build_provenance.sbom_storage_key at the same time it
-// inserts the rest of the row.
+// `regions/<region>/sboms/<buildID>.cdx.json` storage key (unprefixed for
+// legacy apps). Imaged updates build_provenance.sbom_storage_key after the
+// storage write succeeds; builderd creates the rest of the provenance row.
 //
 // This split keeps the new plumbing localised: imaged owns the
 // filesystem artefact and the storage write; builderd owns the
@@ -35,6 +35,8 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/onebox-faas/faas/pkg/region"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -50,7 +52,7 @@ import (
 // `faas storage cat sboms/<id>.cdx.json` straight from the local
 // filesystem on a single-box deploy.
 func BuildSBOMKey(buildID string) string {
-	return "sboms/" + buildID + ".cdx.json"
+	return region.BuildSBOMKey("", buildID)
 }
 
 // defaultSyftRun shells out to syft and returns the raw CycloneDX
@@ -112,9 +114,8 @@ func (h *Handler) runSyft(ctx context.Context, dir string) ([]byte, error) {
 // writeBuildSBOM runs syft against the build-output directory and
 // persists the CycloneDX 1.5 JSON to the canonical storage key.
 //
-// buildID is the Build.ID row whose build_provenance.sbom_storage_key
-// will be set to BuildSBOMKey(buildID) by builderd at markSucceeded
-// time. outDir is the on-disk directory housing the freshly-built
+// computeRegion is the app's immutable placement; buildID is the Build.ID
+// whose provenance imaged updates after publication. outDir houses the built
 // layer ext4 + customer handler — syft's `dir:` source reads it
 // directly.
 //
@@ -131,10 +132,18 @@ func (h *Handler) runSyft(ctx context.Context, dir string) ([]byte, error) {
 // configured (the test default), the storageFor helper returns a
 // per-handler LocalStorageBackend rooted at appsRoot so the test
 // sees real round-tripped bytes.
-func (h *Handler) writeBuildSBOM(ctx context.Context, buildID, outDir string) (string, error) {
+func (h *Handler) writeBuildSBOM(ctx context.Context, computeRegion, buildID, outDir string) (string, error) {
 	be, err := h.storageFor()
 	if err != nil {
 		return "", fmt.Errorf("imaged: writeBuildSBOM storageFor: %w", err)
+	}
+	sbomKey := region.BuildSBOMKey(computeRegion, buildID)
+	if !region.ValidBuildSBOMKey(computeRegion, buildID, sbomKey) {
+		return "", fmt.Errorf("imaged: invalid build SBOM identity")
+	}
+	if err := storage.ValidateArtifactRoute(be, sbomKey); err != nil {
+		h.log.Warn("imaged: build SBOM route unavailable", "key", sbomKey, "err", err)
+		return "", nil
 	}
 	blob, scanErr := h.runSyft(ctx, outDir)
 	if scanErr != nil || len(blob) == 0 {
@@ -151,7 +160,6 @@ func (h *Handler) writeBuildSBOM(ctx context.Context, buildID, outDir string) (s
 			"build_id", buildID, "bytes", len(blob))
 		return "", nil
 	}
-	sbomKey := BuildSBOMKey(buildID)
 	if err := be.Put(ctx, sbomKey, bytes.NewReader(blob)); err != nil {
 		h.log.Warn("imaged: write build SBOM to storage",
 			"key", sbomKey, "err", err)

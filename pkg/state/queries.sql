@@ -5693,3 +5693,13 @@ SELECT status, started_at FROM builds WHERE id = $1 AND deployment_id = $2 FOR U
 UPDATE deployments SET status = sqlc.arg(next_status)::text
 WHERE id = sqlc.arg(deployment_id)::uuid AND status = sqlc.arg(expected_status)::text
   AND build_artifact_key <> '';
+
+-- name: BuildSBOMRegion :one
+SELECT a.compute_region FROM builds b
+JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+WHERE b.id = $1;
+
+-- name: PublishBuildSBOM :execrows
+UPDATE build_provenance
+SET sbom_storage_key = coalesce(nullif(sqlc.arg(sbom_key)::text, ''), sbom_storage_key)
+WHERE build_id = sqlc.arg(build_id)::uuid;

@@ -48,6 +48,9 @@ func (s *PgStore) CompleteBuildWithArtifact(ctx context.Context, claim Build, pa
 	if !ref.ValidFor(dep.ComputeRegion) || (ref.Key != "" && ref.Bytes != bytes) {
 		return ErrInvalidArgument
 	}
+	if err := validateBuildSBOMReference(dep.ComputeRegion, claim.ID, prov.SBOMStorageKey); err != nil {
+		return err
+	}
 	if err := q.SetBuildCompletionArtifact(ctx, tx, sqlc.SetBuildCompletionArtifactParams{
 		DeploymentID: depID, ArtifactPath: path, RuntimeKey: key, ArtifactBytes: bytes,
 		ExportKey: ref.Key, ExportSha256: ref.SHA256, ExportBytes: ref.Bytes,

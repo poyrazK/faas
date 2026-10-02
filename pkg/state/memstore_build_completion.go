@@ -32,6 +32,9 @@ func (m *MemStore) CompleteBuildWithArtifact(_ context.Context, claim Build, pat
 	if !ref.ValidFor(app.ComputeRegion) || (ref.Key != "" && ref.Bytes != bytes) {
 		return ErrInvalidArgument
 	}
+	if err := validateBuildSBOMReference(app.ComputeRegion, claim.ID, prov.SBOMStorageKey); err != nil {
+		return err
+	}
 	dep.RootfsPath, dep.RootfsKey, dep.RootfsBytes = path, key, bytes
 	dep.BuildArtifactKey, dep.BuildArtifactSHA256, dep.BuildArtifactBytes = ref.Key, ref.SHA256, ref.Bytes
 	b.Status, b.FinishedAt = BuildSucceeded, time.Now()

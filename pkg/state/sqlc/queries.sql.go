@@ -751,6 +751,19 @@ func (q *Queries) BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (Build
 	return i, err
 }
 
+const buildSBOMRegion = `-- name: BuildSBOMRegion :one
+SELECT a.compute_region FROM builds b
+JOIN deployments d ON d.id = b.deployment_id JOIN apps a ON a.id = d.app_id
+WHERE b.id = $1
+`
+
+func (q *Queries) BuildSBOMRegion(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, buildSBOMRegion, id)
+	var compute_region string
+	err := row.Scan(&compute_region)
+	return compute_region, err
+}
+
 const bumpInstanceTailCount = `-- name: BumpInstanceTailCount :one
 update instances
    set tail_count = GREATEST(tail_count + $2, 0)
@@ -15753,6 +15766,25 @@ WHERE observed_at <= $1::timestamptz
 
 func (q *Queries) PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error) {
 	result, err := db.Exec(ctx, pruneTCPListenerTLSObservations, beforeAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const publishBuildSBOM = `-- name: PublishBuildSBOM :execrows
+UPDATE build_provenance
+SET sbom_storage_key = coalesce(nullif($1::text, ''), sbom_storage_key)
+WHERE build_id = $2::uuid
+`
+
+type PublishBuildSBOMParams struct {
+	SbomKey string
+	BuildID pgtype.UUID
+}
+
+func (q *Queries) PublishBuildSBOM(ctx context.Context, db DBTX, arg PublishBuildSBOMParams) (int64, error) {
+	result, err := db.Exec(ctx, publishBuildSBOM, arg.SbomKey, arg.BuildID)
 	if err != nil {
 		return 0, err
 	}

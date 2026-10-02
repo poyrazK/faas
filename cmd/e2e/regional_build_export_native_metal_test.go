@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -145,6 +146,21 @@ func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 	wantKey := region.ArtifactKey(regionID, sched.AppLayerKey(app.Slug, dep.ID))
 	if err != nil || final.BuildArtifactReference() != completed.BuildArtifactReference() || final.RootfsKey != wantKey {
 		t.Fatalf("regional runtime publication lost the export: %+v %v", final, err)
+	}
+	build, err := store.BuildByDeployment(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance, err := store.BuildProvenanceByBuildID(ctx, build.ID)
+	if err != nil || provenance.SBOMStorageKey != region.BuildSBOMKey(regionID, build.ID) {
+		t.Fatalf("regional SBOM reference: %+v %v", provenance, err)
+	}
+	sbom, err := client.GetBuildsIdSbom(ctx, build.ID)
+	var document struct {
+		Format string `json:"bomFormat"`
+	}
+	if err != nil || json.Unmarshal(sbom, &document) != nil || document.Format != "CycloneDX" {
+		t.Fatalf("API cannot serve regional CycloneDX SBOM after producer loss: %v", err)
 	}
 	if err := client.Park(ctx, app.Slug); err != nil {
 		t.Fatal(err)

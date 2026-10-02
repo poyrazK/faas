@@ -61,7 +61,7 @@ func TestWriteBuildSBOM_HappyPath(t *testing.T) {
 	// which builds a per-appsRoot LocalStorageBackend. After Put,
 	// the file should exist at rootDir/sboms/<buildID>.cdx.json with
 	// the byte-exact content.
-	key, err := h.writeBuildSBOM(context.Background(), buildID, outDir)
+	key, err := h.writeBuildSBOM(context.Background(), "", buildID, outDir)
 	if err != nil {
 		t.Fatalf("writeBuildSBOM: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestWriteBuildSBOM_FailClosed(t *testing.T) {
 		},
 	}
 
-	key, err := h.writeBuildSBOM(context.Background(), buildID, outDir)
+	key, err := h.writeBuildSBOM(context.Background(), "", buildID, outDir)
 	if err != nil {
 		t.Fatalf("writeBuildSBOM should swallow syft errors; got err = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestWriteBuildSBOM_RejectsInvalidJSON(t *testing.T) {
 		},
 	}
 
-	key, err := h.writeBuildSBOM(context.Background(), buildID, outDir)
+	key, err := h.writeBuildSBOM(context.Background(), "", buildID, outDir)
 	if err != nil {
 		t.Fatalf("writeBuildSBOM should swallow invalid JSON; got err = %v", err)
 	}

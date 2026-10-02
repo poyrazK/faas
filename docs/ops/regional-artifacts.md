@@ -51,8 +51,8 @@ lifecycle credentials according to each daemon's existing ownership. OCI routes
 use the existing egress policy. Each configured region must use a distinct
 bucket or registry/repository namespace, physically located as intended.
 
-New regional sources, build exports, layers, sidecars, job images, snapshots, and signatures use regional
-keys. Existing deployment/image references keep their original store. The local
+New regional sources, build exports, SBOMs, layers, sidecars, job images, snapshots,
+and signatures use regional keys. Existing deployment/image references keep their original store. The local
 cache retains one shared budget and includes region in every key. A regional
 store failure does not redirect operations to another store. Removing a route
 also blocks cached reads; do not remove it while references in that region remain
@@ -79,9 +79,18 @@ deletion if inventory or reference lookup is incomplete. Drain regional builds
 before installing the export migration and upgrading builderd and imaged
 together. A downgrade refuses to discard persisted regional export references.
 
+Build SBOMs use `regions/<region>/sboms/<build-id>.cdx.json` in the same app
+artifact store. Install the regional SBOM migration and upgrade imaged and apid
+together while regional materialization is drained. Syft must be available on the
+materializing peer. API reads validate both build identity and placement, require
+an explicit route, and return unavailable for historical global references until
+republished. Failed scan/upload retries preserve an existing reference. App
+cleanup deletes the full regional key through the configured artifact backend.
+A downgrade refuses while regional references remain. See ADR-433.
+
 Configure all publishers and consumers, restart them, verify storage access with
 their respective credentials, then run native regional acceptance and resource
 leak checks on the dedicated Linux x86_64/KVM fleet. This file configures runtime
-artifact delivery; source builds require native qualification. Logs/SBOM storage,
-persistent services, regional ingress and control-plane independence require
+artifact delivery; source builds require native qualification. Log archive routing,
+SBOM orphan collection, persistent services, regional ingress and control-plane independence require
 further implementation or qualification.

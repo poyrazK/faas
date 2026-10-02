@@ -68,6 +68,11 @@ func testRegionalBuildExports(t *testing.T, s state.Store) {
 			t.Fatalf("invalid reference accepted: %+v %v", bad, err)
 		}
 	}
+	badProvenance := prov
+	badProvenance.SBOMStorageKey = region.BuildSBOMKey("us-export", b.ID)
+	if err := finish.CompleteBuildWithArtifact(fx.Ctx, claim, "/producer/image.tar", "runtime-key", 42, badProvenance, ref); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("completion accepted wrong-region SBOM: %v", err)
+	}
 	stale := claim
 	stale.StartedAt = stale.StartedAt.Add(-time.Second)
 	if err := finish.CompleteBuildWithArtifact(fx.Ctx, stale, "/stale/image.tar", "stale-key", 42, prov, ref); !errors.Is(err, state.ErrNotFound) {

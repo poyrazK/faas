@@ -81,6 +81,7 @@ type Querier interface {
 	BuildArtifactReferencedForMaterialization(ctx context.Context, db DBTX, buildArtifactKey string) (bool, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
+	BuildSBOMRegion(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
 	// `tail_count` column and return the post-update value. The
 	// GREATEST(…, 0) floor mirrors DecrementInstanceTailCount's safety
@@ -1110,6 +1111,7 @@ type Querier interface {
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
+	PublishBuildSBOM(ctx context.Context, db DBTX, arg PublishBuildSBOMParams) (int64, error)
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
