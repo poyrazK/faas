@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
@@ -130,7 +131,32 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		}
 	}
 	if graphStore, ok := b.intent.(state.EnvironmentGitOpsGraphPreparationStore); ok {
-		if _, err := graphStore.ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan); err != nil {
+		graph, err := graphStore.ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan)
+		if err != nil {
+			return err
+		}
+		if graph.Phase == "prepared" {
+			return b.queueWorkloadQualification(ctx, lease, plan)
+		}
+	}
+	return nil
+}
+
+func (b *environmentGitOpsBackend) queueWorkloadQualification(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) error {
+	store, ok := b.intent.(state.EnvironmentGitOpsQualificationStore)
+	if !ok {
+		return nil
+	}
+	requests, err := store.QueueEnvironmentGitOpsQualification(ctx, lease, plan)
+	if err != nil {
+		return err
+	}
+	for _, request := range requests {
+		if request.Phase != "queued" && (request.LeaseUntil == nil || time.Now().Before(*request.LeaseUntil)) {
+			continue
+		}
+		payload, _ := json.Marshal(map[string]string{"qualification_id": request.ID, "graph_id": request.GraphID, "app_id": request.AppID, "deployment_id": request.DeploymentID})
+		if err := b.server.notif.Notify(ctx, db.NotifyEnvironmentWorkloadQualify, string(payload)); err != nil {
 			return err
 		}
 	}

@@ -1819,6 +1819,24 @@ type EnvironmentWorkloadGraph struct {
 	PreparedAt       pgtype.Timestamptz
 }
 
+type EnvironmentWorkloadQualificationRequest struct {
+	ID                 pgtype.UUID
+	GraphID            pgtype.UUID
+	DeploymentID       pgtype.UUID
+	AppID              pgtype.UUID
+	Resource           string
+	Artifact           []byte
+	FrozenInputs       []byte
+	ExecutionMode      string
+	Phase              string
+	CreatedAt          pgtype.Timestamptz
+	WorkerID           string
+	LeaseToken         string
+	LeaseUntil         pgtype.Timestamptz
+	Attempt            int64
+	ReservedInstanceID pgtype.UUID
+}
+
 type Event struct {
 	ID             int64
 	At             pgtype.Timestamptz

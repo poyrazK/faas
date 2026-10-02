@@ -6729,6 +6729,52 @@ UPDATE environment_workload_graphs SET phase=sqlc.arg(phase)::text,error_code=sq
 WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
 RETURNING *;
 
+-- name: CreateEnvironmentWorkloadQualification :execrows
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+SELECT sqlc.arg(graph_id)::uuid,d.id,d.app_id,sqlc.arg(resource)::text,environment_workload_artifact(d),d.environment_workload_runtime,
+ CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
+ THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+ON CONFLICT(graph_id,resource) DO NOTHING;
+
+-- name: EnvironmentWorkloadQualificationsByGraph :many
+SELECT * FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid ORDER BY resource;
+
+-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
+SELECT s.* FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
+WHERE q.id=sqlc.arg(id)::uuid FOR UPDATE OF s;
+
+-- name: EnvironmentWorkloadQualificationForUpdate :one
+SELECT * FROM environment_workload_qualification_requests WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadGraphByIDForUpdate :one
+SELECT * FROM environment_workload_graphs WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadQualificationArtifactCurrent :one
+SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+ LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid
+ LEFT JOIN deployments d ON d.id=q.deployment_id WHERE m ? 'candidate_deployment_id' AND
+ (q.id IS NULL OR q.artifact IS DISTINCT FROM environment_workload_artifact(d) OR q.frozen_inputs IS DISTINCT FROM d.environment_workload_runtime
+ OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0)) AS current
+FROM environment_workload_qualification_requests target JOIN environment_workload_graphs g ON g.id=target.graph_id WHERE target.id=sqlc.arg(id)::uuid;
+
+-- name: SetEnvironmentWorkloadQualificationContext :one
+SELECT set_config('gregale.gitops_qualification',sqlc.arg(token)::text,true)::text;
+
+-- name: ClaimEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id=sqlc.arg(worker_id)::text,
+ lease_token=sqlc.arg(token)::text,lease_until=clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond',attempt=attempt+1,
+ reserved_instance_id=sqlc.narg(instance_id)::uuid
+WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed')) RETURNING *;
+
+-- name: RenewEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
+WHERE id=sqlc.arg(id)::uuid AND phase='claimed' AND lease_token=sqlc.arg(token)::text AND attempt=sqlc.arg(attempt)::bigint
+ AND lease_until>clock_timestamp() RETURNING *;
+
 -- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,
  source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,

@@ -81,7 +81,10 @@
    activation. The preparation journal now captures every reviewed workload,
    candidate, retained live identity, original queue binding and private consumer.
    Its prepared phase records completed artifacts and grants no execution or
-   activation authority. Retry and crash recovery resume the journaled operation;
+   activation authority. Complete prepared cohorts now publish durable runtime
+   qualification requests with separate bounded execution leases. Scheduler
+   admission, native readiness/smoke receipts, release commands and activation
+   remain to be implemented. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
    Host lifecycle consumers must use the same frozen contract as the guest.
@@ -1027,6 +1030,40 @@ completion, retry identity, rollback of durable handoffs, SQL input/phase/deleti
 fences, substituted queue/consumer IDs, supersession, populated migration replay
 and project/account purges. Native Linux KVM lifecycle acceptance remains required
 for the complete feature; the approved-intent executor remains disabled.
+
+## Qualification publication and attempt authority
+
+After the whole cohort is prepared, apid atomically publishes one qualification
+request per managed candidate and its durable notification. Requests bind the
+original graph, app, logical workload, deployment, immutable rootfs artifact,
+frozen build/runtime inputs and reviewed execution mode. A lost publication
+response reuses the same identities. A failed durable handoff rolls back every
+request in the cohort. Notification payloads contain only the four work identities;
+execution tokens and frozen inputs have no public JSON projection.
+
+Runtime owners claim a separate bounded lease rather than borrow the controller's
+intent lease. Claims and renewals re-read the complete approved graph under source
+and app locks, including inherited settings and all candidate artifacts. A changed
+sibling, failed artifact, superseded revision, suspended source or expired attempt
+revokes the lease. Releasing the apid controller lease retains approved runtime
+work. Each non-job attempt reserves a fresh instance identity, retained on renewal.
+Recovery cannot reuse that identity or replace an instance still in an active
+lifecycle state. PostgreSQL guards request identity, cohort completeness, lease
+duration, worker/attempt substitution and ordinary deletion, including raw SQL.
+The original graph's parent purge releases its requests.
+
+Queued and claimed remain work states. They are not qualification receipts and
+cannot create instances through ordinary paths, mark deployments live or advance
+the applied revision. Dedicated scheduler admission, frozen host lifecycle inputs,
+release-command execution, native readiness/smoke evidence, qualified snapshot
+publication and graph activation remain required. The approved-intent executor
+stays disabled until the complete native serving and recovery gates pass.
+
+Local memory/PostgreSQL and apid checks cover unprepared cohorts, stable retry
+identity, frozen-input isolation, lease expiry/replacement, sibling artifact and
+inherited-setting changes, SQL lease/cohort guards, durable publication rollback,
+populated migration replay, parent purges and the HTTP-reviewed source artifact
+handoff. These checks do not establish native KVM qualification.
 
 ## Review and control workflow
 

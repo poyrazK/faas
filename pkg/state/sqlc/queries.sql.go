@@ -1079,6 +1079,51 @@ func (q *Queries) ClaimEnvironmentGitSourcePoll(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const claimEnvironmentWorkloadQualification = `-- name: ClaimEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET phase='claimed',worker_id=$1::text,
+ lease_token=$2::text,lease_until=clock_timestamp()+$3::bigint*interval '1 microsecond',attempt=attempt+1,
+ reserved_instance_id=$4::uuid
+WHERE id=$5::uuid AND (phase='queued' OR lease_until<=clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=reserved_instance_id AND i.state NOT IN ('parked','stopped','failed')) RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+`
+
+type ClaimEnvironmentWorkloadQualificationParams struct {
+	WorkerID   string
+	Token      string
+	DurationUs int64
+	InstanceID pgtype.UUID
+	ID         pgtype.UUID
+}
+
+func (q *Queries) ClaimEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg ClaimEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error) {
+	row := db.QueryRow(ctx, claimEnvironmentWorkloadQualification,
+		arg.WorkerID,
+		arg.Token,
+		arg.DurationUs,
+		arg.InstanceID,
+		arg.ID,
+	)
+	var i EnvironmentWorkloadQualificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.GraphID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.Resource,
+		&i.Artifact,
+		&i.FrozenInputs,
+		&i.ExecutionMode,
+		&i.Phase,
+		&i.CreatedAt,
+		&i.WorkerID,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.Attempt,
+		&i.ReservedInstanceID,
+	)
+	return i, err
+}
+
 const claimServiceRecovery = `-- name: ClaimServiceRecovery :one
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,
@@ -2252,6 +2297,30 @@ func (q *Queries) CreateEnvironmentWorkloadGraph(ctx context.Context, db DBTX, a
 		arg.ResourceIds,
 	)
 	return err
+}
+
+const createEnvironmentWorkloadQualification = `-- name: CreateEnvironmentWorkloadQualification :execrows
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+SELECT $1::uuid,d.id,d.app_id,$2::text,environment_workload_artifact(d),d.environment_workload_runtime,
+ CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
+ THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+FROM deployments d WHERE d.id=$3::uuid
+ON CONFLICT(graph_id,resource) DO NOTHING
+`
+
+type CreateEnvironmentWorkloadQualificationParams struct {
+	GraphID      pgtype.UUID
+	Resource     string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) CreateEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadQualificationParams) (int64, error) {
+	result, err := db.Exec(ctx, createEnvironmentWorkloadQualification, arg.GraphID, arg.Resource, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createInstance = `-- name: CreateInstance :one
@@ -3869,6 +3938,32 @@ func (q *Queries) EnvironmentSecretReferenceWriteOwned(ctx context.Context, db D
 	return owned, err
 }
 
+const environmentWorkloadGraphByIDForUpdate = `-- name: EnvironmentWorkloadGraphByIDForUpdate :one
+SELECT id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at FROM environment_workload_graphs WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) EnvironmentWorkloadGraphByIDForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadGraph, error) {
+	row := db.QueryRow(ctx, environmentWorkloadGraphByIDForUpdate, id)
+	var i EnvironmentWorkloadGraph
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EnvironmentID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.DefinitionDigest,
+		&i.Members,
+		&i.ResourceIds,
+		&i.Phase,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
 const environmentWorkloadGraphForPreparation = `-- name: EnvironmentWorkloadGraphForPreparation :one
 SELECT id, source_id, environment_id, revision_id, generation, intent_version, plan_hash, definition_digest, members, resource_ids, phase, error_code, created_at, prepared_at FROM environment_workload_graphs WHERE source_id=$1::uuid
  AND generation=$2::bigint AND plan_hash=$3::text FOR UPDATE
@@ -3974,6 +4069,127 @@ func (q *Queries) EnvironmentWorkloadIntentLockSource(ctx context.Context, db DB
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentWorkloadQualificationArtifactCurrent = `-- name: EnvironmentWorkloadQualificationArtifactCurrent :one
+SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
+ LEFT JOIN environment_workload_qualification_requests q ON q.graph_id=g.id AND q.resource=m->>'resource' AND q.deployment_id=(m->>'candidate_deployment_id')::uuid
+ LEFT JOIN deployments d ON d.id=q.deployment_id WHERE m ? 'candidate_deployment_id' AND
+ (q.id IS NULL OR q.artifact IS DISTINCT FROM environment_workload_artifact(d) OR q.frozen_inputs IS DISTINCT FROM d.environment_workload_runtime
+ OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0)) AS current
+FROM environment_workload_qualification_requests target JOIN environment_workload_graphs g ON g.id=target.graph_id WHERE target.id=$1::uuid
+`
+
+func (q *Queries) EnvironmentWorkloadQualificationArtifactCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationArtifactCurrent, id)
+	var current bool
+	err := row.Scan(&current)
+	return current, err
+}
+
+const environmentWorkloadQualificationForUpdate = `-- name: EnvironmentWorkloadQualificationForUpdate :one
+SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id FROM environment_workload_qualification_requests WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) EnvironmentWorkloadQualificationForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationRequest, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationForUpdate, id)
+	var i EnvironmentWorkloadQualificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.GraphID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.Resource,
+		&i.Artifact,
+		&i.FrozenInputs,
+		&i.ExecutionMode,
+		&i.Phase,
+		&i.CreatedAt,
+		&i.WorkerID,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.Attempt,
+		&i.ReservedInstanceID,
+	)
+	return i, err
+}
+
+const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
+WHERE q.id=$1::uuid FOR UPDATE OF s
+`
+
+func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationSourceForUpdate, id)
+	var i EnvironmentGitSource
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RepositoryID,
+		&i.InstallationID,
+		&i.Repository,
+		&i.SourceRef,
+		&i.ManifestPath,
+		&i.Mode,
+		&i.ApprovalPolicy,
+		&i.Prune,
+		&i.Suspended,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.ApprovedRevisionID,
+		&i.AppliedRevisionID,
+		&i.SourceCheckedAt,
+		&i.SourceErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
+	)
+	return i, err
+}
+
+const environmentWorkloadQualificationsByGraph = `-- name: EnvironmentWorkloadQualificationsByGraph :many
+SELECT id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id FROM environment_workload_qualification_requests WHERE graph_id=$1::uuid ORDER BY resource
+`
+
+func (q *Queries) EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error) {
+	rows, err := db.Query(ctx, environmentWorkloadQualificationsByGraph, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadQualificationRequest{}
+	for rows.Next() {
+		var i EnvironmentWorkloadQualificationRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.GraphID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.Resource,
+			&i.Artifact,
+			&i.FrozenInputs,
+			&i.ExecutionMode,
+			&i.Phase,
+			&i.CreatedAt,
+			&i.WorkerID,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.Attempt,
+			&i.ReservedInstanceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -20879,6 +21095,47 @@ func (q *Queries) RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const renewEnvironmentWorkloadQualification = `-- name: RenewEnvironmentWorkloadQualification :one
+UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+$1::bigint*interval '1 microsecond')
+WHERE id=$2::uuid AND phase='claimed' AND lease_token=$3::text AND attempt=$4::bigint
+ AND lease_until>clock_timestamp() RETURNING id, graph_id, deployment_id, app_id, resource, artifact, frozen_inputs, execution_mode, phase, created_at, worker_id, lease_token, lease_until, attempt, reserved_instance_id
+`
+
+type RenewEnvironmentWorkloadQualificationParams struct {
+	DurationUs int64
+	ID         pgtype.UUID
+	Token      string
+	Attempt    int64
+}
+
+func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg RenewEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error) {
+	row := db.QueryRow(ctx, renewEnvironmentWorkloadQualification,
+		arg.DurationUs,
+		arg.ID,
+		arg.Token,
+		arg.Attempt,
+	)
+	var i EnvironmentWorkloadQualificationRequest
+	err := row.Scan(
+		&i.ID,
+		&i.GraphID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.Resource,
+		&i.Artifact,
+		&i.FrozenInputs,
+		&i.ExecutionMode,
+		&i.Phase,
+		&i.CreatedAt,
+		&i.WorkerID,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.Attempt,
+		&i.ReservedInstanceID,
+	)
+	return i, err
+}
+
 const replayDeadLetterInvocation = `-- name: ReplayDeadLetterInvocation :execrows
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
@@ -23293,6 +23550,17 @@ SELECT set_config('gregale.gitops_lease', $1::text, true)::text
 
 func (q *Queries) SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX, leaseToken string) (string, error) {
 	row := db.QueryRow(ctx, setEnvironmentGitOpsLeaseContext, leaseToken)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const setEnvironmentWorkloadQualificationContext = `-- name: SetEnvironmentWorkloadQualificationContext :one
+SELECT set_config('gregale.gitops_qualification',$1::text,true)::text
+`
+
+func (q *Queries) SetEnvironmentWorkloadQualificationContext(ctx context.Context, db DBTX, token string) (string, error) {
+	row := db.QueryRow(ctx, setEnvironmentWorkloadQualificationContext, token)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err

@@ -4,16 +4,35 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type environmentQualificationNotifier struct {
+	Notifier
+	mu       sync.Mutex
+	payloads []string
+}
+
+func (n *environmentQualificationNotifier) Notify(ctx context.Context, channel, payload string) error {
+	if channel == db.NotifyEnvironmentWorkloadQualify {
+		n.mu.Lock()
+		n.payloads = append(n.payloads, payload)
+		n.mu.Unlock()
+	}
+	return n.Notifier.Notify(ctx, channel, payload)
+}
 
 func environmentGitOpsBuildArchive(t *testing.T, definition string) []byte {
 	t.Helper()
@@ -46,6 +65,8 @@ func TestEnvironmentGitOpsHTTPSourceBuildCandidateUsesApprovedArchive(t *testing
 	t.Setenv(scanSpoolRootEnv, t.TempDir())
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")
 	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	qualificationNotifier := &environmentQualificationNotifier{Notifier: srv.notif}
+	srv.notif = qualificationNotifier
 	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {
 		t.Fatal(err)
 	}
@@ -141,5 +162,46 @@ func TestEnvironmentGitOpsHTTPSourceBuildCandidateUsesApprovedArchive(t *testing
 	status, err := client.GetEnvironmentGitOps(t.Context(), "shop", "production")
 	if err != nil || status.Source.AppliedRevisionID != "" {
 		t.Fatalf("unqualified build advanced applied revision: %+v %v", status, err)
+	}
+	// Completing the artifact hands the exact reviewed graph to its runtime
+	// owner. Publication and even a claim are still not serving proof.
+	if err := store.SetDeploymentRootfs(t.Context(), dep.ID, "/reviewed-source.ext4", "reviewed-source", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(t.Context(), dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := backend.VerifyRuntime(t.Context(), lease, plan); err != nil || ready {
+		t.Fatalf("prepared source claimed serving: %v %v", ready, err)
+	}
+	qualificationNotifier.mu.Lock()
+	payloads := append([]string(nil), qualificationNotifier.payloads...)
+	qualificationNotifier.mu.Unlock()
+	if len(payloads) != 1 {
+		t.Fatalf("prepared source qualification handoff count: %d", len(payloads))
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(payloads[0]), &payload); err != nil || len(payload) != 4 || payload["qualification_id"] == "" || payload["graph_id"] == "" || payload["app_id"] != app.ID || payload["deployment_id"] != dep.ID {
+		t.Fatalf("qualification handoff identities: %s %v", payloads[0], err)
+	}
+	if ready, err := backend.VerifyRuntime(t.Context(), lease, plan); err != nil || ready || github.fetches != fetches {
+		t.Fatalf("qualification retry changed preparation: %v %v", ready, err)
+	}
+	qualificationNotifier.mu.Lock()
+	retryPayload := qualificationNotifier.payloads[len(qualificationNotifier.payloads)-1]
+	qualificationNotifier.mu.Unlock()
+	if retryPayload != payloads[0] {
+		t.Fatal("retry changed the durable qualification identity")
+	}
+	claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), payload["qualification_id"], "scheduler", time.Minute)
+	if err != nil || claimed.DeploymentID != dep.ID || claimed.ReservedInstanceID == "" {
+		t.Fatalf("claim prepared source qualification: %+v %v", claimed, err)
+	}
+	if ready, err := backend.VerifyRuntime(t.Context(), lease, plan); err != nil || ready {
+		t.Fatalf("claimed source qualification became serving proof: %v %v", ready, err)
+	}
+	status, err = client.GetEnvironmentGitOps(t.Context(), "shop", "production")
+	if err != nil || status.Source.AppliedRevisionID != "" {
+		t.Fatalf("qualification claim advanced applied revision: %+v %v", status, err)
 	}
 }

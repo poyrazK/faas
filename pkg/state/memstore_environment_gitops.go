@@ -10,22 +10,23 @@ import (
 )
 
 type environmentGitOpsMemory struct {
-	source    EnvironmentGitSource
-	revisions map[string]EnvironmentDesiredRevision
-	runs      map[string]EnvironmentGitOpsRun
-	runTokens map[string]string
-	next      time.Time
-	lease     *EnvironmentGitOpsLease
-	attempts  int
-	resources map[string]string
-	queues    map[string]string
-	owners    map[string]environmentsync.Ownership
-	overrides map[string]environmentsync.Override
-	effects   map[string]EnvironmentGitOpsEffect
-	runtime   map[string]EnvironmentGitOpsRuntimeEffect
-	graphs    map[string]EnvironmentWorkloadGraph
-	poll      environmentGitSourcePoll
-	approvals map[string]EnvironmentGitRevisionApproval
+	source         EnvironmentGitSource
+	revisions      map[string]EnvironmentDesiredRevision
+	runs           map[string]EnvironmentGitOpsRun
+	runTokens      map[string]string
+	next           time.Time
+	lease          *EnvironmentGitOpsLease
+	attempts       int
+	resources      map[string]string
+	queues         map[string]string
+	owners         map[string]environmentsync.Ownership
+	overrides      map[string]environmentsync.Override
+	effects        map[string]EnvironmentGitOpsEffect
+	runtime        map[string]EnvironmentGitOpsRuntimeEffect
+	graphs         map[string]EnvironmentWorkloadGraph
+	qualifications map[string]EnvironmentWorkloadQualificationRequest
+	poll           environmentGitSourcePoll
+	approvals      map[string]EnvironmentGitRevisionApproval
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)

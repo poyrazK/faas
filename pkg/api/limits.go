@@ -58,6 +58,12 @@ const EnvironmentGitApprovalMaxAssociatedPRs = 100
 const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
 const EnvironmentGitOpsMaxDeclaredRoutes = 50
 
+// Qualification is separately leased from intent reconciliation. An expired
+// executor cannot publish evidence for a later attempt.
+const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
+const EnvironmentGitOpsQualificationMaxLeaseDuration = 15 * time.Minute
+const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
+
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
 const (

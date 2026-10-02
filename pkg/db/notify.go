@@ -676,6 +676,9 @@ const (
 	// for a held GitOps candidate. The deployment row carries its authority;
 	// receiving this event never authorizes priming or live activation.
 	NotifyEnvironmentWorkloadImage = "environment_workload_image"
+	// Qualification work names a prepared graph; it carries no execution
+	// token and cannot be replayed as an ordinary deployment prime.
+	NotifyEnvironmentWorkloadQualify = "environment_workload_qualify"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from
 	// deployment_changed: account SSE subscribers must never receive the token.
