@@ -137,6 +137,9 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	if b.NodeID != i.NodeID || b.Incarnation != i.Incarnation {
 		return empty, 0, "", runtimeadmission.ErrStale
 	}
+	if b.ProtocolVersion > i.ProtocolVersion {
+		return empty, 0, "", runtimeadmission.ErrUnavailable
+	}
 	var wr fcvm.WakeRequest
 	var app *vmmdpb.AppSpec
 	method := vmmdpb.WakeMethod_WAKE_COLD_BOOT
@@ -172,6 +175,12 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	wr.ArtifactSources, err = runtimeadmission.ArtifactSourcesFromProto(req.ArtifactSources)
 	if err != nil || fcvm.CheckWakeArtifactSources(wr) != nil {
 		return empty, 0, "", runtimeadmission.ErrInvalid
+	}
+	if b.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
+		actual, err := runtimeadmission.HashArtifactSources(wr.ArtifactSources)
+		if err != nil || actual != b.ArtifactSourcesHash || wr.KeepPaused {
+			return empty, 0, "", runtimeadmission.ErrInvalid
+		}
 	}
 	nativeHash, err := fcvm.NativeWakeInputHash(wr)
 	if err != nil {

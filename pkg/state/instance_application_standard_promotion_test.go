@@ -80,7 +80,7 @@ func standardPromotionLifecycle(t *testing.T, s standardRuntimeCaptureTestStore)
 	t.Helper()
 	f, warm, parent := promotionTestParent(t, s)
 	loaded, err := s.GetInstanceApplicationStandardWarmParent(t.Context(), warm.ID)
-	if err != nil || loaded != parent {
+	if err != nil || !loaded.Equal(parent) {
 		t.Fatalf("paused lease: %+v %v", loaded, err)
 	}
 	if _, err := s.PublishInstanceRuntime(t.Context(), warm.ID, warm.State, warm.Netns, warm.HostIP, warm.GuestUID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
@@ -91,7 +91,7 @@ func standardPromotionLifecycle(t *testing.T, s standardRuntimeCaptureTestStore)
 		t.Fatal(err)
 	}
 	again, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), p)
-	if err != nil || again != p {
+	if err != nil || !again.Equal(p) {
 		t.Fatalf("saved grant retry changed: %+v %v", again, err)
 	}
 	if _, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent)); !errors.Is(err, ErrConflict) {

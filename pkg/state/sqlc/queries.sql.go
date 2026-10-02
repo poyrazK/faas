@@ -19369,16 +19369,18 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 }
 
 const registerComputeNodeRuntimeIdentity = `-- name: RegisterComputeNodeRuntimeIdentity :execrows
-UPDATE compute_nodes SET vmmd_incarnation=$1::uuid WHERE id=$2::uuid
+UPDATE compute_nodes SET vmmd_incarnation=$1::uuid,
+vmmd_admission_protocol=$2::smallint WHERE id=$3::uuid
 `
 
 type RegisterComputeNodeRuntimeIdentityParams struct {
-	Incarnation pgtype.UUID
-	NodeID      pgtype.UUID
+	Incarnation     pgtype.UUID
+	ProtocolVersion int16
+	NodeID          pgtype.UUID
 }
 
 func (q *Queries) RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error) {
-	result, err := db.Exec(ctx, registerComputeNodeRuntimeIdentity, arg.Incarnation, arg.NodeID)
+	result, err := db.Exec(ctx, registerComputeNodeRuntimeIdentity, arg.Incarnation, arg.ProtocolVersion, arg.NodeID)
 	if err != nil {
 		return 0, err
 	}

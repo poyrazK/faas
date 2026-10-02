@@ -18,6 +18,15 @@ type Promotion struct {
 	Parent  Receipt `json:"parent"`
 }
 
+func (p Promotion) Equal(other Promotion) bool {
+	return p.Binding == other.Binding && p.Parent.Equal(other.Parent)
+}
+
+func (p Promotion) Clone() Promotion {
+	p.Parent = p.Parent.Clone()
+	return p
+}
+
 func HashPromotionPayload(req *vmmdpb.PromoteAdmittedRuntimeRequest) (string, error) {
 	if req == nil || req.Parent == nil || RejectUnknown(req) != nil {
 		return "", ErrInvalid

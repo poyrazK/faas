@@ -2366,6 +2366,8 @@ message RuntimeBootBinding {
   int64 egress_revision = 13;
   int64 issued_at_unix_nano = 14;
   int64 expires_at_unix_nano = 15;
+  // Protocol 2 binds the complete canonical producer source set.
+  string artifact_sources_hash = 16;
 }
 
 message CreateAdmittedRuntimeRequest {
@@ -2397,6 +2399,26 @@ message RuntimeBootReceipt {
   WakeMethod method = 6;
   bool paused = 7;
   int64 completed_at_unix_nano = 8;
+  // Protocol 1 never gains artifact authority from this field.
+  RuntimeArtifactConsumption artifact_consumption = 9;
+}
+
+message RuntimeArtifactConsumption {
+  string config_hash = 1;
+  uint32 process_pid = 2;
+  string process_start = 3;
+  repeated RuntimeConsumedDrive drives = 4;
+}
+
+message RuntimeConsumedDrive {
+  RuntimeArtifactSource source = 1;
+  string drive_id = 2;
+  bool read_only = 3;
+  bool root_device = 4;
+  string producer_digest = 5;
+  int64 producer_bytes = 6;
+  string injected_digest = 7;
+  int64 injected_bytes = 8;
 }
 
 message CreateAdmittedRuntimeResponse {

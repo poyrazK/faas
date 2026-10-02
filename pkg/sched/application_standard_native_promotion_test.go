@@ -83,7 +83,7 @@ func TestApplicationStandardNativeWarmPromotionRequiresDurableFreshGrant(t *test
 			warm := rows[0]
 			v.beforePromotion = func(p runtimeadmission.Promotion) {
 				saved, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), p)
-				if err != nil || saved != p || p.Binding.Token == p.Parent.Binding.Token {
+				if err != nil || !saved.Equal(p) || p.Binding.Token == p.Parent.Binding.Token {
 					t.Fatalf("resume preceded saved fresh grant: %+v %v", saved, err)
 				}
 				if restart {

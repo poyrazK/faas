@@ -40,7 +40,7 @@ func TestPgInstanceApplicationStandardPromotionAfterInitialGrantExpiry(t *testin
 	}
 	time.Sleep(time.Until(time.Unix(0, b.ExpiresAtUnixNano)) + time.Millisecond)
 	loaded, err := s.GetInstanceApplicationStandardWarmParent(t.Context(), ins.ID)
-	if err != nil || loaded != parent {
+	if err != nil || !loaded.Equal(parent) {
 		t.Fatalf("healthy paused identity expired with boot authority: %+v %v", loaded, err)
 	}
 	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))

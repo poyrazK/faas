@@ -49,7 +49,7 @@ func (m *Manager) RuntimeAdmissionIdentity() (runtimeadmission.Identity, error) 
 	if m.runtimeAdmissionIncarnation == "" {
 		m.runtimeAdmissionIncarnation = uuid.NewString()
 	}
-	identity := runtimeadmission.Identity{ProtocolVersion: runtimeadmission.ProtocolVersion, NodeID: m.runtimeAdmissionNodeID, Incarnation: m.runtimeAdmissionIncarnation}
+	identity := runtimeadmission.Identity{ProtocolVersion: m.runtimeAdmissionProtocol(), NodeID: m.runtimeAdmissionNodeID, Incarnation: m.runtimeAdmissionIncarnation}
 	if err := identity.Validate(); err != nil {
 		return runtimeadmission.Identity{}, err
 	}
@@ -103,18 +103,8 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 	if err != nil {
 		return nil, runtimeadmission.Receipt{}, err
 	}
-	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
-		return nil, runtimeadmission.Receipt{}, runtimeadmission.ErrStale
-	}
-	req, err := cloneAdmittedWake(request.Request)
+	req, hash, err := m.prepareAdmittedInputs(request, identity)
 	if err != nil {
-		return nil, runtimeadmission.Receipt{}, err
-	}
-	hash, err := NativeWakeInputHash(req)
-	if err != nil || hash != request.NativeInputHash || req.Instance != binding.InstanceID || req.AppID != binding.AppID || req.DeploymentID != binding.DeploymentID || req.AccountID != binding.AccountID || req.ExecutionOnly || req.AppTaskOnly || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.KeepPaused && req.Snapshot == nil {
-		return nil, runtimeadmission.Receipt{}, runtimeadmission.ErrInvalid
-	}
-	if err := m.checkAdmittedArtifactSources(req); err != nil {
 		return nil, runtimeadmission.Receipt{}, err
 	}
 	flightCtx, cancel := context.WithDeadline(ctx, time.Unix(0, binding.ExpiresAtUnixNano))
@@ -134,16 +124,52 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 	if err != nil {
 		return nil, runtimeadmission.Receipt{}, err
 	}
+	return m.finishAdmittedWake(ctx, flightCtx, binding, hash, req, inst, flight)
+}
+
+func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity runtimeadmission.Identity) (WakeRequest, string, error) {
+	binding := request.Binding
+	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
+		return WakeRequest{}, "", runtimeadmission.ErrStale
+	}
+	if binding.ProtocolVersion > identity.ProtocolVersion {
+		return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+	}
+	req, err := cloneAdmittedWake(request.Request)
+	if err != nil {
+		return WakeRequest{}, "", err
+	}
+	hash, err := NativeWakeInputHash(req)
+	if err != nil || hash != request.NativeInputHash || req.Instance != binding.InstanceID || req.AppID != binding.AppID || req.DeploymentID != binding.DeploymentID || req.AccountID != binding.AccountID || req.ExecutionOnly || req.AppTaskOnly || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.KeepPaused && req.Snapshot == nil {
+		return WakeRequest{}, "", runtimeadmission.ErrInvalid
+	}
+	if err := m.checkAdmittedArtifactSources(req); err != nil {
+		return WakeRequest{}, "", err
+	}
+	if err := checkAdmittedArtifactHash(binding, req); err != nil {
+		return WakeRequest{}, "", err
+	}
+	return req, hash, nil
+}
+
+func (m *Manager) finishAdmittedWake(ctx, flightCtx context.Context, binding runtimeadmission.Binding, hash string, req WakeRequest, inst *Instance, flight *runtimeAdmissionFlight) (*Instance, runtimeadmission.Receipt, error) {
+	consumption, err := m.admittedArtifactConsumption(flightCtx, binding, inst)
 	// Cancellation/expiry after readiness still refuses a receipt and destroys
 	// the VM. Finish the flight first so cleanup cannot wait on its own caller.
 	m.mu.Lock()
 	completedAt := time.Now()
-	err = binding.Validate(completedAt)
+	if err == nil {
+		err = binding.Validate(completedAt)
+	}
 	if err == nil {
 		err = flightCtx.Err()
 	}
 	if err == nil && m.live[req.Instance] != inst {
 		err = runtimeadmission.ErrStale
+	}
+	receipt := admittedWakeReceipt(binding, hash, inst, consumption, completedAt)
+	if err == nil {
+		err = receipt.Check(binding, completedAt)
 	}
 	if err != nil {
 		m.mu.Unlock()
@@ -152,16 +178,19 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 		defer cleanupCancel()
 		return nil, runtimeadmission.Receipt{}, errors.Join(err, m.Destroy(cleanupCtx, req.Instance))
 	}
-	method := vmmdpb.WakeMethod_WAKE_COLD_BOOT
-	if inst.Method == WakeRestore {
-		method = vmmdpb.WakeMethod_WAKE_RESTORE
-	}
-	receipt := runtimeadmission.Receipt{Binding: binding, NativeInputHash: hash, Netns: inst.Net.Netns, HostIP: inst.Lease.HostIP.String(), LeaseUID: int32(inst.Lease.UID), Method: method, Paused: inst.Paused, CompletedAtUnixNano: completedAt.UnixNano()}
-	inst.runtimeAdmissionReceipt = receipt
+	inst.runtimeAdmissionReceipt = receipt.Clone()
 	inst.runtimeAdmissionEgress = WakeRequest{AppID: req.AppID, Plan: req.Plan, EgressAllowlist: slices.Clone(req.EgressAllowlist), EgressPorts: slices.Clone(req.EgressPorts)}
 	m.finishRuntimeAdmissionFlightLocked(req.Instance, flight)
 	m.mu.Unlock()
 	return inst, receipt, nil
+}
+
+func admittedWakeReceipt(binding runtimeadmission.Binding, hash string, inst *Instance, consumption runtimeadmission.ArtifactConsumption, completedAt time.Time) runtimeadmission.Receipt {
+	method := vmmdpb.WakeMethod_WAKE_COLD_BOOT
+	if inst.Method == WakeRestore {
+		method = vmmdpb.WakeMethod_WAKE_RESTORE
+	}
+	return runtimeadmission.Receipt{Binding: binding, NativeInputHash: hash, Netns: inst.Net.Netns, HostIP: inst.Lease.HostIP.String(), LeaseUID: int32(inst.Lease.UID), Method: method, Paused: inst.Paused, CompletedAtUnixNano: completedAt.UnixNano(), ArtifactConsumption: consumption}
 }
 
 func (m *Manager) consumeRuntimeAdmission(binding runtimeadmission.Binding, flight *runtimeAdmissionFlight) error {

@@ -359,8 +359,9 @@ recovery does not issue a new grant or renew an old clock.
 Producer metadata alone neither authenticates current publisher
 approval nor proves actual file consumption. Runtime-default bases without an
 explicit producer binding remain unapproved, and source-build publisher
-authority, content-aware native grants and consumed-byte acknowledgments remain
-release gates. No consumer observation or public activation follows this change.
+authority and dedicated native consumption acceptance remain release gates.
+Protocol 2 now carries content-bound grants and measured drive receipts, as
+described below. No observed adoption or public activation follows this change.
 
 Native initial boot and warm promotion now recheck current component evidence
 inside their existing owner/control/artifact and explicit-base fences. Go
@@ -496,12 +497,22 @@ fixtures establish refusal behavior, while Linux process and dedicated two-VM
 Firecracker tests cover real descriptor access and shared-base/private-main
 teardown. Those Linux/native tests have not yet run on the acceptance host.
 
-These native-derived in-memory facts are not durable standard adoption. No source
-receipt is echoed as image consumption or observed adoption. The protocol-1
-native input digest includes delivered source identities but retains its original
-meaning; it does not encode these final drive or process observations. A versioned
-grant/receipt contract, exact source-set binding and atomic durable publication
-are still required. Whole guest-overlay scans,
+Protocol 2 now binds the complete captured source set with a canonical,
+length-framed SHA-256 hash. Native capability registration saves the supported
+protocol with the process incarnation. The scheduler prepares that source hash
+before issuing its immutable grant. vmmd returns measured config, process and
+drive facts after readiness; missing or changed observations destroy the boot
+and return no receipt. Returned facts own their slices independently of saved
+history. PostgreSQL and MemStore refuse incomplete source sets, unsupported
+protocols, changed process identities and invalid measured facts. Receipt and
+runtime publication commit together, including through the raw SQL fence.
+
+The protocol-1 native input digest includes delivered source identities and
+retains its original meaning; it cannot acknowledge consumed artifacts. Protocol
+2 currently authorizes unpaused verified cold boots. Snapshot restore and warm
+promotion still require separately frozen artifact lineage. Neither receipt
+advances observed standard adoption or acknowledges log delivery or live egress.
+Whole guest-overlay scans,
 default-base and source-build publisher approval, snapshot lineage, durable
 consumer acknowledgments, full daemon restart recovery, and
 dedicated Linux ext4/KVM/leakcheck acceptance remain release gates. Public standard
@@ -556,9 +567,11 @@ successful native return. Receipts come from the backend and bind the actual
 lease UID, host IP, namespace, boot method and paused state. Both wire boundaries
 validate them and clean up a successful boot with a malformed acknowledgment.
 
-Managed cold boots, initial snapshot prime and snapshot restores now save an
+The protocol-1 path for managed cold boots, initial snapshot prime and restores saves an
 immutable private grant before invoking the native capability. Initial warm
-restores use the same protocol with explicit paused intent. Storage owns the
+restores retain that protocol with explicit paused intent. Protocol 2 currently
+requires unpaused verified cold boot and separate complete source membership.
+Storage owns the
 issue/expiry clock; grants bind the captured node, actual durable egress revision
 and native process incarnation registered by vmmd before serving. The complete
 egress projection is installed through its revisioned RPC before the boot.
@@ -609,9 +622,10 @@ local process without registered native identity or an older native backend
 refuses managed admission before allocation. Native process registration does
 not query inherited customer intent.
 
-This remains partial enforcement. The grant/receipt alone does not attest artifact
-content, log delivery, established-flow tightening or all live-instance egress
-convergence, and it never advances an observed standard revision. App tasks,
+This remains partial enforcement. Protocol 2 binds measured native drive
+handoffs; log delivery, established-flow tightening and all live-instance egress
+convergence still require consumer acknowledgments. Neither protocol advances
+an observed standard revision. App tasks,
 migration attempt authority, restart reconciliation and existing gateway revocation
 remain acceptance work. Dedicated native x86_64 KVM and leakcheck evidence is
 still required.

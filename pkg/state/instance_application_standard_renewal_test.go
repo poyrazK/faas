@@ -119,7 +119,7 @@ func standardArtifactRenewalPromotion(t *testing.T, s nativeArtifactTestStore) {
 	}
 	in = publishRenewedStandardScan(t, s, in, "LOW")
 	loaded, err := s.GetInstanceApplicationStandardWarmParent(t.Context(), ins.ID)
-	if err != nil || loaded != parent {
+	if err != nil || !loaded.Equal(parent) {
 		t.Fatalf("main scan renewal invalidated paused history: %v", err)
 	}
 	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))

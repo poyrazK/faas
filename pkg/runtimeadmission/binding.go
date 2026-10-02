@@ -31,7 +31,7 @@ type Identity struct {
 }
 
 func (i Identity) Validate() error {
-	if i.ProtocolVersion != ProtocolVersion || !canonicalUUID(i.NodeID) || !canonicalUUID(i.Incarnation) {
+	if !supportedProtocol(i.ProtocolVersion) || !canonicalUUID(i.NodeID) || !canonicalUUID(i.Incarnation) {
 		return ErrUnavailable
 	}
 	return nil
@@ -39,25 +39,26 @@ func (i Identity) Validate() error {
 
 // Binding is comparable so all grant fields must match an acknowledgment.
 type Binding struct {
-	ProtocolVersion   uint32 `json:"protocol_version"`
-	Token             string `json:"token"`
-	InstanceID        string `json:"instance_id"`
-	AppID             string `json:"app_id"`
-	DeploymentID      string `json:"deployment_id"`
-	AccountID         string `json:"account_id"`
-	NodeID            string `json:"node_id"`
-	Incarnation       string `json:"incarnation"`
-	DesiredRevision   int64  `json:"desired_revision"`
-	EffectiveHash     string `json:"effective_hash"`
-	CapturedInputHash string `json:"captured_input_hash"`
-	PayloadHash       string `json:"payload_hash"`
-	EgressRevision    int64  `json:"egress_revision"`
-	IssuedAtUnixNano  int64  `json:"issued_at_unix_nano"`
-	ExpiresAtUnixNano int64  `json:"expires_at_unix_nano"`
+	ProtocolVersion     uint32 `json:"protocol_version"`
+	Token               string `json:"token"`
+	InstanceID          string `json:"instance_id"`
+	AppID               string `json:"app_id"`
+	DeploymentID        string `json:"deployment_id"`
+	AccountID           string `json:"account_id"`
+	NodeID              string `json:"node_id"`
+	Incarnation         string `json:"incarnation"`
+	DesiredRevision     int64  `json:"desired_revision"`
+	EffectiveHash       string `json:"effective_hash"`
+	CapturedInputHash   string `json:"captured_input_hash"`
+	PayloadHash         string `json:"payload_hash"`
+	EgressRevision      int64  `json:"egress_revision"`
+	IssuedAtUnixNano    int64  `json:"issued_at_unix_nano"`
+	ExpiresAtUnixNano   int64  `json:"expires_at_unix_nano"`
+	ArtifactSourcesHash string `json:"artifact_sources_hash,omitempty"`
 }
 
 func (b Binding) Validate(now time.Time) error {
-	if b.ProtocolVersion != ProtocolVersion || b.DesiredRevision <= 0 || b.EgressRevision <= 0 {
+	if !supportedProtocol(b.ProtocolVersion) || b.DesiredRevision <= 0 || b.EgressRevision <= 0 || !b.validArtifactProtocol() {
 		return ErrInvalid
 	}
 	for _, id := range []string{b.Token, b.InstanceID, b.AppID, b.DeploymentID, b.AccountID, b.NodeID, b.Incarnation} {
@@ -80,6 +81,14 @@ func (b Binding) Validate(now time.Time) error {
 	return nil
 }
 
+func supportedProtocol(version uint32) bool {
+	return version == ProtocolVersion || version == ArtifactProtocolVersion
+}
+
+func (b Binding) validArtifactProtocol() bool {
+	return b.ProtocolVersion == ProtocolVersion && b.ArtifactSourcesHash == "" || b.ProtocolVersion == ArtifactProtocolVersion && ValidHash(b.ArtifactSourcesHash)
+}
+
 func canonicalUUID(value string) bool {
 	id, err := uuid.Parse(value)
 	return err == nil && id != uuid.Nil && id.String() == value
@@ -94,25 +103,26 @@ func ValidHash(value string) bool {
 }
 
 func (b Binding) ToProto() *vmmdpb.RuntimeBootBinding {
-	return &vmmdpb.RuntimeBootBinding{ProtocolVersion: b.ProtocolVersion, Token: b.Token, InstanceId: b.InstanceID, AppId: b.AppID, DeploymentId: b.DeploymentID, AccountId: b.AccountID, NodeId: b.NodeID, Incarnation: b.Incarnation, DesiredRevision: b.DesiredRevision, EffectiveHash: b.EffectiveHash, CapturedInputHash: b.CapturedInputHash, PayloadHash: b.PayloadHash, EgressRevision: b.EgressRevision, IssuedAtUnixNano: b.IssuedAtUnixNano, ExpiresAtUnixNano: b.ExpiresAtUnixNano}
+	return &vmmdpb.RuntimeBootBinding{ProtocolVersion: b.ProtocolVersion, Token: b.Token, InstanceId: b.InstanceID, AppId: b.AppID, DeploymentId: b.DeploymentID, AccountId: b.AccountID, NodeId: b.NodeID, Incarnation: b.Incarnation, DesiredRevision: b.DesiredRevision, EffectiveHash: b.EffectiveHash, CapturedInputHash: b.CapturedInputHash, PayloadHash: b.PayloadHash, EgressRevision: b.EgressRevision, IssuedAtUnixNano: b.IssuedAtUnixNano, ExpiresAtUnixNano: b.ExpiresAtUnixNano, ArtifactSourcesHash: b.ArtifactSourcesHash}
 }
 
 func BindingFromProto(p *vmmdpb.RuntimeBootBinding) (Binding, error) {
-	if p == nil {
+	if p == nil || RejectUnknown(p) != nil {
 		return Binding{}, ErrInvalid
 	}
-	return Binding{ProtocolVersion: p.ProtocolVersion, Token: p.Token, InstanceID: p.InstanceId, AppID: p.AppId, DeploymentID: p.DeploymentId, AccountID: p.AccountId, NodeID: p.NodeId, Incarnation: p.Incarnation, DesiredRevision: p.DesiredRevision, EffectiveHash: p.EffectiveHash, CapturedInputHash: p.CapturedInputHash, PayloadHash: p.PayloadHash, EgressRevision: p.EgressRevision, IssuedAtUnixNano: p.IssuedAtUnixNano, ExpiresAtUnixNano: p.ExpiresAtUnixNano}, nil
+	return Binding{ProtocolVersion: p.ProtocolVersion, Token: p.Token, InstanceID: p.InstanceId, AppID: p.AppId, DeploymentID: p.DeploymentId, AccountID: p.AccountId, NodeID: p.NodeId, Incarnation: p.Incarnation, DesiredRevision: p.DesiredRevision, EffectiveHash: p.EffectiveHash, CapturedInputHash: p.CapturedInputHash, PayloadHash: p.PayloadHash, EgressRevision: p.EgressRevision, IssuedAtUnixNano: p.IssuedAtUnixNano, ExpiresAtUnixNano: p.ExpiresAtUnixNano, ArtifactSourcesHash: p.ArtifactSourcesHash}, nil
 }
 
 type Receipt struct {
-	Binding             Binding           `json:"binding"`
-	NativeInputHash     string            `json:"native_input_hash"`
-	Netns               string            `json:"netns"`
-	HostIP              string            `json:"host_ip"`
-	LeaseUID            int32             `json:"lease_uid"`
-	Method              vmmdpb.WakeMethod `json:"method"`
-	Paused              bool              `json:"paused"`
-	CompletedAtUnixNano int64             `json:"completed_at_unix_nano"`
+	Binding             Binding             `json:"binding"`
+	NativeInputHash     string              `json:"native_input_hash"`
+	Netns               string              `json:"netns"`
+	HostIP              string              `json:"host_ip"`
+	LeaseUID            int32               `json:"lease_uid"`
+	Method              vmmdpb.WakeMethod   `json:"method"`
+	Paused              bool                `json:"paused"`
+	CompletedAtUnixNano int64               `json:"completed_at_unix_nano"`
+	ArtifactConsumption ArtifactConsumption `json:"artifact_consumption,omitzero"`
 }
 
 func (r Receipt) Check(binding Binding, now time.Time) error {
@@ -130,20 +140,47 @@ func (r Receipt) Check(binding Binding, now time.Time) error {
 	if completed.Before(time.Unix(0, binding.IssuedAtUnixNano).Add(-api.ApplicationStandardRuntimeAdmissionClockSkew)) || completed.After(now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew)) || r.CompletedAtUnixNano >= binding.ExpiresAtUnixNano {
 		return ErrInvalid
 	}
-	return nil
+	return r.checkArtifactProtocol()
+}
+
+func (r Receipt) checkArtifactProtocol() error {
+	if r.Binding.ProtocolVersion == ProtocolVersion {
+		if !r.ArtifactConsumption.IsZero() {
+			return ErrInvalid
+		}
+		return nil
+	}
+	// Snapshot artifacts and warm promotion require separate frozen lineage.
+	if r.Paused || r.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		return ErrUnavailable
+	}
+	return r.ArtifactConsumption.Check(r.Binding.ArtifactSourcesHash)
+}
+
+func (r Receipt) Equal(other Receipt) bool {
+	return r.Binding == other.Binding && r.NativeInputHash == other.NativeInputHash && r.Netns == other.Netns && r.HostIP == other.HostIP && r.LeaseUID == other.LeaseUID && r.Method == other.Method && r.Paused == other.Paused && r.CompletedAtUnixNano == other.CompletedAtUnixNano && r.ArtifactConsumption.Equal(other.ArtifactConsumption)
+}
+
+func (r Receipt) Clone() Receipt {
+	r.ArtifactConsumption = r.ArtifactConsumption.Clone()
+	return r
 }
 
 func (r Receipt) ToProto() *vmmdpb.RuntimeBootReceipt {
-	return &vmmdpb.RuntimeBootReceipt{Binding: r.Binding.ToProto(), NativeInputHash: r.NativeInputHash, Netns: r.Netns, HostIp: r.HostIP, LeaseUid: r.LeaseUID, Method: r.Method, Paused: r.Paused, CompletedAtUnixNano: r.CompletedAtUnixNano}
+	return &vmmdpb.RuntimeBootReceipt{Binding: r.Binding.ToProto(), NativeInputHash: r.NativeInputHash, Netns: r.Netns, HostIp: r.HostIP, LeaseUid: r.LeaseUID, Method: r.Method, Paused: r.Paused, CompletedAtUnixNano: r.CompletedAtUnixNano, ArtifactConsumption: r.ArtifactConsumption.ToProto()}
 }
 
 func ReceiptFromProto(p *vmmdpb.RuntimeBootReceipt) (Receipt, error) {
-	if p == nil {
+	if p == nil || RejectUnknown(p) != nil {
 		return Receipt{}, ErrInvalid
 	}
 	b, err := BindingFromProto(p.Binding)
 	if err != nil {
 		return Receipt{}, err
 	}
-	return Receipt{Binding: b, NativeInputHash: p.NativeInputHash, Netns: p.Netns, HostIP: p.HostIp, LeaseUID: p.LeaseUid, Method: p.Method, Paused: p.Paused, CompletedAtUnixNano: p.CompletedAtUnixNano}, nil
+	consumption, err := artifactConsumptionFromProto(p.ArtifactConsumption)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return Receipt{Binding: b, NativeInputHash: p.NativeInputHash, Netns: p.Netns, HostIP: p.HostIp, LeaseUID: p.LeaseUid, Method: p.Method, Paused: p.Paused, CompletedAtUnixNano: p.CompletedAtUnixNano, ArtifactConsumption: consumption}, nil
 }

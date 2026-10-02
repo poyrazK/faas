@@ -71,7 +71,7 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	if input.Parent != p.Parent {
+	if !input.Parent.Equal(p.Parent) {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
@@ -84,7 +84,7 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 		}
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if copy != old.Grant || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
+		if !copy.Equal(old.Grant) || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 		return old.Grant, tx.Commit(ctx)
@@ -136,11 +136,11 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 	if err != nil {
 		return Instance{}, err
 	}
-	if p.Grant.Parent != input.Parent || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
+	if !p.Grant.Parent.Equal(input.Parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	if input.State == string(StateRunning) {
-		if input.PromotionToken == nil || *input.PromotionToken != r.Binding.Token || p.Receipt == nil || *p.Receipt != r {
+		if input.PromotionToken == nil || *input.PromotionToken != r.Binding.Token || p.Receipt == nil || !p.Receipt.Equal(r) {
 			return Instance{}, ErrConflict
 		}
 	} else {
@@ -150,7 +150,7 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 		if p.Grant.CheckReceipt(r, time.Unix(0, input.ClockUnixNano)) != nil {
 			return Instance{}, ErrApplicationStandardRuntimeStale
 		}
-		if p.Receipt != nil && *p.Receipt != r {
+		if p.Receipt != nil && !p.Receipt.Equal(r) {
 			return Instance{}, ErrConflict
 		}
 		if p.Receipt == nil {

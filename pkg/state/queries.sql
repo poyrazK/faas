@@ -5798,7 +5798,8 @@ SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
 
 -- name: RegisterComputeNodeRuntimeIdentity :execrows
-UPDATE compute_nodes SET vmmd_incarnation=sqlc.arg(incarnation)::uuid WHERE id=sqlc.arg(node_id)::uuid;
+UPDATE compute_nodes SET vmmd_incarnation=sqlc.arg(incarnation)::uuid,
+vmmd_admission_protocol=sqlc.arg(protocol_version)::smallint WHERE id=sqlc.arg(node_id)::uuid;
 
 -- name: LockInstanceApplicationStandardBoot :one
 SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;

@@ -171,6 +171,47 @@ func TestCreateAdmittedRuntimeDeliversExactOwnedSourceInputs(t *testing.T) {
 	}
 }
 
+func TestCreateAdmittedRuntimeVersionTwoRequiresNativeConsumption(t *testing.T) {
+	for _, valid := range []bool{true, false} {
+		t.Run(map[bool]string{true: "measured", false: "missing"}[valid], func(t *testing.T) {
+			s, v, req := admittedRPCFixture(t)
+			v.identity.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+			req.Binding.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+			digest := "sha256:" + strings.Repeat("a", 64)
+			req.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{{Kind: "base-image", StorageKey: "base", Digest: digest, Bytes: 10}, {Kind: "app-layer", StorageKey: "layer", Digest: digest, Bytes: 20}}
+			sources, err := runtimeadmission.ArtifactSourcesFromProto(req.ArtifactSources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Binding.ArtifactSourcesHash, err = runtimeadmission.HashArtifactSources(sources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rehashAdmittedRequest(t, req)
+			if valid {
+				v.mutate = func(_ *fcvm.Instance, r *runtimeadmission.Receipt) {
+					r.ArtifactConsumption = runtimeadmission.ArtifactConsumption{ConfigHash: strings.Repeat("d", 64), ProcessPID: 42, ProcessStart: "101"}
+					for _, a := range sources {
+						r.ArtifactConsumption.Drives = append(r.ArtifactConsumption.Drives, runtimeadmission.ConsumedDrive{Source: a, DriveID: a.Role(), ReadOnly: a.Role() != "main", RootDevice: a.Role() == "base", ProducerDigest: a.Digest, ProducerBytes: a.Bytes, InjectedDigest: a.Digest, InjectedBytes: a.Bytes})
+					}
+				}
+			}
+			response, err := s.CreateAdmittedRuntime(admittedRPCContext(t), req)
+			if valid {
+				if err != nil || response == nil || response.Receipt.ArtifactConsumption == nil || len(response.Receipt.ArtifactConsumption.Drives) != 2 || len(v.destroyed) != 0 {
+					t.Fatal("measured native receipt was lost at the RPC boundary", err)
+				}
+			} else if err == nil || response != nil || len(v.destroyed) != 1 {
+				t.Fatal("missing native evidence retained a runtime or RPC receipt", err)
+			}
+			req.Binding.ArtifactSourcesHash = strings.Repeat("0", 64)
+			if _, err := s.CreateAdmittedRuntime(admittedRPCContext(t), req); status.Code(err) != codes.InvalidArgument || len(v.requests) != 1 {
+				t.Fatal("changed source-set authority reached the native backend", err)
+			}
+		})
+	}
+}
+
 func TestCreateAdmittedRuntimeInvalidNativeReceiptDestroysInstance(t *testing.T) {
 	for _, test := range []struct {
 		name   string

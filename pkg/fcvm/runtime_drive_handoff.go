@@ -20,11 +20,12 @@ import (
 // RuntimeDriveObservation contains native-derived drive facts only. It is not
 // a protocol-1 receipt or durable application-standard consumer acknowledgment.
 type RuntimeDriveObservation struct {
-	Source   runtimeadmission.ArtifactSource
-	DriveID  string
-	ReadOnly bool
-	Producer rootfs.ArtifactIdentity
-	Injected rootfs.ArtifactIdentity
+	Source     runtimeadmission.ArtifactSource
+	DriveID    string
+	ReadOnly   bool
+	RootDevice bool
+	Producer   rootfs.ArtifactIdentity
+	Injected   rootfs.ArtifactIdentity
 }
 
 type RuntimeDriveHandoffObservation struct {
@@ -144,7 +145,7 @@ func pinRuntimeDrive(ctx context.Context, sandbox *os.Root, drive Drive, source 
 	if err != nil {
 		return pinned, errors.Join(err, file.Close())
 	}
-	return pinnedRuntimeDrive{observation: RuntimeDriveObservation{Source: source, DriveID: drive.DriveID, ReadOnly: drive.IsReadOnly, Producer: actual}, path: drive.PathOnHost, file: file, info: finalInfo}, nil
+	return pinnedRuntimeDrive{observation: RuntimeDriveObservation{Source: source, DriveID: drive.DriveID, ReadOnly: drive.IsReadOnly, RootDevice: drive.IsRootDevice, Producer: actual}, path: drive.PathOnHost, file: file, info: finalInfo}, nil
 }
 
 func measurePinnedRuntimeDrive(ctx context.Context, file *os.File, size int64) (rootfs.ArtifactIdentity, os.FileInfo, error) {

@@ -20,7 +20,7 @@ func (s *PgStore) RegisterComputeNodeRuntimeIdentity(ctx context.Context, identi
 	if err := identity.Validate(); err != nil {
 		return ErrInvalidArgument
 	}
-	count, err := sqlc.New().RegisterComputeNodeRuntimeIdentity(ctx, s.pool, sqlc.RegisterComputeNodeRuntimeIdentityParams{NodeID: mustPgUUID(identity.NodeID), Incarnation: mustPgUUID(identity.Incarnation)})
+	count, err := sqlc.New().RegisterComputeNodeRuntimeIdentity(ctx, s.pool, sqlc.RegisterComputeNodeRuntimeIdentityParams{NodeID: mustPgUUID(identity.NodeID), Incarnation: mustPgUUID(identity.Incarnation), ProtocolVersion: int16(identity.ProtocolVersion)})
 	if err != nil {
 		return fmt.Errorf("register native process: %w", mapErr(err))
 	}
@@ -75,7 +75,7 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 		return runtimeadmission.Binding{}, fmt.Errorf("lock native boot inputs: %w", err)
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
-	if err := validateStandardBootBinding(binding, input.capture, input.Incarnation, now); err != nil {
+	if err := validateStandardBootBinding(binding, input.capture, input.Incarnation, input.ProtocolVersion, now); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
 	q := sqlc.New()
@@ -130,7 +130,7 @@ func (s *PgStore) PublishInstanceApplicationStandardRuntime(ctx context.Context,
 		return Instance{}, fmt.Errorf("lock native publication inputs: %w", err)
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
-	if err := validateStandardBootBinding(receipt.Binding, input.capture, input.Incarnation, now); err != nil {
+	if err := validateStandardBootBinding(receipt.Binding, input.capture, input.Incarnation, input.ProtocolVersion, now); err != nil {
 		return Instance{}, err
 	}
 	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
@@ -151,7 +151,7 @@ func (s *PgStore) PublishInstanceApplicationStandardRuntime(ctx context.Context,
 	if boot.ExpectedState != expectedState || boot.Binding != receipt.Binding || receipt.Check(boot.Binding, now) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
-	if boot.Receipt != nil && *boot.Receipt != receipt {
+	if boot.Receipt != nil && !boot.Receipt.Equal(receipt) {
 		return Instance{}, ErrConflict
 	}
 	if boot.Receipt == nil {

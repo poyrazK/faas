@@ -80,7 +80,7 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 		snap = &copy
 	}
 	now := time.Now().UTC()
-	binding := runtimeadmission.Binding{ProtocolVersion: runtimeadmission.ProtocolVersion, Token: uuid.NewString(), InstanceID: instanceID, AppID: capture.AppID, DeploymentID: capture.DeploymentID, AccountID: capture.AccountID, NodeID: nodeID, Incarnation: identity.Incarnation, DesiredRevision: capture.DesiredRevision, EffectiveHash: capture.EffectiveHash, CapturedInputHash: capture.NativeInputHash, EgressRevision: capture.EgressRevision, IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()}
+	binding := runtimeadmission.Binding{ProtocolVersion: identity.ProtocolVersion, Token: uuid.NewString(), InstanceID: instanceID, AppID: capture.AppID, DeploymentID: capture.DeploymentID, AccountID: capture.AccountID, NodeID: nodeID, Incarnation: identity.Incarnation, DesiredRevision: capture.DesiredRevision, EffectiveHash: capture.EffectiveHash, CapturedInputHash: capture.NativeInputHash, EgressRevision: capture.EgressRevision, IssuedAtUnixNano: now.UnixNano(), ExpiresAtUnixNano: now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()}
 	req, err := prepareStandardAdmittedRuntime(ctx, binding, capture, spec, snap, paused)
 	if err != nil {
 		return nil, err

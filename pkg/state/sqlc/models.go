@@ -1265,8 +1265,9 @@ type ComputeNode struct {
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
-	OverlayIp       *netip.Addr
-	VmmdIncarnation pgtype.UUID
+	OverlayIp             *netip.Addr
+	VmmdIncarnation       pgtype.UUID
+	VmmdAdmissionProtocol int16
 }
 
 type ComputeNodeHeartbeat struct {

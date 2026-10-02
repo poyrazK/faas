@@ -9,8 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-// Boot grants/receipts are private scheduler authority. They never acknowledge
-// image content, delivered logs or live-egress convergence.
+// Boot grants/receipts are private scheduler authority. Protocol 2 binds measured
+// drive handoffs; neither version acknowledges delivered logs or live egress.
 type InstanceApplicationStandardBootStore interface {
 	IssueInstanceApplicationStandardBoot(context.Context, string, runtimeadmission.Binding) (runtimeadmission.Binding, error)
 	PublishInstanceApplicationStandardRuntime(context.Context, string, State, runtimeadmission.Receipt) (Instance, error)
@@ -32,22 +32,37 @@ type nativeBootLockedInputs struct {
 	CapturedInputHash         string          `json:"captured_input_hash"`
 	NodeID                    string          `json:"node_id"`
 	Incarnation               string          `json:"incarnation"`
+	ProtocolVersion           uint32          `json:"protocol_version"`
 	ClockUnixNano             int64           `json:"clock_unix_nano"`
 	ArtifactExpiresAtUnixNano int64           `json:"artifact_expires_at_unix_nano"`
 	capture                   InstanceApplicationStandardAdmission
 }
 
-func validateStandardBootBinding(binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, incarnation string, now time.Time) error {
+func validateStandardBootBinding(binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, incarnation string, protocol uint32, now time.Time) error {
 	if err := binding.Validate(now); err != nil {
 		if errors.Is(err, runtimeadmission.ErrExpired) {
 			return ErrApplicationStandardRuntimeStale
 		}
 		return ErrInvalidArgument
 	}
-	if !capture.Managed || binding.InstanceID != capture.InstanceID || binding.AppID != capture.AppID || binding.AccountID != capture.AccountID || binding.DeploymentID != capture.DeploymentID || binding.NodeID != capture.NodeID || binding.Incarnation != incarnation || binding.DesiredRevision != capture.DesiredRevision || capture.PersistedRevision != capture.DesiredRevision || binding.EffectiveHash != capture.EffectiveHash || binding.CapturedInputHash != capture.NativeInputHash || binding.EgressRevision != capture.EgressRevision {
+	if binding.ProtocolVersion > protocol || !capture.Managed || binding.InstanceID != capture.InstanceID || binding.AppID != capture.AppID || binding.AccountID != capture.AccountID || binding.DeploymentID != capture.DeploymentID || binding.NodeID != capture.NodeID || binding.Incarnation != incarnation || binding.DesiredRevision != capture.DesiredRevision || capture.PersistedRevision != capture.DesiredRevision || binding.EffectiveHash != capture.EffectiveHash || binding.CapturedInputHash != capture.NativeInputHash || binding.EgressRevision != capture.EgressRevision {
 		return ErrApplicationStandardRuntimeStale
 	}
+	if binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
+		hash, err := standardCapturedArtifactSourceHash(capture)
+		if err != nil || hash != binding.ArtifactSourcesHash {
+			return ErrApplicationStandardRuntimeStale
+		}
+	}
 	return nil
+}
+
+func standardCapturedArtifactSourceHash(capture InstanceApplicationStandardAdmission) (string, error) {
+	sources := make([]runtimeadmission.ArtifactSource, 0, len(capture.RuntimeArtifacts))
+	for _, a := range capture.RuntimeArtifacts {
+		sources = append(sources, runtimeadmission.ArtifactSource{Kind: a.Kind, WorkloadName: a.WorkloadName, StorageKey: a.StorageKey, Digest: a.Digest, Bytes: a.Bytes})
+	}
+	return runtimeadmission.HashArtifactSources(sources)
 }
 
 func standardRuntimeReceiptTarget(next State, receipt runtimeadmission.Receipt) bool {

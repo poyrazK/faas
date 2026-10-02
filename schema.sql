@@ -649,7 +649,7 @@ CREATE FUNCTION public.application_standard_lock_native_boot(instance_id uuid, e
     LANGUAGE plpgsql
     AS $$
 DECLARE i instances%ROWTYPE; c instance_application_standard_admissions%ROWTYPE;
-        input jsonb; incarnation uuid; artifact_deadline timestamptz; now_utc timestamptz;
+        input jsonb; incarnation uuid; protocol smallint; artifact_deadline timestamptz; now_utc timestamptz;
 BEGIN
  SELECT * INTO i FROM instances WHERE id=instance_id FOR UPDATE NOWAIT;
  IF NOT FOUND OR i.state IS DISTINCT FROM expected_state OR i.kind<>'wake' OR i.app_id IS NULL THEN
@@ -663,7 +663,7 @@ BEGIN
    OR (input->'adoptions'='[]'::jsonb AND input->'materialized_fields'='[]'::jsonb) THEN
   RAISE EXCEPTION 'runtime admission inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
- SELECT vmmd_incarnation INTO incarnation FROM compute_nodes WHERE id=i.node_id FOR SHARE NOWAIT;
+ SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=i.node_id FOR SHARE NOWAIT;
  IF incarnation IS NULL THEN
   RAISE EXCEPTION 'native process is not registered' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
@@ -677,7 +677,7 @@ BEGIN
  END IF;
  RETURN jsonb_build_object('artifact_expires_at_unix_nano',(extract(epoch FROM artifact_deadline)*1000000000)::bigint,
   'input_snapshot',input,'captured_input_hash',c.native_input_hash,
-  'node_id',i.node_id::text,'incarnation',incarnation::text,'clock_unix_nano',(extract(epoch FROM now_utc)*1000000000)::bigint);
+  'protocol_version',protocol,'node_id',i.node_id::text,'incarnation',incarnation::text,'clock_unix_nano',(extract(epoch FROM now_utc)*1000000000)::bigint);
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
@@ -773,6 +773,40 @@ $$;
 
 
 --
+-- Name: application_standard_native_artifact_protocol(jsonb, jsonb, jsonb, smallint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_artifact_protocol(b jsonb, r jsonb, input jsonb, protocol smallint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE version integer; actual text;
+BEGIN
+ IF jsonb_typeof(b->'protocol_version') IS DISTINCT FROM 'number' OR b->>'protocol_version' NOT IN ('1','2') THEN
+  RAISE EXCEPTION 'native protocol is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ version:=(b->>'protocol_version')::integer;
+ IF version NOT IN (1,2) OR version>protocol THEN
+  RAISE EXCEPTION 'native protocol is not registered' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF version=1 THEN
+  IF coalesce(b->>'artifact_sources_hash','')<>'' OR (r IS NOT NULL AND r ? 'artifact_consumption') THEN
+   RAISE EXCEPTION 'legacy authority cannot acknowledge consumed artifacts' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+  RETURN;
+ END IF;
+ actual:=application_standard_native_source_hash(input->'runtime_artifacts'->'artifacts');
+ IF jsonb_typeof(b->'artifact_sources_hash') IS DISTINCT FROM 'string' OR b->>'artifact_sources_hash' IS DISTINCT FROM actual THEN
+  RAISE EXCEPTION 'native source hash differs from captured producers' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF r IS NOT NULL AND (jsonb_typeof(r->'method')='number' AND r->>'method'='0' AND r->'paused'='false'::jsonb
+  AND application_standard_native_consumption_valid(r->'artifact_consumption',actual)) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native consumed artifact receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+END;
+$$;
+
+
+--
 -- Name: application_standard_native_base_deadline(jsonb, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -826,7 +860,8 @@ BEGIN
  locked:=application_standard_lock_native_boot(NEW.instance_id,NEW.expected_state);
  input:=locked->'input_snapshot'; b:=NEW.binding;
  now_nano:=(locked->>'clock_unix_nano')::bigint;
- IF (b->>'protocol_version')::integer IS DISTINCT FROM 1 OR b->>'token' IS DISTINCT FROM NEW.token::text
+ PERFORM application_standard_native_artifact_protocol(b,NULL,input,(locked->>'protocol_version')::smallint);
+ IF (b->>'protocol_version')::integer NOT IN (1,2) OR b->>'protocol_version' IS NULL OR b->>'token' IS DISTINCT FROM NEW.token::text
   OR b->>'instance_id' IS DISTINCT FROM NEW.instance_id::text OR b->>'app_id' IS DISTINCT FROM input->>'app_id'
   OR b->>'deployment_id' IS DISTINCT FROM input->'artifact'->>'id' OR b->>'account_id' IS DISTINCT FROM input->>'account_id'
   OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
@@ -847,6 +882,7 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' THEN
   r:=NEW.receipt;
+  PERFORM application_standard_native_artifact_protocol(b,r,input,(locked->>'protocol_version')::smallint);
   IF r->'binding' IS DISTINCT FROM b OR coalesce(r->>'native_input_hash','') !~ '^[0-9a-f]{64}$'
    OR coalesce(r->>'netns','')='' OR coalesce(r->>'host_ip','')='' OR coalesce((r->>'lease_uid')::integer,0)<=0
    OR coalesce((r->>'method')::integer,-1) NOT IN (0,1) OR (r->>'paused')::boolean IS NULL
@@ -908,6 +944,60 @@ BEGIN
  RETURN least(limit_at,application_standard_native_scan_deadline(s.input_snapshot,s.scanned_at,s.expires_at,now_utc,enforce));
 END;
 $$;
+
+
+--
+-- Name: application_standard_native_consumed_drive_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_consumed_drive_valid(d jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE a jsonb; role text;
+BEGIN
+ a:=d->'source'; role:=application_standard_native_source_role(a);
+ RETURN coalesce(jsonb_typeof(d)='object' AND role IS NOT NULL
+  AND d-ARRAY['source','drive_id','read_only','root_device','producer_digest','producer_bytes','injected_digest','injected_bytes']='{}'::jsonb
+  AND a-ARRAY['kind','workload_name','storage_key','digest','bytes']='{}'::jsonb
+  AND jsonb_typeof(d->'drive_id')='string' AND octet_length(d->>'drive_id') BETWEEN 1 AND 512
+  AND position(chr(13) IN (d->>'drive_id'))=0 AND position(chr(10) IN (d->>'drive_id'))=0
+  AND jsonb_typeof(d->'read_only')='boolean' AND d->'read_only'=to_jsonb(role<>'main')
+  AND jsonb_typeof(d->'root_device')='boolean' AND d->'root_device'=to_jsonb(role='base')
+  AND d->'producer_digest'=a->'digest' AND jsonb_typeof(d->'producer_bytes')='number'
+  AND d->>'producer_bytes'=a->>'bytes'
+  AND jsonb_typeof(d->'injected_bytes')='number' AND d->>'injected_bytes'=a->>'bytes' AND jsonb_typeof(d->'injected_digest')='string'
+  AND d->>'injected_digest' ~ '^sha256:[0-9a-f]{64}$'
+  AND (role='main' OR d->'injected_digest'=d->'producer_digest'),false);
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_consumption_valid(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_consumption_valid(c jsonb, source_hash text) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE d jsonb; sources jsonb:='[]'; ids text[]:='{}';
+BEGIN
+ IF (jsonb_typeof(c)='object'
+  AND c-ARRAY['config_hash','process_pid','process_start','drives']='{}'::jsonb
+  AND jsonb_typeof(c->'config_hash')='string' AND c->>'config_hash' ~ '^[0-9a-f]{64}$'
+  AND jsonb_typeof(c->'process_pid')='number' AND c->>'process_pid' ~ '^[1-9][0-9]{0,9}$'
+  AND (c->>'process_pid')::bigint<=2147483647
+  AND jsonb_typeof(c->'process_start')='string' AND c->>'process_start' ~ '^[1-9][0-9]{0,19}$'
+  AND (c->>'process_start')::numeric<=18446744073709551615
+  AND jsonb_typeof(c->'drives')='array') IS NOT TRUE THEN RETURN false; END IF;
+ IF jsonb_array_length(c->'drives') NOT BETWEEN 2 AND 7 THEN RETURN false; END IF;
+ FOR d IN SELECT value FROM jsonb_array_elements(c->'drives') LOOP
+  IF NOT application_standard_native_consumed_drive_valid(d) OR d->>'drive_id'=ANY(ids) THEN RETURN false; END IF;
+  ids:=array_append(ids,d->>'drive_id'); sources:=sources || jsonb_build_array(d->'source');
+ END LOOP;
+ RETURN application_standard_native_source_hash(sources)=source_hash;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value OR check_violation THEN RETURN false;
+END;
+$_$;
 
 
 --
@@ -999,7 +1089,7 @@ CREATE FUNCTION public.application_standard_native_publication_guard() RETURNS t
     AS $$
 DECLARE c instance_application_standard_admissions%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
         p instance_application_standard_promotions%ROWTYPE;
-        incarnation uuid; b jsonb; r jsonb; managed boolean; publishing boolean; input jsonb; artifact_deadline timestamptz;
+        incarnation uuid; protocol smallint; b jsonb; r jsonb; managed boolean; publishing boolean; input jsonb; artifact_deadline timestamptz;
 BEGIN
  IF NEW.app_id IS NULL OR NEW.kind<>'wake' OR NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
  SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_id=NEW.id;
@@ -1019,13 +1109,14 @@ BEGIN
  IF TG_OP='UPDATE' AND OLD.application_standard_promotion_token IS NOT NULL AND OLD.application_standard_promotion_token IS DISTINCT FROM NEW.application_standard_promotion_token THEN
   RAISE EXCEPTION 'published promotion identity is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
  END IF;
- SELECT vmmd_incarnation INTO incarnation FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  IF g.instance_id IS DISTINCT FROM NEW.id OR r IS NULL OR b->>'node_id' IS DISTINCT FROM NEW.node_id::text
   OR b->>'incarnation' IS DISTINCT FROM incarnation::text OR b->>'captured_input_hash' IS DISTINCT FROM c.native_input_hash
   OR r->'binding' IS DISTINCT FROM b OR r->>'netns' IS DISTINCT FROM NEW.netns OR r->>'host_ip' IS DISTINCT FROM host(NEW.host_ip)
   OR (r->>'lease_uid')::integer IS DISTINCT FROM NEW.guest_uid OR (r->>'paused')::boolean IS DISTINCT FROM (NEW.state='warm') THEN
   RAISE EXCEPTION 'managed runtime requires its exact native receipt' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
  END IF;
+ PERFORM application_standard_native_artifact_protocol(b,r,c.input_snapshot,protocol);
  IF TG_OP='INSERT' OR OLD.state IN ('waking','cold_booting') OR OLD.application_standard_boot_token IS DISTINCT FROM NEW.application_standard_boot_token
   OR OLD.application_standard_promotion_token IS DISTINCT FROM NEW.application_standard_promotion_token THEN
   input:=application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
@@ -1112,6 +1203,75 @@ BEGIN
  RETURN least(expires_at,built+interval '30 days');
 END;
 $$;
+
+
+--
+-- Name: application_standard_native_source_hash(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_source_hash(sources jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE a jsonb; role text; roles text[]:='{}'; keys text[]:='{}';
+ bytes bytea; field text;
+BEGIN
+ IF jsonb_typeof(sources) IS DISTINCT FROM 'array' THEN
+  RAISE EXCEPTION 'native sources are not an array' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF jsonb_array_length(sources) NOT BETWEEN 2 AND 7 THEN
+  RAISE EXCEPTION 'native source membership is incomplete' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ bytes:=convert_to('gregale.native-artifact-sources.v2','UTF8') || decode('00','hex')
+  || int8send(jsonb_array_length(sources)::bigint);
+ FOR a IN SELECT value FROM jsonb_array_elements(sources)
+  ORDER BY application_standard_native_source_role(value) COLLATE "C" LOOP
+  role:=application_standard_native_source_role(a);
+  IF role IS NULL OR role=ANY(roles) OR a->>'storage_key'=ANY(keys) THEN
+   RAISE EXCEPTION 'native source membership is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  roles:=array_append(roles,role); keys:=array_append(keys,a->>'storage_key');
+  FOREACH field IN ARRAY ARRAY[a->>'kind',a->>'workload_name',a->>'storage_key',a->>'digest'] LOOP
+   bytes:=bytes || int8send(octet_length(convert_to(field,'UTF8'))::bigint) || convert_to(field,'UTF8');
+  END LOOP;
+  bytes:=bytes || int8send((a->>'bytes')::bigint);
+ END LOOP;
+ IF NOT ('base'=ANY(roles) AND 'main'=ANY(roles)) THEN
+  RAISE EXCEPTION 'native base or main is missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN encode(sha256(bytes),'hex');
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_source_role(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_source_role(a jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE k text; n text; key text;
+BEGIN
+ IF jsonb_typeof(a)<>'object' OR jsonb_typeof(a->'kind') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'workload_name') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'storage_key') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'digest') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'bytes') IS DISTINCT FROM 'number' THEN RETURN NULL; END IF;
+ k:=a->>'kind'; n:=a->>'workload_name'; key:=a->>'storage_key';
+ IF key IN ('','.') OR octet_length(key)>512 OR left(key,1)='/' OR right(key,1)='/'
+  OR position('..' IN key)>0 OR position('//' IN key)>0
+  OR key ~ '(^|/)[.](/|$)' OR position(chr(92) IN key)>0
+  OR position(chr(13) IN key)>0 OR position(chr(10) IN key)>0
+  OR a->>'digest' !~ '^sha256:[0-9a-f]{64}$'
+  OR a->>'bytes' !~ '^[1-9][0-9]{0,10}$'
+  OR (a->>'bytes')::bigint>17179869184 THEN RETURN NULL; END IF;
+ IF k='base-image' AND n='' THEN RETURN 'base'; END IF;
+ IF k IN ('app-layer','full-rootfs') AND n='' THEN RETURN 'main'; END IF;
+ IF k='sidecar-layer' AND n<>'main' AND n ~ '^[a-z0-9][a-z0-9-]{0,62}$' THEN RETURN 'sidecar:' || n; END IF;
+ RETURN NULL;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN NULL;
+END;
+$_$;
 
 
 --
@@ -7657,6 +7817,7 @@ CREATE TABLE public.compute_nodes (
     last_recovery_outcome text,
     overlay_ip inet,
     vmmd_incarnation uuid,
+    vmmd_admission_protocol smallint DEFAULT 1 NOT NULL,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -7667,6 +7828,7 @@ CREATE TABLE public.compute_nodes (
     CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
     CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
     CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
+    CONSTRAINT compute_nodes_vmmd_admission_protocol_check CHECK ((vmmd_admission_protocol = ANY (ARRAY[1, 2]))),
     CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
 );
 
@@ -13046,7 +13208,7 @@ CREATE TABLE public.service_recovery (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     claim_token uuid,
-    lease_until timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone DEFAULT '1970-01-01 02:00:00+02'::timestamp with time zone NOT NULL,
     status text NOT NULL,
     failures integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
@@ -13846,14 +14008,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
 
 
 --
 -- Name: log_events_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
 
 
 --
@@ -13867,21 +14029,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 03:00:00+03') TO ('2026-12-01 03:00:00+03');
 
 
 --
 -- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 03:00:00+03') TO ('2027-01-01 03:00:00+03');
 
 
 --

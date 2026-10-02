@@ -12,6 +12,7 @@ import (
 // PromoteAdmitted resumes only the exact paused lease described by the saved
 // parent receipt. The app policy gate spans validation, resume and receipt.
 func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promotion) (*Instance, runtimeadmission.Receipt, error) {
+	p = p.Clone()
 	if err := p.Validate(time.Now()); err != nil {
 		return nil, runtimeadmission.Receipt{}, err
 	}
@@ -43,7 +44,7 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 	}
 	if err == nil {
 		m.mu.Lock()
-		if m.live[p.Binding.InstanceID] != inst || !inst.Paused || inst.runtimeAdmissionReceipt != p.Parent {
+		if m.live[p.Binding.InstanceID] != inst || !inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent) {
 			err = runtimeadmission.ErrStale
 		} else {
 			inst.Paused = false
@@ -63,7 +64,7 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 	if err == nil {
 		err = flightCtx.Err()
 	}
-	if err == nil && (m.live[p.Binding.InstanceID] != inst || inst.Paused || inst.runtimeAdmissionReceipt != p.Parent) {
+	if err == nil && (m.live[p.Binding.InstanceID] != inst || inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent)) {
 		err = runtimeadmission.ErrStale
 	}
 	if err != nil {
@@ -73,9 +74,9 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		defer cleanupCancel()
 		return nil, runtimeadmission.Receipt{}, errors.Join(err, m.Destroy(cleanupCtx, p.Binding.InstanceID))
 	}
-	r := p.Parent
+	r := p.Parent.Clone()
 	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, completed.UnixNano()
-	inst.Paused, inst.runtimeAdmissionReceipt = false, r
+	inst.Paused, inst.runtimeAdmissionReceipt = false, r.Clone()
 	m.finishRuntimeAdmissionFlightLocked(p.Binding.InstanceID, flight)
 	m.mu.Unlock()
 	return inst, r, nil
@@ -92,7 +93,7 @@ func (m *Manager) consumeRuntimePromotion(p runtimeadmission.Promotion, flight *
 		return nil, err
 	}
 	inst := m.live[p.Binding.InstanceID]
-	if inst == nil || !inst.Paused || inst.AppTaskOnly || inst.ExecutionOnly || inst.runtimeAdmissionReceipt != p.Parent || inst.Lease.Instance != p.Binding.InstanceID || inst.AppID != p.Binding.AppID || inst.AccountID != p.Binding.AccountID || inst.DeploymentID != p.Binding.DeploymentID || inst.Net.Netns != p.Parent.Netns || inst.Lease.HostIP.String() != p.Parent.HostIP || int32(inst.Lease.UID) != p.Parent.LeaseUID || m.vmm == nil {
+	if inst == nil || !inst.Paused || inst.AppTaskOnly || inst.ExecutionOnly || !inst.runtimeAdmissionReceipt.Equal(p.Parent) || inst.Lease.Instance != p.Binding.InstanceID || inst.AppID != p.Binding.AppID || inst.AccountID != p.Binding.AccountID || inst.DeploymentID != p.Binding.DeploymentID || inst.Net.Netns != p.Parent.Netns || inst.Lease.HostIP.String() != p.Parent.HostIP || int32(inst.Lease.UID) != p.Parent.LeaseUID || m.vmm == nil {
 		return nil, runtimeadmission.ErrStale
 	}
 	for token, expiry := range m.runtimeAdmissionTokens {

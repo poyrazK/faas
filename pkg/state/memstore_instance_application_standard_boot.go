@@ -29,6 +29,10 @@ func (m *MemStore) RegisterComputeNodeRuntimeIdentity(ctx context.Context, ident
 		m.computeNodeRuntimeIncarnations = map[string]string{}
 	}
 	m.computeNodeRuntimeIncarnations[identity.NodeID] = identity.Incarnation
+	if m.computeNodeRuntimeProtocols == nil {
+		m.computeNodeRuntimeProtocols = map[string]uint32{}
+	}
+	m.computeNodeRuntimeProtocols[identity.NodeID] = identity.ProtocolVersion
 	return nil
 }
 
@@ -107,7 +111,7 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 		return runtimeadmission.Binding{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := validateStandardBootBinding(binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], now); err != nil {
+	if err := validateStandardBootBinding(binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], m.computeNodeRuntimeProtocols[capture.NodeID], now); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
 	if old, ok := m.instanceApplicationStandardBoots[binding.Token]; ok {
@@ -163,13 +167,13 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	if err := validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], now); err != nil {
+	if err := validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], m.computeNodeRuntimeProtocols[capture.NodeID], now); err != nil {
 		return Instance{}, err
 	}
 	if receipt.Check(boot.Binding, now) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
-	if boot.Receipt != nil && *boot.Receipt != receipt {
+	if boot.Receipt != nil && !boot.Receipt.Equal(receipt) {
 		return Instance{}, ErrConflict
 	}
 	published := ins
@@ -177,7 +181,7 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	if err := m.checkStandardNativeRuntimeTransitionLocked(ins, published); err != nil {
 		return Instance{}, err
 	}
-	copy := receipt
+	copy := receipt.Clone()
 	boot.Receipt = &copy
 	boot.ReceivedAt = now
 	// One mutex commit for receipt + runtime tuple + state; no observation is
@@ -218,13 +222,13 @@ func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture Instanc
 		return nil
 	}
 	boot, ok := m.instanceApplicationStandardBoots[m.instanceApplicationStandardBootTokens[ins.ID]]
-	if !ok || boot.Receipt == nil || boot.Binding.NodeID != ins.NodeID || boot.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] || boot.Binding.CapturedInputHash != capture.NativeInputHash {
+	if !ok || boot.Receipt == nil || boot.Binding.NodeID != ins.NodeID || boot.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] || boot.Binding.ProtocolVersion > m.computeNodeRuntimeProtocols[ins.NodeID] || boot.Binding.CapturedInputHash != capture.NativeInputHash {
 		return ErrApplicationStandardRuntimeStale
 	}
 	r := boot.Receipt
 	if token := m.instanceApplicationStandardPromotionTokens[ins.ID]; token != "" {
 		promotion, exists := m.instanceApplicationStandardPromotions[token]
-		if !exists || promotion.Receipt == nil || promotion.Grant.Parent != *boot.Receipt || promotion.Grant.Binding.NodeID != ins.NodeID || promotion.Grant.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] {
+		if !exists || promotion.Receipt == nil || !promotion.Grant.Parent.Equal(*boot.Receipt) || promotion.Grant.Binding.NodeID != ins.NodeID || promotion.Grant.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] {
 			return ErrApplicationStandardRuntimeStale
 		}
 		r = promotion.Receipt

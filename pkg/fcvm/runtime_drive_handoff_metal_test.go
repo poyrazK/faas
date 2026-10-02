@@ -119,7 +119,7 @@ func (f metalRuntimeDriveFixture) boot(t *testing.T, ctx context.Context) *Insta
 	t.Helper()
 	req := f.request(t)
 	inst, receipt, err := f.manager.WakeAdmitted(ctx, req, nil)
-	if err != nil || receipt.Check(req.Binding, time.Now()) != nil || inst == nil {
+	if err != nil || receipt.Check(req.Binding, time.Now()) != nil || inst == nil || receipt.Binding.ProtocolVersion != runtimeadmission.ArtifactProtocolVersion || len(receipt.ArtifactConsumption.Drives) != len(f.sources) {
 		t.Fatal("verified native boot failed", err)
 	}
 	assertMetalRuntimeDriveObservation(t, ctx, f, inst)
@@ -137,6 +137,11 @@ func (f metalRuntimeDriveFixture) request(t *testing.T) AdmittedWakeRequest {
 	req.Request.Sidecars = []WorkloadSpec{{Name: "metrics", Type: "sidecar", StorageKey: f.sources[2].StorageKey, DriveID: "layer-sidecar-0", RamMB: 64, Port: 9090, Essential: true}}
 	req.Request.MemSizeMiB = 256
 	var err error
+	req.Binding.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+	req.Binding.ArtifactSourcesHash, err = runtimeadmission.HashArtifactSources(f.sources)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.NativeInputHash, err = NativeWakeInputHash(req.Request)
 	if err != nil {
 		t.Fatal(err)

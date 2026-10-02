@@ -93,7 +93,7 @@ func TestReceiptRequiresEveryGrantFieldAndValidNativeFacts(t *testing.T) {
 		}
 	}
 	decoded, err := ReceiptFromProto(r.ToProto())
-	if err != nil || decoded != r {
+	if err != nil || !decoded.Equal(r) {
 		t.Fatal("lossy receipt round trip")
 	}
 }

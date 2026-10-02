@@ -22,8 +22,8 @@ func (m *MemStore) lockNativePromotionLocked(id string, allowRunning bool) (Inst
 	if !ok || boot.Receipt == nil || !boot.Receipt.Paused || boot.Receipt.Netns != ins.Netns || boot.Receipt.HostIP != ins.HostIP || int(boot.Receipt.LeaseUID) != ins.GuestUID || (ins.State == string(StateWarm) && m.instanceApplicationStandardPromotionTokens[id] != "") {
 		return Instance{}, capture, runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
-	parent := *boot.Receipt
-	if validateStandardBootBinding(parent.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
+	parent := boot.Receipt.Clone()
+	if validateStandardBootBinding(parent.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
 		return Instance{}, capture, runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
 	return ins, capture, parent, nil
@@ -56,7 +56,7 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	if p.Parent != parent {
+	if !p.Parent.Equal(parent) {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
 	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
@@ -67,10 +67,10 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if old, ok := m.instanceApplicationStandardPromotions[p.Binding.Token]; ok {
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if copy != old.Grant || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, deadline) {
+		if !copy.Equal(old.Grant) || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, deadline) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
-		return old.Grant, nil
+		return old.Grant.Clone(), nil
 	}
 	for _, old := range m.instanceApplicationStandardPromotions {
 		if old.Grant.Binding.InstanceID == p.Binding.InstanceID {
@@ -85,7 +85,7 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if m.instanceApplicationStandardPromotions == nil {
 		m.instanceApplicationStandardPromotions = map[string]instanceStandardPromotion{}
 	}
-	m.instanceApplicationStandardPromotions[p.Binding.Token] = instanceStandardPromotion{Grant: p}
+	m.instanceApplicationStandardPromotions[p.Binding.Token] = instanceStandardPromotion{Grant: p.Clone()}
 	return p, nil
 }
 
@@ -103,11 +103,11 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 		return Instance{}, err
 	}
 	p, ok := m.instanceApplicationStandardPromotions[r.Binding.Token]
-	if !ok || p.Grant.Parent != parent || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
+	if !ok || !p.Grant.Parent.Equal(parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	if ins.State == string(StateRunning) {
-		if m.instanceApplicationStandardPromotionTokens[ins.ID] != r.Binding.Token || p.Receipt == nil || *p.Receipt != r {
+		if m.instanceApplicationStandardPromotionTokens[ins.ID] != r.Binding.Token || p.Receipt == nil || !p.Receipt.Equal(r) {
 			return Instance{}, ErrConflict
 		}
 		return ins, nil // Retry a committed publication without reusing its grant.
@@ -123,7 +123,7 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 	if p.Grant.CheckReceipt(r, now) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
-	if p.Receipt != nil && *p.Receipt != r {
+	if p.Receipt != nil && !p.Receipt.Equal(r) {
 		return Instance{}, ErrConflict
 	}
 	published := ins
@@ -131,7 +131,7 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 	if err := m.checkStandardNativeRuntimeTransitionLocked(ins, published); err != nil {
 		return Instance{}, err
 	}
-	copy := r
+	copy := r.Clone()
 	p.Receipt, p.ReceivedAt = &copy, now
 	ins = published
 	if m.instanceApplicationStandardPromotionTokens == nil {
