@@ -3,6 +3,7 @@ package faas_test
 // adr: 456
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -44,11 +45,11 @@ func TestRouteHealthHistoryClientSavedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := client.ListRouteHealthHistory(t.Context(), "demo", "candidate", 2, "cursor&value")
+	page, err := client.ListRouteHealthHistory(context.Background(), "demo", "candidate", 2, "cursor&value")
 	if err != nil || len(page.Entries) != 1 || page.NextCursor != entry.ID {
 		t.Fatal("history page", err)
 	}
-	got, err := client.GetRouteHealthHistoryEntry(t.Context(), "demo", "candidate", entry.ID)
+	got, err := client.GetRouteHealthHistoryEntry(context.Background(), "demo", "candidate", entry.ID)
 	if err != nil || got.Decision.HistoryID != entry.ID || !got.Report.ObservationAnchor.Equal(anchor) || got.Policy.MinLatencyRequests != 100 || got.Source != "worker" {
 		t.Fatal("saved context lost", err)
 	}

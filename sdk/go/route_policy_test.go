@@ -30,11 +30,11 @@ func TestCanaryRouteGateClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := client.GetCanaryRouteGate(t.Context(), "demo")
+	gate, err := client.GetCanaryRouteGate(context.Background(), "demo")
 	if err != nil || gate.Mode != "report" || gate.Revision != 0 {
 		t.Fatalf("read: %+v %v", gate, err)
 	}
-	gate, err = client.SetCanaryRouteGate(t.Context(), "demo", faas.SetCanaryRouteGateRequest{Mode: "enforce", ExpectedRevision: &gate.Revision})
+	gate, err = client.SetCanaryRouteGate(context.Background(), "demo", faas.SetCanaryRouteGateRequest{Mode: "enforce", ExpectedRevision: &gate.Revision})
 	if err != nil || gate.Mode != "enforce" || gate.Revision != 1 {
 		t.Fatalf("set: %+v %v", gate, err)
 	}
@@ -114,13 +114,13 @@ func TestSavedRouteRequirementsClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved, err := client.SaveRouteRequirements(t.Context(), "demo", faas.SaveRouteRequirementsRequest{ExpectedRevision: &zero, Requirements: faas.RouteRequirementsConfig{Version: 2}}); err != nil || saved.Revision != 1 {
+	if saved, err := client.SaveRouteRequirements(context.Background(), "demo", faas.SaveRouteRequirementsRequest{ExpectedRevision: &zero, Requirements: faas.RouteRequirementsConfig{Version: 2}}); err != nil || saved.Revision != 1 {
 		t.Fatalf("save: %+v %v", saved, err)
 	}
-	if saved, err := client.GetSavedRouteRequirements(t.Context(), "demo"); err != nil || saved.AppID != "app-id" {
+	if saved, err := client.GetSavedRouteRequirements(context.Background(), "demo"); err != nil || saved.AppID != "app-id" {
 		t.Fatalf("get: %+v %v", saved, err)
 	}
-	if result, err := client.CheckRouteRequirements(t.Context(), "demo", faas.CheckRouteRequirementsRequest{ExpectedRevision: &one, DeploymentID: "selected"}); err != nil || result.Report.Status != "violated" || result.RequirementsRevision != 1 {
+	if result, err := client.CheckRouteRequirements(context.Background(), "demo", faas.CheckRouteRequirementsRequest{ExpectedRevision: &one, DeploymentID: "selected"}); err != nil || result.Report.Status != "violated" || result.RequirementsRevision != 1 {
 		t.Fatalf("check: %+v %v", result, err)
 	}
 }
@@ -146,10 +146,10 @@ func TestAutomaticRouteCheckClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.RefreshAutomaticRouteCheck(t.Context(), "demo", "selected"); err != nil || refreshes != 1 {
+	if err := client.RefreshAutomaticRouteCheck(context.Background(), "demo", "selected"); err != nil || refreshes != 1 {
 		t.Fatalf("refresh: %v", err)
 	}
-	result, err := client.GetAutomaticRouteCheck(t.Context(), "demo", "selected")
+	result, err := client.GetAutomaticRouteCheck(context.Background(), "demo", "selected")
 	if err != nil || result.Freshness != "stale" || result.Check.Report.Status != "satisfied" || result.CurrentRequirementsRevision != 2 {
 		t.Fatalf("lookup: %+v %v", result, err)
 	}

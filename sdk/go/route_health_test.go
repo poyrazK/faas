@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,15 +32,15 @@ func TestRouteHealthClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.GetRouteHealthGate(t.Context(), "demo")
+	g, err := client.GetRouteHealthGate(context.Background(), "demo")
 	if err != nil || g.Mode != "report" {
 		t.Fatal(err)
 	}
-	g, err = client.SetRouteHealthGate(t.Context(), "demo", faas.SetRouteHealthGateRequest{Mode: "enforce", OnRegression: "abort", ExpectedRevision: &g.Revision, Routes: []faas.RouteHealthRoute{{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}}})
+	g, err = client.SetRouteHealthGate(context.Background(), "demo", faas.SetRouteHealthGateRequest{Mode: "enforce", OnRegression: "abort", ExpectedRevision: &g.Revision, Routes: []faas.RouteHealthRoute{{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}}})
 	if err != nil || len(g.Routes) != 1 || g.OnRegression != "abort" || !g.Routes[0].CheckLatency || g.Routes[0].MaxP95MS != 300 {
 		t.Fatal(err)
 	}
-	r, err := client.GetRouteHealthReport(t.Context(), "demo", "candidate")
+	r, err := client.GetRouteHealthReport(context.Background(), "demo", "candidate")
 	if err != nil || r.Status != "regressed" || r.DeploymentID != "candidate" || r.MinimumLatencyRequests != 100 || len(r.Routes) != 1 || r.Routes[0].LatencyStatus != "regressed" {
 		t.Fatal(err)
 	}

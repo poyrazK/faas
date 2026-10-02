@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,15 +32,15 @@ func TestRouteCheckHistoryClient(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "token")
-	page, err := client.ListRouteCheckHistory(t.Context(), "demo", "deployment", 3, "cursor")
+	page, err := client.ListRouteCheckHistory(context.Background(), "demo", "deployment", 3, "cursor")
 	if err != nil || len(page.Entries) != 1 || page.NextCursor != "next" || page.Entries[0].Summary.NewlyViolated != 1 {
 		t.Fatalf("history pagination: %+v %v", page, err)
 	}
-	entry, err := client.GetRouteCheckHistoryEntry(t.Context(), "demo", "deployment", "check")
+	entry, err := client.GetRouteCheckHistoryEntry(context.Background(), "demo", "deployment", "check")
 	if err != nil || entry.ID != "check" || entry.Changes.Summary.NewlyViolated != 1 || len(entry.Check.Report.Scope) != 5<<20 {
 		t.Fatalf("large history entry: id=%s %v", entry.ID, err)
 	}
-	if _, err := client.GetRouteCheckHistoryEntry(t.Context(), "demo", "deployment", "oversized"); err == nil || !strings.Contains(err.Error(), "limit") {
+	if _, err := client.GetRouteCheckHistoryEntry(context.Background(), "demo", "deployment", "oversized"); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("unbounded history entry: %v", err)
 	}
 }
