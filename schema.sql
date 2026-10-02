@@ -24484,3 +24484,186 @@ CREATE TRIGGER builds_sbom_identity BEFORE UPDATE OF deployment_id ON public.bui
 --
 
 CREATE TRIGGER deployments_sbom_identity BEFORE UPDATE OF app_id ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_regional_sbom_identity();
+
+--
+-- Name: enforce_runtime_log_archive_binding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_log_archive_binding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF (NEW.instance_id, NEW.app_id, NEW.account_id, NEW.deployment_id, NEW.compute_region)
+           IS DISTINCT FROM (OLD.instance_id, OLD.app_id, OLD.account_id, OLD.deployment_id, OLD.compute_region) THEN
+            RAISE EXCEPTION 'runtime log archive identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_binding_immutable';
+        END IF;
+    ELSIF NOT EXISTS (
+        SELECT 1 FROM instances i JOIN deployments d ON d.id = i.deployment_id JOIN apps a ON a.id = d.app_id
+         WHERE i.id::text = NEW.instance_id AND i.app_id = d.app_id AND a.status = 'active'
+           AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+           AND (d.app_id, a.account_id, d.id, a.compute_region)
+               = (NEW.app_id, NEW.account_id, NEW.deployment_id, NEW.compute_region)
+    ) THEN
+        RAISE EXCEPTION 'runtime log archive binding requires its durable instance owner'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_binding_owner';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_runtime_log_archive_key(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_log_archive_key() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE selected_region text; expected_key text;
+BEGIN
+    IF TG_OP = 'UPDATE' AND (NEW.instance_id, NEW.archive_day, NEW.storage_key)
+        IS DISTINCT FROM (OLD.instance_id, OLD.archive_day, OLD.storage_key) THEN
+        RAISE EXCEPTION 'runtime log archive key is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_key_immutable';
+    END IF;
+    SELECT compute_region INTO selected_region FROM runtime_log_archive_bindings WHERE instance_id = NEW.instance_id;
+    expected_key := CASE WHEN selected_region = '' THEN '' ELSE 'regions/' || selected_region || '/' END
+       || 'faas-logs/' || NEW.instance_id || '/' || to_char(NEW.archive_day, 'YYYY/MM/YYYY-MM-DD') || '.jsonl.gz';
+    IF NEW.storage_key IS DISTINCT FROM expected_key THEN
+        RAISE EXCEPTION 'runtime log archive key must match its binding and day'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_key_identity';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: runtime_log_archive_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_log_archive_bindings (
+    instance_id text NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    compute_region text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_log_archive_bindings_compute_region_check CHECK (((compute_region = ''::text) OR ((length(compute_region) <= 63) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
+    CONSTRAINT runtime_log_archive_bindings_instance_id_check CHECK (((instance_id ~ '^[A-Za-z0-9._-]{1,128}$'::text) AND (instance_id <> ALL (ARRAY['.'::text, '..'::text]))))
+);
+
+
+--
+-- Name: runtime_log_archive_fragments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_log_archive_fragments (
+    instance_id text NOT NULL,
+    archive_day date NOT NULL,
+    fragment_sha256 text NOT NULL,
+    CONSTRAINT runtime_log_archive_fragments_fragment_sha256_check CHECK ((fragment_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_log_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_log_archives (
+    instance_id text NOT NULL,
+    archive_day date NOT NULL,
+    storage_key text NOT NULL,
+    bytes bigint DEFAULT 0 NOT NULL,
+    sha256 text DEFAULT ''::text NOT NULL,
+    published_at timestamp with time zone,
+    CONSTRAINT runtime_log_archives_publication CHECK ((((bytes = 0) AND (sha256 = ''::text) AND (published_at IS NULL)) OR ((bytes > 0) AND (sha256 ~ '^[0-9a-f]{64}$'::text) AND (published_at IS NOT NULL)))),
+    CONSTRAINT runtime_log_archives_storage_key_check CHECK ((storage_key <> ''::text))
+);
+
+
+--
+-- Name: runtime_log_archive_bindings runtime_log_archive_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_bindings
+    ADD CONSTRAINT runtime_log_archive_bindings_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: runtime_log_archive_fragments runtime_log_archive_fragments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_fragments
+    ADD CONSTRAINT runtime_log_archive_fragments_pkey PRIMARY KEY (instance_id, archive_day, fragment_sha256);
+
+
+--
+-- Name: runtime_log_archives runtime_log_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archives
+    ADD CONSTRAINT runtime_log_archives_pkey PRIMARY KEY (instance_id, archive_day);
+
+
+--
+-- Name: runtime_log_archives runtime_log_archives_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archives
+    ADD CONSTRAINT runtime_log_archives_storage_key_key UNIQUE (storage_key);
+
+
+--
+-- Name: runtime_log_archive_bindings_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_log_archive_bindings_app ON public.runtime_log_archive_bindings USING btree (app_id);
+
+
+--
+-- Name: runtime_log_archive_bindings runtime_log_archive_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_log_archive_binding_guard BEFORE INSERT OR UPDATE ON public.runtime_log_archive_bindings FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_binding();
+
+
+--
+-- Name: runtime_log_archives runtime_log_archive_key_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_log_archive_key_guard BEFORE INSERT OR UPDATE ON public.runtime_log_archives FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_key();
+
+
+--
+-- Name: runtime_log_archive_bindings runtime_log_archive_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_bindings
+    ADD CONSTRAINT runtime_log_archive_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_log_archive_bindings runtime_log_archive_bindings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_bindings
+    ADD CONSTRAINT runtime_log_archive_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_log_archive_fragments runtime_log_archive_fragments_instance_id_archive_day_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_fragments
+    ADD CONSTRAINT runtime_log_archive_fragments_instance_id_archive_day_fkey FOREIGN KEY (instance_id, archive_day) REFERENCES public.runtime_log_archives(instance_id, archive_day) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_log_archives runtime_log_archives_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archives
+    ADD CONSTRAINT runtime_log_archives_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.runtime_log_archive_bindings(instance_id) ON DELETE CASCADE;

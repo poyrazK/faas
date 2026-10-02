@@ -15,7 +15,7 @@ Regional compute is internal and default-off. Configure artifact routes before
 enabling regional deployments; an unconfigured region fails publication and reads.
 
 Set `FAAS_STORAGE_REGIONS_FILE=/etc/faas/storage-regions.json` in the storage
-environment used by apid, builderd, imaged, schedd, and vmmd. Provision the routing
+environment used by apid, builderd, imaged, schedd, vmmd, and gatewayd-internal. Provision the routing
 file on each host that publishes or consumes regional artifacts. Workers may
 receive only their own region's route; global artifact lifecycle and drift scans
 need all participating routes. Keep the existing `FAAS_STORAGE_BACKEND` settings
@@ -51,7 +51,7 @@ lifecycle credentials according to each daemon's existing ownership. OCI routes
 use the existing egress policy. Each configured region must use a distinct
 bucket or registry/repository namespace, physically located as intended.
 
-New regional sources, build exports, SBOMs, layers, sidecars, job images, snapshots,
+New regional sources, build exports, SBOMs, runtime log archives, layers, sidecars, job images, snapshots,
 and signatures use regional keys. Existing deployment/image references keep their original store. The local
 cache retains one shared budget and includes region in every key. A regional
 store failure does not redirect operations to another store. Removing a route
@@ -88,9 +88,32 @@ republished. Failed scan/upload retries preserve an existing reference. App
 cleanup deletes the full regional key through the configured artifact backend.
 A downgrade refuses while regional references remain. See ADR-433.
 
+Runtime log archives share those routes (ADR-434). Gatewayd-internal loads
+`storage.env` and then its private cache override in
+`/etc/faas/gatewayd-internal-storage.env`. Ansible installs that override with
+`FAAS_STORAGE_CACHE_DIR=/var/lib/faas/gatewayd-internal-artifacts`; install it
+alongside the unit on manually managed hosts to keep the reader cache writable
+and separate from compute caches. Install the archive catalog
+migration and upgrade vmmd, gatewayd-internal and apid together while publishers
+and regional wakes are drained. Regional-only archives require the routing file;
+the global S3 envelope is optional unless legacy apps still use that bucket.
+Ownership bindings survive instance and deployment cleanup. Daily references are
+reserved before upload, and fragment receipts protect retries across workers.
+Daily archive reads/writes bypass immutable artifact cache entries while retaining
+the routing guard. History reads verify app/account, placement, compressed size and digest; missing
+routes never fall back to global storage. App and account hard deletion collect
+pending and published references under the publication lock. Keep every referenced
+route available to cleanup workers until its metadata is removed.
+
+Drain old pending spools before upgrading. Unattributed files and historical global
+archives of regional apps need a separate verified backfill or purge; filenames and
+worker placement do not establish ownership. Configure archive retention on each
+regional store's `faas-logs/` prefix (or OCI repository). Catalog-aware remote
+retention and orphan collection remain follow-up work.
+
 Configure all publishers and consumers, restart them, verify storage access with
 their respective credentials, then run native regional acceptance and resource
 leak checks on the dedicated Linux x86_64/KVM fleet. This file configures runtime
-artifact delivery; source builds require native qualification. Log archive routing,
+artifact delivery; source builds require native qualification. Runtime log lifecycle qualification, archive retention/orphan collection,
 SBOM orphan collection, persistent services, regional ingress and control-plane independence require
 further implementation or qualification.

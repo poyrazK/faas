@@ -25,8 +25,12 @@ package logarchive
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/region"
+	"github.com/onebox-faas/faas/pkg/state"
 	"io"
 	"log/slog"
 	"os"
@@ -55,11 +59,17 @@ const (
 // Shipper is the loop driver. Construct with NewShipper; drive
 // with Run (blocks until ctx cancel) or RunOnce (one pass,
 // returns the (files shipped, bytes shipped, error) tuple).
+type UploadClient interface {
+	PutObject(context.Context, string, string, io.Reader, int64) error
+}
+
 type Shipper struct {
 	mu      sync.Mutex // serialize archive replacement and retention passes
 	cfg     Config
 	spool   *Spool
-	s3      *S3Client
+	s3      UploadClient
+	catalog state.RuntimeLogArchiveCatalog
+	locker  state.RuntimeLogArchiveLocker
 	log     *slog.Logger
 	metrics Metrics
 	now     func() time.Time
@@ -75,7 +85,7 @@ type Shipper struct {
 // Returns an error when s3 is nil and cfg.Bucket is non-empty —
 // the enabled-without-client shape is a wire-up bug the caller
 // must fix before Run returns.
-func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metrics Metrics) (*Shipper, error) {
+func NewShipper(cfg Config, spool *Spool, s3 UploadClient, log *slog.Logger, metrics Metrics) (*Shipper, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -85,7 +95,10 @@ func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metric
 	if spool == nil {
 		return nil, errors.New("logarchive: shipper requires a non-nil Spool")
 	}
-	if cfg.Bucket != "" && s3 == nil {
+	if client, ok := s3.(*S3Client); ok && client == nil {
+		s3 = nil
+	}
+	if cfg.Enabled() && s3 == nil {
 		return nil, errors.New("logarchive: shipper requires a non-nil S3Client when Bucket is set")
 	}
 	if cfg.FlushInterval <= 0 {
@@ -115,6 +128,48 @@ func NewShipper(cfg Config, spool *Spool, s3 *S3Client, log *slog.Logger, metric
 		metrics: metrics,
 		now:     time.Now,
 	}, nil
+}
+
+// WithCatalog enables durable ownership and the fence shared with hard deletion.
+// Production publishers always provide both dependencies.
+func (s *Shipper) WithCatalog(c state.RuntimeLogArchiveCatalog, l state.RuntimeLogArchiveLocker) *Shipper {
+	s.catalog, s.locker = c, l
+	return s
+}
+
+func (s *Shipper) publication(ctx context.Context, f FileInfo) (state.RuntimeLogArchive, func(context.Context), error) {
+	empty := state.RuntimeLogArchive{}
+	if s.catalog == nil && s.locker == nil {
+		if s.cfg.Regional {
+			return empty, nil, errors.New("logarchive: regional publication requires ownership catalog")
+		}
+		return state.RuntimeLogArchive{StorageKey: region.RuntimeLogArchiveKey("", f.Instance, f.Day)}, func(context.Context) {}, nil
+	}
+	if s.catalog == nil || s.locker == nil {
+		return empty, nil, errors.New("logarchive: publication catalog and lock are required together")
+	}
+	binding, err := s.catalog.RuntimeLogArchiveBindingByInstance(ctx, f.Instance)
+	if err != nil {
+		return empty, nil, fmt.Errorf("archive binding: %w", err)
+	}
+	ref := state.RuntimeLogArchive{RuntimeLogArchiveBinding: binding, Day: f.Day, StorageKey: region.RuntimeLogArchiveKey(binding.ComputeRegion, f.Instance, f.Day)}
+	if !ref.ValidReference() {
+		return empty, nil, errors.New("logarchive: invalid ownership binding")
+	}
+	unlock, err := s.locker.AcquireRuntimeLogArchivePublicationLock(ctx, binding.AppID)
+	if err != nil {
+		return empty, nil, fmt.Errorf("archive publication lock: %w", err)
+	}
+	if err := s.catalog.ReserveRuntimeLogArchive(ctx, ref); err != nil {
+		unlock(context.WithoutCancel(ctx))
+		return empty, nil, fmt.Errorf("reserve archive: %w", err)
+	}
+	ref, err = s.catalog.RuntimeLogArchiveByInstanceDay(ctx, f.Instance, f.Day)
+	if err != nil {
+		unlock(context.WithoutCancel(ctx))
+		return empty, nil, fmt.Errorf("reserved archive: %w", err)
+	}
+	return ref, unlock, nil
 }
 
 // Spool returns the per-process Spool. The caller owns shutdown ordering and
@@ -219,6 +274,15 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 // evictions can continue into a fresh .partial file while the upload runs;
 // failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
+	ref, unlock, err := s.publication(ctx, f)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock(context.WithoutCancel(ctx))
+	key := ref.StorageKey
+	if err := s.recoverPublishedArchive(ctx, f); err != nil {
+		return 0, err
+	}
 	path, err := s.spool.PrepareUpload(f.Instance, f.Day)
 	if err != nil {
 		return 0, fmt.Errorf("prepare %s: %w", f.Path, err)
@@ -236,6 +300,19 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 	}
 	defer func() { _ = src.Close() }()
 
+	fragment, err := archiveFileSHA256(path)
+	if err != nil {
+		return 0, fmt.Errorf("hash sealed fragment: %w", err)
+	}
+	if s.catalog != nil {
+		accepted, err := s.catalog.RuntimeLogArchiveFragmentPublished(ctx, f.Instance, f.Day, fragment)
+		if err != nil {
+			return 0, fmt.Errorf("sealed fragment receipt: %w", err)
+		}
+		if accepted {
+			return 0, s.spool.CompleteUpload(path)
+		}
+	}
 	basePath := strings.TrimSuffix(path, spoolUploadSuffix)
 	basePath = strings.TrimSuffix(basePath, spoolPartialSuffix)
 	historyPath := basePath + archiveGzipSuffix
@@ -247,7 +324,7 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 	// Concatenated gzip members decode as one JSONL stream. Preserve earlier
 	// successful flushes without decompressing the entire daily history, and
 	// never truncate that history until the replacement is accepted by S3.
-	if err := copyArchiveHistory(gz, historyPath); err != nil {
+	if err := s.copyOwnedArchiveHistory(ctx, gz, historyPath, ref); err != nil {
 		_ = gz.Close()
 		_ = os.Remove(gzPath)
 		return 0, err
@@ -284,7 +361,6 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		return 0, fmt.Errorf("stat %s: %w", gzPath, err)
 	}
 	uploadStart := s.now()
-	key := s.bucketKey(f.Instance, f.Day)
 	//nolint:forbidigo // vetted path — gzPath is the .jsonl.gz
 	// the shipper just renamed from .partial inside
 	// /var/log/faas/archive/; stat'd above, owner faas:faas (spec §11).
@@ -293,6 +369,13 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		return 0, fmt.Errorf("open %s for upload: %w", gzPath, err)
 	}
 	defer func() { _ = gzReader.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, gzReader); err != nil {
+		return 0, fmt.Errorf("hash archive: %w", err)
+	}
+	if _, err := gzReader.Seek(0, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("rewind archive: %w", err)
+	}
 	if err := s.s3.PutObject(ctx, key, "application/gzip", gzReader, stat.Size()); err != nil {
 		s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
 		// Best-effort cleanup of the local gz on failure —
@@ -302,6 +385,11 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		return 0, fmt.Errorf("put %s: %w", key, err)
 	}
 	s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
+	if s.catalog != nil {
+		if err := s.catalog.PublishRuntimeLogArchiveFragment(ctx, f.Instance, f.Day, stat.Size(), hex.EncodeToString(digest.Sum(nil)), fragment); err != nil {
+			return 0, fmt.Errorf("publish archive metadata: %w", err)
+		}
+	}
 	// A recoverable local commit preserves the cumulative gzip before any
 	// future flush can append another fragment to it. New evictions stay in
 	// their independent .partial file throughout the commit.

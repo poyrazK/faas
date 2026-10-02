@@ -278,6 +278,7 @@ const (
 	repoSources      = "sources"
 	repoBuildExports = "build-exports"
 	repoSBOMs        = "sboms"
+	repoRuntimeLogs  = "faas-logs"
 	repoSnapIdx      = "snap-index"
 )
 
@@ -441,6 +442,13 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		}
 		tag := parts[1]
 		return repoSources, tag, nil
+	case repoRuntimeLogs:
+		_, instance, day, err := region.ParseRuntimeLogArchiveKey(key)
+		tag := instance + "__" + day + ".jsonl.gz"
+		if err != nil || !tagCharset.MatchString(tag) {
+			return "", "", fmt.Errorf("%w: invalid runtime log archive key", ErrInvalidKey)
+		}
+		return repoRuntimeLogs, tag, nil
 	case repoSBOMs:
 		// sboms/<build>.cdx.json → repo "sboms", tag
 		// "<build>.cdx.json". Build IDs are canonical UUIDs and the
@@ -957,6 +965,8 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix s
 		return []string{repoBuildExports}, nil
 	case repoSources:
 		return []string{repoSources}, nil
+	case repoRuntimeLogs:
+		return []string{repoRuntimeLogs}, nil
 	case repoSBOMs:
 		return []string{repoSBOMs}, nil
 	default:
@@ -1133,6 +1143,18 @@ func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 		}
 		key := repoBuildExports + "/" + publication + "/" + suffix
 		if _, _, _, err := region.ParseBuildExportKey(key); err != nil {
+			return "", false
+		}
+		return key, true
+	case repoRuntimeLogs:
+		at := strings.LastIndex(tag, "__")
+		if at < 1 || !strings.HasSuffix(tag, ".jsonl.gz") {
+			return "", false
+		}
+		instance, day := tag[:at], strings.TrimSuffix(tag[at+2:], ".jsonl.gz")
+		key := region.RuntimeLogArchiveKey("", instance, day)
+		_, _, _, err := region.ParseRuntimeLogArchiveKey(key)
+		if err != nil || !tagCharset.MatchString(tag) {
 			return "", false
 		}
 		return key, true

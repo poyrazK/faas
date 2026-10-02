@@ -876,7 +876,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the With*Stamper chain shares one receiver rather than
 	// allocating two equivalent adapters.
 	tailStamper := stamperFromStore(store, log)
-	archiveSink, stopArchive := startVMMDLogArchive(ctx, log, ops)
+	archiveSink, stopArchive := startVMMDLogArchive(ctx, log, ops, store, nodeID, storageBackend)
 	if stopArchive != nil {
 		defer stopArchive()
 	}
@@ -1454,6 +1454,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
 		impl.WithBuilderClaimStore(store)
+	}
+	if archiveSink != nil {
+		impl.WithRuntimeLogArchiveCapture(archiveSink.Capture, archiveSink.Forget)
 	}
 	impl.Register(gsrv)
 	defer func() {

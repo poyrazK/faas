@@ -58,9 +58,10 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,8 +75,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -107,16 +110,6 @@ const (
 // month + two-digit day.
 var archiveDateRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// archiveInstanceRegex caps ?instance= to a safe character set.
-// Firecracker instance ids are normally UUIDs (36 chars, hex +
-// dashes) but the spool accepts any string up to
-// logarchive.MaxInstanceIDLen (128) — the bucket-proxy uses the
-// same lenient shape and rejects anything outside
-// [A-Za-z0-9._-]. The character class forecloses the
-// path-traversal surface (no slashes, no backslashes, no NUL) at
-// the handler boundary, not at S3.
-var archiveInstanceRegex = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-
 // ArchiveLogsHandler owns the ?archive=1 branch of
 // `GET /v1/apps/{slug}/logs`. The handler composes four services:
 //
@@ -147,8 +140,9 @@ var archiveInstanceRegex = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 // cap is the same envelope the live stream enforces. The
 // production default matches defaultAppLogsBackstop.
 type ArchiveLogsHandler struct {
-	Auth *mwauth.Middleware
-	S3   *logarchive.S3Client
+	Auth     *mwauth.Middleware
+	S3       *logarchive.S3Client
+	Archives *logarchive.RoutedClient
 	// Bucket is the destination bucket the shipper writes
 	// into (FAAS_LOG_ARCHIVE_BUCKET). Carried on the
 	// handler rather than read from S3.Bucket so tests
@@ -214,7 +208,7 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrPlanLogArchiveNotAllowed(acct.Plan))
 		return
 	}
-	if h.S3 == nil || h.Bucket == "" {
+	if h.Archives == nil && (h.S3 == nil || h.Bucket == "") {
 		api.WriteProblem(w, api.ErrLogArchiveUnavailable())
 		return
 	}
@@ -224,7 +218,7 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrLogArchiveInvalidQuery("Both instance and date are required for archived logs."))
 		return
 	}
-	if !archiveInstanceRegex.MatchString(instance) {
+	if !region.ValidRuntimeLogInstance(instance) {
 		api.WriteProblem(w, api.ErrLogArchiveInvalidQuery(
 			fmt.Sprintf("Instance %q must contain only letters, numbers, dots, underscores, or dashes.", instance)))
 		return
@@ -269,7 +263,7 @@ func (h *ArchiveLogsHandler) streamUnauth(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrPlanLogArchiveNotAllowed(acct.Plan))
 		return
 	}
-	if h.S3 == nil || h.Bucket == "" {
+	if h.Archives == nil && (h.S3 == nil || h.Bucket == "") {
 		api.WriteProblem(w, api.ErrLogArchiveUnavailable())
 		return
 	}
@@ -279,7 +273,7 @@ func (h *ArchiveLogsHandler) streamUnauth(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrLogArchiveInvalidQuery("Both instance and date are required for archived logs."))
 		return
 	}
-	if !archiveInstanceRegex.MatchString(instance) {
+	if !region.ValidRuntimeLogInstance(instance) {
 		api.WriteProblem(w, api.ErrLogArchiveInvalidQuery(
 			fmt.Sprintf("Instance %q must contain only letters, numbers, dots, underscores, or dashes.", instance)))
 		return
@@ -324,28 +318,68 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 	return !d.Before(cutoff)
 }
 
-// serveArchive is the S3 fetch + gzip-decompress + SSE pump body.
-// Mirrors the receive-pump shape AppLogsHandler.serveAppLogs uses
-// (heartbeat ticker, backstop timer, ctx-cancel drain) so the
-// production wiring is uniform across the two paths.
-//
-// Implementation: GetObject streams the .jsonl.gz body into an
-// in-memory buffer (one day's logs cap at ~hundreds of MiB on
-// the noisiest apps; well within the stdlib heap budget), then
-// a bufio.Scanner over gzip.NewReader walks the inflated
-// JSONL line-by-line. The simpler buffer-then-decompress shape
-// keeps the error handling linear (no pipe dance, no goroutine
-// leak risk) at the cost of holding the full archive in memory
-// for the duration of the stream. A future optimisation can
-// pipe-through-the-gzip-reader if any single-day archive ever
-// exceeds the stdlib heap budget; the wire shape stays the
-// same.
+// archiveReference checks the instance owner before any object-store access.
+// Legacy history is readable only while its original durable instance survives.
+// Regional history always requires a published catalog reference.
+func (h *ArchiveLogsHandler) archiveReference(ctx context.Context, appID, accountID, instance, day string) (state.RuntimeLogArchive, error) {
+	if h.Store == nil {
+		return state.RuntimeLogArchive{}, state.ErrNotFound
+	}
+	app, err := h.Store.AppByID(ctx, appID)
+	if err != nil {
+		return state.RuntimeLogArchive{}, err
+	}
+	if app.AccountID != accountID {
+		return state.RuntimeLogArchive{}, state.ErrNotFound
+	}
+	if catalog, ok := h.Store.(state.RuntimeLogArchiveReader); ok {
+		ref, err := catalog.RuntimeLogArchiveByInstanceDay(ctx, instance, day)
+		if err == nil {
+			if !ref.Published() || ref.InstanceID != instance || ref.Day != day || ref.AppID != appID || ref.AccountID != accountID || ref.ComputeRegion != app.ComputeRegion {
+				return state.RuntimeLogArchive{}, state.ErrNotFound
+			}
+			return ref, nil
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return state.RuntimeLogArchive{}, err
+		}
+	}
+	if app.ComputeRegion != "" {
+		return state.RuntimeLogArchive{}, state.ErrNotFound
+	}
+	inst, err := h.Store.InstanceByID(ctx, instance)
+	if err != nil {
+		return state.RuntimeLogArchive{}, err
+	}
+	if inst.AppID != appID {
+		return state.RuntimeLogArchive{}, state.ErrNotFound
+	}
+	return state.RuntimeLogArchive{RuntimeLogArchiveBinding: state.RuntimeLogArchiveBinding{InstanceID: instance, AppID: appID, AccountID: accountID, DeploymentID: inst.DeploymentID}, Day: day, StorageKey: region.RuntimeLogArchiveKey("", instance, day)}, nil
+}
+
+// serveArchiveWithAccount streams the owned gzip, verifies cataloged bytes and
+// digest, and preserves the existing terminal-frame vocabulary.
 func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
-	key := archiveObjectKey(instance, day)
-	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
+	ref, err := h.archiveReference(ctx_, appID, accountID, instance, day)
+	if err != nil {
+		reason := archiveReasonDegraded
+		if errors.Is(err, state.ErrNotFound) {
+			reason = archiveReasonMissing
+		}
+		renderArchiveTerminal(w, flusher, reason)
+		return
+	}
+	key := ref.StorageKey
+	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, ref.DeploymentID, make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
 	if backstop <= 0 {
 		backstop = defaultAppLogsBackstop
+	}
+	ctx_, cancel := context.WithTimeout(ctx_, backstop)
+	defer cancel()
+	identity.DeploymentID = ref.DeploymentID
+	if ref.ComputeRegion != "" {
+		identity.Region = ref.ComputeRegion
 	}
 	backstopTimer := time.NewTimer(backstop)
 	defer backstopTimer.Stop()
@@ -353,23 +387,24 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 
-	// Fetch the gzipped body into memory. GetObject returns
-	// *Permanent on 4xx and a plain error on 5xx / network;
-	// archiveTerminalForError maps both to the terminal
-	// reason vocabulary the SDK decodes.
-	var body bytes.Buffer
-	if _, err := h.S3.GetObject(ctx_, key, &body); err != nil {
-		// 4xx → archive_missing; 5xx / network → archive_degraded.
+	client := h.Archives
+	if client == nil {
+		client = &logarchive.RoutedClient{Legacy: h.S3}
+	}
+	body, err := client.OpenObject(ctx_, key)
+	if err != nil {
 		renderArchiveTerminal(w, flusher, archiveTerminalForError(err))
 		return
 	}
-
-	// Wrap the bytes in a gzip reader so the scanner walks the
-	// inflated JSONL. A malformed gzip body (someone wrote
-	// raw JSONL into the bucket) surfaces as a gzip header
-	// error here — treated as archive_degraded because the
-	// archive exists, just isn't readable.
-	gz, gzErr := gzip.NewReader(&body)
+	defer func() { _ = body.Close() }()
+	digest := sha256.New()
+	var compressed io.Reader = body
+	var bounded *io.LimitedReader
+	if ref.Published() {
+		bounded = &io.LimitedReader{R: body, N: ref.Bytes}
+		compressed = io.TeeReader(bounded, digest)
+	}
+	gz, gzErr := gzip.NewReader(compressed)
 	if gzErr != nil {
 		renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 		return
@@ -425,6 +460,17 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 				h.Log.Warn("logarchive.readback.scan_error",
 					"app", appID, "instance", instance, "day", day, "err", err)
 			}
+			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+			return
+		}
+	}
+	if bounded != nil {
+		// gzip consumes every member. Drain any buffered tail through the same hash,
+		// then reject truncated, oversized, or replaced objects before completion.
+		_, drainErr := io.Copy(io.Discard, compressed)
+		var extra [1]byte
+		n, tailErr := body.Read(extra[:])
+		if drainErr != nil || bounded.N != 0 || n != 0 || !errors.Is(tailErr, io.EOF) || hex.EncodeToString(digest.Sum(nil)) != ref.SHA256 {
 			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 			return
 		}
@@ -546,7 +592,7 @@ func archiveTerminalForError(err error) string {
 	if err == nil {
 		return archiveReasonComplete
 	}
-	if logarchive.IsPermanent(err) {
+	if storage.IsNotFound(err) || logarchive.IsPermanent(err) {
 		return archiveReasonMissing
 	}
 	return archiveReasonDegraded

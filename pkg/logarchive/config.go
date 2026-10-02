@@ -173,6 +173,8 @@ type Config struct {
 	// ConfigFromEnv's us-east-1 default. It lets an archive envelope provide
 	// its region without overriding an operator-provided environment value.
 	regionExplicit bool
+	// Regional enables archive routes configured through FAAS_STORAGE_REGIONS_FILE.
+	Regional bool
 }
 
 // Enabled reports whether the config has the minimum required
@@ -182,7 +184,7 @@ type Config struct {
 // the creds envelope out-of-band and the next daemon restart
 // flips the switch without code changes.
 func (c Config) Enabled() bool {
-	return c.Bucket != ""
+	return c.Bucket != "" || c.Regional
 }
 
 // ConfigFromEnv reads the FAAS_LOG_ARCHIVE_* env vars and
@@ -198,6 +200,7 @@ func ConfigFromEnv(getenv func(string) string, log *slog.Logger) (Config, error)
 		log = slog.Default()
 	}
 	cfg := Config{
+		Regional:       getenv("FAAS_STORAGE_REGIONS_FILE") != "",
 		Endpoint:       getenv(EnvEndpoint),
 		Region:         defaultRegion(getenv(EnvRegion)),
 		Bucket:         getenv(EnvBucket),

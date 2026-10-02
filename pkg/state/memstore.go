@@ -137,6 +137,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	runtimeLogArchiveBindings   map[string]RuntimeLogArchiveBinding
+	runtimeLogArchives          map[string]RuntimeLogArchive
+	runtimeLogArchiveFragments  map[string]bool
 	exclusivePolicies           map[string]ExclusiveWorkPolicy
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
 	exclusiveKeys               map[string]exclusiveKey
@@ -4071,6 +4074,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	insertedIDs := make([]string, 0, len(apps))
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
+			m.dropRuntimeLogArchivesForAppLocked(id)
 			delete(m.apps, id)
 		}
 		return nil, err
@@ -6504,6 +6508,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.serviceRecovery, id)
+	m.dropRuntimeLogArchivesForAppLocked(id)
 	delete(m.apps, id)
 	return nil
 }
@@ -20870,6 +20875,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for aid, a := range m.apps {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
+			m.dropRuntimeLogArchivesForAppLocked(aid)
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
 		}

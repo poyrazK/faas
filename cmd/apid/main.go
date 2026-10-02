@@ -782,12 +782,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
-			Store:     srv.store,
-			Mailer:    graceSenderAdapter{m: srv.mailer},
-			Log:       log,
-			Interval:  graceIntervalFromEnv(log),
-			Artifacts: srv.sbomStorage,
-			Registry:  srv.ops.Registry(),
+			Store:       srv.store,
+			Mailer:      graceSenderAdapter{m: srv.mailer},
+			Log:         log,
+			Interval:    graceIntervalFromEnv(log),
+			Artifacts:   srv.sbomStorage,
+			LogArchives: archiveDeletionClient(srv.sbomStorage, log),
+			Registry:    srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
@@ -860,14 +861,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		case !shipCfg.Enabled():
 			log.Info("logarchive.disabled", "reason", "FAAS_LOG_ARCHIVE_BUCKET unset")
 		default:
-			s3, err := logarchive.NewS3Client(
-				shipCfg.Endpoint,
-				shipCfg.Region,
-				shipCfg.Bucket,
-				shipCfg.KeyID,
-				shipCfg.Secret,
-				shipCfg.AuthMode,
-			)
+			s3, err := logarchive.ClientForConfig(shipCfg, srv.sbomStorage)
 			if err != nil {
 				log.Warn("logarchive.s3client_init_failed", "err", err)
 			} else {
@@ -877,12 +871,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 				if err != nil {
 					log.Warn("logarchive.shipper_init_failed", "err", err)
 				} else {
-					go func() {
-						if err := sh.Run(ctx); err != nil && ctx.Err() == nil {
-							log.Warn("logarchive.run_returned_error", "err", err)
-						}
-						_ = sh.Spool().CloseAll()
-					}()
+					catalog, catalogOK := srv.store.(state.RuntimeLogArchiveCatalog)
+					locker, lockerOK := srv.store.(state.RuntimeLogArchiveLocker)
+					if !catalogOK || !lockerOK {
+						log.Warn("logarchive.ownership_store_unavailable")
+					} else {
+						sh.WithCatalog(catalog, locker)
+						go func() {
+							if err := sh.Run(ctx); err != nil && ctx.Err() == nil {
+								log.Warn("logarchive.run_returned_error", "err", err)
+							}
+							_ = sh.Spool().CloseAll()
+						}()
+					}
 				}
 			}
 		}

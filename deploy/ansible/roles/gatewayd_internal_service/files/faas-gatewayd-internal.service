@@ -16,9 +16,13 @@ RestartSec=2s
 WatchdogSec=60s
 Slice=faas-cp.slice
 MemoryMax=512M
+StateDirectory=faas/gatewayd-internal-artifacts
+StateDirectoryMode=0750
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/gatewayd-internal-storage.env
 EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_GATEWAY_LISTEN=off
@@ -47,7 +51,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage
+ReadWritePaths=/var/lib/faas/gatewayd-internal-artifacts /run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage
 
 [Install]
 WantedBy=multi-user.target

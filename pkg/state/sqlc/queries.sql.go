@@ -816,6 +816,53 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const captureRuntimeLogArchiveBinding = `-- name: CaptureRuntimeLogArchiveBinding :one
+WITH captured AS (
+    INSERT INTO runtime_log_archive_bindings(instance_id, app_id, account_id, deployment_id, compute_region)
+    SELECT i.id::text, a.id, a.account_id, d.id, a.compute_region
+      FROM instances i JOIN deployments d ON d.id = i.deployment_id JOIN apps a ON a.id = d.app_id
+     WHERE i.id = $1::uuid AND i.node_id = $2::uuid
+       AND i.app_id = d.app_id AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+    ON CONFLICT (instance_id) DO NOTHING
+    RETURNING instance_id, app_id, account_id, deployment_id, compute_region
+)
+SELECT instance_id, app_id, account_id, deployment_id, compute_region FROM captured
+UNION ALL
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region
+  FROM runtime_log_archive_bindings b JOIN instances i ON i.id::text = b.instance_id
+  JOIN deployments d ON d.id = i.deployment_id JOIN apps a ON a.id = d.app_id
+ WHERE i.id = $1::uuid AND i.node_id = $2::uuid AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+   AND (b.app_id, b.account_id, b.deployment_id, b.compute_region) = (a.id, a.account_id, d.id, a.compute_region)
+   AND NOT EXISTS(SELECT 1 FROM captured)
+LIMIT 1
+`
+
+type CaptureRuntimeLogArchiveBindingParams struct {
+	InstanceID pgtype.UUID
+	NodeID     pgtype.UUID
+}
+
+type CaptureRuntimeLogArchiveBindingRow struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+}
+
+func (q *Queries) CaptureRuntimeLogArchiveBinding(ctx context.Context, db DBTX, arg CaptureRuntimeLogArchiveBindingParams) (CaptureRuntimeLogArchiveBindingRow, error) {
+	row := db.QueryRow(ctx, captureRuntimeLogArchiveBinding, arg.InstanceID, arg.NodeID)
+	var i CaptureRuntimeLogArchiveBindingRow
+	err := row.Scan(
+		&i.InstanceID,
+		&i.AppID,
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.ComputeRegion,
+	)
+	return i, err
+}
+
 const checkExclusiveWorkRuntime = `-- name: CheckExclusiveWorkRuntime :one
 SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
 WHERE i.id=$1::text::uuid AND i.wake_id=$2::text::uuid
@@ -8592,6 +8639,57 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppRuntimeLogArchives = `-- name: ListAppRuntimeLogArchives :many
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region,
+       r.archive_day, r.storage_key, r.bytes, r.sha256, r.published_at
+FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+WHERE b.app_id = $1 ORDER BY r.instance_id, r.archive_day
+`
+
+type ListAppRuntimeLogArchivesRow struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+	ArchiveDay    pgtype.Date
+	StorageKey    string
+	Bytes         int64
+	Sha256        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListAppRuntimeLogArchives(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAppRuntimeLogArchivesRow, error) {
+	rows, err := db.Query(ctx, listAppRuntimeLogArchives, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppRuntimeLogArchivesRow{}
+	for rows.Next() {
+		var i ListAppRuntimeLogArchivesRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.AccountID,
+			&i.DeploymentID,
+			&i.ComputeRegion,
+			&i.ArchiveDay,
+			&i.StorageKey,
+			&i.Bytes,
+			&i.Sha256,
+			&i.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -15791,6 +15889,33 @@ func (q *Queries) PublishBuildSBOM(ctx context.Context, db DBTX, arg PublishBuil
 	return result.RowsAffected(), nil
 }
 
+const publishRuntimeLogArchive = `-- name: PublishRuntimeLogArchive :execrows
+UPDATE runtime_log_archives r SET bytes = $1::bigint, sha256 = $2::text, published_at = now()
+FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
+WHERE r.instance_id = b.instance_id AND r.instance_id = $3::text
+  AND r.archive_day = $4::date AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+`
+
+type PublishRuntimeLogArchiveParams struct {
+	Bytes      int64
+	Sha256     string
+	InstanceID string
+	ArchiveDay pgtype.Date
+}
+
+func (q *Queries) PublishRuntimeLogArchive(ctx context.Context, db DBTX, arg PublishRuntimeLogArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, publishRuntimeLogArchive,
+		arg.Bytes,
+		arg.Sha256,
+		arg.InstanceID,
+		arg.ArchiveDay,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -16352,6 +16477,22 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recordRuntimeLogArchiveFragment = `-- name: RecordRuntimeLogArchiveFragment :exec
+INSERT INTO runtime_log_archive_fragments(instance_id, archive_day, fragment_sha256) VALUES($1,$2,$3)
+ON CONFLICT DO NOTHING
+`
+
+type RecordRuntimeLogArchiveFragmentParams struct {
+	InstanceID     string
+	ArchiveDay     pgtype.Date
+	FragmentSha256 string
+}
+
+func (q *Queries) RecordRuntimeLogArchiveFragment(ctx context.Context, db DBTX, arg RecordRuntimeLogArchiveFragmentParams) error {
+	_, err := db.Exec(ctx, recordRuntimeLogArchiveFragment, arg.InstanceID, arg.ArchiveDay, arg.FragmentSha256)
+	return err
 }
 
 const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec
@@ -17912,6 +18053,28 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	return current_inflight, err
 }
 
+const reserveRuntimeLogArchive = `-- name: ReserveRuntimeLogArchive :execrows
+INSERT INTO runtime_log_archives(instance_id, archive_day, storage_key)
+SELECT b.instance_id, $1::date, $2::text
+FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
+WHERE b.instance_id = $3::text AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+ON CONFLICT (instance_id, archive_day) DO UPDATE SET storage_key = excluded.storage_key
+`
+
+type ReserveRuntimeLogArchiveParams struct {
+	ArchiveDay pgtype.Date
+	StorageKey string
+	InstanceID string
+}
+
+func (q *Queries) ReserveRuntimeLogArchive(ctx context.Context, db DBTX, arg ReserveRuntimeLogArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, reserveRuntimeLogArchive, arg.ArchiveDay, arg.StorageKey, arg.InstanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
 UPDATE debug_regression_observations
 SET state = 'resolved',
@@ -18135,6 +18298,92 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const runtimeLogArchiveBindingByInstance = `-- name: RuntimeLogArchiveBindingByInstance :one
+SELECT instance_id, app_id, account_id, deployment_id, compute_region
+FROM runtime_log_archive_bindings WHERE instance_id = $1
+`
+
+type RuntimeLogArchiveBindingByInstanceRow struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+}
+
+func (q *Queries) RuntimeLogArchiveBindingByInstance(ctx context.Context, db DBTX, instanceID string) (RuntimeLogArchiveBindingByInstanceRow, error) {
+	row := db.QueryRow(ctx, runtimeLogArchiveBindingByInstance, instanceID)
+	var i RuntimeLogArchiveBindingByInstanceRow
+	err := row.Scan(
+		&i.InstanceID,
+		&i.AppID,
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.ComputeRegion,
+	)
+	return i, err
+}
+
+const runtimeLogArchiveByInstanceDay = `-- name: RuntimeLogArchiveByInstanceDay :one
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region,
+       r.archive_day, r.storage_key, r.bytes, r.sha256, r.published_at
+FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+WHERE r.instance_id = $1 AND r.archive_day = $2
+`
+
+type RuntimeLogArchiveByInstanceDayParams struct {
+	InstanceID string
+	ArchiveDay pgtype.Date
+}
+
+type RuntimeLogArchiveByInstanceDayRow struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+	ArchiveDay    pgtype.Date
+	StorageKey    string
+	Bytes         int64
+	Sha256        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) RuntimeLogArchiveByInstanceDay(ctx context.Context, db DBTX, arg RuntimeLogArchiveByInstanceDayParams) (RuntimeLogArchiveByInstanceDayRow, error) {
+	row := db.QueryRow(ctx, runtimeLogArchiveByInstanceDay, arg.InstanceID, arg.ArchiveDay)
+	var i RuntimeLogArchiveByInstanceDayRow
+	err := row.Scan(
+		&i.InstanceID,
+		&i.AppID,
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.ComputeRegion,
+		&i.ArchiveDay,
+		&i.StorageKey,
+		&i.Bytes,
+		&i.Sha256,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const runtimeLogArchiveFragmentPublished = `-- name: RuntimeLogArchiveFragmentPublished :one
+SELECT EXISTS(SELECT 1 FROM runtime_log_archive_fragments WHERE instance_id = $1 AND archive_day = $2 AND fragment_sha256 = $3)
+`
+
+type RuntimeLogArchiveFragmentPublishedParams struct {
+	InstanceID     string
+	ArchiveDay     pgtype.Date
+	FragmentSha256 string
+}
+
+func (q *Queries) RuntimeLogArchiveFragmentPublished(ctx context.Context, db DBTX, arg RuntimeLogArchiveFragmentPublishedParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeLogArchiveFragmentPublished, arg.InstanceID, arg.ArchiveDay, arg.FragmentSha256)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one

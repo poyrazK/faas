@@ -173,6 +173,7 @@ func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 	if err != nil || current.ComputeRegion != regionID || current.NodeID != nodes[1].ID {
 		t.Fatalf("deployment did not become live on peer: %+v %v", current, err)
 	}
+	requireNativeRegionalLogBindings(t, ctx, store, app.ID, dep.ID, regionID, nodes[1].ID)
 	var escaped int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM instances i JOIN compute_nodes n ON n.id=i.node_id WHERE i.app_id=$1 AND n.region IS DISTINCT FROM $2`, app.ID, regionID).Scan(&escaped); err != nil || escaped != 0 {
 		t.Fatalf("source-build instances escaped region: count=%d err=%v", escaped, err)
@@ -282,4 +283,27 @@ func waitRegionalBuildExport(t *testing.T, ctx context.Context, store *state.PgS
 	}
 	t.Fatal("timed out waiting for durable regional build completion")
 	return state.Deployment{}
+}
+
+// A real cold boot must capture ownership before its ring can archive evictions.
+func requireNativeRegionalLogBindings(t *testing.T, ctx context.Context, s *state.PgStore, appID, depID, regionID, nodeID string) {
+	t.Helper()
+	instances, err := s.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, instance := range instances {
+		if instance.State != string(state.StateRunning) {
+			continue
+		}
+		binding, err := s.RuntimeLogArchiveBindingByInstance(ctx, instance.ID)
+		if err != nil || binding.AppID != appID || binding.DeploymentID != depID || binding.ComputeRegion != regionID || instance.NodeID != nodeID {
+			t.Fatalf("native wake did not capture regional log identity: %+v %v", binding, err)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no running native instance to verify log archive binding")
+	}
 }

@@ -287,7 +287,9 @@ type Server struct {
 	// Ack/Cancel: after a successful commit the database row no
 	// longer has state='migrating', but the source still owns the
 	// paused VM until Ack destroys it.
-	migrationStore state.Store
+	migrationStore           state.Store
+	runtimeLogArchiveCapture func(context.Context, fcvm.WakeRequest) error
+	runtimeLogArchiveForget  func(string)
 	// migrationLeases is the optional durable source-side lease record. The
 	// in-memory tracker remains the hot cache for paused-VM handles; this store
 	// survives vmmd restarts and supplies those handles to Ack/Cancel/expiry.
@@ -362,6 +364,24 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 func (s *Server) WithEvents(p *events.Platform) *Server {
 	s.events = p
 	return s
+}
+
+// WithRuntimeLogArchiveCapture resolves durable ownership before ring producers start.
+func (s *Server) WithRuntimeLogArchiveCapture(capture func(context.Context, fcvm.WakeRequest) error, forget ...func(string)) *Server {
+	s.runtimeLogArchiveCapture = capture
+	if len(forget) > 0 {
+		s.runtimeLogArchiveForget = forget[0]
+	}
+	return s
+}
+
+func (s *Server) captureRuntimeLogArchive(ctx context.Context, wr fcvm.WakeRequest) {
+	if s.runtimeLogArchiveCapture == nil {
+		return
+	}
+	if err := s.runtimeLogArchiveCapture(ctx, wr); err != nil {
+		s.log.Warn("vmmd: log archive binding unavailable", "instance", wr.Instance, "err", err)
+	}
 }
 
 // WithMigrationStore wires the durable instance-row view required by
@@ -473,6 +493,9 @@ func (s *Server) ForgetNet(instance string) {
 // not on the End call (which is the last-resort cleanup
 // documented in pkg/fcvm/activity/doc.go).
 func (s *Server) ForgetActivity(instance string) {
+	if s.runtimeLogArchiveForget != nil {
+		s.runtimeLogArchiveForget(instance)
+	}
 	if s == nil || s.activity == nil {
 		return
 	}
@@ -610,6 +633,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 // continue in parallel, so the first customer request does not pay the bridge
 // process/socket startup. Both rollback switches retain the previous path.
 func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest, appProtocol string) (*fcvm.Instance, error) {
+	s.captureRuntimeLogArchive(ctx, wr)
 	fastVMM, ok := s.vmm.(wakeNetworkReadyVMM)
 	if !ok || currentStreamBridgeVersion() != "v2" || !persistentStreamBridgeEnabled() {
 		return s.vmm.Wake(ctx, wr)
@@ -661,6 +685,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	// CreateFromSnapshot: schedd is the source of truth, vmmd's
 	// observation is corroborating evidence.
 	s.emitBootObserved(wakeCtx, req.GetInstance(), "cold_boot")
+	s.captureRuntimeLogArchive(wakeCtx, wr)
 	inst, err := s.vmm.Wake(wakeCtx, wr)
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
@@ -857,6 +882,9 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+	if s.runtimeLogArchiveForget != nil {
+		s.runtimeLogArchiveForget(req.GetInstance())
 	}
 	s.streamBridges.forget(context.WithoutCancel(ctx), req.GetInstance())
 	return &vmmdpb.SnapshotResponse{

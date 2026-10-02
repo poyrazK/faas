@@ -219,6 +219,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -257,6 +258,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 func TestArchiveStream_FreePlan_OneDayWindow(t *testing.T) {
 	srv := newFakeS3(t, http.StatusOK, gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"free"}`}))
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -283,6 +285,7 @@ func TestArchiveStream_FreePlan_OneDayWindow(t *testing.T) {
 // Known Free is enabled, but an unknown plan must never reach S3.
 func TestArchiveStream_UnknownPlan_Returns402(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store:  archiveFixtureOwner{},
 		S3:     nil,
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -305,6 +308,7 @@ func TestArchiveStream_UnknownPlan_Returns402(t *testing.T) {
 func TestArchiveStream_S3NotFound_ArchiveMissing(t *testing.T) {
 	srv := newFakeS3(t, http.StatusNotFound, []byte(`<Error><Code>NoSuchKey</Code></Error>`))
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -325,6 +329,7 @@ func TestArchiveStream_S3NotFound_ArchiveMissing(t *testing.T) {
 func TestArchiveStream_S3ServerError_ArchiveDegraded(t *testing.T) {
 	srv := newFakeS3(t, http.StatusInternalServerError, []byte(`<Error><Code>InternalError</Code></Error>`))
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -343,6 +348,7 @@ func TestArchiveStream_S3ServerError_ArchiveDegraded(t *testing.T) {
 // fetch — defends against path-traversal-shaped strings.
 func TestArchiveStream_InvalidDate(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store: archiveFixtureOwner{},
 		// Placeholder S3: validation fires before S3 is touched.
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
@@ -363,6 +369,7 @@ func TestArchiveStream_InvalidDate(t *testing.T) {
 // hard limit; anything else fails validation.
 func TestArchiveStream_InvalidInstance(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store:  archiveFixtureOwner{},
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -386,6 +393,7 @@ func TestArchiveStream_RetentionCap_HobbyBoundary(t *testing.T) {
 	withinStamp := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02") + "T12:00:00Z"
 	srv := newFakeS3(t, http.StatusOK, gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"` + withinStamp + `","msg":"x"}`}))
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -420,6 +428,7 @@ func TestArchiveStream_RetentionCap_HobbyBoundary(t *testing.T) {
 // window — there's no archive for a future day.
 func TestArchiveStream_FutureDateRefused(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store:  archiveFixtureOwner{},
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -441,6 +450,7 @@ func TestArchiveStream_FutureDateRefused(t *testing.T) {
 // 400 + log_archive_invalid_query.
 func TestArchiveStream_MissingQueryParams(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store:  archiveFixtureOwner{},
 		S3:     newArchivePlaceholderClient(t),
 		Bucket: "test-bucket",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -483,6 +493,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -504,6 +515,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 // FIRST, so this branch is only reachable on Hobby+.
 func TestArchiveStream_NilS3AndBucket_ServiceUnavailable(t *testing.T) {
 	h := &ArchiveLogsHandler{
+		Store:  archiveFixtureOwner{},
 		S3:     nil,
 		Bucket: "",
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -586,6 +598,7 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &ArchiveLogsHandler{
+		Store:    archiveFixtureOwner{},
 		S3:       newArchiveTestClient(t, srv),
 		Bucket:   "test-bucket",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -628,4 +641,19 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 	if got["instance"].(string) != "inst-abc" {
 		t.Errorf("instance: got %v, want inst-abc", got["instance"])
 	}
+}
+
+// These transport tests explicitly attribute their historical legacy instance to
+// the fixture app. Ownership denial and retained regional catalogs have separate tests.
+type archiveFixtureOwner struct{ state.Store }
+
+func (archiveFixtureOwner) AppByID(context.Context, string) (state.App, error) {
+	return state.App{ID: "test-app-id", AccountID: "acct-1"}, nil
+}
+func (archiveFixtureOwner) InstanceByID(_ context.Context, id string) (state.Instance, error) {
+	return state.Instance{ID: id, AppID: "test-app-id", DeploymentID: "test-dep"}, nil
+}
+
+func (archiveFixtureOwner) DeploymentByID(context.Context, string) (state.Deployment, error) {
+	return state.Deployment{}, state.ErrNotFound
 }

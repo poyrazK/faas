@@ -22,7 +22,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,16 +62,21 @@ type Auditor interface {
 // Params wires the runtime dependencies the Grace loop needs. All
 // fields except Store are optional and fall back to no-op behavior;
 // Store must be non-nil (the constructor panics otherwise).
+type ArchiveDeleter interface {
+	Delete(context.Context, string) error
+}
+
 type Params struct {
-	Store     state.Store
-	Mailer    Sender
-	Interval  time.Duration // default 60s
-	Now       func() time.Time
-	Log       *slog.Logger
-	Notif     Notifier
-	Audit     Auditor // optional; PR-5.5 emits account.deleted after DeleteAccount fires
-	Artifacts storage.StorageBackend
-	Registry  prometheus.Registerer
+	Store       state.Store
+	Mailer      Sender
+	Interval    time.Duration // default 60s
+	Now         func() time.Time
+	Log         *slog.Logger
+	Notif       Notifier
+	Audit       Auditor // optional; PR-5.5 emits account.deleted after DeleteAccount fires
+	Artifacts   storage.StorageBackend
+	LogArchives ArchiveDeleter
+	Registry    prometheus.Registerer
 }
 
 // Grace is the 30-day deletion-grace timer. Owns the ticker + the
@@ -169,7 +176,7 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		// because DeleteAccount removed it; we still guard on the
 		// returned ErrNotFound for the redelivery race (two ticks
 		// firing close together on the same overdue row).
-		if err := g.p.Store.DeleteAccount(ctx, acct.ID); err != nil {
+		if err := g.deleteAccountWithArchives(ctx, acct); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
@@ -240,83 +247,189 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
 			continue
 		}
-		if app.DeleteGraceUntil != nil {
-			if err := g.p.Store.ClaimAppDeletion(ctx, app.ID); err != nil {
-				if !errors.Is(err, state.ErrNotFound) {
-					g.metrics.failure("claim_tombstone")
-					g.p.Log.Warn("grace: claim app deletion failed", "app", app.ID, "err", err)
-				}
-				continue
+		func() {
+			unlock, err := g.archiveLock(ctx, app.ID)
+			if err != nil {
+				g.metrics.failure("archive_lock")
+				g.p.Log.Warn("grace: archive lock failed", "app", app.ID, "err", err)
+				return
 			}
-		}
-		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
-		if err != nil {
-			g.metrics.failure("list_artifacts")
-			g.p.Log.Warn("grace: list app deletion artifacts failed", "app", app.ID, "err", err)
+			defer unlock(context.WithoutCancel(ctx))
+			if app.DeleteGraceUntil != nil {
+				if err := g.p.Store.ClaimAppDeletion(ctx, app.ID); err != nil {
+					if !errors.Is(err, state.ErrNotFound) {
+						g.metrics.failure("claim_tombstone")
+						g.p.Log.Warn("grace: claim app deletion failed", "app", app.ID, "err", err)
+					}
+					return
+				}
+			}
+			artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+			if err != nil {
+				g.metrics.failure("list_artifacts")
+				g.p.Log.Warn("grace: list app deletion artifacts failed", "app", app.ID, "err", err)
+				if app.DeleteGraceUntil == nil {
+					missingDeadlines++
+				}
+				return
+			}
+			var appArtifactBytes int64
+			for _, artifact := range artifacts {
+				if artifact.Bytes > 0 {
+					appArtifactBytes += artifact.Bytes
+				}
+			}
 			if app.DeleteGraceUntil == nil {
 				missingDeadlines++
+				retainedArtifactBytes += appArtifactBytes
+				g.p.Log.Error("grace: quarantined deleted app without purge deadline",
+					"app", app.ID, "slug", app.Slug, "artifact_bytes", appArtifactBytes)
+				return
 			}
-			continue
-		}
-		var appArtifactBytes int64
-		for _, artifact := range artifacts {
-			if artifact.Bytes > 0 {
-				appArtifactBytes += artifact.Bytes
+			if len(artifacts) != 0 && g.p.Artifacts == nil {
+				retainedArtifactBytes += appArtifactBytes
+				g.metrics.failure("artifact_backend_missing")
+				g.p.Log.Error("grace: refusing app purge without artifact backend",
+					"app", app.ID, "artifact_count", len(artifacts), "artifact_bytes", appArtifactBytes)
+				return
 			}
-		}
-		if app.DeleteGraceUntil == nil {
-			missingDeadlines++
-			retainedArtifactBytes += appArtifactBytes
-			g.p.Log.Error("grace: quarantined deleted app without purge deadline",
-				"app", app.ID, "slug", app.Slug, "artifact_bytes", appArtifactBytes)
-			continue
-		}
-		if len(artifacts) != 0 && g.p.Artifacts == nil {
-			retainedArtifactBytes += appArtifactBytes
-			g.metrics.failure("artifact_backend_missing")
-			g.p.Log.Error("grace: refusing app purge without artifact backend",
-				"app", app.ID, "artifact_count", len(artifacts), "artifact_bytes", appArtifactBytes)
-			continue
-		}
-		artifactFailed := false
-		for _, artifact := range artifacts {
-			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
-				artifactFailed = true
-				if artifact.Bytes > 0 {
-					retainedArtifactBytes += artifact.Bytes
+			artifactFailed := false
+			for _, artifact := range artifacts {
+				if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
+					artifactFailed = true
+					if artifact.Bytes > 0 {
+						retainedArtifactBytes += artifact.Bytes
+					}
+					g.metrics.failure("delete_artifact")
+					g.p.Log.Warn("grace: app artifact delete failed", "app", app.ID,
+						"key", artifact.Key, "bytes", artifact.Bytes, "err", err)
 				}
-				g.metrics.failure("delete_artifact")
-				g.p.Log.Warn("grace: app artifact delete failed", "app", app.ID,
-					"key", artifact.Key, "bytes", artifact.Bytes, "err", err)
 			}
-		}
-		if artifactFailed {
-			continue
-		}
-		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				continue
+			if artifactFailed {
+				return
 			}
-			g.metrics.failure("delete_database")
-			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
-			continue
-		}
-		g.metrics.deleted.Inc()
-		// Reuse the existing lifecycle channel so schedd's cleanup path
-		// gets a durable redelivery signal. The app row has already been
-		// removed, so consumers treat a missing row as an idempotent no-op.
-		payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "slug": app.Slug})
-		if err := g.p.Notif(ctx, db.NotifyAppDelete, string(payload)); err != nil {
-			g.p.Log.Warn("grace: app delete notify failed", "app", app.ID, "err", err)
-		}
-		appID := app.AccountID
-		g.p.Audit.Emit(ctx, "app.deleted", &appID, map[string]any{
-			"app_id": app.ID, "slug": app.Slug, "actor": "grace-sweep",
-		})
-		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
+			if err := g.deleteAppArchives(ctx, app); err != nil {
+				g.metrics.failure("delete_log_archive")
+				g.p.Log.Warn("grace: log archive cleanup failed", "app", app.ID, "err", err)
+				return
+			}
+			if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					return
+				}
+				g.metrics.failure("delete_database")
+				g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
+				return
+			}
+			g.metrics.deleted.Inc()
+			// Reuse the existing lifecycle channel so schedd's cleanup path
+			// gets a durable redelivery signal. The app row has already been
+			// removed, so consumers treat a missing row as an idempotent no-op.
+			payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "slug": app.Slug})
+			if err := g.p.Notif(ctx, db.NotifyAppDelete, string(payload)); err != nil {
+				g.p.Log.Warn("grace: app delete notify failed", "app", app.ID, "err", err)
+			}
+			appID := app.AccountID
+			g.p.Audit.Emit(ctx, "app.deleted", &appID, map[string]any{
+				"app_id": app.ID, "slug": app.Slug, "actor": "grace-sweep",
+			})
+			g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
+		}()
 	}
 	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
 	g.metrics.expiredArtifactBytes.Set(float64(retainedArtifactBytes))
 	g.metrics.lastSuccess.SetToCurrentTime()
+	return nil
+}
+
+func (g *Grace) archiveLock(ctx context.Context, appID string) (func(context.Context), error) {
+	locker, ok := g.p.Store.(state.RuntimeLogArchiveLocker)
+	if !ok {
+		if _, catalogOK := g.p.Store.(state.RuntimeLogArchiveCatalog); catalogOK {
+			return nil, errors.New("grace: archive publication lock unavailable")
+		}
+		return func(context.Context) {}, nil
+	}
+	return locker.AcquireRuntimeLogArchivePublicationLock(ctx, appID)
+}
+
+// Pending reservations are collected too: PUT can time out after storage commits.
+func (g *Grace) deleteAppArchives(ctx context.Context, app state.App) error {
+	catalog, ok := g.p.Store.(state.RuntimeLogArchiveCatalog)
+	if !ok {
+		return nil
+	}
+	refs, err := catalog.ListAppRuntimeLogArchives(ctx, app.ID)
+	if err != nil {
+		return fmt.Errorf("list log archives: %w", err)
+	}
+	if len(refs) != 0 && g.p.LogArchives == nil {
+		return errors.New("grace: log archive store unavailable")
+	}
+	for _, ref := range refs {
+		if !ref.ValidReference() || ref.AppID != app.ID || ref.AccountID != app.AccountID || ref.ComputeRegion != app.ComputeRegion {
+			return errors.New("grace: invalid log archive owner")
+		}
+		if err := g.p.LogArchives.Delete(ctx, ref.StorageKey); err != nil && !storage.IsNotFound(err) {
+			return fmt.Errorf("delete log archive %s: %w", ref.StorageKey, err)
+		}
+	}
+	return nil
+}
+
+func (g *Grace) deleteAccountWithArchives(ctx context.Context, expected state.Account) error {
+	accountID := expected.ID
+	apps, err := g.p.Store.ListApps(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	deleted, err := g.p.Store.ListDeletedApps(ctx)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		seen[app.ID] = true
+	}
+	for _, app := range deleted {
+		if app.AccountID == accountID && !seen[app.ID] {
+			apps = append(apps, app)
+		}
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
+	// AccountDeletedPending forbids new reservations. Drain and collect each app
+	// separately: retaining every lock would exhaust the connection pool before
+	// the ordinary catalog queries or final account delete could run.
+	for _, app := range apps {
+		if err := g.collectAccountAppArchives(ctx, expected, app); err != nil {
+			return err
+		}
+	}
+	if err := g.checkAccountDeletion(ctx, expected); err != nil {
+		return err
+	}
+	return g.p.Store.DeleteAccount(ctx, accountID)
+}
+
+func (g *Grace) collectAccountAppArchives(ctx context.Context, expected state.Account, app state.App) error {
+	unlock, err := g.archiveLock(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock(context.WithoutCancel(ctx))
+	if err := g.checkAccountDeletion(ctx, expected); err != nil {
+		return err
+	}
+	return g.deleteAppArchives(ctx, app)
+}
+
+func (g *Grace) checkAccountDeletion(ctx context.Context, expected state.Account) error {
+	account, err := g.p.Store.AccountByID(ctx, expected.ID)
+	if err != nil {
+		return err
+	}
+	if account.Status != state.AccountDeletedPending || account.DeletionRequestedAt == nil || expected.DeletionRequestedAt == nil || !account.DeletionRequestedAt.Equal(*expected.DeletionRequestedAt) || account.DeletionRequestedAt.After(g.p.Now().Add(-state.DeletionGraceDuration())) {
+		return state.ErrNotFound
+	}
 	return nil
 }

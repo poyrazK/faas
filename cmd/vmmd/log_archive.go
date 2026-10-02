@@ -8,8 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -38,6 +41,9 @@ type vmmdLogArchiveSink struct {
 	mu          sync.RWMutex
 	closed      bool
 	queuedBytes int64
+	catalog     state.RuntimeLogArchiveCatalog
+	nodeID      string
+	bindings    map[string]state.RuntimeLogArchiveBinding
 }
 
 func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, log *slog.Logger) *vmmdLogArchiveSink {
@@ -58,6 +64,48 @@ func newVMMDLogArchiveSink(spool *logarchive.Spool, metrics logarchive.Metrics, 
 	return s
 }
 
+// Capture runs before a VM wake, outside the ring mutex. A failed or mismatched
+// lookup clears the cached identity so no stale binding can accept evictions.
+func (s *vmmdLogArchiveSink) Capture(ctx context.Context, wr fcvm.WakeRequest) error {
+	s.mu.Lock()
+	delete(s.bindings, wr.Instance)
+	s.mu.Unlock()
+	b, err := s.catalog.CaptureRuntimeLogArchiveBinding(ctx, wr.Instance, s.nodeID)
+	if err != nil {
+		return err
+	}
+	if b.AppID != wr.AppID || b.AccountID != wr.AccountID || b.DeploymentID != wr.DeploymentID {
+		return state.ErrInvalidArgument
+	}
+	s.mu.Lock()
+	s.bindings[wr.Instance] = b
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *vmmdLogArchiveSink) bootstrap(ctx context.Context, store state.Store) {
+	instances, err := store.ListInstancesOnNodeID(ctx, s.nodeID)
+	if err != nil {
+		s.log.Warn("logarchive.binding_bootstrap_failed", "err", err)
+		return
+	}
+	for _, i := range instances {
+		b, err := s.catalog.CaptureRuntimeLogArchiveBinding(ctx, i.ID, s.nodeID)
+		if err != nil {
+			continue
+		}
+		s.mu.Lock()
+		s.bindings[i.ID] = b
+		s.mu.Unlock()
+	}
+}
+
+func (s *vmmdLogArchiveSink) Forget(instance string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.bindings, instance)
+}
+
 // Enqueue is intentionally non-blocking because it runs from Ring's
 // eviction callback while the per-instance ring mutex is held.
 func (s *vmmdLogArchiveSink) Enqueue(instance string, line logbuf.Line) {
@@ -66,7 +114,7 @@ func (s *vmmdLogArchiveSink) Enqueue(instance string, line logbuf.Line) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.closed || (s.bindings != nil && s.bindings[instance].InstanceID == "") {
 		return
 	}
 	lineBytes := int64(len(line.Line))
@@ -126,7 +174,7 @@ func (s *vmmdLogArchiveSink) Close(ctx context.Context) error {
 // setup is optional: an absent credential envelope leaves vmmd serving live
 // logs with archive disabled; a malformed envelope emits a clear startup
 // warning, matching apid's best-effort archive policy.
-func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMetrics) (*vmmdLogArchiveSink, func()) {
+func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMetrics, store state.Store, nodeID string, backend storage.StorageBackend) (*vmmdLogArchiveSink, func()) {
 	cfg, err := logarchive.ConfigFromEnv(os.Getenv, log)
 	if err != nil {
 		log.Warn("vmmd: log archive config failed", "err", err)
@@ -138,9 +186,9 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Warn("vmmd: log archive credentials unavailable", "path", credsPath, "err", err)
 		}
-		return nil, nil
+	} else {
+		cfg = cfg.WithCredentials(creds)
 	}
-	cfg = cfg.WithCredentials(creds)
 	// Keep vmmd's local producer spool separate from apid on single-box
 	// installs. An explicit vmmd override wins; otherwise a shared override
 	// remains supported for operators that intentionally co-locate spools.
@@ -153,7 +201,13 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		log.Info("vmmd: log archive disabled", "reason", "archive bucket not configured")
 		return nil, nil
 	}
-	s3, err := logarchive.NewS3Client(cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.KeyID, cfg.Secret, cfg.AuthMode)
+	catalog, ok := store.(state.RuntimeLogArchiveCatalog)
+	locker, lockOK := store.(state.RuntimeLogArchiveLocker)
+	if !ok || !lockOK || nodeID == "" {
+		log.Warn("vmmd: log archive requires durable ownership store")
+		return nil, nil
+	}
+	s3, err := logarchive.ClientForConfig(cfg, backend)
 	if err != nil {
 		log.Warn("vmmd: log archive client init failed", "err", err)
 		return nil, nil
@@ -169,7 +223,12 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		log.Warn("vmmd: log archive shipper init failed", "err", err)
 		return nil, nil
 	}
+	shipper.WithCatalog(catalog, locker)
 	sink := newVMMDLogArchiveSink(spool, metrics, log)
+	sink.mu.Lock()
+	sink.catalog, sink.nodeID, sink.bindings = catalog, nodeID, make(map[string]state.RuntimeLogArchiveBinding)
+	sink.mu.Unlock()
+	sink.bootstrap(ctx, store)
 	archiveCtx, archiveCancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {

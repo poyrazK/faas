@@ -99,6 +99,7 @@ type Querier interface {
 	// commit-after-cancel hits 0 rows and the handler returns 409
 	// upload_session_already_cancelled.
 	CancelUploadSession(ctx context.Context, db DBTX, arg CancelUploadSessionParams) error
+	CaptureRuntimeLogArchiveBinding(ctx context.Context, db DBTX, arg CaptureRuntimeLogArchiveBindingParams) (CaptureRuntimeLogArchiveBindingRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
 	ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg ClaimBuildVMCleanupOnNodeParams) ([]ClaimBuildVMCleanupOnNodeRow, error)
 	ClaimNextQueuedBuildOnNode(ctx context.Context, db DBTX, arg ClaimNextQueuedBuildOnNodeParams) (Build, error)
@@ -679,6 +680,7 @@ type Querier interface {
 	// types — without them sqlc infers $5 as timestamptz from the
 	// leading (received_at) reference, breaking pagination.
 	ListAppErrorRequests(ctx context.Context, db DBTX, arg ListAppErrorRequestsParams) ([]ListAppErrorRequestsRow, error)
+	ListAppRuntimeLogArchives(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAppRuntimeLogArchivesRow, error)
 	ListAppSecretRevocationTargets(ctx context.Context, db DBTX, revocationID pgtype.UUID) ([]ListAppSecretRevocationTargetsRow, error)
 	// Build the complete active roster for each secret from the deployment's
 	// persisted scope/allowlist and reload opt-in. A missing observation remains
@@ -1112,6 +1114,7 @@ type Querier interface {
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
 	PublishBuildSBOM(ctx context.Context, db DBTX, arg PublishBuildSBOMParams) (int64, error)
+	PublishRuntimeLogArchive(ctx context.Context, db DBTX, arg PublishRuntimeLogArchiveParams) (int64, error)
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
@@ -1193,6 +1196,7 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
+	RecordRuntimeLogArchiveFragment(ctx context.Context, db DBTX, arg RecordRuntimeLogArchiveFragmentParams) error
 	RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
@@ -1273,6 +1277,7 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	ReserveRuntimeLogArchive(ctx context.Context, db DBTX, arg ReserveRuntimeLogArchiveParams) (int64, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
@@ -1291,6 +1296,9 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	RuntimeLogArchiveBindingByInstance(ctx context.Context, db DBTX, instanceID string) (RuntimeLogArchiveBindingByInstanceRow, error)
+	RuntimeLogArchiveByInstanceDay(ctx context.Context, db DBTX, arg RuntimeLogArchiveByInstanceDayParams) (RuntimeLogArchiveByInstanceDayRow, error)
+	RuntimeLogArchiveFragmentPublished(ctx context.Context, db DBTX, arg RuntimeLogArchiveFragmentPublishedParams) (bool, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
 	// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
 	// Publication is insert-only; retirement is the sole mutable transition.

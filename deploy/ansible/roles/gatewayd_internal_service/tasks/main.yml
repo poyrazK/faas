@@ -76,6 +76,18 @@
     create_home: false
     password: "*"
 
+# Override the shared worker cache after loading storage.env. The archive reader
+# needs a writable cache without granting access to the VM artifact cache.
+- name: gatewayd_internal_service — configure private archive artifact cache
+  ansible.builtin.copy:
+    dest: /etc/faas/gatewayd-internal-storage.env
+    content: |
+      FAAS_STORAGE_CACHE_DIR=/var/lib/faas/gatewayd-internal-artifacts
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 # The callback spool contains customer payloads and callback bearer tokens.
 # Keep it on the host boot disk and private to the realtimed service user.
 - name: gatewayd_internal_service — create persistent realtime callback spool

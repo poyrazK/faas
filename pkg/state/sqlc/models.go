@@ -3969,6 +3969,30 @@ type RuntimeConfigRevision struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type RuntimeLogArchive struct {
+	InstanceID  string
+	ArchiveDay  pgtype.Date
+	StorageKey  string
+	Bytes       int64
+	Sha256      string
+	PublishedAt pgtype.Timestamptz
+}
+
+type RuntimeLogArchiveBinding struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type RuntimeLogArchiveFragment struct {
+	InstanceID     string
+	ArchiveDay     pgtype.Date
+	FragmentSha256 string
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string

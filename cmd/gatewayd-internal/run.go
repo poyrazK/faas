@@ -80,6 +80,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1179,7 +1180,8 @@ type runDeps struct {
 	// when FAAS_LOG_ARCHIVE_BUCKET is unset / unseal
 	// incomplete; the handler surfaces a 503
 	// log_archive_unconfigured in that branch.
-	archiveS3 *logarchive.S3Client
+	archiveS3     *logarchive.S3Client
+	archiveClient *logarchive.RoutedClient
 	// archiveBucket (issue #562 PR-B) is the destination bucket
 	// name the shipper writes into and the read-back handler
 	// reads from. Kept separate from archiveS3.Bucket so the
@@ -2282,15 +2284,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	case !archiveCfg.Enabled():
 		log.Info("gatewayd-internal: log archive disabled (FAAS_LOG_ARCHIVE_BUCKET unset); archive read-back will return 503")
 	default:
-		s3c, s3Err := logarchive.NewS3Client(
-			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
-			archiveCfg.KeyID, archiveCfg.Secret,
-			archiveCfg.AuthMode,
-		)
+		var archiveBackend storage.StorageBackend
+		var backendErr error
+		if archiveCfg.Regional {
+			archiveBackend, backendErr = storage.BackendFromEnvContext(ctx)
+		}
+		s3c, s3Err := logarchive.ClientForConfig(archiveCfg, archiveBackend)
+		if backendErr != nil {
+			s3Err = backendErr
+		}
 		if s3Err != nil {
 			log.Warn("gatewayd-internal: S3 client build failed; archive read-back disabled", "err", s3Err)
 		} else {
-			deps.archiveS3 = s3c
+			deps.archiveS3 = s3c.Legacy
+			deps.archiveClient = s3c
 			deps.archiveBucket = archiveCfg.Bucket
 			log.Info("gatewayd-internal: log archive read-back armed",
 				"endpoint", archiveCfg.Endpoint,
@@ -3152,12 +3159,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Ops:       nil,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:   deps.authMw,
-				S3:     deps.archiveS3,
-				Bucket: deps.archiveBucket,
-				Store:  deps.pgStore,
-				Log:    log,
-				Ops:    nil,
+				Auth:     deps.authMw,
+				S3:       deps.archiveS3,
+				Archives: deps.archiveClient,
+				Bucket:   deps.archiveBucket,
+				Store:    deps.pgStore,
+				Log:      log,
+				Ops:      nil,
 			},
 		})
 		logsHandler = logsMux

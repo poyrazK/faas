@@ -204,28 +204,53 @@ func prepareUploadBody(r io.Reader, size int64) (io.Reader, string, error) {
 // streams the result straight to the SSE response without
 // buffering.
 func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	r, err := c.OpenObject(ctx, key)
 	if err != nil {
-		return 0, fmt.Errorf("logarchive: build request: %w", err)
-	}
-	if err := c.authorize(req, hexSHA256(nil)); err != nil {
 		return 0, err
 	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("logarchive: get: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	// Status check only — we must NOT drain the success-path
-	// body, or io.Copy below would see 0 bytes.
-	if err := checkS3Status(resp, "GET"); err != nil {
-		return 0, err
-	}
-	n, err := io.Copy(w, resp.Body)
+	defer func() { _ = r.Close() }()
+	n, err := io.Copy(w, r)
 	if err != nil {
 		return n, fmt.Errorf("logarchive: read body: %w", err)
 	}
 	return n, nil
+}
+
+// OpenObject preserves streaming reads so the gateway never buffers an entire
+// daily archive. Ownership and key routing are checked before this method.
+func (c *S3Client) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	if err != nil {
+		return nil, fmt.Errorf("logarchive: build request: %w", err)
+	}
+	if err := c.authorize(req, hexSHA256(nil)); err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logarchive: get: %w", err)
+	}
+	if err := checkS3Status(resp, "GET"); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (c *S3Client) DeleteObject(ctx context.Context, key string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.objectURL(key), nil)
+	if err != nil {
+		return fmt.Errorf("logarchive: build delete request: %w", err)
+	}
+	if err := c.authorize(req, hexSHA256(nil)); err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("logarchive: delete: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return checkS3Status(resp, "DELETE")
 }
 
 func (c *S3Client) authorize(req *http.Request, payloadHash string) error {

@@ -5703,3 +5703,59 @@ WHERE b.id = $1;
 UPDATE build_provenance
 SET sbom_storage_key = coalesce(nullif(sqlc.arg(sbom_key)::text, ''), sbom_storage_key)
 WHERE build_id = sqlc.arg(build_id)::uuid;
+
+-- name: CaptureRuntimeLogArchiveBinding :one
+WITH captured AS (
+    INSERT INTO runtime_log_archive_bindings(instance_id, app_id, account_id, deployment_id, compute_region)
+    SELECT i.id::text, a.id, a.account_id, d.id, a.compute_region
+      FROM instances i JOIN deployments d ON d.id = i.deployment_id JOIN apps a ON a.id = d.app_id
+     WHERE i.id = sqlc.arg(instance_id)::uuid AND i.node_id = sqlc.arg(node_id)::uuid
+       AND i.app_id = d.app_id AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+    ON CONFLICT (instance_id) DO NOTHING
+    RETURNING instance_id, app_id, account_id, deployment_id, compute_region
+)
+SELECT * FROM captured
+UNION ALL
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region
+  FROM runtime_log_archive_bindings b JOIN instances i ON i.id::text = b.instance_id
+  JOIN deployments d ON d.id = i.deployment_id JOIN apps a ON a.id = d.app_id
+ WHERE i.id = sqlc.arg(instance_id)::uuid AND i.node_id = sqlc.arg(node_id)::uuid AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+   AND (b.app_id, b.account_id, b.deployment_id, b.compute_region) = (a.id, a.account_id, d.id, a.compute_region)
+   AND NOT EXISTS(SELECT 1 FROM captured)
+LIMIT 1;
+
+-- name: RuntimeLogArchiveBindingByInstance :one
+SELECT instance_id, app_id, account_id, deployment_id, compute_region
+FROM runtime_log_archive_bindings WHERE instance_id = $1;
+
+-- name: ReserveRuntimeLogArchive :execrows
+INSERT INTO runtime_log_archives(instance_id, archive_day, storage_key)
+SELECT b.instance_id, sqlc.arg(archive_day)::date, sqlc.arg(storage_key)::text
+FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
+WHERE b.instance_id = sqlc.arg(instance_id)::text AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+ON CONFLICT (instance_id, archive_day) DO UPDATE SET storage_key = excluded.storage_key;
+
+-- name: PublishRuntimeLogArchive :execrows
+UPDATE runtime_log_archives r SET bytes = sqlc.arg(bytes)::bigint, sha256 = sqlc.arg(sha256)::text, published_at = now()
+FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
+WHERE r.instance_id = b.instance_id AND r.instance_id = sqlc.arg(instance_id)::text
+  AND r.archive_day = sqlc.arg(archive_day)::date AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active');
+
+-- name: RuntimeLogArchiveByInstanceDay :one
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region,
+       r.archive_day, r.storage_key, r.bytes, r.sha256, r.published_at
+FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+WHERE r.instance_id = $1 AND r.archive_day = $2;
+
+-- name: ListAppRuntimeLogArchives :many
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region,
+       r.archive_day, r.storage_key, r.bytes, r.sha256, r.published_at
+FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+WHERE b.app_id = $1 ORDER BY r.instance_id, r.archive_day;
+
+-- name: RuntimeLogArchiveFragmentPublished :one
+SELECT EXISTS(SELECT 1 FROM runtime_log_archive_fragments WHERE instance_id = $1 AND archive_day = $2 AND fragment_sha256 = $3);
+
+-- name: RecordRuntimeLogArchiveFragment :exec
+INSERT INTO runtime_log_archive_fragments(instance_id, archive_day, fragment_sha256) VALUES($1,$2,$3)
+ON CONFLICT DO NOTHING;
