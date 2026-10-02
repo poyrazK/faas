@@ -182,12 +182,16 @@ func runMCPRemote(ctx context.Context, command string, c *mcphosting.Client, leg
 	if err := c.Initialize(ctx); err != nil {
 		return printErr("MCP initialize", err)
 	}
-	tools, _, err := c.Tools(ctx)
+	tools, discovery, err := c.Tools(ctx)
 	if err != nil {
 		return printErr("MCP tool discovery", err)
 	}
 	if command == "tools" {
-		return jsonOut(writeJSON(map[string]any{"tools": tools}))
+		result := map[string]any{"tools": tools}
+		if len(discovery.RejectedTools) != 0 {
+			result["rejected_tools"] = discovery.RejectedTools
+		}
+		return jsonOut(writeJSON(result))
 	}
 	if tool == "" {
 		return printErr("MCP call", errors.New("--tool is required"))

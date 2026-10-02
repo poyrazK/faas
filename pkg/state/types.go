@@ -4713,32 +4713,48 @@ type CreateMirrorRuleParams struct {
 // Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
 // `include_body=false`; schema fingerprints are present only for complete JSON
 // responses. Any hash can be nil when its source/mirror snapshot is missing or
-// truncated.
+// truncated. AdmissionFailureReason is set only when schedd does not return an
+// admitted target; these rows are incomplete and do not represent guest crashes.
 type MirrorInvocationResult struct {
-	ID                   string
-	MirrorRuleID         string
-	AccountID            string
-	AppID                string
-	SourceDeploymentID   string
-	MirrorDeploymentID   string
-	InstanceID           string
-	SourceInstanceID     string
-	StatusCode           int
-	SourceStatusCode     int
-	LatencyMs            int
-	SourceLatencyMs      int
-	BodyHash             []byte
-	SourceBodyHash       []byte
-	SchemaHash           []byte
-	SourceSchemaHash     []byte
-	StatusDiff           bool
-	SchemaDiff           bool
-	BodyDiff             bool
-	Crashed              bool
-	ComparisonIncomplete bool
-	RequestID            string
-	CompletedAt          time.Time
+	ID                     string
+	MirrorRuleID           string
+	AccountID              string
+	AppID                  string
+	SourceDeploymentID     string
+	MirrorDeploymentID     string
+	InstanceID             string
+	SourceInstanceID       string
+	StatusCode             int
+	SourceStatusCode       int
+	LatencyMs              int
+	SourceLatencyMs        int
+	BodyHash               []byte
+	SourceBodyHash         []byte
+	SchemaHash             []byte
+	SourceSchemaHash       []byte
+	StatusDiff             bool
+	SchemaDiff             bool
+	BodyDiff               bool
+	Crashed                bool
+	ComparisonIncomplete   bool
+	AdmissionFailureReason MirrorAdmissionFailureReason
+	RequestID              string
+	CompletedAt            time.Time
 }
+
+// MirrorAdmissionFailureReason records why the scheduler did not return an
+// admitted mirror target. These outcomes are incomplete comparisons, not
+// guest crashes. The value is persisted on the invocation row so later
+// summaries can distinguish admission timeouts, capacity rejections, and
+// other scheduler errors.
+type MirrorAdmissionFailureReason string
+
+const (
+	MirrorAdmissionFailureNone     MirrorAdmissionFailureReason = ""
+	MirrorAdmissionFailureTimeout  MirrorAdmissionFailureReason = "scheduler_admission_timeout"
+	MirrorAdmissionFailureRejected MirrorAdmissionFailureReason = "scheduler_admission_rejected"
+	MirrorAdmissionFailureError    MirrorAdmissionFailureReason = "scheduler_admission_error"
+)
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
 // GET /v1/apps/{slug}/mirrors/{id}/summary endpoint returns over
@@ -4748,16 +4764,19 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations          int
-	ChangedResponseCount      int
-	StatusDiffCount           int
-	SchemaDiffCount           int
-	BodyDiffCount             int
-	MeanLatencyDiffMs         int
-	P99LatencyDiffMs          int
-	CrashCount                int
-	IncompleteComparisonCount int
-	WindowSeconds             int
+	TotalInvocations                int
+	ChangedResponseCount            int
+	StatusDiffCount                 int
+	SchemaDiffCount                 int
+	BodyDiffCount                   int
+	MeanLatencyDiffMs               int
+	P99LatencyDiffMs                int
+	CrashCount                      int
+	IncompleteComparisonCount       int
+	SchedulerAdmissionTimeoutCount  int
+	SchedulerAdmissionRejectedCount int
+	SchedulerAdmissionErrorCount    int
+	WindowSeconds                   int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis

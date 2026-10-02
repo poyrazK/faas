@@ -1,6 +1,7 @@
 package sched
 
 // adr: 210
+// adr: 133
 
 import (
 	"context"
@@ -39,6 +40,7 @@ type fakeVMM struct {
 	snapshots             int
 	warmSnapshots         int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
 	destroys              int
+	lastDestroyContextErr error
 	pings                 int // PR #114: counts Ping calls (heartbeat path)
 	frameworkReadyCount   int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
 	prepares              int // Tier A5: counts PrepareLiveMigration calls
@@ -270,6 +272,7 @@ func (f *fakeVMM) Destroy(ctx context.Context, _, _ string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastDestroyContextErr = ctx.Err()
 	if f.destroyErr != nil {
 		return f.destroyErr
 	}

@@ -24920,6 +24920,14 @@ func (m *MemStore) MirrorSummary(_ context.Context, ruleID string, since time.Ti
 		if r.ComparisonIncomplete {
 			s.IncompleteComparisonCount++
 		}
+		switch r.AdmissionFailureReason {
+		case MirrorAdmissionFailureTimeout:
+			s.SchedulerAdmissionTimeoutCount++
+		case MirrorAdmissionFailureRejected:
+			s.SchedulerAdmissionRejectedCount++
+		case MirrorAdmissionFailureError:
+			s.SchedulerAdmissionErrorCount++
+		}
 		if r.LatencyMs > 0 && r.SourceLatencyMs > 0 {
 			latencyDiffs = append(latencyDiffs, r.LatencyMs-r.SourceLatencyMs)
 		}
