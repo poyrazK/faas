@@ -3,7 +3,9 @@ package s3gateway
 import (
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
@@ -12,7 +14,7 @@ func supportedCopyHeader(r *http.Request, name string) bool {
 		return false
 	}
 	switch strings.ToLower(name) {
-	case "x-amz-copy-source-if-match", "x-amz-copy-source-if-none-match":
+	case "x-amz-copy-source-if-match", "x-amz-copy-source-if-none-match", "x-amz-copy-source-if-modified-since", "x-amz-copy-source-if-unmodified-since":
 		return true
 	case "x-amz-copy-source-range":
 		return r.URL.Query().Get("uploadId") != "" && r.URL.Query().Get("partNumber") != ""
@@ -34,8 +36,27 @@ func isCopyRequest(r *http.Request) bool {
 	return len(q) == 0 || q.Get("uploadId") != "" && q.Get("partNumber") != "" && queryKeysOnly(q, "uploadId", "partNumber")
 }
 
-func copySourceConditions(r *http.Request) objectstorage.CopySourceConditions {
-	return objectstorage.CopySourceConditions{IfMatch: r.Header.Get("X-Amz-Copy-Source-If-Match"), IfNoneMatch: r.Header.Get("X-Amz-Copy-Source-If-None-Match")}
+func copySourceConditions(r *http.Request) (objectstorage.CopySourceConditions, bool) {
+	c := objectstorage.CopySourceConditions{IfMatch: r.Header.Get("X-Amz-Copy-Source-If-Match"), IfNoneMatch: r.Header.Get("X-Amz-Copy-Source-If-None-Match")}
+	for _, date := range []struct {
+		name   string
+		target **time.Time
+	}{
+		{"X-Amz-Copy-Source-If-Modified-Since", &c.IfModifiedSince},
+		{"X-Amz-Copy-Source-If-Unmodified-Since", &c.IfUnmodifiedSince},
+	} {
+		if value, present := r.Header[http.CanonicalHeaderKey(date.name)]; present {
+			if len(value) != 1 || len(value[0]) == 0 || len(value[0]) > api.MaxObjectCopyDateHeaderBytes {
+				return c, false
+			}
+			t, err := http.ParseTime(value[0])
+			if err != nil {
+				return c, false
+			}
+			*date.target = &t
+		}
+	}
+	return c, c.Valid()
 }
 
 func (h *Handler) validCopyBody(w http.ResponseWriter, r *http.Request, req requestContext) bool {
@@ -59,8 +80,7 @@ func (h *Handler) validCopyBody(w http.ResponseWriter, r *http.Request, req requ
 }
 
 func gatewayCopyConditions(w http.ResponseWriter, r *http.Request, req requestContext) (objectstorage.CopySourceConditions, bool) {
-	c := copySourceConditions(r)
-	valid := c.Valid()
+	c, valid := copySourceConditions(r)
 	for _, name := range []string{"X-Amz-Copy-Source-If-Match", "X-Amz-Copy-Source-If-None-Match"} {
 		if values, present := r.Header[http.CanonicalHeaderKey(name)]; present && (len(values) != 1 || values[0] == "") {
 			valid = false
@@ -78,6 +98,12 @@ func (h *Handler) tryTrackedGatewayCopy(w http.ResponseWriter, r *http.Request, 
 		return true
 	}
 	copier, capable := req.provider.(objectstorage.TrackedObjectCopier)
+	if conditions.HasDates() {
+		if _, supports := req.provider.(objectstorage.DateConditionalTrackedObjectCopier); !supports {
+			h.unsupported(w, r, req.requestID)
+			return true
+		}
+	}
 	if !conditions.Empty() {
 		if _, supports := req.provider.(objectstorage.ConditionalTrackedObjectCopier); !supports {
 			h.unsupported(w, r, req.requestID)

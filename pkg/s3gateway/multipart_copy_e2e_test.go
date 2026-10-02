@@ -48,6 +48,10 @@ type multipartCopyHTTPProvider struct {
 	sequence, copies int
 	failure          string
 	completed        bool
+	sourceSize       int64
+	sourceVersion    string
+	sourceModified   time.Time
+	latestChanged    bool
 }
 
 func (p *multipartCopyHTTPProvider) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -58,8 +62,37 @@ func (p *multipartCopyHTTPProvider) serve(t *testing.T, w http.ResponseWriter, r
 	w.Header().Set("Content-Type", "application/xml")
 	switch {
 	case r.Method == http.MethodHead && strings.HasSuffix(r.URL.Path, "/source"):
-		w.Header().Set("Content-Length", strconv.FormatInt(api.MaxObjectSinglePutBytes+1, 10))
+		size := p.sourceSize
+		if size == 0 {
+			size = api.MaxObjectSinglePutBytes + 1
+		}
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.Header().Set("ETag", `"source"`)
+		w.Header().Set("X-Amz-Version-Id", p.sourceVersion)
+		if !p.sourceModified.IsZero() {
+			w.Header().Set("Last-Modified", p.sourceModified.Format(http.TimeFormat))
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-Amz-Meta-Owner", "original")
+	case r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "" && !q.Has("uploadId"):
+		p.copies++
+		if !p.checkSourceCopy(t, w, r) {
+			return
+		}
+		if r.Header.Get("Content-Type") != "image/png" || r.Header.Get("X-Amz-Meta-Owner") != "original" {
+			t.Error("version copy lost measured metadata")
+		}
+		if p.failure == "lost_ack" {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		w.Header().Set("X-Amz-Copy-Source-Version-Id", p.sourceVersion)
+		_, _ = io.WriteString(w, `<CopyObjectResult><ETag>&quot;copied&quot;</ETag><LastModified>2026-10-02T10:00:00Z</LastModified></CopyObjectResult>`)
 	case r.Method == http.MethodGet && q.Has("uploads"):
 		_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>`)
 	case r.Method == http.MethodPost && q.Has("uploads"):
@@ -92,8 +125,10 @@ func (p *multipartCopyHTTPProvider) serveUpload(t *testing.T, w http.ResponseWri
 	switch r.Method {
 	case http.MethodPut:
 		p.copies++
-		source, _ := url.PathUnescape(r.Header.Get("X-Amz-Copy-Source"))
-		if source != "physical/source" || r.Header.Get("X-Amz-Copy-Source-If-Match") != `"source"` || r.Header.Get("X-Amz-Copy-Source-Range") != "bytes=0-9" {
+		if !p.checkSourceCopy(t, w, r) {
+			return
+		}
+		if r.Header.Get("X-Amz-Copy-Source-Range") != "bytes=0-9" {
 			t.Error("part copy not bound to measured private source/range")
 		}
 		if p.failure == "source_changed" {
@@ -129,6 +164,64 @@ func (p *multipartCopyHTTPProvider) serveUpload(t *testing.T, w http.ResponseWri
 		t.Error("unexpected multipart provider method", r.Method)
 		w.WriteHeader(500)
 	}
+}
+
+// The fixture evaluates provider-side predicates on the requested immutable
+// source, independent of gateway admission. Changing the latest source leaves
+// the retained version usable and detects accidentally copying the latest.
+func (p *multipartCopyHTTPProvider) checkSourceCopy(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
+	t.Helper()
+	path, rawQuery, _ := strings.Cut(r.Header.Get("X-Amz-Copy-Source"), "?")
+	source, err := url.PathUnescape(path)
+	query, qe := url.ParseQuery(rawQuery)
+	version := p.sourceVersion
+	if version == "null" {
+		version = ""
+	}
+	if err != nil || qe != nil || source != "physical/source" || query.Get("versionId") != version || len(query) > 1 {
+		t.Error("copy did not select the inspected version", source, query)
+	}
+	if p.latestChanged && query.Get("versionId") == "" {
+		t.Error("copy selected changed latest source")
+	}
+	match := r.Header.Get("X-Amz-Copy-Source-If-Match")
+	none := r.Header.Get("X-Amz-Copy-Source-If-None-Match")
+	if p.sourceVersion == "" && match != `"source"` {
+		t.Error("mutable source lost measured ETag fence")
+	}
+	if p.failure == "source_deleted" {
+		w.WriteHeader(404)
+		_, _ = io.WriteString(w, `<Error><Code>NoSuchVersion</Code><Message>private-version</Message></Error>`)
+		return false
+	}
+	if match != "" && match != `"source"` || none == `"source"` || none == "*" {
+		w.WriteHeader(412)
+		_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`)
+		return false
+	}
+	if value := r.Header.Get("X-Amz-Copy-Source-If-Unmodified-Since"); value != "" && match == "" {
+		date, err := http.ParseTime(value)
+		if err != nil {
+			t.Error(err)
+		}
+		if p.sourceModified.After(date) {
+			w.WriteHeader(412)
+			_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`)
+			return false
+		}
+	}
+	if value := r.Header.Get("X-Amz-Copy-Source-If-Modified-Since"); value != "" {
+		date, err := http.ParseTime(value)
+		if err != nil {
+			t.Error(err)
+		}
+		if !p.sourceModified.After(date) {
+			w.WriteHeader(412)
+			_, _ = io.WriteString(w, `<Error><Code>PreconditionFailed</Code></Error>`)
+			return false
+		}
+	}
+	return true
 }
 
 type multipartCopyIntegration struct {

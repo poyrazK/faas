@@ -3,20 +3,32 @@ package objectstorage
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// CopySourceConditions are source ETag predicates, distinct from destination
-// PUT/completion conditions. Each header accepts one strong ETag or '*'.
+// CopySourceConditions are source predicates, distinct from destination
+// PUT/completion conditions. Each ETag header accepts one strong ETag or '*'.
 type CopySourceConditions struct {
-	IfMatch, IfNoneMatch string
+	IfMatch, IfNoneMatch               string
+	IfModifiedSince, IfUnmodifiedSince *time.Time
 }
 
-func (c CopySourceConditions) Empty() bool { return c.IfMatch == "" && c.IfNoneMatch == "" }
+func (c CopySourceConditions) HasDates() bool {
+	return c.IfModifiedSince != nil || c.IfUnmodifiedSince != nil
+}
+
+func (c CopySourceConditions) Empty() bool {
+	return c.IfMatch == "" && c.IfNoneMatch == "" && !c.HasDates()
+}
 
 func (c CopySourceConditions) Valid() bool {
-	return validCopyETagCondition(c.IfMatch) && validCopyETagCondition(c.IfNoneMatch)
+	return validCopyETagCondition(c.IfMatch) && validCopyETagCondition(c.IfNoneMatch) && validCopyDate(c.IfModifiedSince) && validCopyDate(c.IfUnmodifiedSince)
+}
+
+func validCopyDate(t *time.Time) bool {
+	return t == nil || !t.IsZero() && t.Year() >= 1 && t.Year() <= 9999 && t.Nanosecond() == 0
 }
 
 func validCopyETagCondition(value string) bool {
@@ -34,12 +46,27 @@ func validCopyETagCondition(value string) bool {
 	return true
 }
 
+// Check preflights ETag predicates and verifies that source identity can
+// preserve date semantics. The provider evaluates dates during the copy.
 func (c CopySourceConditions) Check(source CopySourceSnapshot) error {
 	if !c.Valid() {
 		return ErrInvalid
 	}
 	if c.IfMatch != "" && c.IfMatch != "*" && c.IfMatch != source.ETag || c.IfNoneMatch == "*" || c.IfNoneMatch != "" && c.IfNoneMatch == source.ETag {
 		return ErrPreconditionFailed
+	}
+	// Only the customer's If-Match suppresses If-Unmodified-Since. The
+	// internal ETag fence must never change customer predicate precedence.
+	effectiveDates := c.IfModifiedSince != nil || c.IfUnmodifiedSince != nil && c.IfMatch == ""
+	if effectiveDates {
+		if source.ProviderVersionID == "" || source.ProviderVersionID == "null" {
+			return ErrUnsupported
+		}
+		if !validNativeVersionID(source.ProviderVersionID) {
+			return ErrUnavailable
+		}
+		// The provider evaluates dates on this immutable version, with the
+		// customer's exact predicates and its native precedence rules.
 	}
 	return nil
 }

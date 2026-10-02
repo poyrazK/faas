@@ -767,7 +767,7 @@ func normalize(err error) error {
 		switch e.ErrorCode() {
 		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed":
 			return ErrConfiguration
-		case "NoSuchBucket", "NoSuchKey", "NoSuchUpload", "NotFound":
+		case "NoSuchBucket", "NoSuchKey", "NoSuchUpload", "NoSuchVersion", "NotFound":
 			return ErrNotFound
 		case "BucketNotEmpty":
 			return ErrNotEmpty

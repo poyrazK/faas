@@ -950,11 +950,13 @@ private. See [ADR-393](adr/393-recoverable-s3-gateway-puts.md).
 ## Recoverable branded copies
 
 Same-bucket `CopyObject` through the branded gateway now tracks a durable
-destination receipt on S3 backends. A source HEAD captures the size and ETag;
-the provider copy must match that ETag. If the source changes before copying,
-the request returns 412 `PreconditionFailed`. Start a new request to capture
-the current source. Missing source size/ETag, weak ETags, versioned sources and
-copies exceeding the existing 5 GiB single-write limit fail closed.
+destination receipt on S3 backends. A source HEAD captures the size, ETag and
+private native version. A native source requires a verified `all_versions`
+capacity baseline and is copied from exactly the inspected version, even if
+the current object is later overwritten. Mutable sources use an atomic ETag
+condition; a change returns 412 `PreconditionFailed`. Missing source size/ETag,
+weak ETags, native sources without that baseline and copies exceeding the
+existing 5 GiB single-write limit fail closed.
 
 Metadata COPY preserves the captured source HTTP/customer metadata and Expires
 while replacing private markers with a fresh receipt. REPLACE uses customer
@@ -963,12 +965,21 @@ that preserve its ETag do not change the captured metadata snapshot. Customer
 copy ETag conditions are checked against the source snapshot and preserved by
 the atomic provider copy. A failed predicate returns 412 before destination
 admission. Providers without the conditional tracked-copy capability return
-501 for these headers. Date-based copy conditions remain unsupported.
+501 for these headers. Native sources also support signed copy-source
+If-Modified-Since and If-Unmodified-Since dates. The provider evaluates dates
+on the inspected immutable version. Gregale omits its internal If-Match when
+the customer did not supply one, preserving standalone date semantics. Date
+headers must contain one valid HTTP date of at most 128 bytes. Independently
+restrictive dates on absent/null native versions remain unsupported; a customer
+If-Match can accompany If-Unmodified-Since using S3's ETag precedence. See
+[ADR-399](adr/399-immutable-s3-copy-sources-and-date-conditions.md).
 
 The source probe passes read admission before HEAD. A successful tracked copy
 consumes two monthly safety authorizations (probe and destination admission);
-a failed source predicate consumes only the probe authorization and reserves
-no destination capacity. Spent budgets or stale usage block the probe itself.
+an ETag predicate rejected by the probe consumes only the probe authorization
+and reserves no destination capacity. Provider-side date rejection occurs after
+destination admission, spends both authorizations and keeps conservative quota
+until verified reconciliation. Spent budgets or stale usage block the probe itself.
 
 Admitted copies return `X-Gregale-Upload-ID`. Each request uses one provider
 copy attempt. Lost, truncated or invalid acknowledgments, HTTP 408/5xx and
@@ -1003,8 +1014,9 @@ The part must fit `max_part_bytes` and the total upload must fit
 copying its entire body through the gateway; their source may be at most the
 existing 5 TiB total-object ceiling. A range source must exceed 5 MiB. Open-ended,
 suffix and multiple ranges are invalid. Every completed part except the last
-must meet the 5 MiB multipart minimum. Sources with provider version IDs remain
-unsupported until versioning is implemented.
+must meet the 5 MiB multipart minimum. Native source versions use the same
+immutable-source and `all_versions` baseline requirements as CopyObject, with
+the same source date predicates. Customer-supplied version IDs remain pending.
 
 Gregale measures the source, reserves only the copied bytes and atomically
 requires the measured ETag at the provider. Customer source ETag conditions

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,6 +16,7 @@ import (
 
 var _ TrackedObjectCopier = (*S3)(nil)
 var _ ConditionalTrackedObjectCopier = (*S3)(nil)
+var _ DateConditionalTrackedObjectCopier = (*S3)(nil)
 
 func (p *S3) SnapshotCopySource(ctx context.Context, bucket, key string) (CopySourceSnapshot, error) {
 	return p.snapshotCopySource(ctx, bucket, key, api.MaxObjectSinglePutBytes)
@@ -31,10 +33,14 @@ func (p *S3) snapshotCopySource(ctx context.Context, bucket, key string, maxByte
 	if out == nil || out.ContentLength == nil {
 		return CopySourceSnapshot{}, ErrUnavailable
 	}
-	if v := aws.ToString(out.VersionId); v != "" && v != "null" {
-		return CopySourceSnapshot{}, ErrUnsupported
+	if aws.ToBool(out.DeleteMarker) {
+		return CopySourceSnapshot{}, ErrNotFound
 	}
 	snapshot := CopySourceSnapshot{SizeBytes: *out.ContentLength, ETag: aws.ToString(out.ETag), Metadata: ObjectMetadata{ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl), ContentDisposition: aws.ToString(out.ContentDisposition), ContentEncoding: aws.ToString(out.ContentEncoding), ContentLanguage: aws.ToString(out.ContentLanguage), Metadata: copyCustomerMetadata(out.Metadata)}}
+	snapshot.ProviderVersionID = aws.ToString(out.VersionId)
+	if snapshot.ProviderVersionID != "" && !validNativeVersionID(snapshot.ProviderVersionID) {
+		return CopySourceSnapshot{}, ErrUnavailable
+	}
 	if !validCopySourceSize(snapshot, maxBytes) {
 		return CopySourceSnapshot{}, ErrInvalid
 	}
@@ -53,7 +59,28 @@ func validCopySource(s CopySourceSnapshot) bool {
 }
 
 func validCopySourceSize(s CopySourceSnapshot, maxBytes int64) bool {
-	return s.SizeBytes >= 0 && s.SizeBytes <= maxBytes && s.ETag != "" && s.ETag != "*" && validCopyETagCondition(s.ETag) && ValidateObjectMetadata(s.Metadata) == nil
+	return s.SizeBytes >= 0 && s.SizeBytes <= maxBytes && s.ETag != "" && s.ETag != "*" && validCopyETagCondition(s.ETag) && (s.ProviderVersionID == "" || validNativeVersionID(s.ProviderVersionID)) && ValidateObjectMetadata(s.Metadata) == nil
+}
+
+func immutableCopySource(s CopySourceSnapshot) bool {
+	return s.ProviderVersionID != "" && s.ProviderVersionID != "null"
+}
+
+func trackedCopySource(bucket, key string, s CopySourceSnapshot) string {
+	value := url.PathEscape(bucket + "/" + key)
+	if immutableCopySource(s) {
+		value += "?versionId=" + url.QueryEscape(s.ProviderVersionID)
+	}
+	return value
+}
+
+func trackedCopySourceMatch(s CopySourceSnapshot, c CopySourceConditions) *string {
+	if immutableCopySource(s) && c.HasDates() && c.IfMatch == "" {
+		// The version is the identity fence. Adding If-Match here would make
+		// S3 ignore an independently restrictive If-Unmodified-Since.
+		return nil
+	}
+	return aws.String(s.ETag)
 }
 
 func copyCustomerMetadata(source map[string]string) map[string]string {
@@ -68,6 +95,10 @@ func copyCustomerMetadata(source map[string]string) map[string]string {
 
 func (p *S3) CopyTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
 	return p.CopyConditionalTrackedObject(ctx, bucket, receipt, r, source, CopySourceConditions{})
+}
+
+func (p *S3) CopyDateConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
+	return p.CopyConditionalTrackedObject(ctx, bucket, receipt, r, source, conditions)
 }
 
 func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
@@ -93,8 +124,11 @@ func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt s
 		in.Metadata = map[string]string{}
 	}
 	in.Metadata[ReservedUploadReceiptMetadataKey] = receipt
-	in.CopySourceIfMatch = aws.String(source.ETag)
+	in.CopySource = aws.String(trackedCopySource(bucket, r.SourceKey, source))
+	in.CopySourceIfMatch = trackedCopySourceMatch(source, conditions)
 	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
+	in.CopySourceIfModifiedSince = conditions.IfModifiedSince
+	in.CopySourceIfUnmodifiedSince = conditions.IfUnmodifiedSince
 	if copyMetadata {
 		in.Expires = source.Expires
 	}

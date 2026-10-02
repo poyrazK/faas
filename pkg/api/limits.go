@@ -94,6 +94,9 @@ const (
 	ObjectVersionInventoryPagesPerSweep  = 10
 )
 
+// Bound a single HTTP date in a signed S3 copy-source condition.
+const MaxObjectCopyDateHeaderBytes = 128
+
 const (
 	// Customer-configured admission budgets are safety bounds, not plan
 	// allowances. Zero disables a dimension; these caps keep counters and

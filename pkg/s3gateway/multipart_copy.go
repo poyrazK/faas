@@ -37,6 +37,12 @@ func (h *Handler) copyMultipartPart(w http.ResponseWriter, r *http.Request, req 
 		h.unsupported(w, r, req.requestID)
 		return
 	}
+	if c.Conditions.HasDates() {
+		if _, ok := req.provider.(objectstorage.DateConditionalMultipartPartCopier); !ok {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+	}
 	select {
 	case h.putSlots <- struct{}{}:
 		defer func() { <-h.putSlots }()
@@ -93,8 +99,7 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		h.providerError(w, r, req, err, c.SourceKey)
 		return
 	}
-	if err = c.Conditions.Check(source); err != nil {
-		h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, c.SourceKey)
+	if !h.checkCopySource(w, r, req, c.SourceKey, source, c.Conditions) {
 		return
 	}
 	size, err := objectstorage.MultipartCopySize(source, c.Range)
@@ -116,7 +121,12 @@ func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	safeToSettle = false
-	result, err := copier.CopyMultipartPart(ctx, req.bucket.PhysicalName, c, source)
+	var result objectstorage.CopyObjectResult
+	if c.Conditions.HasDates() {
+		result, err = copier.(objectstorage.DateConditionalMultipartPartCopier).CopyDateConditionalMultipartPart(ctx, req.bucket.PhysicalName, c, source)
+	} else {
+		result, err = copier.CopyMultipartPart(ctx, req.bucket.PhysicalName, c, source)
+	}
 	if err != nil {
 		safeToSettle = errors.Is(err, objectstorage.ErrWriteRejected)
 		if !safeToSettle {

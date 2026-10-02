@@ -263,12 +263,16 @@ type ObjectCopier interface {
 }
 
 // CopySourceSnapshot captures the source before capacity admission. The copy
-// must atomically require its ETag; metadata COPY uses this captured metadata.
+// must select its immutable version or atomically require its ETag; metadata
+// COPY uses this captured metadata.
 type CopySourceSnapshot struct {
 	SizeBytes int64
 	ETag      string
 	Metadata  ObjectMetadata
 	Expires   *time.Time
+	// A non-null native version is immutable. It remains private and binds
+	// both metadata admission and the provider copy to the inspected object.
+	ProviderVersionID string `json:"-"`
 }
 
 // TrackedObjectCopier must issue one copy with a fresh private receipt and the
@@ -286,12 +290,25 @@ type ConditionalTrackedObjectCopier interface {
 	CopyConditionalTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot, CopySourceConditions) (CopyObjectResult, error)
 }
 
+// DateConditionalTrackedObjectCopier explicitly opts into atomic date
+// predicates without changing customer precedence. Older adapters cannot
+// ignore dates. Independently restrictive dates require an immutable source.
+type DateConditionalTrackedObjectCopier interface {
+	ConditionalTrackedObjectCopier
+	CopyDateConditionalTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot, CopySourceConditions) (CopyObjectResult, error)
+}
+
 // MultipartPartCopier copies a measured source (or its inclusive byte range)
-// into an existing upload with an atomic source ETag fence and one attempt.
+// into an existing upload with an atomic source identity fence and one attempt.
 // Only ErrWriteRejected proves that the part write did not take place.
 type MultipartPartCopier interface {
 	SnapshotMultipartCopySource(context.Context, string, string) (CopySourceSnapshot, error)
 	CopyMultipartPart(context.Context, string, MultipartPartCopyRequest, CopySourceSnapshot) (CopyObjectResult, error)
+}
+
+type DateConditionalMultipartPartCopier interface {
+	MultipartPartCopier
+	CopyDateConditionalMultipartPart(context.Context, string, MultipartPartCopyRequest, CopySourceSnapshot) (CopyObjectResult, error)
 }
 
 type MultipartPartCopyRequest struct {

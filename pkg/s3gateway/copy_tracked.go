@@ -27,8 +27,7 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 		h.providerError(w, r, req, err, copy.SourceKey)
 		return
 	}
-	if err = conditions.Check(source); err != nil {
-		h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, copy.SourceKey)
+	if !h.checkCopySource(w, r, req, copy.SourceKey, source, conditions) {
 		return
 	}
 	c, err := st.BeginTrackedGatewayCopy(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending"}, h.registry.Accounting)
@@ -49,7 +48,9 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 	}
 	c, dispatched = intent, true
 	var result objectstorage.CopyObjectResult
-	if conditions.Empty() {
+	if conditions.HasDates() {
+		result, err = copier.(objectstorage.DateConditionalTrackedObjectCopier).CopyDateConditionalTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source, conditions)
+	} else if conditions.Empty() {
 		result, err = copier.CopyTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source)
 	} else {
 		result, err = copier.(objectstorage.ConditionalTrackedObjectCopier).CopyConditionalTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source, conditions)
