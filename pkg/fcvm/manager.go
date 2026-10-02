@@ -776,7 +776,9 @@ type Manager struct {
 	// before the final live-map insert; retaining the exit under the
 	// same mutex lets Wake fail closed instead of registering a dead
 	// instance. Entries are consumed by Wake or cleared by cleanup.
-	pendingProcessExits map[string]int
+	pendingProcessExits   map[string]int
+	processGenerations    map[string]uint64
+	nextProcessGeneration uint64
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -1155,6 +1157,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		appCPUPolicies:       make(map[string]appCPUPolicy),
 		jobBoots:             make(map[string]*jobBootFlight),
 		pendingProcessExits:  make(map[string]int),
+		processGenerations:   make(map[string]uint64),
 		waking:               make(map[string]struct{}),
 		exportDirs:           make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
@@ -1700,10 +1703,24 @@ func (m *Manager) WithLifecycleContext(ctx context.Context) *Manager { //nolint:
 // resource cleanup. If no relay is wired (development/test mode), it falls
 // back to local cleanup so the allocator and network cannot leak.
 func (m *Manager) ProcessExited(instance string, exitCode int) {
+	m.processExited(instance, exitCode, nil)
+}
+
+// ProcessExitedAttempt fences late notifications from a retired process. A
+// failed restore and its cold-boot replacement share the instance ID.
+func (m *Manager) ProcessExitedAttempt(instance string, generation uint64, exitCode int) {
+	m.processExited(instance, exitCode, &generation)
+}
+
+func (m *Manager) processExited(instance string, exitCode int, generation *uint64) {
 	if m == nil || instance == "" {
 		return
 	}
 	m.mu.Lock()
+	if generation != nil && m.processGenerations[instance] != *generation {
+		m.mu.Unlock()
+		return
+	}
 	inst, live := m.live[instance]
 	relay := m.livenessRelay
 	lifecycle := m.lifecycleCtx
@@ -3928,6 +3945,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	m.waking[req.Instance] = struct{}{}
 	m.mu.Unlock()
+	lease = m.beginProcessAttempt(lease)
 	// Any failure from this point — Plan validation, wire-side
 	// allowlist checks, bringUp, cgroup write — must fully clean up.
 	// Registering the cleanup BEFORE the validation loop is
@@ -4762,6 +4780,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, reason).Inc()
 			}
 			_ = m.vmm.Kill(ctx, lease)
+			lease = m.beginProcessAttempt(lease)
 		}
 	}
 
@@ -4956,6 +4975,19 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
 	}
 	return nil
+}
+
+func (m *Manager) beginProcessAttempt(lease Lease) Lease {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processGenerations == nil {
+		m.processGenerations = make(map[string]uint64)
+	}
+	m.nextProcessGeneration++
+	lease.processGeneration = m.nextProcessGeneration
+	m.processGenerations[lease.Instance] = lease.processGeneration
+	delete(m.pendingProcessExits, lease.Instance)
+	return lease
 }
 
 func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
@@ -7155,6 +7187,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	// expected exit poison a later Wake using the same instance id.
 	m.mu.Lock()
 	delete(m.pendingProcessExits, lease.Instance)
+	delete(m.processGenerations, lease.Instance)
 	delete(m.waking, lease.Instance)
 	m.mu.Unlock()
 	// Issue #463 / ADR-069 / PR-B: tear down per-workload cgroup child

@@ -4550,6 +4550,44 @@ $$;
 
 
 --
+-- Name: record_commit_managed_operation_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_commit_managed_operation_state() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE commit_receipts SET operation_state=CASE NEW.state
+ WHEN 'pending' THEN 'accepted' WHEN 'running' THEN 'running'
+ WHEN 'completed' THEN 'completed' WHEN 'cancelled' THEN 'cancelled'
+ WHEN 'failed' THEN 'failed' WHEN 'expired' THEN 'failed'
+ ELSE 'unknown' END, completed_at=NEW.completed_at
+ WHERE operation_id=NEW.id;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: record_commit_operation_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_commit_operation_state() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE commit_receipts SET operation_state=CASE NEW.state
+ WHEN 'pending' THEN 'accepted' WHEN 'dispatching' THEN 'running'
+ WHEN 'completed' THEN 'completed' WHEN 'cancelled' THEN 'cancelled'
+ WHEN 'failed' THEN 'failed' WHEN 'dead_letter' THEN 'failed'
+ ELSE 'unknown' END, completed_at=NEW.completed_at
+ WHERE invocation_id=NEW.id;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: record_job_task_attempt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6979,6 +7017,82 @@ CREATE TABLE public.cluster_signing_keys (
     CONSTRAINT cluster_signing_keys_id_check CHECK ((id = 1)),
     CONSTRAINT cluster_signing_keys_key_id_check CHECK ((key_id ~ '^[A-Za-z0-9_-]{22}$'::text)),
     CONSTRAINT cluster_signing_keys_public_key_pem_check CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
+);
+
+
+--
+-- Name: commit_blocked_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commit_blocked_events (
+    account_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    event_type text NOT NULL,
+    blocked_code text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: commit_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commit_receipts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    event_type text NOT NULL,
+    payload jsonb NOT NULL,
+    invocation_id uuid,
+    operation_state text DEFAULT 'accepted'::text NOT NULL,
+    completed_at timestamp with time zone,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    operation_id uuid,
+    CONSTRAINT commit_receipt_one_operation CHECK (((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT commit_receipts_operation_state_check CHECK ((operation_state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'cancelled'::text, 'failed'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: commit_replay_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commit_replay_requests (
+    account_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT commit_replay_requests_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: commit_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.commit_sources (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    sealed_connection bytea,
+    credential_revision bigint DEFAULT 0 NOT NULL,
+    relay_status text DEFAULT 'unconfigured'::text NOT NULL,
+    last_checked_at timestamp with time zone,
+    pending_events bigint,
+    blocked_events bigint,
+    oldest_pending_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    operation_policy text,
+    CONSTRAINT commit_source_operation_policy_name CHECK (((operation_policy IS NULL) OR (operation_policy ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
+    CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );
 
 
@@ -10504,6 +10618,19 @@ CREATE TABLE public.mirror_rules (
     CONSTRAINT mirror_rules_check CHECK ((source_deployment_id <> mirror_deployment_id)),
     CONSTRAINT mirror_rules_percent_check CHECK (((percent >= 0) AND (percent <= 100))),
     CONSTRAINT mirror_rules_redact_headers_check CHECK (((array_length(redact_headers, 1) IS NULL) OR (array_length(redact_headers, 1) <= 32)))
+);
+
+
+--
+-- Name: mirror_slot_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mirror_slot_leases (
+    lease_id uuid NOT NULL,
+    mirror_rule_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mirror_slot_leases_expiry_after_creation CHECK ((expires_at > created_at))
 );
 
 
@@ -14357,6 +14484,62 @@ ALTER TABLE ONLY public.cluster_signing_keys
 
 
 --
+-- Name: commit_blocked_events commit_blocked_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_blocked_events
+    ADD CONSTRAINT commit_blocked_events_pkey PRIMARY KEY (source_id, event_id);
+
+
+--
+-- Name: commit_receipts commit_receipts_account_id_source_id_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_receipts
+    ADD CONSTRAINT commit_receipts_account_id_source_id_event_id_key UNIQUE (account_id, source_id, event_id);
+
+
+--
+-- Name: commit_receipts commit_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_receipts
+    ADD CONSTRAINT commit_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: commit_replay_requests commit_replay_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_replay_requests
+    ADD CONSTRAINT commit_replay_requests_pkey PRIMARY KEY (source_id, event_id);
+
+
+--
+-- Name: commit_sources commit_sources_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_sources_account_id_id_key UNIQUE (account_id, id);
+
+
+--
+-- Name: commit_sources commit_sources_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_sources_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: commit_sources commit_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_sources_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15770,6 +15953,14 @@ ALTER TABLE ONLY public.mirror_invocation_summary
 
 ALTER TABLE ONLY public.mirror_rules
     ADD CONSTRAINT mirror_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mirror_slot_leases mirror_slot_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_slot_leases
+    ADD CONSTRAINT mirror_slot_leases_pkey PRIMARY KEY (lease_id);
 
 
 --
@@ -18100,6 +18291,27 @@ CREATE INDEX cli_auth_codes_pending_idx ON public.cli_auth_codes USING btree (st
 
 
 --
+-- Name: commit_receipts_managed_operation_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX commit_receipts_managed_operation_identity ON public.commit_receipts USING btree (operation_id) WHERE (operation_id IS NOT NULL);
+
+
+--
+-- Name: commit_receipts_operation_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX commit_receipts_operation_identity ON public.commit_receipts USING btree (invocation_id);
+
+
+--
+-- Name: commit_receipts_source_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btree (account_id, source_id, accepted_at, id);
+
+
+--
 -- Name: compute_node_heartbeat_hourly_bucket_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20256,6 +20468,13 @@ CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_
 
 
 --
+-- Name: mirror_slot_leases_rule_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mirror_slot_leases_rule_expiry_idx ON public.mirror_slot_leases USING btree (mirror_rule_id, expires_at);
+
+
+--
 -- Name: node_join_jobs_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22405,6 +22624,20 @@ CREATE TRIGGER cluster_signing_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE
 
 
 --
+-- Name: exclusive_work_operations commit_managed_operation_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER commit_managed_operation_state AFTER UPDATE OF state, completed_at ON public.exclusive_work_operations FOR EACH ROW EXECUTE FUNCTION public.record_commit_managed_operation_state();
+
+
+--
+-- Name: invocations commit_operation_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER commit_operation_state AFTER UPDATE OF state, completed_at ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_commit_operation_state();
+
+
+--
 -- Name: compute_nodes compute_node_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24476,6 +24709,54 @@ ALTER TABLE ONLY public.cli_auth_codes
 
 
 --
+-- Name: commit_blocked_events commit_blocked_events_account_id_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_blocked_events
+    ADD CONSTRAINT commit_blocked_events_account_id_source_id_fkey FOREIGN KEY (account_id, source_id) REFERENCES public.commit_sources(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: commit_receipts commit_receipts_account_id_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_receipts
+    ADD CONSTRAINT commit_receipts_account_id_source_id_fkey FOREIGN KEY (account_id, source_id) REFERENCES public.commit_sources(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: commit_replay_requests commit_replay_requests_account_id_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_replay_requests
+    ADD CONSTRAINT commit_replay_requests_account_id_source_id_fkey FOREIGN KEY (account_id, source_id) REFERENCES public.commit_sources(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: commit_sources commit_source_operation_policy_owner; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_source_operation_policy_owner FOREIGN KEY (account_id, operation_policy) REFERENCES public.exclusive_work_policies(account_id, name);
+
+
+--
+-- Name: commit_sources commit_sources_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_sources_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: commit_sources commit_sources_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.commit_sources
+    ADD CONSTRAINT commit_sources_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26193,6 +26474,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_rules
     ADD CONSTRAINT mirror_rules_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_slot_leases mirror_slot_leases_mirror_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mirror_slot_leases
+    ADD CONSTRAINT mirror_slot_leases_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
 
 
 --

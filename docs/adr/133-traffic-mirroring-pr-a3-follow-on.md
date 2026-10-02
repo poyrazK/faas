@@ -106,6 +106,7 @@ emits exactly one of:
 - `body_diff` — statuses match, bodies differ
 - `cap_at_max` — per-rule slot cap fired before admit
 - `sched_error` — schedd errored other than cap-at-max
+- `slot_store_error` — shared fleet-wide slot reservation was unavailable
 - `mirror_roundtrip_error` — round-trip transport error
 - `build_request_error` — request body read / header build failed
 
@@ -122,6 +123,22 @@ an admission after schedd has created an instance row, schedd performs a
 bounded cleanup with a detached context: it asks vmmd to destroy the partial
 guest, releases the admission reservation, and marks the row failed. Schedd
 owns this cleanup because the gateway may not have received the instance ID.
+
+## Fleet-wide mirror concurrency reservations
+
+Gateway replicas acquire one PostgreSQL-backed lease for the mirror rule before
+calling schedd. Each acquisition locks the rule row, removes expired leases,
+checks the shared active count, and inserts a reservation in one transaction.
+This preserves the configured per-rule cap across replicas. The lease remains
+held until after the admitted mirror instance has been parked; a two-minute
+expiry reclaims reservations when a gateway exits before cleanup. The schedd's
+one-minute orphan fallback reclaims idle mirror instances whose gateway cleanup
+failed. A failed park leaves its lease in place until expiry, so capacity is
+not reused before the orphan fallback can reclaim the VM. If the shared store
+cannot make an admission decision, Gregale drops only the shadow request and
+emits `slot_store_error`; it never falls back to a replica-local permit and
+multiply the cap. Test and single-process development handlers without a shared
+store retain the existing local counter.
 
 `rule_id` cardinality is bounded by `Limits.MirrorTargetsPerApp`
 ≤ 3 per app. `app_id` cardinality matches the rest of the
@@ -165,7 +182,6 @@ operator can alert on.
 - Mirror across regions.
 - Auto-promote canary on zero diff over rolling window.
 - JCS schema-hash body diff (A3 ships byte-equal).
-- Cross-process per-rule concurrency cap (single-process schedd).
 - Retention summary archive (e.g. `mirror_invocation_summary_archive` after 90d).
 
 ## Acceptance criteria
@@ -181,6 +197,7 @@ operator can alert on.
 | Risk | Mitigation |
 |---|---|
 | Per-rule cap fires before wake → customer sees mirror not firing | Ledger entry written with `result=cap_at_max` + metric incremented; ops can lift the cap or split the rule. D14 documents the cap (5) explicitly. |
+| Gateway exits before releasing a mirror slot | The two-minute lease expires after the one-minute schedd orphan fallback has time to reclaim an idle mirror VM. |
 | Mirror goroutine panics → daemon crash | Match ADR-098 contract: "ensure never panics". Explicit `if err != nil { ...; return }` after every fallible call. Panic surfaces via `runtime.Goexit`, no customer data lost. |
 | `kind="mirror"` discriminator collision with traffic-split's `kind="traffic"` | Both flows write the SAME channel (`NotifyDeploymentChanged`) but consume DIFFERENT discriminators. The gateway subscriber arms branch on `kind`. Wire-shape parity pinned by `cmd/gatewayd-internal/backend_test.go::fakeInvalidator.mirrorRefreshed`. |
 | `gateway_mirror_dispatched_total{rule_id}` label cardinality unbounded | `rule_id` cardinality is bounded by `Limits.MirrorTargetsPerApp` ≤ 3 per app, so label set is closed at A3 launch. |

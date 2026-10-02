@@ -1318,6 +1318,11 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
 	env = append(env, forwardedStorageEnv()...)
+	// Every artifact consumer, including schedd's layer verifier, must read
+	// the same per-test app store that imaged publishes into.
+	if currentHarness != nil && currentHarness.ImagedTmp != "" {
+		env = append(env, "FAAS_APPS_ROOT="+currentHarness.ImagedTmp)
+	}
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
 	}
@@ -1523,13 +1528,36 @@ func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]stri
 // than re-running with -v on a CI flake (issue #52 PR #59 follow-up).
 func (h *Harness) stop() {
 	h.releaseGatewayAddressReservations()
+	// Builders, snapshot workers, and the scheduler need VMMD and the gateway
+	// while draining. Stopping their RPC dependencies at the same time can
+	// strand a microVM during a final capture or cancelled build.
+	var draining, remaining []*exec.Cmd
 	for _, p := range h.procs {
+		needsRuntime := false
+		for _, arg := range p.Args {
+			switch filepath.Base(arg) {
+			case "builderd", "imaged", "schedd":
+				needsRuntime = true
+			}
+		}
+		if needsRuntime {
+			draining = append(draining, p)
+		} else {
+			remaining = append(remaining, p)
+		}
+	}
+	h.stopProcs(draining)
+	h.stopProcs(remaining)
+}
+
+func (h *Harness) stopProcs(procs []*exec.Cmd) {
+	for _, p := range procs {
 		if p.Process == nil {
 			continue
 		}
 		_ = p.Process.Signal(syscall.SIGTERM)
 	}
-	for _, proc := range h.procs {
+	for _, proc := range procs {
 		if proc.Process == nil || proc.ProcessState != nil {
 			continue
 		}
@@ -1592,14 +1620,31 @@ func (h *Harness) SetScheddEnv(key, value string) error {
 		return fmt.Errorf("e2etest: invalid schedd env key %q", key)
 	}
 	entry := key + "=" + value
+	found := false
 	for i, existing := range h.scheddEnv {
 		if strings.HasPrefix(existing, key+"=") {
 			h.scheddEnv[i] = entry
-			return nil
+			found = true
 		}
 	}
-	h.scheddEnv = append(h.scheddEnv, entry)
+	if !found {
+		h.scheddEnv = append(h.scheddEnv, entry)
+	}
 	return nil
+}
+
+// ScheddEnvValue reads the retained launch environment, honoring the final
+// occurrence just as exec.Cmd does when its environment contains duplicates.
+func (h *Harness) ScheddEnvValue(key string) string {
+	if h == nil {
+		return ""
+	}
+	for i := len(h.scheddEnv) - 1; i >= 0; i-- {
+		if strings.HasPrefix(h.scheddEnv[i], key+"=") {
+			return strings.TrimPrefix(h.scheddEnv[i], key+"=")
+		}
+	}
+	return ""
 }
 
 // KillSchedd terminates and reaps the schedd child, leaving the rest of the

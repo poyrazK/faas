@@ -19,12 +19,13 @@ type mirrorParkCall struct {
 
 type mirrorParkerBackend struct {
 	*mirrorTargetFakeBackend
-	parks []mirrorParkCall
+	parks   []mirrorParkCall
+	parkErr error
 }
 
 func (b *mirrorParkerBackend) ParkMirrorInstance(ctx context.Context, appID, instanceID, traceID string) error {
 	b.parks = append(b.parks, mirrorParkCall{appID: appID, instanceID: instanceID, traceID: traceID, ctxErr: ctx.Err()})
-	return nil
+	return b.parkErr
 }
 
 func TestDispatchMirrorParksAdmittedInstanceOnEveryExit(t *testing.T) {

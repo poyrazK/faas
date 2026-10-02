@@ -321,6 +321,7 @@ from .capabilities_response_plan import CapabilitiesResponsePlan
 from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
+from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -328,6 +329,13 @@ from .change_plan_request_plan import ChangePlanRequestPlan
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .commit_blocked_event_response import CommitBlockedEventResponse
+from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_request import CommitEventRequest
+from .commit_operation_response import CommitOperationResponse
+from .commit_operation_response_state import CommitOperationResponseState
+from .commit_receipt_response import CommitReceiptResponse
+from .commit_source_response import CommitSourceResponse
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -369,6 +377,7 @@ from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_commit_source_body import CreateCommitSourceBody
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -1635,6 +1644,7 @@ from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
+from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
@@ -1837,6 +1847,7 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
@@ -2408,6 +2419,7 @@ __all__ = (
     "CapabilityStatus",
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
+    "CapabilityStatusUnavailableReason",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -2415,6 +2427,13 @@ __all__ = (
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CommitBlockedEventResponse",
+    "CommitBlockedEventsResponse",
+    "CommitEventRequest",
+    "CommitOperationResponse",
+    "CommitOperationResponseState",
+    "CommitReceiptResponse",
+    "CommitSourceResponse",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -2456,6 +2475,7 @@ __all__ = (
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
+    "CreateCommitSourceBody",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -3664,6 +3684,7 @@ __all__ = (
     "PutAppSecretReferenceRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
+    "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
@@ -3860,6 +3881,7 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetCommitSourceEnabledBody",
     "SetDeploymentAliasRequest",
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",

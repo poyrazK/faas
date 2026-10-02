@@ -861,9 +861,18 @@ var methodRouteMap = map[string]string{
 	// hyphens (e.g. "DeleteDelayed-tasksId") because the spec path uses
 	// the k8s-style hyphen; the explicit map below drops the hyphen and
 	// conforms to the SDK's flat resource naming.
-	"POST /v1/apps/{slug}/invoke":                                            "InvokeApp",
-	"POST /v1/apps/{slug}/invoke/async":                                      "InvokeAppAsync",
-	"POST /v1/apps/{slug}/inbox":                                             "SendAppMessage",
+	"POST /v1/apps/{slug}/invoke":       "InvokeApp",
+	"POST /v1/apps/{slug}/invoke/async": "InvokeAppAsync",
+	"POST /v1/apps/{slug}/inbox":        "SendAppMessage",
+	// ADR-430: pin the hyphenated Commit routes to their typed client methods.
+	"POST /v1/apps/{slug}/commit-sources":                                    "CreateCommitSource",
+	"GET /v1/commit-sources/{source}":                                        "GetCommitSource",
+	"PATCH /v1/commit-sources/{source}":                                      "SetCommitSourceEnabled",
+	"PUT /v1/commit-sources/{source}/connection":                             "PutCommitSourceConnection",
+	"POST /v1/commit-sources/{source}/events":                                "AcceptCommitEvent",
+	"GET /v1/commit-sources/{source}/events/{event}":                         "GetCommitReceipt",
+	"GET /v1/commit-sources/{source}/blocked-events":                         "ListCommitBlockedEvents",
+	"POST /v1/commit-sources/{source}/events/{event}/replay":                 "ReplayCommitBlockedEvent",
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",

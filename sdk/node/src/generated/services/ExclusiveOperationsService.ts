@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CommitOperationResponse } from '../models/CommitOperationResponse.js';
 import type { ExclusiveAppTaskOperationRequest } from '../models/ExclusiveAppTaskOperationRequest.js';
 import type { ExclusiveOperationAccepted } from '../models/ExclusiveOperationAccepted.js';
 import type { ExclusiveOperationPolicy } from '../models/ExclusiveOperationPolicy.js';
@@ -485,7 +486,7 @@ export class ExclusiveOperationsService {
   }
   /**
    * Read an account-owned operation and its committed result.
-   * @returns ExclusiveOperationRecord Operation receipt; claim tokens and accepted request contents are never returned.
+   * @returns any Operation receipt; claim tokens and accepted request contents are never returned.
    * @throws ApiError
    */
   public static getExclusiveOperation({
@@ -495,7 +496,7 @@ export class ExclusiveOperationsService {
      * Operation receipt ID.
      */
     id: string,
-  }): CancelablePromise<ExclusiveOperationRecord> {
+  }): CancelablePromise<(ExclusiveOperationRecord | CommitOperationResponse)> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/operations/{id}',

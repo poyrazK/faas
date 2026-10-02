@@ -1,10 +1,11 @@
-# ADR-430 · Git-owned environment intent and continuous reconciliation
+# ADR-431 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425, ADR-428 and ADR-429
+  ADR-387 and ADR-425, and this branch's earlier ADR-393, ADR-423, ADR-425, ADR-428, ADR-429 and ADR-430
   documents, refer to this contract.
+  Published ADR-430 covers the managed PostgreSQL Commit outbox.
   Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations;
   ADR-425 covers retained cache materialization.
 - **Decision:** A registered project environment may bind one approved,
@@ -1064,6 +1065,14 @@ identity, frozen-input isolation, lease expiry/replacement, sibling artifact and
 inherited-setting changes, SQL lease/cohort guards, durable publication rollback,
 populated migration replay, parent purges and the HTTP-reviewed source artifact
 handoff. These checks do not establish native KVM qualification.
+
+This checkpoint integrates main through `445cc397e`, preserving managed Commit
+operations and distributed mirror slot coordination. Focused PostgreSQL, apid,
+scheduler, database outbox, migration and gateway checks pass locally; schedd
+compiles. Regenerated SQLC output, the embedded OpenAPI copy and ADR number
+uniqueness checks pass. The configured native acceptance project's API currently
+reports that the project is suspended, so the required KVM serving gates remain
+unverified.
 
 ## Review and control workflow
 

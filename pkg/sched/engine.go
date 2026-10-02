@@ -2166,6 +2166,23 @@ func (e *Engine) Prewarm(ctx context.Context, appID string, count int) (int, err
 // desired-capacity hint from a coalesced gateway burst. Followers inherit the
 // leader's actual results; unmet demand is reconciled by their ordinary path.
 func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, desired int) (CoordOutcome, error) {
+	return e.ensureWake(ctx, appID, func(leaderCtx context.Context) ([]WakeResult, error) {
+		return e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
+	})
+}
+
+// EnsureWakeForDeployment preserves the accepted target while sharing the
+// parked-app lifecycle, rollback and wake coordination used by public traffic.
+// Followers must check the returned deployment: another target may lead the
+// same app's in-flight wake, in which case their durable work retries later.
+func (e *Engine) EnsureWakeForDeployment(ctx context.Context, appID, deploymentID, scope, trigger string) (CoordOutcome, error) {
+	return e.ensureWake(WithScope(ctx, scope), appID, func(leaderCtx context.Context) ([]WakeResult, error) {
+		result, err := e.Wake(leaderCtx, appID, deploymentID, scope, trigger)
+		return []WakeResult{result}, err
+	})
+}
+
+func (e *Engine) ensureWake(ctx context.Context, appID string, wake func(context.Context) ([]WakeResult, error)) (CoordOutcome, error) {
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
 	}
@@ -2263,7 +2280,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 		}
 	}
 	//nolint:contextcheck // leader wake uses the detached, TTL-bounded context.
-	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
+	results, err := wake(leaderCtx)
 	if err != nil {
 		rollbackWake()
 		out.Err = err
