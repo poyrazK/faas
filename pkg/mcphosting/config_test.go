@@ -55,3 +55,50 @@ func TestConfigRequiresExplicitSafeProfile(t *testing.T) {
 		t.Fatal("accepted unknown field")
 	}
 }
+
+func TestConfigToolScopes(t *testing.T) {
+	c := Config{Version: 1, Endpoint: "/mcp", Transport: "streamable-http", Mode: "stateless", AllowedOrigins: []string{}, Auth: AuthConfig{Mode: "open"}}
+	for _, tc := range []struct {
+		name, policy string
+		valid        bool
+	}{
+		{"empty denies all", `{}`, true},
+		{"explicit public tool", `{"greet":[]}`, true},
+		{"null policy", `null`, false},
+		{"array policy", `[]`, false},
+		{"null scopes", `{"greet":null}`, false},
+		{"string scopes", `{"greet":"read"}`, false},
+		{"empty name", `{"":[]}`, false},
+		{"control name", `{"bad\u0000name":[]}`, false},
+		{"open scoped tool", `{"greet":["read"]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(c)
+			body = []byte(strings.Replace(string(body), `"mode":"open"`, `"mode":"open","tool_scopes":`+tc.policy, 1))
+			decoded, err := Decode(strings.NewReader(string(body)))
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v err=%v", tc.valid, err)
+			}
+			if err != nil {
+				return
+			}
+			encoded, err := json.Marshal(decoded)
+			if err != nil || !strings.Contains(string(encoded), `"tool_scopes":`+tc.policy) {
+				t.Fatalf("policy lost on serialization: %s err=%v", encoded, err)
+			}
+		})
+	}
+	c.Auth = AuthConfig{Mode: "external-oauth", Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/jwks", Resource: "https://app.example/mcp", Scopes: []string{"mcp:tools"}}
+	for _, scopes := range [][]string{{}, {"files:read", "files:write"}} {
+		c.Auth.ToolScopes = ToolScopePolicy{"read": scopes}
+		if err := c.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, scopes := range [][]string{nil, {""}, {"two words"}, {"quote\""}, {"slash\\"}, {"nonascii:é"}} {
+		c.Auth.ToolScopes = ToolScopePolicy{"read": scopes}
+		if err := c.Validate(); err == nil {
+			t.Fatalf("accepted invalid scopes %q", scopes)
+		}
+	}
+}

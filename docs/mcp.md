@@ -103,7 +103,12 @@ Before adding sensitive tools, change `auth` in `gregale-mcp.json`:
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
   "resource": "https://my-mcp.gregale.dev/mcp",
-  "scopes": ["mcp:tools"]
+  "scopes": ["mcp:tools"],
+  "tool_scopes": {
+    "greet": [],
+    "add": ["math:read"],
+    "stream_demo": ["mcp:stream"]
+  }
 }
 ```
 
@@ -112,8 +117,29 @@ audience. The starter serves RFC 9728 protected-resource metadata and a bearer
 challenge. It verifies signed RS256/ES256 JWT access tokens with issuer, audience,
 expiry, subject and all configured scopes. The provider owns login, consent,
 client registration and token issuance. Opaque tokens require an introspection
-adapter. Endpoint scopes do not provide different tool permissions to different
-clients; implement that policy before exposing such tools.
+adapter. `auth.scopes` are required for every request. In the Node starter,
+`auth.tool_scopes` adds application-owned permissions: every listed scope is
+required in addition to the endpoint scopes. `[]` permits any authenticated
+endpoint caller to use that tool. A configured map denies tools missing from it;
+`{}` denies every tool. Null maps or scope arrays fail configuration validation.
+Open mode allows only empty scope arrays; the generated public starter explicitly
+allows its three harmless tools.
+
+The starter filters `tools/list` using verified JWT scopes on each request and
+checks `tools/call` before execution, including calls to hidden tools. Missing
+tool scopes return HTTP 403 with an `insufficient_scope` bearer challenge naming
+the endpoint and tool scopes; an unlisted tool returns `tool_access_denied`.
+Headers, arguments and tool annotations cannot grant permissions. Register new
+tools through the starter's `registerTool` helper to retain discovery filtering
+and the callback guard. The JSON-RPC tool name controls authorization; an
+`Mcp-Name` header does not.
+
+Omitting `auth.tool_scopes` preserves endpoint-only authorization for existing
+servers. This manifest describes application policy: deploying an arbitrary
+server with this field does not install a gateway enforcement layer. Such servers
+must implement the policy themselves. Object/tenant ownership checks inside each
+tool remain the application's responsibility. Compare contract snapshots under
+the same identity and scopes, including separate baselines for different roles.
 
 Pass an MCP client access token with `--token-env MCP_TOKEN` for authenticated
 deploy verification, doctor or calls. Keep secrets out of shell history and use

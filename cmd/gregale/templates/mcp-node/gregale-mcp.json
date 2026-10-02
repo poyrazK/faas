@@ -5,5 +5,8 @@
   "mode": "stateless",
   "legacy": true,
   "allowed_origins": [],
-  "auth": { "mode": "open" }
+  "auth": {
+    "mode": "open",
+    "tool_scopes": { "greet": [], "add": [], "stream_demo": [] }
+  }
 }
