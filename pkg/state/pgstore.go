@@ -11385,6 +11385,19 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	failed, err := setDeploymentFailedTx(ctx, tx, id, code, message)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
+}
+
+// setDeploymentFailedTx keeps the existing failure side effects in the
+// caller's transaction, including when hosting evidence must commit with it.
+func setDeploymentFailedTx(ctx context.Context, tx pgx.Tx, id, code, message string) (Deployment, error) {
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -11408,9 +11421,6 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", code); err != nil {
-		return Deployment{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
 	return failed, nil

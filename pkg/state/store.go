@@ -382,6 +382,14 @@ type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
 }
 
+// DeploymentHostingFailureStore commits a failed hosting verdict with the
+// deployment's terminal status, stage, traffic and outcome activity. Only a
+// snapshotting candidate can transition; terminal rows are unchanged. changed
+// tells the caller whether it owns the post-commit notification.
+type DeploymentHostingFailureStore interface {
+	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
+}
+
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
 // gate (ADR-121). It is intentionally separate from Store so narrow test
 // doubles and daemon-specific stores remain source-compatible. Production

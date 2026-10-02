@@ -1,3 +1,12 @@
+-- name: LockDeploymentHostingFailure :one
+SELECT app_id, status FROM deployments
+WHERE id = sqlc.arg(deployment_id)::uuid
+FOR UPDATE;
+
+-- name: WriteDeploymentHostingFailureReceipt :execrows
+UPDATE deployments SET api_hosting_receipt = sqlc.arg(receipt)::jsonb
+WHERE id = sqlc.arg(deployment_id)::uuid AND status = 'snapshotting';
+
 -- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
