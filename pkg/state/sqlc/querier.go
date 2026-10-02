@@ -166,6 +166,7 @@ type Querier interface {
 	CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsSourceBuildParams) error
 	CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsWorkloadCandidateParams) (pgtype.UUID, error)
 	CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg CreateEnvironmentGitSourceParams) (EnvironmentGitSource, error)
+	CreateEnvironmentQualificationInstance(ctx context.Context, db DBTX, arg CreateEnvironmentQualificationInstanceParams) (Instance, error)
 	CreateEnvironmentWorkloadGraph(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadGraphParams) error
 	CreateEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadQualificationParams) (int64, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
@@ -303,6 +304,9 @@ type Querier interface {
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
+	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
+	EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)
 	EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error)
 	// Public controls check authority before source/quota checks, including a
@@ -315,6 +319,7 @@ type Querier interface {
 	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)
 	EnvironmentWorkloadQualificationArtifactCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationRequest, error)
+	EnvironmentWorkloadQualificationInputsCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error)
 	EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error)
 	ExclusiveWorkAppScope(ctx context.Context, db DBTX, arg ExclusiveWorkAppScopeParams) (ExclusiveWorkAppScopeRow, error)
@@ -1000,6 +1005,8 @@ type Querier interface {
 	LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForScopeParams) ([]pgtype.UUID, error)
 	LockEnvironmentGitSourceForSecretMutation(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForSecretMutationParams) ([]pgtype.UUID, error)
 	LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg LockEnvironmentGitSourcePollParams) (pgtype.UUID, error)
+	LockEnvironmentQualificationAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
+	LockEnvironmentQualificationNode(ctx context.Context, db DBTX, arg LockEnvironmentQualificationNodeParams) error
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
 	LockExclusiveWorkAccount(ctx context.Context, db DBTX, accountID string) (LockExclusiveWorkAccountRow, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)

@@ -237,6 +237,9 @@ func (m *MemStore) PublishInstanceRuntimeWithConfig(_ context.Context, id, expec
 	}
 	prior := instance
 	instance.State, instance.Netns, instance.HostIP, instance.GuestUID, instance.StartedAt = string(StateRunning), netns, hostIP, uid, time.Now().UTC()
+	if err := m.guardInstanceRuntimeTransitionLocked(prior, instance); err != nil {
+		return Instance{}, err
+	}
 	m.instances[id] = instance
 	if err := m.recordInstanceRuntimeConfigReceiptLocked(id, wakeID, inputs); err != nil {
 		m.instances[id] = prior

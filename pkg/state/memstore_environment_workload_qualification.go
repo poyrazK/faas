@@ -67,6 +67,9 @@ func (m *MemStore) qualificationLocked(id string) (*environmentGitOpsMemory, Env
 
 func (m *MemStore) qualificationCurrentLocked(memory *environmentGitOpsMemory, request EnvironmentWorkloadQualificationRequest) error {
 	source := memory.source
+	if !m.accounts[source.AccountID].MayDeploy() {
+		return ErrConflict
+	}
 	graph, exists := memory.graphs[preparationGraphKey(request.FrozenInputs.Generation, request.FrozenInputs.PlanHash)]
 	if !exists || graph.ID != request.GraphID || graph.Phase != "prepared" || source.Spec.Mode != "enforce" || source.Suspended ||
 		graph.Generation != source.Generation || graph.IntentVersion != source.IntentVersion || graph.RevisionID != source.ApprovedRevisionID {

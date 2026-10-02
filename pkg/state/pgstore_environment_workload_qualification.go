@@ -125,7 +125,7 @@ func (s *PgStore) qualificationCurrentTx(ctx context.Context, tx pgx.Tx, id stri
 	if _, _, _, err := s.environmentCandidateInputsTx(ctx, tx, EnvironmentGitOpsLease{Source: source}, environmentsync.Plan{Hash: graph.PlanHash}); err != nil {
 		return row, err
 	}
-	current, err := q.EnvironmentWorkloadQualificationArtifactCurrent(ctx, tx, row.ID)
+	current, err := q.EnvironmentWorkloadQualificationInputsCurrent(ctx, tx, row.ID)
 	if err != nil {
 		return row, mapErr(err)
 	}

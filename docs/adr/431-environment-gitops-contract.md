@@ -83,8 +83,9 @@
    candidate, retained live identity, original queue binding and private consumer.
    Its prepared phase records completed artifacts and grants no execution or
    activation authority. Complete prepared cohorts now publish durable runtime
-   qualification requests with separate bounded execution leases. Scheduler
-   admission, native readiness/smoke receipts, release commands and activation
+   qualification requests with separate bounded execution leases. Dedicated
+   scheduler instance admission now binds the current attempt and preserves
+   reservation limits. The VM consumer, native readiness/smoke receipts, release commands and activation
    remain to be implemented. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
@@ -1055,7 +1056,7 @@ The original graph's parent purge releases its requests.
 
 Queued and claimed remain work states. They are not qualification receipts and
 cannot create instances through ordinary paths, mark deployments live or advance
-the applied revision. Dedicated scheduler admission, frozen host lifecycle inputs,
+the applied revision. The VM consumer, frozen host lifecycle inputs,
 release-command execution, native readiness/smoke evidence, qualified snapshot
 publication and graph activation remain required. The approved-intent executor
 stays disabled until the complete native serving and recovery gates pass.
@@ -1073,6 +1074,42 @@ compiles. Regenerated SQLC output, the embedded OpenAPI copy and ADR number
 uniqueness checks pass. The configured native acceptance project's API currently
 reports that the project is suspended, so the required KVM serving gates remain
 unverified.
+
+## Qualification instance admission
+
+Schedd has a dedicated store capability to reserve the exact instance identity
+issued by a current non-job qualification attempt. Admission rechecks the full
+reviewed observation and artifact cohort, then applies the ordinary node RAM
+reservation, account worker quota and service capacity protection. It also
+requires the account and node to remain eligible and the requested RAM to match
+the current app. Source/app locks precede the existing node/account reservation
+order. Jobs cannot use this VM admission capability.
+
+A lost response returns the same reservation with `Created=false`; changing its
+node, wake, memory, mode or attempt cannot reuse it. A retired reservation cannot
+be booted again by that attempt. Ordinary lifecycle writers cannot publish
+runtime identity, readiness or runtime-config evidence on the held candidate.
+Its app, deployment, node, wake and resource identity stay immutable. Terminal
+cleanup remains possible after expiry and supersession. Direct deletion retains
+the reservation while it is active or its current attempt is unexpired, so it
+cannot turn a retry into a second admission. Original parent purges revoke their
+requests and release reservation cleanup; project deletion still detaches apps
+according to the existing project contract.
+
+This capability records `cold_booting` admission only. It does not call vmmd,
+run a release command, produce a qualification/snapshot receipt, activate a
+deployment or advance the applied revision. Native execution must still use
+the frozen host contract, revalidate the attempt before each effect, atomically
+publish its bound input evidence, and retain recovery ownership until the VM
+has actually retired. The approved-intent executor remains disabled.
+
+Local memory/PostgreSQL checks cover stable admission retries, cancellation,
+node and account worker capacity refusal, ordinary runtime publication fences,
+attempt expiry, account ineligibility, sibling changes, immutable reservation
+identity, duplicate reservation refusal, deletion/recovery and original parent
+cleanup. The broad GitOps suite, focused state/scheduler regressions, populated
+environment-intent migration replay, regenerated SQLC comparison and repository
+ADR number gate pass. These checks do not establish native VM qualification.
 
 ## Review and control workflow
 

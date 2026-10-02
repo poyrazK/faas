@@ -136,7 +136,7 @@ func TestPgEnvironmentGitOpsImageCandidateDatabaseFences(t *testing.T) {
 			t.Fatalf("raw SQL bypassed candidate fence: %s", query)
 		}
 	}
-	if _, err := pool.Exec(t.Context(), `insert into instances(app_id,deployment_id,state,ram_mb) values($1,$2,'cold_booting',512)`, app.ID, id); err == nil || !strings.Contains(err.Error(), "graph qualification") {
+	if _, err := pool.Exec(t.Context(), `insert into instances(app_id,deployment_id,state,ram_mb) values($1,$2,'cold_booting',512)`, app.ID, id); err == nil || !strings.Contains(err.Error(), "current qualification attempt") {
 		t.Fatalf("raw instance insert escaped hold: %v", err)
 	}
 	dep, _ := store.DeploymentByID(t.Context(), id)

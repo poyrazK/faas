@@ -6794,6 +6794,9 @@ SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m
  OR d.status IS DISTINCT FROM 'snapshotting' OR coalesce(d.rootfs_bytes,0)<=0)) AS current
 FROM environment_workload_qualification_requests target JOIN environment_workload_graphs g ON g.id=target.graph_id WHERE target.id=sqlc.arg(id)::uuid;
 
+-- name: EnvironmentWorkloadQualificationInputsCurrent :one
+SELECT environment_workload_qualification_inputs_current(sqlc.arg(id)::uuid)::boolean;
+
 -- name: SetEnvironmentWorkloadQualificationContext :one
 SELECT set_config('gregale.gitops_qualification',sqlc.arg(token)::text,true)::text;
 
@@ -6808,6 +6811,30 @@ WHERE id=sqlc.arg(id)::uuid AND (phase='queued' OR lease_until<=clock_timestamp(
 UPDATE environment_workload_qualification_requests SET lease_until=greatest(lease_until,clock_timestamp()+sqlc.arg(duration_us)::bigint*interval '1 microsecond')
 WHERE id=sqlc.arg(id)::uuid AND phase='claimed' AND lease_token=sqlc.arg(token)::text AND attempt=sqlc.arg(attempt)::bigint
  AND lease_until>clock_timestamp() RETURNING *;
+
+-- name: EnvironmentQualificationAdmissionInputs :one
+SELECT a.ram_mb,n.admission_ceiling_mb FROM apps a JOIN accounts c ON c.id=a.account_id
+CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(node_id)::uuid
+ AND c.status='active' AND c.abuse_hold_at IS NULL AND n.active AND n.lifecycle='active' FOR SHARE OF n;
+
+-- name: EnvironmentQualificationInstance :one
+SELECT * FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockEnvironmentQualificationAccount :one
+SELECT c.status='active' AND c.abuse_hold_at IS NULL AS may_deploy FROM accounts c JOIN apps a ON a.account_id=c.id
+WHERE a.id=sqlc.arg(app_id)::uuid FOR UPDATE OF c;
+
+-- name: LockEnvironmentQualificationNode :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_class)::integer,hashtext(sqlc.arg(node_id)::text));
+
+-- name: EnvironmentQualificationNodeUsedMB :one
+SELECT coalesce(sum(ram_mb+sqlc.arg(overhead_mb)::integer),0)::bigint FROM instances
+WHERE node_id=sqlc.arg(node_id)::uuid AND state IN ('waking','cold_booting','running','draining','warm');
+
+-- name: CreateEnvironmentQualificationInstance :one
+INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,'cold_booting',sqlc.arg(ram_mb)::integer,
+ sqlc.arg(node_id)::uuid,sqlc.arg(wake_id)::uuid,clock_timestamp(),sqlc.arg(mode)::text) RETURNING *;
 
 -- name: CreateEnvironmentGitOpsWorkloadCandidate :one
 INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic_percent,traffic_percent_explicit,

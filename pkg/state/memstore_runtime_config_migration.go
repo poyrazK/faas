@@ -41,6 +41,9 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(_ context.Context, id, 
 	if input.GuestUID > 0 {
 		instance.GuestUID = input.GuestUID
 	}
+	if err := m.guardInstanceRuntimeTransitionLocked(m.instances[id], instance); err != nil {
+		return err
+	}
 	m.instances[id] = instance
 	delete(m.instanceRuntimeConfigReceipts, id)
 	if input.Inputs != nil {

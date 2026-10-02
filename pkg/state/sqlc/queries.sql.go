@@ -2586,6 +2586,68 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 	return i, err
 }
 
+const createEnvironmentQualificationInstance = `-- name: CreateEnvironmentQualificationInstance :one
+INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
+VALUES($1::uuid,$2::uuid,$3::uuid,'cold_booting',$4::integer,
+ $5::uuid,$6::uuid,clock_timestamp(),$7::text) RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu
+`
+
+type CreateEnvironmentQualificationInstanceParams struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	RamMb        int32
+	NodeID       pgtype.UUID
+	WakeID       pgtype.UUID
+	Mode         string
+}
+
+func (q *Queries) CreateEnvironmentQualificationInstance(ctx context.Context, db DBTX, arg CreateEnvironmentQualificationInstanceParams) (Instance, error) {
+	row := db.QueryRow(ctx, createEnvironmentQualificationInstance,
+		arg.ID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RamMb,
+		arg.NodeID,
+		arg.WakeID,
+		arg.Mode,
+	)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+		&i.ExclusiveCaptureBlocked,
+		&i.CapacityRamMb,
+		&i.CapacityCpuMillicores,
+		&i.CapacityVcpu,
+	)
+	return i, err
+}
+
 const createEnvironmentWorkloadGraph = `-- name: CreateEnvironmentWorkloadGraph :exec
 INSERT INTO environment_workload_graphs(source_id,environment_id,revision_id,generation,intent_version,plan_hash,definition_digest,members,resource_ids)
 VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,
@@ -4210,6 +4272,88 @@ func (q *Queries) EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg E
 	return i, err
 }
 
+const environmentQualificationAdmissionInputs = `-- name: EnvironmentQualificationAdmissionInputs :one
+SELECT a.ram_mb,n.admission_ceiling_mb FROM apps a JOIN accounts c ON c.id=a.account_id
+CROSS JOIN compute_nodes n WHERE a.id=$1::uuid AND n.id=$2::uuid
+ AND c.status='active' AND c.abuse_hold_at IS NULL AND n.active AND n.lifecycle='active' FOR SHARE OF n
+`
+
+type EnvironmentQualificationAdmissionInputsParams struct {
+	AppID  pgtype.UUID
+	NodeID pgtype.UUID
+}
+
+type EnvironmentQualificationAdmissionInputsRow struct {
+	RamMb              int32
+	AdmissionCeilingMb int32
+}
+
+func (q *Queries) EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error) {
+	row := db.QueryRow(ctx, environmentQualificationAdmissionInputs, arg.AppID, arg.NodeID)
+	var i EnvironmentQualificationAdmissionInputsRow
+	err := row.Scan(&i.RamMb, &i.AdmissionCeilingMb)
+	return i, err
+}
+
+const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
+	row := db.QueryRow(ctx, environmentQualificationInstance, instanceID)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+		&i.ExclusiveCaptureBlocked,
+		&i.CapacityRamMb,
+		&i.CapacityCpuMillicores,
+		&i.CapacityVcpu,
+	)
+	return i, err
+}
+
+const environmentQualificationNodeUsedMB = `-- name: EnvironmentQualificationNodeUsedMB :one
+SELECT coalesce(sum(ram_mb+$1::integer),0)::bigint FROM instances
+WHERE node_id=$2::uuid AND state IN ('waking','cold_booting','running','draining','warm')
+`
+
+type EnvironmentQualificationNodeUsedMBParams struct {
+	OverheadMb int32
+	NodeID     pgtype.UUID
+}
+
+func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error) {
+	row := db.QueryRow(ctx, environmentQualificationNodeUsedMB, arg.OverheadMb, arg.NodeID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const environmentSecretReferenceQuota = `-- name: EnvironmentSecretReferenceQuota :one
 SELECT ((SELECT count(*) FROM app_envs WHERE app_id=$1::uuid)
  +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=$1::uuid))::bigint AS total,
@@ -4475,6 +4619,17 @@ func (q *Queries) EnvironmentWorkloadQualificationForUpdate(ctx context.Context,
 		&i.ReservedInstanceID,
 	)
 	return i, err
+}
+
+const environmentWorkloadQualificationInputsCurrent = `-- name: EnvironmentWorkloadQualificationInputsCurrent :one
+SELECT environment_workload_qualification_inputs_current($1::uuid)::boolean
+`
+
+func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentWorkloadQualificationInputsCurrent, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
@@ -14853,6 +15008,32 @@ func (q *Queries) LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg
 	var source_id pgtype.UUID
 	err := row.Scan(&source_id)
 	return source_id, err
+}
+
+const lockEnvironmentQualificationAccount = `-- name: LockEnvironmentQualificationAccount :one
+SELECT c.status='active' AND c.abuse_hold_at IS NULL AS may_deploy FROM accounts c JOIN apps a ON a.account_id=c.id
+WHERE a.id=$1::uuid FOR UPDATE OF c
+`
+
+func (q *Queries) LockEnvironmentQualificationAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, lockEnvironmentQualificationAccount, appID)
+	var may_deploy pgtype.Bool
+	err := row.Scan(&may_deploy)
+	return may_deploy, err
+}
+
+const lockEnvironmentQualificationNode = `-- name: LockEnvironmentQualificationNode :exec
+SELECT pg_advisory_xact_lock($1::integer,hashtext($2::text))
+`
+
+type LockEnvironmentQualificationNodeParams struct {
+	LockClass int32
+	NodeID    string
+}
+
+func (q *Queries) LockEnvironmentQualificationNode(ctx context.Context, db DBTX, arg LockEnvironmentQualificationNodeParams) error {
+	_, err := db.Exec(ctx, lockEnvironmentQualificationNode, arg.LockClass, arg.NodeID)
+	return err
 }
 
 const lockExclusiveSnapshotInstance = `-- name: LockExclusiveSnapshotInstance :one

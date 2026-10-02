@@ -23,8 +23,12 @@ func workloadGraphFixture(t *testing.T, basic gitOpsTestStore) (state.Environmen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: worker.ID, Scope: "production", Kind: state.DeploymentKindImage,
-		Status: state.DeployLive, ImageDigest: "registry.example/worker@sha256:" + strings.Repeat("c", 64)}); err != nil {
+	servingWorker, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: worker.ID, Scope: "production", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, ImageDigest: "registry.example/worker@sha256:" + strings.Repeat("c", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(t.Context(), servingWorker.ID, state.DeployLive, ""); err != nil {
 		t.Fatal(err)
 	}
 	queue, err := basic.(state.QueueBindingConsumerStore).CreateQueueBindingWithConsumer(t.Context(), state.QueueBinding{AccountID: source.AccountID, AppID: worker.ID,

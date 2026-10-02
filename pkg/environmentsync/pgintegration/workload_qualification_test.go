@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -287,8 +286,20 @@ func TestPgEnvironmentGitOpsQualificationOriginalParentPurges(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			store := state.NewPgStore(pool)
 			lease, _, requests := preparedQualificationFixture(t, store)
+			claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, qualificationPlacement(t, store, 4096)); err != nil {
+				t.Fatal(err)
+			}
 			if parent == "project" {
 				if err := store.DeleteProject(t.Context(), lease.Source.ProjectID); err != nil {
+					t.Fatal(err)
+				}
+				// Project deletion detaches apps. Their lifecycle owner can
+				// collect the reservation after original authority is purged.
+				if err := store.DeleteInstance(t.Context(), claimed.ReservedInstanceID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -305,6 +316,9 @@ func TestPgEnvironmentGitOpsQualificationOriginalParentPurges(t *testing.T) {
 			}
 			if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", time.Minute); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("purged work still granted authority: %v", err)
+			}
+			if _, err := store.InstanceByID(t.Context(), claimed.ReservedInstanceID); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("original parent purge retained its reservation: %v", err)
 			}
 		})
 	}
@@ -363,37 +377,43 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)
 	_, _, requests := preparedQualificationFixture(t, store)
-	old, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "lost-scheduler", 100*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: "prior-qualification-instance", Active: true,
-		TargetURL: "tcp://127.0.0.1:50051", AdmissionCeilingMB: 4096, MemMB: 8192, VPCPUs: 4, VCPUBudget: 160, MaxConcurrency: 5})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Model a lifecycle row at the reserved identity using the retained
-	// ordinary deployment. Held-candidate admission is still unavailable.
-	result, err := pool.Exec(t.Context(), `insert into instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id)
- select $1,a.id,d.id,'cold_booting',a.ram_mb,$2,$3 from apps a join deployments d on d.app_id=a.id
- where a.id=$4 and d.status='live' and d.scope='production' limit 1`, old.ReservedInstanceID, node.ID, uuid.NewString(), old.AppID)
-	if err != nil || result.RowsAffected() != 1 {
-		t.Fatalf("prior instance fixture: %v", err)
-	}
-	time.Sleep(max(0, time.Until(*old.LeaseUntil)+20*time.Millisecond))
+	placement := qualificationPlacement(t, store, 4096)
+	var prior state.EnvironmentWorkloadQualificationRequest
 	for _, phase := range []state.State{state.State("pending"), state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateDraining, state.StateWarm, state.StateSnapshotting, state.StateMigrating, state.StateEvictingAccountDeleting} {
-		if _, err := pool.Exec(t.Context(), `update instances set state=$2 where id=$1`, old.ReservedInstanceID, string(phase)); err != nil {
+		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", 250*time.Millisecond)
+		if err != nil || (prior.ID != "" && (current.Attempt != prior.Attempt+1 || current.ReservedInstanceID == prior.ReservedInstanceID)) {
+			t.Fatalf("fresh attempt after retirement: %+v %v", current, err)
+		}
+		if _, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), current, placement); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), old.ID, "recovery-scheduler", time.Minute); !errors.Is(err, state.ErrConflict) {
+		// Model the dedicated executor's lifecycle under its still-current
+		// capability, then lose the scheduler while that lifecycle is active.
+		tx, err := pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), `select set_config('gregale.gitops_qualification',$1,true)`, current.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), `update instances set state=$2 where id=$1`, current.ReservedInstanceID, string(phase)); err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(max(0, time.Until(*current.LeaseUntil)+20*time.Millisecond))
+		if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), current.ID, "recovery-scheduler", time.Minute); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("expired %s instance allowed a replacement attempt: %v", phase, err)
 		}
+		if err := store.UpdateInstanceState(t.Context(), current.ReservedInstanceID, string(state.StateStopped)); err != nil {
+			t.Fatal(err)
+		}
+		prior = current
 	}
-	if _, err := pool.Exec(t.Context(), `update instances set state='parked' where id=$1`, old.ReservedInstanceID); err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), old.ID, "recovery-scheduler", time.Minute)
-	if err != nil || recovered.Attempt != old.Attempt+1 || recovered.ReservedInstanceID == old.ReservedInstanceID {
+	recovered, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), prior.ID, "recovery-scheduler", time.Minute)
+	if err != nil || recovered.Attempt != prior.Attempt+1 || recovered.ReservedInstanceID == prior.ReservedInstanceID {
 		t.Fatalf("retired instance did not release fresh recovery authority: %v", err)
 	}
 }
