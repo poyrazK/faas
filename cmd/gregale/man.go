@@ -433,7 +433,7 @@ func suggestSubcommand(query string, c cliCommand) (string, bool) {
 // top-level dispatcher. No-op when sug == "" (ambiguous or
 // over-threshold — see suggestSubcommand).
 func maybeSuggestSub(sug string) {
-	if sug == "" {
+	if sug == "" || jsonOutput {
 		return
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
