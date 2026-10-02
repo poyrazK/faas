@@ -2589,6 +2589,33 @@ func (q *Queries) DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []
 	return err
 }
 
+const deleteCollectedRuntimeLogArchive = `-- name: DeleteCollectedRuntimeLogArchive :execrows
+DELETE FROM runtime_log_archives r USING runtime_log_archive_bindings b
+WHERE r.instance_id = b.instance_id AND r.instance_id = $1::text
+  AND r.archive_day = $2::date AND r.archive_day < b.expired_before
+  AND r.storage_key = $3::text AND b.app_id = $4::uuid
+`
+
+type DeleteCollectedRuntimeLogArchiveParams struct {
+	InstanceID string
+	ArchiveDay pgtype.Date
+	StorageKey string
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) DeleteCollectedRuntimeLogArchive(ctx context.Context, db DBTX, arg DeleteCollectedRuntimeLogArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCollectedRuntimeLogArchive,
+		arg.InstanceID,
+		arg.ArchiveDay,
+		arg.StorageKey,
+		arg.AppID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteCron = `-- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2
 `
@@ -11575,6 +11602,71 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 	return items, nil
 }
 
+const listRuntimeLogArchiveRetentionCandidates = `-- name: ListRuntimeLogArchiveRetentionCandidates :many
+SELECT b.instance_id, b.app_id, b.account_id, b.deployment_id, b.compute_region,
+       r.archive_day, r.storage_key, r.bytes, r.sha256, r.published_at
+FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+WHERE r.archive_day < $1::date
+  AND (r.archive_day, r.instance_id) > ($2::date, $3::text)
+ORDER BY r.archive_day, r.instance_id LIMIT $4::int
+`
+
+type ListRuntimeLogArchiveRetentionCandidatesParams struct {
+	BeforeDay     pgtype.Date
+	AfterDay      pgtype.Date
+	AfterInstance string
+	BatchSize     int32
+}
+
+type ListRuntimeLogArchiveRetentionCandidatesRow struct {
+	InstanceID    string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	DeploymentID  pgtype.UUID
+	ComputeRegion string
+	ArchiveDay    pgtype.Date
+	StorageKey    string
+	Bytes         int64
+	Sha256        string
+	PublishedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListRuntimeLogArchiveRetentionCandidates(ctx context.Context, db DBTX, arg ListRuntimeLogArchiveRetentionCandidatesParams) ([]ListRuntimeLogArchiveRetentionCandidatesRow, error) {
+	rows, err := db.Query(ctx, listRuntimeLogArchiveRetentionCandidates,
+		arg.BeforeDay,
+		arg.AfterDay,
+		arg.AfterInstance,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRuntimeLogArchiveRetentionCandidatesRow{}
+	for rows.Next() {
+		var i ListRuntimeLogArchiveRetentionCandidatesRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.AccountID,
+			&i.DeploymentID,
+			&i.ComputeRegion,
+			&i.ArchiveDay,
+			&i.StorageKey,
+			&i.Bytes,
+			&i.Sha256,
+			&i.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServiceRecoveryApps = `-- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
 LEFT JOIN service_recovery r ON r.app_id = a.id
@@ -15893,7 +15985,7 @@ const publishRuntimeLogArchive = `-- name: PublishRuntimeLogArchive :execrows
 UPDATE runtime_log_archives r SET bytes = $1::bigint, sha256 = $2::text, published_at = now()
 FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
 WHERE r.instance_id = b.instance_id AND r.instance_id = $3::text
-  AND r.archive_day = $4::date AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+  AND r.archive_day = $4::date AND r.archive_day >= b.expired_before AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
 `
 
 type PublishRuntimeLogArchiveParams struct {
@@ -18057,7 +18149,7 @@ const reserveRuntimeLogArchive = `-- name: ReserveRuntimeLogArchive :execrows
 INSERT INTO runtime_log_archives(instance_id, archive_day, storage_key)
 SELECT b.instance_id, $1::date, $2::text
 FROM runtime_log_archive_bindings b JOIN apps a ON a.id = b.app_id
-WHERE b.instance_id = $3::text AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
+WHERE b.instance_id = $3::text AND $1::date >= b.expired_before AND a.status = 'active' AND EXISTS (SELECT 1 FROM accounts acct WHERE acct.id = a.account_id AND acct.status = 'active')
 ON CONFLICT (instance_id, archive_day) DO UPDATE SET storage_key = excluded.storage_key
 `
 
@@ -18122,6 +18214,33 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const retireRuntimeLogArchive = `-- name: RetireRuntimeLogArchive :execrows
+UPDATE runtime_log_archive_bindings b SET expired_before = greatest(b.expired_before, r.archive_day + 1)
+FROM runtime_log_archives r WHERE r.instance_id = b.instance_id AND r.instance_id = $1::text
+  AND r.archive_day = $2::date AND r.storage_key = $3::text
+  AND b.app_id = $4::uuid
+`
+
+type RetireRuntimeLogArchiveParams struct {
+	InstanceID string
+	ArchiveDay pgtype.Date
+	StorageKey string
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) RetireRuntimeLogArchive(ctx context.Context, db DBTX, arg RetireRuntimeLogArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, retireRuntimeLogArchive,
+		arg.InstanceID,
+		arg.ArchiveDay,
+		arg.StorageKey,
+		arg.AppID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows
@@ -18367,6 +18486,22 @@ func (q *Queries) RuntimeLogArchiveByInstanceDay(ctx context.Context, db DBTX, a
 		&i.PublishedAt,
 	)
 	return i, err
+}
+
+const runtimeLogArchiveDayExpired = `-- name: RuntimeLogArchiveDayExpired :one
+SELECT EXISTS(SELECT 1 FROM runtime_log_archive_bindings WHERE instance_id = $1::text AND $2::date < expired_before)
+`
+
+type RuntimeLogArchiveDayExpiredParams struct {
+	InstanceID string
+	ArchiveDay pgtype.Date
+}
+
+func (q *Queries) RuntimeLogArchiveDayExpired(ctx context.Context, db DBTX, arg RuntimeLogArchiveDayExpiredParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeLogArchiveDayExpired, arg.InstanceID, arg.ArchiveDay)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const runtimeLogArchiveFragmentPublished = `-- name: RuntimeLogArchiveFragmentPublished :one

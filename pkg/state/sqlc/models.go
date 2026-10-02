@@ -3985,6 +3985,7 @@ type RuntimeLogArchiveBinding struct {
 	DeploymentID  pgtype.UUID
 	ComputeRegion string
 	CreatedAt     pgtype.Timestamptz
+	ExpiredBefore pgtype.Date
 }
 
 type RuntimeLogArchiveFragment struct {

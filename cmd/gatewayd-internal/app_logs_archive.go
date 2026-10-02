@@ -340,6 +340,9 @@ func (h *ArchiveLogsHandler) archiveReference(ctx context.Context, appID, accoun
 			}
 			return ref, nil
 		}
+		if errors.Is(err, state.ErrRuntimeLogArchiveExpired) {
+			return state.RuntimeLogArchive{}, state.ErrNotFound
+		}
 		if !errors.Is(err, state.ErrNotFound) {
 			return state.RuntimeLogArchive{}, err
 		}

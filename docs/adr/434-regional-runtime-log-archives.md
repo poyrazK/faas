@@ -87,7 +87,8 @@ paths. Regional admission remains internal and default-off pending those gates.
 
 ## Remaining work
 
-A catalog-aware remote retention/orphan collector, cleanup of unattributed old local
-spools, job archive history, persistent services, regional ingress and independent
-control planes remain open. PostgreSQL metadata remains shared. Artifact and archive
+ADR-435 supplies catalog-aware remote retention and failed-PUT orphan collection.
+Cleanup of permanently expired or unattributed local spools, ownership backfill for
+uncataloged old remote objects, job archive history, persistent services, regional
+ingress and independent control planes remain open. PostgreSQL metadata remains shared. Artifact and archive
 routing alone does not promise end-to-end data residency.

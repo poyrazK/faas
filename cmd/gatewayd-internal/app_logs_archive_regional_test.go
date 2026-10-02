@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -170,5 +171,33 @@ func TestLegacyArchiveKeepsPhysicalNodeRegion(t *testing.T) {
 	out := r.Body.String()
 	if !strings.Contains(out, `"region":"physical-eu"`) || !strings.Contains(out, archiveReasonComplete) {
 		t.Fatalf("legacy physical region lost: %s", out)
+	}
+}
+
+func TestCollectedLegacyArchiveCannotBypassExpiryFence(t *testing.T) {
+	s := state.NewMemStore()
+	fx := conformance.Seed(t, s)
+	instance, err := s.CreateInstance(t.Context(), fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 128, fx.Node.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := s.CaptureRuntimeLogArchiveBinding(t.Context(), instance.ID, fx.Node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := archiveTestDate()
+	ref := state.RuntimeLogArchive{RuntimeLogArchiveBinding: binding, Day: day, StorageKey: region.RuntimeLogArchiveKey("", instance.ID, day)}
+	if err := s.ReserveRuntimeLogArchive(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetireRuntimeLogArchive(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteCollectedRuntimeLogArchive(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	handler := &ArchiveLogsHandler{Store: s}
+	if _, err := handler.archiveReference(t.Context(), fx.App.ID, fx.App.AccountID, instance.ID, day); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("retained legacy instance bypassed expiry: %v", err)
 	}
 }

@@ -60,7 +60,7 @@ func (s *PgStore) ReserveRuntimeLogArchive(ctx context.Context, a RuntimeLogArch
 		return err
 	}
 	if n != 1 {
-		return ErrNotFound
+		return s.runtimeLogArchiveWriteMiss(ctx, a.InstanceID, a.Day)
 	}
 	return nil
 }
@@ -86,7 +86,8 @@ func (s *PgStore) PublishRuntimeLogArchiveFragment(ctx context.Context, instance
 		return err
 	}
 	if n != 1 {
-		return ErrNotFound
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return s.runtimeLogArchiveWriteMiss(ctx, instanceID, day)
 	}
 	if fragment != "" {
 		if err := q.RecordRuntimeLogArchiveFragment(ctx, tx, sqlc.RecordRuntimeLogArchiveFragmentParams{InstanceID: instanceID, ArchiveDay: date, FragmentSha256: fragment}); err != nil {
@@ -109,6 +110,11 @@ func (s *PgStore) RuntimeLogArchiveByInstanceDay(ctx context.Context, instanceID
 	date, err := runtimeLogDay(day)
 	if err != nil {
 		return RuntimeLogArchive{}, err
+	}
+	if expired, err := s.RuntimeLogArchiveDayExpired(ctx, instanceID, day); err != nil {
+		return RuntimeLogArchive{}, err
+	} else if expired {
+		return RuntimeLogArchive{}, ErrRuntimeLogArchiveExpired
 	}
 	a, err := sqlc.New().RuntimeLogArchiveByInstanceDay(ctx, s.pool, sqlc.RuntimeLogArchiveByInstanceDayParams{InstanceID: instanceID, ArchiveDay: date})
 	if err != nil {

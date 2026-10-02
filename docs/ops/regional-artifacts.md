@@ -117,3 +117,35 @@ leak checks on the dedicated Linux x86_64/KVM fleet. This file configures runtim
 artifact delivery; source builds require native qualification. Runtime log lifecycle qualification, archive retention/orphan collection,
 SBOM orphan collection, persistent services, regional ingress and control-plane independence require
 further implementation or qualification.
+
+## Runtime archive remote retention
+
+Apid now collects expired cataloged archives, including pending reservations whose
+PUT may have committed without publication metadata (ADR-435). The remote window
+uses the largest existing plan retention in `pkg/api/limits.go`, currently 90 days;
+`FAAS_LOG_ARCHIVE_RETENTION_DAYS` continues to control only the local spool. The
+inclusive UTC cutoff matches the gateway. Object-store lifecycle policies must
+preserve at least that longest customer window.
+
+Deploy migration `20261002102304135` before updated apid, gatewayd-internal and vmmd.
+Apid needs every participating regional archive route and legacy credentials if
+legacy archives exist. It visits at most 256 descriptors every five minutes with a
+one-minute pass deadline. Pagination advances beyond failed regions and wraps for
+retry. An app publication lock orders retirement, DELETE and catalog collection
+against late PUTs and hard deletion. Once retired, the durable expiry floor prevents
+an old local spool from reserving or publishing that day again.
+
+Storage failures retain the descriptor and receipts. If DELETE succeeded but the
+metadata update failed, a later pass confirms the object is missing and completes
+metadata cleanup. Expired local pending fragments are retained; they require the
+separate local backlog cleanup policy and still count against the local byte cap.
+Uncataloged objects with no verified owner are not collected automatically. Backfill
+verified instance/app/account/region ownership or remove them explicitly after an
+operator inventory; a filename or worker region alone is insufficient evidence.
+
+Observe `apid_log_archive_retention_failures_total{operation}` and
+`apid_log_archive_retention_last_success_timestamp_seconds`, alongside scanned and
+collected counters. A successful page is not proof that the entire expired inventory
+has been drained. Size collector throughput against archive volume before expanding
+admission. Native KVM and operational qualification remain pending; region admission
+stays internal and default-off.

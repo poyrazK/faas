@@ -24551,7 +24551,9 @@ CREATE TABLE public.runtime_log_archive_bindings (
     deployment_id uuid NOT NULL,
     compute_region text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expired_before date DEFAULT '0001-01-01'::date NOT NULL,
     CONSTRAINT runtime_log_archive_bindings_compute_region_check CHECK (((compute_region = ''::text) OR ((length(compute_region) <= 63) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
+    CONSTRAINT runtime_log_archive_bindings_expired_before_check CHECK (((expired_before >= '0001-01-01'::date) AND (expired_before <= '9999-12-31'::date))),
     CONSTRAINT runtime_log_archive_bindings_instance_id_check CHECK (((instance_id ~ '^[A-Za-z0-9._-]{1,128}$'::text) AND (instance_id <> ALL (ARRAY['.'::text, '..'::text]))))
 );
 
@@ -24667,3 +24669,53 @@ ALTER TABLE ONLY public.runtime_log_archive_fragments
 
 ALTER TABLE ONLY public.runtime_log_archives
     ADD CONSTRAINT runtime_log_archives_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.runtime_log_archive_bindings(instance_id) ON DELETE CASCADE;
+
+--
+-- Name: enforce_runtime_log_archive_retention_floor(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_log_archive_retention_floor() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.expired_before < OLD.expired_before THEN
+        RAISE EXCEPTION 'runtime log archive expiry cannot be reversed'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_expiry_monotonic';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+--
+-- Name: enforce_runtime_log_archive_retention(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_log_archive_retention() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM runtime_log_archive_bindings b WHERE b.instance_id = NEW.instance_id AND NEW.archive_day < b.expired_before) THEN
+        RAISE EXCEPTION 'runtime log archive day has expired'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_expired';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+--
+-- Name: runtime_log_archives_retention; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX runtime_log_archives_retention ON public.runtime_log_archives USING btree (archive_day, instance_id);
+
+--
+-- Name: runtime_log_archive_bindings runtime_log_archive_retention_floor_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_log_archive_retention_floor_guard BEFORE UPDATE OF expired_before ON public.runtime_log_archive_bindings FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_retention_floor();
+
+--
+-- Name: runtime_log_archives runtime_log_archive_retention_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_log_archive_retention_guard BEFORE INSERT OR UPDATE ON public.runtime_log_archives FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_retention();

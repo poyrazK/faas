@@ -210,6 +210,7 @@ type Querier interface {
 	// 100 rows/fingerprint cap evicts oldest request rows first).
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
+	DeleteCollectedRuntimeLogArchive(ctx context.Context, db DBTX, arg DeleteCollectedRuntimeLogArchiveParams) (int64, error)
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
 	DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error
 	DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg DeleteCustomerAppSecretParams) (int64, error)
@@ -879,6 +880,7 @@ type Querier interface {
 	// partition, then interleaved so one high-volume revision cannot crowd all
 	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
+	ListRuntimeLogArchiveRetentionCandidates(ctx context.Context, db DBTX, arg ListRuntimeLogArchiveRetentionCandidatesParams) ([]ListRuntimeLogArchiveRetentionCandidatesRow, error)
 	ListServiceRecoveryApps(ctx context.Context, db DBTX, arg ListServiceRecoveryAppsParams) ([]pgtype.UUID, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
@@ -1282,6 +1284,7 @@ type Querier interface {
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
+	RetireRuntimeLogArchive(ctx context.Context, db DBTX, arg RetireRuntimeLogArchiveParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
@@ -1298,6 +1301,7 @@ type Querier interface {
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
 	RuntimeLogArchiveBindingByInstance(ctx context.Context, db DBTX, instanceID string) (RuntimeLogArchiveBindingByInstanceRow, error)
 	RuntimeLogArchiveByInstanceDay(ctx context.Context, db DBTX, arg RuntimeLogArchiveByInstanceDayParams) (RuntimeLogArchiveByInstanceDayRow, error)
+	RuntimeLogArchiveDayExpired(ctx context.Context, db DBTX, arg RuntimeLogArchiveDayExpiredParams) (bool, error)
 	RuntimeLogArchiveFragmentPublished(ctx context.Context, db DBTX, arg RuntimeLogArchiveFragmentPublishedParams) (bool, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
 	// Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).

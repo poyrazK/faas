@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/prometheus/client_golang/prometheus"
 	"log/slog"
 	"os"
 )
@@ -29,4 +32,21 @@ func archiveDeletionClient(backend storage.StorageBackend, log *slog.Logger) *lo
 		return nil
 	}
 	return client
+}
+
+func startArchiveRetention(ctx context.Context, store state.Store, client *logarchive.RoutedClient, registry prometheus.Registerer, log *slog.Logger) {
+	if client == nil {
+		return
+	}
+	catalog, ok := store.(state.RuntimeLogArchiveRetentionStore)
+	if !ok {
+		log.Warn("logarchive.retention_store_unavailable")
+		return
+	}
+	collector, err := logarchive.NewRetentionCollector(logarchive.RetentionParams{Store: catalog, Archives: client, Registry: registry, Log: log})
+	if err != nil {
+		log.Warn("logarchive.retention_init_failed", "err", err)
+		return
+	}
+	go collector.Run(ctx)
 }

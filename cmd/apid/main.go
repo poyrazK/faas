@@ -781,13 +781,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// matches the grace-side precision we need; sweep is a
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
+		archiveStore := archiveDeletionClient(srv.sbomStorage, log)
+		startArchiveRetention(ctx, srv.store, archiveStore, srv.ops.Registry(), log)
 		graceLoop := grace.New(grace.Params{
 			Store:       srv.store,
 			Mailer:      graceSenderAdapter{m: srv.mailer},
 			Log:         log,
 			Interval:    graceIntervalFromEnv(log),
 			Artifacts:   srv.sbomStorage,
-			LogArchives: archiveDeletionClient(srv.sbomStorage, log),
+			LogArchives: archiveStore,
 			Registry:    srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)

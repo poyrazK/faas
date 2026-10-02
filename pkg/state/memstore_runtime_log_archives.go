@@ -57,6 +57,9 @@ func (m *MemStore) ReserveRuntimeLogArchive(_ context.Context, a RuntimeLogArchi
 	if b != a.RuntimeLogArchiveBinding {
 		return ErrInvalidArgument
 	}
+	if a.Day < m.runtimeLogArchiveExpiry[a.InstanceID] {
+		return ErrRuntimeLogArchiveExpired
+	}
 	k := archiveMapKey(a.InstanceID, a.Day)
 	if old, ok := m.runtimeLogArchives[k]; ok {
 		if old.StorageKey != a.StorageKey {
@@ -80,6 +83,9 @@ func (m *MemStore) PublishRuntimeLogArchiveFragment(_ context.Context, instanceI
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if day < m.runtimeLogArchiveExpiry[instanceID] {
+		return ErrRuntimeLogArchiveExpired
+	}
 	k := archiveMapKey(instanceID, day)
 	a, ok := m.runtimeLogArchives[k]
 	if !ok || m.apps[a.AppID].Status != AppActive || m.accounts[a.AccountID].Status != AccountActive {
@@ -109,6 +115,9 @@ func (m *MemStore) RuntimeLogArchiveByInstanceDay(_ context.Context, instanceID,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if day < m.runtimeLogArchiveExpiry[instanceID] {
+		return RuntimeLogArchive{}, ErrRuntimeLogArchiveExpired
+	}
 	a, ok := m.runtimeLogArchives[archiveMapKey(instanceID, day)]
 	if !ok {
 		return a, ErrNotFound
@@ -141,6 +150,7 @@ func (m *MemStore) dropRuntimeLogArchivesForAppLocked(appID string) {
 	for key, b := range m.runtimeLogArchiveBindings {
 		if b.AppID == appID {
 			delete(m.runtimeLogArchiveBindings, key)
+			delete(m.runtimeLogArchiveExpiry, key)
 		}
 	}
 }
