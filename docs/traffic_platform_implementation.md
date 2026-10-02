@@ -3,6 +3,74 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Bounded selected-deployment service wakes — 2026-10-02
+
+The baseline reproduced a direct-admission bypass: three blocked managed calls
+in queue mode started three admissions, and two calls in drop mode started two.
+The production selected-deployment path now uses the same app wake gate and
+gateway-wide leader queue as public routing. Same-cohort requests coalesce;
+different cohorts share the app generation, then wake only their own deployment.
+The outer queue allowance covers all generations and retains the earlier caller
+deadline. Cancellation/expiry release waiter slots while bounded shared work can
+finish; an already expired caller cannot initiate it. Warm selected targets retain
+the direct success path.
+
+Managed admission now respects the app ceiling and uses the pinned routing view
+for the existing rollout allowance. The exact deployment projection supplies its
+scope as well as ingress. CapacityCount now includes cached residents outside
+the current weight roster, matching Admit's resident accounting. Structured quota
+problems retain the actual observed count. Queue/drop/timeout problems reuse the
+public response and Retry-After contract.
+
+A new actual Postgres integration combines production policy reads, stored app
+queue/ceiling projection, deployment scope, Handler/WakeGate, PGBackend publication
+and ServiceProxy. Two queued calls share one admission; the excess call receives
+503 plus Retry-After. Cancellation frees a slot for a replacement caller. No
+forwarding or retained database transaction occurs while waiting. Publishing a
+new deployment during that wait does not change the two admitted calls' selected
+deployment or policy fingerprint. The next cold cohort is refused with the stored
+app ceiling, observed count one, no extra scheduler admission and no forwarding.
+After fixture eviction of the old resident, fresh work wakes and forwards to the
+new cohort. Queue metrics return to zero. Unit regressions also cover public and
+managed callers in the same/different cohorts, orphan reuse, earlier caller/app
+wait expiry, global queue saturation, app/rollout bounds and structured refusals.
+
+Scheduler lifecycle, source identity and the final forwarder are fixtures in this
+new integration. It does not qualify actual VM startup, node forwarding or a
+configured cold daemon path. The preceding warm configured process evidence keeps
+its own scope. Cross-process exact-wake coalescing, complete path, native KVM,
+firewall/namespace/restore/process-death/leak checks, deployed load/recovery and
+staging remain pending; the user confirmed no available acceptance host.
+
+Verification against the final 12,525-file source freeze:
+
+- All 12 complete unit packages pass in 177.034 s. Raw events contain 10,934
+  named passes and 1,452 skips. Excluding 46 passed parents with wholly guarded
+  children leaves 10,888 accepted and 1,498 guarded results.
+- The expanded Postgres profile passes 201 named results with no skips in
+  82.819 s: 43 under 26 actual Postgres fixture roots and 158 memory/transport
+  checks. Across both profiles, 10,930 distinct named results are accepted;
+  1,470 guarded results remain without acceptance.
+- Lint 2.4.0 checks all 12 complete packages with tests and reports zero issues
+  in 3.929 s. SQLC 1.31.1 reproduces all four generated files exactly. Runbook SQL,
+  text encoding, shell quoting and ADR uniqueness pass in 25.862 s, retaining
+  the 71 existing duplicate groups.
+- Gates run serially with the preceding Go 1.25.13 runtime and task-owned caches.
+  Only this tracker changes after the final source freeze. No new suppression,
+  exclusion, overlay, schema, quota or relaxed assertion was introduced. The
+  disposable source retains zero public tables and fsync, synchronous_commit
+  and full_page_writes enabled.
+
+Whole baseline, failed and preliminary runs are diagnostic evidence, excluded
+from final acceptance. Their logs and terminal receipts, the final source freeze,
+and exact staged/committed content are preserved under
+`outputs/traffic-managed-wake-20261002/` relative to the checkout's parent. Repairs covered the omitted deployment scope, the fixture's
+required SetScalingPolicy flag, its incorrect capacity problem code, resident
+counting and a disk-full linker failure. After all owned heavy runs became
+terminal, three obsolete task-owned cache artifacts were removed, reclaiming
+1,356,378,112 physical bytes. No sibling process, cache or database changed.
+All six release requirements remain open.
+
 ## Service readiness across discovery, cached routes and replacement — 2026-10-02
 
 The corrected baseline reproduced six unsafe accepts: single-source and

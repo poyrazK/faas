@@ -6613,7 +6613,7 @@ haveApp:
 				wakeCtx, wakeSpan := pkgtrace.StartSpan(wakeCtx, "gateway.wake",
 					attribute.String("app_id", app.ID), attribute.String("app_plan", string(app.Plan)),
 					attribute.String("deployment_id", exactDeploymentID), attribute.Int("desired_instances", maximum))
-				admittedWakeID, method, atCapacity, admitErr = h.wakePublicDeployment(wakeCtx, app, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maximum)
+				admittedWakeID, method, atCapacity, admitErr = h.wakeDeployment(wakeCtx, app, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maximum)
 				wakeSpan.SetAttributes(attribute.Bool("cold", admittedWakeID != ""), attribute.String("wake_id", admittedWakeID), attribute.String("wake_method", method.String()))
 				if admitErr != nil {
 					wakeSpan.RecordError(admitErr)
@@ -8607,22 +8607,17 @@ func (h *Handler) EnsureServiceCapacity(ctx context.Context, app App) error {
 // for a keyed service call. A warm stable revision must not make ensureCapacity
 // short-circuit while the selected candidate remains parked.
 func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, deploymentID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if deploymentID == "" {
 		return h.EnsureServiceCapacity(ctx, app)
 	}
-	if picker, ok := h.backend.(deploymentTargetPicker); ok {
-		if pick := picker.PickForDeployment(app.ID, deploymentID); pick.OK {
-			return nil
-		}
+	if pickPublicDeployment(h.backend, app.ID, deploymentID, "").OK {
+		return nil
 	}
-	limits, ok := api.LimitsFor(app.Plan)
-	if !ok {
-		limits = api.Limits{}
-	}
-	// Match the public cold-bucket fan-out allowance: rollout capacity is
-	// governed by the plan ceiling here, while schedd remains authoritative
-	// for the temporary rollout-instance exception.
-	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	maximum := h.serviceRoutingWakeMaximum(ctx, app, deploymentID)
+	_, _, _, err := h.wakeDeployment(ctx, app, deploymentID, app.Scope, sched.TriggerServiceMesh, maximum)
 	return err
 }
 

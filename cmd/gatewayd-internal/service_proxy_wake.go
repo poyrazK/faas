@@ -61,6 +61,7 @@ func newServiceProxyDeploymentWaker(store state.Store, ensure func(context.Conte
 		if !ok {
 			return nil
 		}
+		resolved.Scope = deployment.Scope
 		return ensure(ctx, resolved, deploymentID)
 	}
 }

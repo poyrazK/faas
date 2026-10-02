@@ -1448,10 +1448,8 @@ func (b *PGBackend) targetCountLocked(appID string) int {
 		return 0
 	}
 	n := 0
-	for _, weight := range picker.weights {
-		if set := picker.sets[weight.DeploymentID]; set != nil {
-			n += len(set.entries)
-		}
+	for _, set := range picker.sets {
+		n += len(set.entries)
 	}
 	return n
 }

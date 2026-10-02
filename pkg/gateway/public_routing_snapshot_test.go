@@ -262,7 +262,7 @@ func TestPublicRoutingWakeCoalescesCohortsAndKeepsTotalQueueAllowance(t *testing
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, _, _, err := h.wakePublicDeployment(t.Context(), backend.app, deployment, "production", "gateway", 4)
+			_, _, _, err := h.wakeDeployment(t.Context(), backend.app, deployment, "production", "gateway", 4)
 			errorsSeen <- err
 		}()
 	}
@@ -503,7 +503,7 @@ func TestPublicRoutingWakeQueueSharesCapAcrossCohorts(t *testing.T) {
 	results := make(chan error, 2)
 	start := func() {
 		go func() {
-			_, _, _, err := h.wakePublicDeployment(t.Context(), backend.app, deployment, "production", "gateway", 4)
+			_, _, _, err := h.wakeDeployment(t.Context(), backend.app, deployment, "production", "gateway", 4)
 			results <- err
 		}()
 	}
@@ -514,7 +514,7 @@ func TestPublicRoutingWakeQueueSharesCapAcrossCohorts(t *testing.T) {
 	for h.gate.InflightWaiters(backend.app.ID) < 2 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	_, _, _, err := h.wakePublicDeployment(t.Context(), backend.app, uuid.NewString(), "production", "gateway", 4)
+	_, _, _, err := h.wakeDeployment(t.Context(), backend.app, uuid.NewString(), "production", "gateway", 4)
 	if !errors.Is(err, ErrQueueFull) || calls.Load() != 1 {
 		t.Fatalf("cross-cohort queue cap bypassed: %v calls=%d", err, calls.Load())
 	}

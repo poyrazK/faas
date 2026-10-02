@@ -266,6 +266,28 @@ retains its existing scheduler-controlled allowance. Detached cache refresh
 uses the same admitted deployment. Cross-process exact-wake coalescing and atomic host/alias/environment
 binding with the earlier resolved app settings still require follow-up.
 
+Selected managed deployment wakes use that same local app gate and gateway-wide
+leader queue. Public and managed waiters for one cohort share an admission; a
+different cohort waits for the current generation and then wakes only itself.
+One outer queue allowance covers that wait and any later generation, with the
+caller's earlier deadline retained. Cancellation releases the caller's slot
+while the bounded leader can finish for other callers. Expired callers cannot
+start a new leader. The exact deployment waker supplies that deployment's scope.
+Managed admission respects the app's ceiling and uses the admitted routing view
+for the existing rollout allowance. Cached resident capacity includes cohorts
+outside the current weight roster until lifecycle eviction; these still count
+toward admission and its reported observation. Queue/drop/timeout refusals retain
+the public structured problem and Retry-After contract. Scheduler ownership,
+plan limits and the rollout grant remain unchanged.
+
+Local Postgres integration combines the real policy reader, deployment/app
+projection, shared handler gate, backend publication and managed proxy. It checks
+stored queue depth, cancellation, coalescing, retained selection through cutover,
+the steady app ceiling and a fresh request to the new cohort. Scheduler lifecycle,
+source identity and final forwarding are fixtures. Configured cold daemon paths,
+cross-process exact-wake coalescing, native lifecycle and deployed acceptance
+remain unqualified.
+
 Managed service discovery, alias access, binding/target authorization,
 preview/test namespace, method/path grant, reliability and transport posture
 are read from one bounded read-only repeatable-read transaction. The transaction

@@ -1173,18 +1173,17 @@ func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request,
 
 // writeWakeFailure maps a wake error onto the caller-facing response.
 func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err error) {
-	var full *WakeQueueFullError
-	if errors.As(err, &full) {
+	if errors.Is(err, ErrQueueFull) || errors.Is(err, ErrWakeAdmissionQueueFull) || errors.Is(err, ErrWakeQueueWaitTimeout) {
 		p.metrics.IncServiceCall(ServiceCallWakeQueueFull)
-		// Mirror the public edge: a saturated wake queue is a bounded,
-		// retryable condition, not a failure of the service. Hand the caller
-		// the same Retry-After the edge would so a peer workload can back off
-		// instead of hot-looping on a restoring dependency.
-		w.Header().Set("Retry-After", retryAfterSeconds(full.RetryAfter))
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service is waking and its wake queue is full")
+		writeWakeError(w, err)
 		return
 	}
 	p.metrics.IncServiceCall(ServiceCallWakeFailed)
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		writeWakeError(w, err)
+		return
+	}
 	p.log.Warn("gateway: service proxy wake failed", "app", appID, "err", err)
 	serviceProxyProblem(w, http.StatusServiceUnavailable, "service could not be woken")
 }

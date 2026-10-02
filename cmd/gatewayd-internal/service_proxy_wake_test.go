@@ -59,7 +59,7 @@ func TestServiceProxyDeploymentWakerUsesExactIngressAndRefusesForeignDeployment(
 	calls := 0
 	wake := newServiceProxyDeploymentWaker(store, func(_ context.Context, resolved gateway.App, deployment string) error {
 		calls++
-		if resolved.PrimaryIngressPort != 8082 || deployment != stage.ID || resolved.AccountID != app.AccountID {
+		if resolved.PrimaryIngressPort != 8082 || resolved.Scope != "staging" || deployment != stage.ID || resolved.AccountID != app.AccountID {
 			t.Fatalf("deployment wake inherited other ingress: %+v / %s", resolved, deployment)
 		}
 		return nil

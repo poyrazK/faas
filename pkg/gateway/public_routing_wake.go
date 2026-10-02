@@ -29,7 +29,10 @@ func (h *Handler) publicRoutingWakeMaximum(app App, routing PublicRoutingSnapsho
 // Keep one bounded queue and one boot generation per app. A different cohort
 // waits for that generation, then starts its own only if still cold. The outer
 // allowance covers all generations; joining another cohort never resets it.
-func (h *Handler) wakePublicDeployment(ctx context.Context, app App, deployment, scope, trigger string, maximum int) (string, WakeMethod, bool, error) {
+func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope, trigger string, maximum int) (string, WakeMethod, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", WakeMethodUnspecified, false, err
+	}
 	defer measureTrafficPhase(ctx, trafficWake)()
 	policy := WakeAdmissionPolicyForAppWithWakeLimits(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.WakeMaxQueueDepth, app.WakeMaxQueueWaitSeconds)
 	waitCtx, cancel := context.WithTimeout(ctx, policy.MaxWait)
@@ -86,6 +89,9 @@ func (h *Handler) wakePublicDeployment(ctx context.Context, app App, deployment,
 			continue
 		}
 		if err != nil {
+			if app.ConcurrencyOverflow == api.ConcurrencyOverflowDrop && errors.Is(err, ErrQueueFull) {
+				err = &WakeConcurrencyDropError{RetryAfter: policy.MaxWait}
+			}
 			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 				err = &WakeQueueWaitTimeoutError{RetryAfter: policy.MaxWait}
 			}

@@ -674,6 +674,29 @@ release without verified source deployment 403, and an ineligible exact override
 422. These refusals precede wake/guest dispatch. Normal updates retain admitted
 policy; emergency generation fences still apply.
 
+### Selected deployment wake admission
+
+Cold managed calls use the public handler's app wake gate and gateway-wide
+leader queue. The projected app wake depth, wait and overflow settings apply.
+Same-cohort public and managed callers share one admission in that gateway;
+another cohort waits for the current generation before waking its own deployment.
+Its total queue allowance and earlier call deadline cover both generations.
+Cancellation releases a waiter slot while the bounded shared wake can finish.
+An already expired call cannot initiate admission. A warm sibling never satisfies
+the selected deployment's wake, and the deployment waker supplies its exact scope.
+
+Admission uses the app ceiling. The existing rollout allowance applies to a
+second positive cohort beside a routable cohort or an admitted exact/release pin;
+schedd still owns the authoritative instance ledger. Residents outside the current
+weight roster remain counted until lifecycle eviction. Quota refusals preserve
+their structured limit and observed count. App/gateway queue saturation and wait
+expiry return 503 with Retry-After; configured drop returns 429 with Retry-After.
+
+The local Postgres integration covers policy/projection, queueing, backend target
+publication and managed dispatch through fixtures for scheduler lifecycle,
+trusted caller identity and final forwarding. Configured cold daemon paths,
+cross-process exact-wake coalescing and native/deployed acceptance remain pending.
+
 ### Service readiness and cached endpoints
 
 Service discovery returns only locally ready targets. For a deployment with

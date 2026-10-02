@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // These inputs are constructed after node source identity is verified. The
@@ -39,6 +40,28 @@ type ServiceRoutingSnapshot struct {
 	OverrideChecked, OverrideAllowed   bool
 	Weights                            []DeploymentWeightsRow
 	SelectedDeploymentID               string `json:"-"`
+}
+
+// Use the admitted routing view for the existing rollout allowance. A warm
+// sibling can justify overlap but cannot satisfy this deployment's wake.
+func (h *Handler) serviceRoutingWakeMaximum(ctx context.Context, app App, deployment string) int {
+	limits, _ := api.LimitsFor(app.Plan)
+	maximum := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
+	pinned, ok := ctx.Value(pinnedServicePolicyKey{}).(pinnedServicePolicy)
+	if !ok || pinned.snapshot.Target.AppID != app.ID || pinned.snapshot.Routing == nil {
+		return maximum
+	}
+	routing := pinned.snapshot.Routing
+	if routing.SelectedDeploymentID != deployment {
+		return maximum
+	}
+	reason := "weighted"
+	if routing.ReleaseDeploymentID == deployment || (routing.OverrideChecked && routing.OverrideAllowed && routing.OverrideDeploymentID == deployment) {
+		reason = "revision"
+	}
+	return h.publicRoutingWakeMaximum(app, PublicRoutingSnapshot{
+		SelectionReason: reason, SelectedDeploymentID: deployment, Weights: routing.Weights,
+	})
 }
 
 func (p *ServiceProxy) withServiceRoutingInputs(r *http.Request, sourceDeployment, targetPath string, probe bool) {

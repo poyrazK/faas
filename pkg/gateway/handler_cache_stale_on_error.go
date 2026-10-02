@@ -177,7 +177,7 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 			if routing, pinned := publicRoutingSnapshot(ctx); pinned {
 				if !pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "").OK {
 					maximum := h.publicRoutingWakeMaximum(app, routing)
-					if _, _, _, err := h.wakePublicDeployment(ctx, app, routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway, maximum); err != nil {
+					if _, _, _, err := h.wakeDeployment(ctx, app, routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway, maximum); err != nil {
 						return nil, err
 					}
 				}
