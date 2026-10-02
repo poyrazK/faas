@@ -87,6 +87,15 @@ consumer verification, exceptions, and rollback are still
 being implemented. A successful read-only freshness check does not authorize an
 unlocked mutation; writes must use the atomic approval path.
 
+Native source staging uses a private `.vmmd-runtime-sources` directory in the
+node-local storage cache, or local storage root when no cache is configured. It
+records each instance before exposing sealed image bytes and keeps an OS lock
+while a cache is active. Startup and periodic cleanup reclaim aged unlocked
+roots only after every recorded instance is durably gone. Live instances,
+database failures and unknown records retain their shared files. Ownership
+records authorize cleanup; they do not count as runtime observation. Full
+snapshot lineage, consumer acknowledgments and native acceptance remain open.
+
 ## Publish and inspect candidates
 
 Create a definition file:

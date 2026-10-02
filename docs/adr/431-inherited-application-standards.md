@@ -459,6 +459,17 @@ Concurrent consumers share the sealed read-only base inode. Each writable main
 drive still receives its own copy or CoW clone before runtime-file injection;
 the two-drive guest overlay and read-only sidecar contract remain unchanged.
 
+Sealed sources now live under a private node-local parent outside jail tmpfs.
+Before reading or exposing a source, vmmd syncs a canonical, bounded record of
+the owning instance and holds an OS lock on its private process root. The last
+release removes the record, files and lock. Startup and periodic sweeps retain
+locked roots, young roots, every live durable owner, malformed records, symlinks
+and unknown database state. A complete dead owner set permits reclamation after
+the age guard. These records grant cleanup authority only; they do not attest to
+image approval, consumed drives, guest readiness or adoption. Older unjournaled
+temporary files are not inferred to be dead. Process-kill and portable race
+tests validate this host-file boundary; dedicated native leakcheck remains open.
+
 Source verification is not snapshot approval. A request carrying these identities
 currently uses verified cold boot even when a snapshot cache entry exists. A
 paused restore refuses before allocation, because its frozen writable drive has
@@ -470,7 +481,7 @@ No source receipt is echoed as image consumption or observed adoption. The nativ
 input digest includes the delivered source identities but is not a digest of the
 final injected drives or Firecracker's consumed bytes. Whole guest-overlay scans,
 default-base and source-build publisher approval, snapshot lineage, durable
-consumer acknowledgments, restart recovery for retained sealed-source files, and
+consumer acknowledgments, full daemon restart recovery, and
 dedicated Linux ext4/KVM/leakcheck acceptance remain release gates. Public standard
 activation remains disabled. Portable stream and adapter tests establish only the
 boundaries described here.

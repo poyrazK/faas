@@ -143,6 +143,7 @@ type JailerVMM struct {
 	// across thousands of wakes on a busy box.
 	materialisedTmp        map[string][]string
 	verifiedRuntimeSources *runtimeSourceCache
+	runtimeSourceRoot      string
 	// bindMounts tracks image bind mounts used when a source and the jail
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.

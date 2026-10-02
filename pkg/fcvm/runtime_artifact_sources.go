@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -70,11 +71,14 @@ type sealedRuntimeSource struct {
 type runtimeSourceCache struct {
 	mu      sync.Mutex
 	root    string
+	parent  string
+	lock    *flock.Flock
+	owners  map[string]bool
 	entries map[string]*sealedRuntimeSource
 }
 
 func newRuntimeSourceCache() *runtimeSourceCache {
-	return &runtimeSourceCache{entries: map[string]*sealedRuntimeSource{}}
+	return &runtimeSourceCache{entries: map[string]*sealedRuntimeSource{}, owners: map[string]bool{}}
 }
 
 func (v *JailerVMM) runtimeSources() *runtimeSourceCache {
@@ -82,6 +86,7 @@ func (v *JailerVMM) runtimeSources() *runtimeSourceCache {
 	defer v.mu.Unlock()
 	if v.verifiedRuntimeSources == nil {
 		v.verifiedRuntimeSources = newRuntimeSourceCache()
+		v.verifiedRuntimeSources.parent = v.runtimeSourceRoot
 	}
 	return v.verifiedRuntimeSources
 }
@@ -98,6 +103,11 @@ func (c *runtimeSourceCache) acquire(ctx context.Context, backend storage.Storag
 	if present && entry.bytes != source.Bytes {
 		c.mu.Unlock()
 		return "", runtimeadmission.ErrInvalid
+	}
+	if err := c.retainOwner(instance); err != nil {
+		err = errors.Join(err, c.removeEmptyRoot())
+		c.mu.Unlock()
+		return "", err
 	}
 	if !present {
 		entry = &sealedRuntimeSource{bytes: source.Bytes, users: map[string]bool{}, ready: make(chan struct{})}
@@ -146,12 +156,8 @@ func (c *runtimeSourceCache) load(ctx context.Context, backend storage.StorageBa
 func (c *runtimeSourceCache) ensureRoot() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.root == "" {
-		root, err := os.MkdirTemp("", "faas-runtime-sources-")
-		if err != nil {
-			return "", err
-		}
-		c.root = root // MkdirTemp creates a private 0700 directory.
+	if err := c.ensureRootLocked(); err != nil {
+		return "", err
 	}
 	return c.root, nil
 }
@@ -232,7 +238,7 @@ func (c *runtimeSourceCache) release(instance string) error {
 			// The downloader joins its own context and sweeps an unclaimed result.
 		}
 	}
-	return errors.Join(result, c.removeEmptyRoot())
+	return errors.Join(result, c.releaseOwner(instance), c.removeEmptyRoot())
 }
 
 func (c *runtimeSourceCache) removeEntry(digest string, entry *sealedRuntimeSource) error {
@@ -249,10 +255,15 @@ func (c *runtimeSourceCache) removeEmptyRoot() error {
 	if len(c.entries) != 0 || c.root == "" {
 		return nil
 	}
-	if err := os.Remove(c.root); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(c.root); err != nil {
+		return err
+	}
+	if err := c.lock.Close(); err != nil {
 		return err
 	}
 	c.root = ""
+	c.lock = nil
+	clear(c.owners)
 	return nil
 }
 

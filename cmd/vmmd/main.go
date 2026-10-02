@@ -881,6 +881,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer stopArchive()
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
@@ -1064,19 +1065,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// an ungated sweep would have killed a customer's VM. A nil store
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
+	sourceSweep := vmmdRuntimeSourceSweep(store, vmmdRuntimeSourceRoot(storageBackend), log)
+	if sourceSweep != nil {
+		sourceSweep(ctx)
+	}
 	if store != nil {
-		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
-			ins, err := store.InstanceByID(ctx, instanceID)
-			if err != nil {
-				// A row that is genuinely gone is not live; anything else is
-				// unknown and must not authorise resource removal.
-				if errors.Is(err, state.ErrNotFound) {
-					return false, nil
-				}
-				return false, err
-			}
-			return state.IsLive(ins.State), nil
-		}
+		isLiveInstance := vmmdRuntimeSourceLiveness(store)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
@@ -1129,7 +1123,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		sweepInterval = 30 * time.Second
 	}
 	liveness.Register(sweepLoopName, 3*sweepInterval)
-	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) })
+	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) }, sourceSweep)
 	// Shutdown sweep — registered as a defer BEFORE the gRPC
 	// GracefulStop so a late RPC still gets serviced and the
 	// registry is empty when vmmd exits. Defers run LIFO, so
