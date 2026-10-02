@@ -268,29 +268,30 @@ func (c *runtimeSourceCache) removeEmptyRoot() error {
 }
 
 func (v *JailerVMM) releaseRuntimeSources(instance string) error {
+	observationErr := v.releaseRuntimeDriveHandoff(instance)
 	v.mu.Lock()
 	cache := v.verifiedRuntimeSources
 	v.mu.Unlock()
 	if cache == nil {
-		return nil
+		return observationErr
 	}
-	return cache.release(instance)
+	return errors.Join(observationErr, cache.release(instance))
 }
 
 func (v *JailerVMM) BootColdBootVerified(ctx context.Context, lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) (err error) {
 	spec, err = v.prepareVerifiedColdBoot(ctx, lease, spec, sources)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, v.releaseRuntimeSources(lease.Instance))
 		}
 	}()
-	if err != nil {
-		return err
-	}
 	return v.BootColdBoot(ctx, lease, spec)
 }
 
-func (v *JailerVMM) prepareVerifiedColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) (ColdBootSpec, error) {
+func (v *JailerVMM) prepareVerifiedColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) (result ColdBootSpec, err error) {
 	mainKey := spec.LayerKey
 	sidecars := map[string]string{}
 	if len(spec.Workloads) != 0 {
@@ -305,6 +306,14 @@ func (v *JailerVMM) prepareVerifiedColdBoot(ctx context.Context, lease Lease, sp
 	if spec.Validate() != nil || runtimeadmission.CheckArtifactSources(sources, spec.BaseKey, mainKey, sidecars) != nil {
 		return spec, runtimeadmission.ErrInvalid
 	}
+	if err := v.registerRuntimeDriveHandoff(lease, spec, sources); err != nil {
+		return spec, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, v.releaseRuntimeSources(lease.Instance))
+		}
+	}()
 	paths := map[string]string{}
 	for _, source := range sources {
 		path, err := v.runtimeSources().acquire(ctx, v.storage, lease.Instance, source)

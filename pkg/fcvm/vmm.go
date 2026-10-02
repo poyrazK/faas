@@ -144,6 +144,7 @@ type JailerVMM struct {
 	materialisedTmp        map[string][]string
 	verifiedRuntimeSources *runtimeSourceCache
 	runtimeSourceRoot      string
+	runtimeDriveHandoffs   map[string]*runtimeDriveHandoff
 	// bindMounts tracks image bind mounts used when a source and the jail
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
@@ -875,6 +876,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
+	if err := v.pinApprovedRuntimeDrives(ctx, l, root, jailed); err != nil {
+		return fmt.Errorf("vmm: verify staged runtime drives: %w", err)
+	}
 	if err := v.stagePreBootFiles(l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -945,6 +949,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 	}
 	cgroupReadyAt := time.Now()
+	if err := v.measureFinalRuntimeDrives(ctx, l, root, cfgBytes); err != nil {
+		return fmt.Errorf("vmm: measure runtime drive handoff: %w", err)
+	}
 	if err = writeConfigFIFO(ctx, cfgPath, cfgBytes); err != nil {
 		return fmt.Errorf("vmm: write config: %w", err)
 	}
@@ -1027,6 +1034,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		if !quotaRestoredAt.IsZero() {
 			breakdown.QuotaRestoreMs = quotaRestoredAt.Sub(readyAt).Milliseconds()
 		}
+	}
+	if err := v.observeApprovedRuntimeDrives(ctx, l); err != nil {
+		return fmt.Errorf("vmm: observe native runtime drive handles: %w", err)
 	}
 	return nil
 }

@@ -96,6 +96,26 @@ database failures and unknown records retain their shared files. Ownership
 records authorize cleanup; they do not count as runtime observation. Full
 snapshot lineage, consumer acknowledgments and native acceptance remain open.
 
+Governed cold boots also measure the staged producer drives, the final drives
+after runtime injection, and the exact Firecracker configuration. A Linux
+observer checks that the live native process holds every measured drive inode
+with the expected read-only or writable access. Teardown removes these facts.
+They are private in-memory verification; protocol-1 receipts and observed
+standards adoption do not gain content authority from them.
+
+On the dedicated Linux amd64/KVM acceptance host, with the checkout's staged
+kernel, base and main-layer fixtures configured, run:
+
+```bash
+RUN_REGEX='^TestMetalRuntimeDriveHandoff' make test-metal PKGS=./pkg/fcvm
+make leakcheck
+```
+
+The native cases require all three fixtures, verify two live VMs and a sidecar,
+and reject a changed source without retaining a runtime. Linux process tests
+also exercise actual procfs access modes without KVM. These checks do not replace
+the full scanner, snapshot, rollout, recovery and product acceptance checklist.
+
 ## Publish and inspect candidates
 
 Create a definition file:

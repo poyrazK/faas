@@ -477,9 +477,31 @@ no bound source-to-snapshot lineage yet. Restoring that capability with verified
 snapshot artifacts and promoting the exact retained lease remain full-feature
 requirements; the cold-boot restriction is an interim implementation boundary.
 
-No source receipt is echoed as image consumption or observed adoption. The native
-input digest includes the delivered source identities but is not a digest of the
-final injected drives or Firecracker's consumed bytes. Whole guest-overlay scans,
+The governed cold-boot path now pins the provisioned drive descriptors before
+runtime-file injection and hashes every complete staged file against its producer
+identity. Drive IDs, root/read-only settings, membership and writable-main inode
+isolation must match. After injection, immediately before handing the exact
+configuration bytes to Firecracker, vmmd rechecks each pathname's pinned inode
+and measures the final complete drives. Read-only base and sidecar bytes must
+remain unchanged; the main drive retains separate producer and injected hashes.
+Configuration digests contain no configuration or environment bytes.
+
+After readiness, a Linux observer checks the registered live native process's
+actual procfs descriptors against every measured drive inode, fixed byte count
+and required access mode. It binds the lease UID, process PID and start time,
+checks process identity before and after the walk, and rejects O_PATH handles,
+missing drives and changed process identity. Retrieval repeats the native check;
+teardown closes the pinned descriptors and removes the observation. Portable
+fixtures establish refusal behavior, while Linux process and dedicated two-VM
+Firecracker tests cover real descriptor access and shared-base/private-main
+teardown. Those Linux/native tests have not yet run on the acceptance host.
+
+These native-derived in-memory facts are not durable standard adoption. No source
+receipt is echoed as image consumption or observed adoption. The protocol-1
+native input digest includes delivered source identities but retains its original
+meaning; it does not encode these final drive or process observations. A versioned
+grant/receipt contract, exact source-set binding and atomic durable publication
+are still required. Whole guest-overlay scans,
 default-base and source-build publisher approval, snapshot lineage, durable
 consumer acknowledgments, full daemon restart recovery, and
 dedicated Linux ext4/KVM/leakcheck acceptance remain release gates. Public standard
