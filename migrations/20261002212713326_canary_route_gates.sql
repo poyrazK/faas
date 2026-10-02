@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE canary_route_gates (
+CREATE TABLE IF NOT EXISTS canary_route_gates (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     mode text NOT NULL CHECK (mode IN ('report', 'enforce')),

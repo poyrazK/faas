@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE route_policy_receipts (
+CREATE TABLE IF NOT EXISTS route_policy_receipts (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,

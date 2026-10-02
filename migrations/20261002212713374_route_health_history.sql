@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE route_health_history (
+CREATE TABLE IF NOT EXISTS route_health_history (
     id uuid PRIMARY KEY,
     deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -17,7 +17,7 @@ CREATE TABLE route_health_history (
     ),
     UNIQUE (deployment_id, decision_key)
 );
-CREATE INDEX route_health_history_deployment_idx ON route_health_history(deployment_id, checked_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS route_health_history_deployment_idx ON route_health_history(deployment_id, checked_at DESC, id DESC);
 
 -- +goose Down
 -- Forward-only: retain saved rollout evidence.

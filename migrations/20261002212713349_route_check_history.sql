@@ -1,8 +1,8 @@
 -- +goose Up
 ALTER TABLE automatic_route_checks
-    ADD COLUMN finding_baseline jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(finding_baseline) = 'object' AND octet_length(finding_baseline::text) <= 33554432),
-    ADD COLUMN latest_changes jsonb CHECK (latest_changes IS NULL OR (jsonb_typeof(latest_changes) = 'object' AND octet_length(latest_changes::text) <= 4194304));
-CREATE TABLE route_check_history (
+    ADD COLUMN IF NOT EXISTS finding_baseline jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(finding_baseline) = 'object' AND octet_length(finding_baseline::text) <= 33554432),
+    ADD COLUMN IF NOT EXISTS latest_changes jsonb CHECK (latest_changes IS NULL OR (jsonb_typeof(latest_changes) = 'object' AND octet_length(latest_changes::text) <= 4194304));
+CREATE TABLE IF NOT EXISTS route_check_history (
     id uuid PRIMARY KEY,
     deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -11,16 +11,18 @@ CREATE TABLE route_check_history (
     encoded_bytes integer NOT NULL CHECK (encoded_bytes BETWEEN 1 AND 33554432),
     entry jsonb NOT NULL CHECK (jsonb_typeof(entry) = 'object' AND entry->>'version' = '1' AND octet_length(entry::text) <= 67108864)
 );
-CREATE INDEX route_check_history_deployment_idx ON route_check_history(deployment_id, checked_at DESC, id DESC);
-ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
+CREATE INDEX IF NOT EXISTS route_check_history_deployment_idx ON route_check_history(deployment_id, checked_at DESC, id DESC);
+-- Keep the final route event vocabulary during replay so retained events
+-- written by later migrations remain valid.
+ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT IF EXISTS app_webhook_event_outbox_event_chk;
 ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk
-    CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed'));
+    CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted'));
 
 -- Finding deltas are computed by the bounded shared evaluator. Only comparable
 -- new violations during an existing incident notify; aggregate transitions keep
 -- their existing events. Recipient snapshot and intent commit with completion.
 -- +goose StatementBegin
-CREATE FUNCTION route_requirements_findings_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_requirements_findings_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE recipients uuid[]; app_slug text;
 BEGIN
     IF OLD.safety_state <> 'violated' OR NEW.latest_changes->>'status' <> 'comparable'
@@ -50,6 +52,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_requirements_findings_changed ON automatic_route_checks;
 CREATE TRIGGER route_requirements_findings_changed AFTER UPDATE OF completed_request_id ON automatic_route_checks
     FOR EACH ROW WHEN (OLD.completed_request_id IS DISTINCT FROM NEW.completed_request_id) EXECUTE FUNCTION route_requirements_findings_changed();
 

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE automatic_route_checks (
+CREATE TABLE IF NOT EXISTS automatic_route_checks (
     deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -19,13 +19,13 @@ CREATE TABLE automatic_route_checks (
     CHECK ((lease_token IS NULL AND lease_until IS NULL AND claimed_request_id IS NULL) OR (lease_token IS NOT NULL AND lease_until IS NOT NULL AND claimed_request_id IS NOT NULL)),
     CHECK ((latest_check IS NULL AND checked_at IS NULL AND completed_request_id IS NULL) OR (latest_check IS NOT NULL AND checked_at IS NOT NULL AND completed_request_id IS NOT NULL))
 );
-CREATE INDEX automatic_route_checks_ready_idx ON automatic_route_checks (next_attempt_at, queued_at, deployment_id) WHERE completed_request_id IS DISTINCT FROM request_id;
-CREATE INDEX automatic_route_checks_app_idx ON automatic_route_checks (app_id);
+CREATE INDEX IF NOT EXISTS automatic_route_checks_ready_idx ON automatic_route_checks (next_attempt_at, queued_at, deployment_id) WHERE completed_request_id IS DISTINCT FROM request_id;
+CREATE INDEX IF NOT EXISTS automatic_route_checks_app_idx ON automatic_route_checks (app_id);
 
 -- Capture/intent writes and their queue handoff commit together. Explicit
 -- refresh coalesces with already pending work; changed inputs supersede leases.
 -- +goose StatementBegin
-CREATE FUNCTION enqueue_automatic_route_check(p_app uuid, p_deployment uuid DEFAULT NULL, p_force boolean DEFAULT true) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enqueue_automatic_route_check(p_app uuid, p_deployment uuid DEFAULT NULL, p_force boolean DEFAULT true) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO automatic_route_checks (deployment_id, app_id, account_id)
     SELECT d.id, a.id, a.account_id FROM deployments d
@@ -43,7 +43,7 @@ END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION automatic_route_check_capture_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION automatic_route_check_capture_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         PERFORM enqueue_automatic_route_check(OLD.app_id, OLD.deployment_id);
@@ -56,9 +56,10 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS automatic_route_check_capture_changed ON deployment_openapi_docs;
 CREATE TRIGGER automatic_route_check_capture_changed AFTER INSERT OR UPDATE OR DELETE ON deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION automatic_route_check_capture_changed();
 -- +goose StatementBegin
-CREATE FUNCTION automatic_route_check_intent_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION automatic_route_check_intent_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.sha256 IS DISTINCT FROM OLD.sha256 THEN
         PERFORM enqueue_automatic_route_check(NEW.app_id);
@@ -67,6 +68,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS automatic_route_check_intent_changed ON saved_route_requirements;
 CREATE TRIGGER automatic_route_check_intent_changed AFTER INSERT OR UPDATE ON saved_route_requirements FOR EACH ROW EXECUTE FUNCTION automatic_route_check_intent_changed();
 -- Existing saved intent receives an initial check for each retained capture.
 SELECT enqueue_automatic_route_check(app_id) FROM saved_route_requirements;

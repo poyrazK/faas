@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE saved_route_requirements (
+CREATE TABLE IF NOT EXISTS saved_route_requirements (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),

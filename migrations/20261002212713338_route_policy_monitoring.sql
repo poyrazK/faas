@@ -1,14 +1,16 @@
 -- +goose Up
-ALTER TABLE automatic_route_checks ADD COLUMN safety_state text NOT NULL DEFAULT 'unknown'
+ALTER TABLE automatic_route_checks ADD COLUMN IF NOT EXISTS safety_state text NOT NULL DEFAULT 'unknown'
     CHECK (safety_state IN ('unknown', 'satisfied', 'violated'));
-ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
+-- Keep the final route event vocabulary during replay so retained events
+-- written by later migrations remain valid.
+ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT IF EXISTS app_webhook_event_outbox_event_chk;
 ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk
-    CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered'));
+    CHECK (event IN ('usage_statement.finalized', 'app.parked', 'app.woken', 'issue.created', 'issue.assigned', 'issue.resolved', 'issue.reopened', 'issue.ignored', 'issue.regressed', 'issue.impact_threshold_reached', 'routes.requirements.violated', 'routes.requirements.recovered', 'routes.requirements.changed', 'routes.health.blocked', 'routes.health.resumed', 'routes.health.aborted'));
 
 -- Only currently live deployments participate in policy monitoring. Retained
 -- historical captures remain available for explicit checks, without alerts.
 -- +goose StatementBegin
-CREATE FUNCTION enqueue_route_policy_checks(p_app uuid) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enqueue_route_policy_checks(p_app uuid) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE target uuid;
 BEGIN
     FOR target IN SELECT d.id FROM deployments d JOIN apps a ON a.id = d.app_id
@@ -24,7 +26,7 @@ END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION route_policy_rule_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_policy_rule_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         PERFORM enqueue_route_policy_checks(OLD.app_id);
@@ -41,9 +43,10 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_policy_rule_changed ON edge_rules;
 CREATE TRIGGER route_policy_rule_changed AFTER INSERT OR UPDATE OR DELETE ON edge_rules FOR EACH ROW EXECUTE FUNCTION route_policy_rule_changed();
 -- +goose StatementBegin
-CREATE FUNCTION route_policy_app_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_policy_app_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF ROW(NEW.slug, NEW.type, NEW.consumer_auth_mode, NEW.maintenance_mode, NEW.manifest->'request_timeout_s', NEW.request_rate_limit_rps, NEW.request_rate_limit_burst, NEW.ram_mb, NEW.cpu_millicores, NEW.max_concurrency, NEW.scaling_policy)
         IS DISTINCT FROM ROW(OLD.slug, OLD.type, OLD.consumer_auth_mode, OLD.maintenance_mode, OLD.manifest->'request_timeout_s', OLD.request_rate_limit_rps, OLD.request_rate_limit_burst, OLD.ram_mb, OLD.cpu_millicores, OLD.max_concurrency, OLD.scaling_policy) THEN
@@ -53,9 +56,10 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_policy_app_changed ON apps;
 CREATE TRIGGER route_policy_app_changed AFTER UPDATE ON apps FOR EACH ROW EXECUTE FUNCTION route_policy_app_changed();
 -- +goose StatementBegin
-CREATE FUNCTION route_policy_account_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_policy_account_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target uuid;
 BEGIN
     IF ROW(NEW.plan, NEW.status, NEW.abuse_hold_at IS NULL) IS DISTINCT FROM ROW(OLD.plan, OLD.status, OLD.abuse_hold_at IS NULL) THEN
@@ -67,10 +71,11 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_policy_account_changed ON accounts;
 CREATE TRIGGER route_policy_account_changed AFTER UPDATE ON accounts FOR EACH ROW EXECUTE FUNCTION route_policy_account_changed();
 -- A previously captured deployment that becomes live needs a current check.
 -- +goose StatementBegin
-CREATE FUNCTION route_policy_deployment_live() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_policy_deployment_live() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status = 'live' AND OLD.status IS DISTINCT FROM NEW.status THEN
         PERFORM enqueue_route_policy_checks(NEW.app_id);
@@ -79,13 +84,14 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_policy_deployment_live ON deployments;
 CREATE TRIGGER route_policy_deployment_live AFTER UPDATE OF status ON deployments FOR EACH ROW EXECUTE FUNCTION route_policy_deployment_live();
 
 -- Completion and notification intent commit together. Unknown evidence never
 -- clears a confirmed violation. Capture recipients at the transition, so a
 -- later subscriber cannot receive private historical events.
 -- +goose StatementBegin
-CREATE FUNCTION route_requirements_safety_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION route_requirements_safety_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE event_name text; recipients uuid[]; event_payload jsonb; app_slug text;
 BEGIN
     IF NEW.safety_state = 'violated' THEN
@@ -119,6 +125,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS route_requirements_safety_changed ON automatic_route_checks;
 CREATE TRIGGER route_requirements_safety_changed AFTER UPDATE OF safety_state ON automatic_route_checks
     FOR EACH ROW WHEN (OLD.safety_state IS DISTINCT FROM NEW.safety_state) EXECUTE FUNCTION route_requirements_safety_changed();
 SELECT enqueue_route_policy_checks(app_id) FROM saved_route_requirements ORDER BY app_id;
