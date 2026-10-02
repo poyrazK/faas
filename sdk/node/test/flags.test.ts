@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GregaleFlags, GREGALE_FLAG_PROPAGATION_HEADER, type FlagsBundle } from '../src/flags.js';
+import { evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, GregaleFlags, GREGALE_FLAG_PROPAGATION_HEADER, type FlagsBundle } from '../src/flags.js';
 import { createGregaleFetch } from '../src/release-context.js';
 const customer = '00000000-0000-0000-0000-000000000001';
 const bundle = (): FlagsBundle => ({environment_id: customer, version: 1, groups: { internal: [customer] }, flags: [{key: 'export', enabled: true, default: false, seed: 'seed', rules: [{id: 'selected', group: 'internal', value: true}]}]});
@@ -12,6 +12,10 @@ test('cross-language allocation vectors', () => {
 test('cross-language variant allocation vectors', () => {
  const vectors = JSON.parse(readFileSync(new URL('../../../../pkg/flags/testdata/variant_allocation.json',import.meta.url),'utf8')) as {seed:string;key:string;customer:string;bucket:number}[];
  for (const v of vectors) assert.equal(flagVariantBucket(v.seed,v.key,v.customer),v.bucket);
+});
+test('cross-language subject allocation vectors', () => {
+ const vectors = JSON.parse(readFileSync(new URL('../../../../pkg/flags/testdata/subject_allocation.json',import.meta.url),'utf8')) as {seed:string;key:string;customer:string;subject:string;bucket:number;variant_bucket:number}[];
+ for (const v of vectors) { assert.equal(flagSubjectBucket(v.seed,v.key,v.customer,v.subject),v.bucket); assert.equal(flagSubjectVariantBucket(v.seed,v.key,v.customer,v.subject),v.variant_bucket); }
 });
 const variants = (): FlagsBundle => ({environment_id:customer,version:5,groups:{},flags:[{key:'checkout',type:'variant',enabled:true,default:'control',seed:'stable',variants:[{key:'control',weight:5000},{key:'treatment',weight:5000}],rules:[{id:'eligible',rollout:10000}]}]});
 test('weighted variants are sticky, explainable, and independently rollout-gated', () => {
@@ -27,11 +31,28 @@ test('targeting defaults and first-match explanation', () => {
  assert.equal(evaluateFlag(bundle(),'export',undefined,false).reason,'customer_missing');
  assert.equal(evaluateFlag(bundle(),'missing',customer,true).value,true);
 });
+test('subject targeting uses tenant-scoped sticky allocation and fails closed without an actor', () => {
+ const targeted: FlagsBundle = {environment_id:customer,version:2,groups:{},flags:[{key:'new-export',enabled:true,default:false,seed:'stable',rules:[{id:'pilot-users',customers:[customer],rollout:6000,rollout_unit:'subject',value:true}]}]};
+ const first=evaluateFlag(targeted,'new-export',customer,false,'user-17');
+ const second=evaluateFlag(targeted,'new-export',customer,false,'user-18');
+ assert.equal(first.value,false);assert.equal(first.reason,'default');assert.equal(flagSubjectBucket('stable','new-export',customer,'user-17'),6443);
+ assert.equal(second.value,true);assert.equal(second.bucket,5279);
+ assert.equal(evaluateFlag(targeted,'new-export',customer,false).reason,'subject_missing');
+ assert.notEqual(flagSubjectBucket('stable','new-export',customer,'user-17'),flagSubjectBucket('stable','new-export','00000000-0000-0000-0000-000000000004','user-17'));
+ const variants: FlagsBundle = {environment_id:customer,version:2,groups:{},flags:[{key:'checkout',type:'variant',enabled:true,default:'control',seed:'stable',variants:[{key:'control',weight:5000},{key:'treatment',weight:5000}],rules:[{id:'pilot-users',customers:[customer],subjects:['user-17'] }]}]};
+ const userVariant=evaluateVariant(variants,'checkout',customer,'control','user-17');
+ const userBucket=flagSubjectVariantBucket('stable','checkout',customer,'user-17');
+ assert.equal(userVariant.bucket,userBucket);
+ assert.equal(userVariant.value,userBucket<5000?'control':'treatment');
+ assert.equal(evaluateVariant(variants,'checkout',customer,'control','user-18').reason,'default');
+});
 test('request snapshots, explicit exposure, and restore freshness', async () => {
  let now = 0; let config = bundle(); let unavailable = false; let calls = 0;
- const fakeFetch: typeof fetch = async (input) => {
+ const fakeFetch: typeof fetch = async (input, init) => {
    calls++; if (unavailable) throw new Error('offline');
-   return new Response(JSON.stringify(String(input).includes('127.0.0.1') ? {access_token:'token'} : config));
+   if (String(input).includes('127.0.0.1')) return new Response(JSON.stringify({access_token:'token'}));
+   assert.equal(new Headers(init?.headers).get('X-Faas-Flags-Capabilities'),'subject-targeting-v1');
+   return new Response(JSON.stringify(config));
  };
  const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1:8082/token',fetch:fakeFetch,now:()=>now});
  await flags.refresh();
@@ -58,6 +79,27 @@ test('request-scoped variant decisions are included in application evidence', as
   flags.used('checkout');
   assert.deepEqual(flags.evidence()[0],{...decision,used:true});
  });
+ flags.close();
+});
+test('subject scope is established after authentication and evidence omits the subject ID', async () => {
+ const config: FlagsBundle = {environment_id:customer,version:2,groups:{},flags:[{key:'new-export',enabled:true,default:false,seed:'stable',rules:[{id:'pilot-users',customers:[customer],subjects:['user-17'],value:true}]}]};
+ const flags=new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:config))});
+ await flags.refresh();
+ await flags.runRequest({'X-Faas-Platform-Tenant-Id':customer},async()=>{
+  assert.throws(()=>flags.withSubject('not allowed',()=>Promise.resolve()),/Invalid opaque subject ID/);
+  await flags.withSubject('user-17',()=>{
+   assert.equal(flags.boolean('new-export',false).value,true);
+   flags.used('new-export');
+  });
+  const raw=Buffer.from(flags.responseEvidence(),'base64url').toString();
+  assert.match(raw,/"rule_id":"pilot-users"/);assert.doesNotMatch(raw,/user-17/);
+ });
+ flags.close();
+});
+test('runtime bundle validation rejects an empty subject target list', async () => {
+ const config: FlagsBundle = {environment_id:customer,version:2,groups:{},flags:[{key:'new-export',enabled:true,default:false,seed:'stable',rules:[{id:'pilot-users',customers:[customer],subjects:[],value:true}]}]};
+ const flags=new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:config))});
+ await assert.rejects(flags.refresh(),/Invalid Flags rule/);
  flags.close();
 });
 test('concurrent request contexts do not share customer decisions', async () => {

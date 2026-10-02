@@ -74,7 +74,7 @@ func TestPg_IssueStoreLifecycle(t *testing.T) {
 		t.Fatalf("reused event ID error = %v, want ErrIssueEventConflict", err)
 	}
 
-	listed, err := store.ListIssues(ctx, app.ID, "open", "application", state.IssueCursor{})
+	listed, err := store.ListIssues(ctx, app.ID, state.IssueListFilter{State: "open", Environment: "application"}, state.IssueCursor{})
 	if err != nil || len(listed.Items) != 1 || listed.Items[0].ID != first.IssueID {
 		t.Fatalf("ListIssues = %+v, %v", listed, err)
 	}

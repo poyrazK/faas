@@ -1,6 +1,6 @@
 package cosign
 
-// adr: 393
+// adr: 429
 // The pure verifier lives below storage and state in the dependency graph.
 import (
 	"context"

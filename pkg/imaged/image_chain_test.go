@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 393
+// adr: 429
 
 import (
 	"bytes"
@@ -56,7 +56,7 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 				th.createReplacementDeployment(t)
 				baseLayer := gzTar(t, map[string]string{"base/file": "base"})
 				baseDiff := imagechain.Digest(layerPlainBytes(t, baseLayer))
-				layer := gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})
+				layer := gzTarWithModes(t, map[string]string{"app/server": "#!/bin/sh\n"}, map[string]int64{"app/server": 0o755})
 				plain := layerPlainBytes(t, layer)
 				diff := imagechain.Digest(plain)
 				if mode == "wrong DiffID" {

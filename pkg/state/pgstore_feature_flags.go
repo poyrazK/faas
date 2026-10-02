@@ -94,6 +94,41 @@ func (s *PgStore) ListFeatureFlagVersions(ctx context.Context, scope FeatureFlag
 	}
 	return out, nil
 }
+
+func (s *PgStore) ListFeatureFlagAutoRolloutCandidates(ctx context.Context, afterEnvironmentID string, limit int) ([]FeatureFlagAutoRolloutCandidate, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, ErrInvalidArgument
+	}
+	var after pgtype.UUID
+	if afterEnvironmentID != "" {
+		id, err := uuid.Parse(afterEnvironmentID)
+		if err != nil {
+			return nil, ErrInvalidArgument
+		}
+		after = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	rows, err := sqlc.New().ListFeatureFlagAutoRolloutCandidates(ctx, s.pool, sqlc.ListFeatureFlagAutoRolloutCandidatesParams{
+		AfterEnvironmentID: after,
+		LimitRows:          int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list automatic feature flag rollouts: %w", err)
+	}
+	candidates := make([]FeatureFlagAutoRolloutCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, FeatureFlagAutoRolloutCandidate{
+			Scope: FeatureFlagScope{
+				AccountID:     uuidString(row.AccountID),
+				ProjectID:     uuidString(row.ProjectID),
+				EnvironmentID: uuidString(row.EnvironmentID),
+			},
+			ProjectSlug:     row.ProjectSlug,
+			EnvironmentSlug: row.EnvironmentSlug,
+		})
+	}
+	return candidates, nil
+}
+
 func (s *PgStore) UpdateFeatureFlags(ctx context.Context, u FeatureFlagUpdate) (FeatureFlagVersion, error) {
 	p, err := flagPGScope(u.Scope)
 	if err != nil {

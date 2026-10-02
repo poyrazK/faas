@@ -69,7 +69,7 @@ func TestDirectOCIPort3000Metal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 
 	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer deployCancel()
@@ -114,7 +114,7 @@ func TestDirectOCIPort3000Metal(t *testing.T) {
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cleanupCancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-port-3000/park", nil); status != http.StatusAccepted {
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-port-3000/park", nil); status != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", status)
 	}
 	if _, err := e2etest.WaitForInstanceState(cleanupCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {

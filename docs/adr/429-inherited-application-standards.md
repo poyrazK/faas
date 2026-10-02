@@ -1,4 +1,4 @@
-# ADR-393 · Versioned inherited application standards
+# ADR-429 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -16,6 +16,11 @@ This decision originally used ADR-387 on the implementation branch. It was
 renumbered after upstream assigned that number to FOCUS invoice projection.
 Already committed migration comments retain their original citation; the
 migration files remain immutable.
+
+It subsequently used ADR-393 on this branch. Latest-main integration assigned
+ADR-393 to managed exclusive operations, so this decision is now ADR-429.
+Historical migration comments retain the numbers originally issued; no applied
+or committed migration contents are changed during renumbering.
 
 ## Contract
 
@@ -363,6 +368,16 @@ promotion does not issue new authority or require an old approval to be renewed.
 These checks neither scan the guest overlay nor verify physical bytes consumed
 by vmmd, and they never advance observed standard adoption.
 
+Native receipt publication also participates in the existing service recovery
+capacity and exclusive-operation lifecycle guards. Memory-store preflight checks
+capacity before recording a receipt or changing ownership; PostgreSQL retains
+the corresponding statement and runtime triggers in the publication transaction.
+A refusal leaves the saved grant, paused runtime and receipt history unchanged.
+Eligible recovery can retry the same unexpired grant after capacity returns.
+Portable storage tests cover initial paused publication and warm promotion,
+including an ineligible host and recovery on a surviving eligible host. They
+do not establish a native consumer acknowledgment or release acceptance.
+
 The periodic live lease checker uses this private complete set when retained
 producer lineage exists. A missing sidecar, failed or replaced base, expired
 lease, metadata drift or revoked publisher cannot fall back to the clean main
@@ -422,6 +437,7 @@ retained evidence.
 - [ ] Effective-state and affected-app views with desired/observed adoption.
 - [ ] End-to-end multi-service onboarding and controlled standard-update scenario.
 - [ ] Product registry, operational guide and recovery evidence.
+- [ ] Verified repair of missing migration ledger entries without changing frozen migrations.
 
 This ADR records the complete intended feature. Individual green tests do not
 declare the feature launched or satisfy the entire checklist.
@@ -485,6 +501,22 @@ already-committed receipt, including after grant expiry, while current input and
 process fences remain valid. History cannot recreate residency after cleanup.
 These unit and storage boundaries do not establish native KVM acceptance or
 complete daemon restart recovery.
+
+Native publication also passes the ordinary recovery-capacity and exclusive
+owner guards before recording its receipt or changing lifecycle state. A refusal
+preserves the previous runtime and any active owner. Unmanaged resident guests
+retain their admitted shape across an account plan change without rewriting the
+capture. Only the plan comparison is relaxed, and only when both snapshots have
+no adoption or retained managed fields. New boots and managed native grants stay
+strict; current eligibility, controls, artifact identity and capacity still apply.
+
+Fresh install and normal upgrade are verified, but the whole added migration
+set currently fails the missing-ledger replay gate at the frozen initial
+`20260930170711001_application_standard_versions.sql` table creation. Passing
+replay checks for the latest additive migrations does not satisfy this release
+gate. Recovery must verify the expanded schema and repair its ledger explicitly;
+no committed or applied migration may be edited and no runtime authority may be
+manufactured from that repair.
 
 A managed node requires vmmd's existing compute-node registration with database
 configuration (including a named default-local node on a single box). A legacy

@@ -193,7 +193,8 @@ func TestWake_StageWorkload_WritesPerWorkloadCgroup(t *testing.T) {
 	// memory.max files back.
 	_ = dir
 
-	run, vmm := &fakeRunner{}, &fakeVMM{}
+	run := &fakeRunner{}
+	vmm := &memoryFenceVMM{fakeVMM: &fakeVMM{}}
 	m := newTestManager(run, vmm)
 
 	r := req("app-with-cgroup")
@@ -209,6 +210,20 @@ func TestWake_StageWorkload_WritesPerWorkloadCgroup(t *testing.T) {
 	// Manifest stage ran.
 	if got := len(vmm.stagedWorkloads); got != 2 {
 		t.Errorf("StageWorkloadManifest called %d times, want 2", got)
+	}
+	if vmm.bootLease.MemoryMaxMiB != 320 {
+		t.Fatalf("early jailer lease memory = %d MiB, want 320", vmm.bootLease.MemoryMaxMiB)
+	}
+	if got := vmm.coldBootSpecs[0].MemSizeMiB; got != 320 {
+		t.Fatalf("VM memory = %d MiB, want main 256 + companion 64", got)
+	}
+	parentMemory := filepath.Join(cgroupRoot, ParentCgroupFor(r.Plan), PerInstanceScope(r.Instance), "memory.max")
+	body, err := os.ReadFile(parentMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(body)), itoa(api.BillableRAMMB(320)<<20); got != want {
+		t.Fatalf("VM host memory fence = %s, want %s", got, want)
 	}
 	// Per-workload cgroup scopes materialized.
 	instID := "app-with-cgroup"
@@ -389,4 +404,31 @@ func TestProjectedWorkloadManifestBytes_AccountsForCmdEntry(t *testing.T) {
 	if got4-got2 < 1024 {
 		t.Errorf("projection should grow by ≥ cmd delta: 2k→1k delta = %d, want ≥ 1024", got4-got2)
 	}
+}
+
+func TestCompanionSnapshotMemoryMatches(t *testing.T) {
+	req := WakeRequest{MemSizeMiB: 256, Sidecars: []WorkloadSpec{{RamMB: 64}, {RamMB: 0}}}
+	for _, mb := range []int{0, 256, 320, 384} {
+		req.Snapshot = &Snapshot{MemBytes: int64(mb) << 20}
+		if got := companionSnapshotMemoryMatches(req); got != (mb == 320) {
+			t.Errorf("snapshot memory %d: match=%v, want %v", mb, got, mb == 320)
+		}
+	}
+	req.Sidecars = nil
+	req.Snapshot = &Snapshot{}
+	if !companionSnapshotMemoryMatches(req) {
+		t.Fatal("legacy single workload compatibility changed")
+	}
+}
+
+// Capture the lease before BootColdBoot enters the VMM: the early jailer fence
+// must constrain the same aggregate as the physical VM and post-boot fence.
+type memoryFenceVMM struct {
+	*fakeVMM
+	bootLease Lease
+}
+
+func (v *memoryFenceVMM) BootColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec) error {
+	v.bootLease = lease
+	return v.fakeVMM.BootColdBoot(ctx, lease, spec)
 }

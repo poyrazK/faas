@@ -515,9 +515,10 @@ const (
 	// CodeForbidden / CodeValidation so the dashboard / CLI can
 	// surface "switch providers to use this surface" instead of a
 	// generic error. Maps to HTTP 501.
-	CodeBillingNotImplemented  = "billing_not_implemented"
-	CodeCapacity               = "capacity_unavailable"
-	CodeSafeReleaseUnavailable = "safe_release_unavailable"
+	CodeBillingNotImplemented   = "billing_not_implemented"
+	CodeCapacity                = "capacity_unavailable"
+	CodeServiceRecoveryCapacity = "service_recovery_capacity_unavailable"
+	CodeSafeReleaseUnavailable  = "safe_release_unavailable"
 	// CodeWakeInProgress is a successful asynchronous admission response from
 	// the public gateway. It is returned with HTTP 202 when a cold fallback
 	// outlives the function request budget but the coalesced wake is still
@@ -1730,14 +1731,15 @@ const (
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
 	// Disposable one-shot executions (ADR-171).
-	CodeExecutionsNotAllowed     = "executions_not_allowed"
-	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
-	CodeExecutionSourceInvalid   = "execution_source_invalid"
-	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
-	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
-	CodeExecutionLimitInvalid    = "execution_limit_invalid"
-	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
-	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+	CodeExecutionsNotAllowed        = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid     = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid      = "execution_source_invalid"
+	CodeExecutionPayloadInvalid     = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge    = "execution_payload_too_large"
+	CodeExecutionLimitInvalid       = "execution_limit_invalid"
+	CodeExecutionLimitExceeded      = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid     = "execution_network_invalid"
+	CodeExecutionWorkflowStepExists = "execution_workflow_step_exists"
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
@@ -1873,7 +1875,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeCapacity, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -2283,6 +2285,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case CodeExecutionWorkflowStepExists:
+		return http.StatusConflict
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
@@ -6385,4 +6389,13 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
 			"queue_depth, queue_lag) or upgrade.", plan))
+}
+
+const CodeUDPListenerLimit = "udp_listener_limit"
+
+// ErrUDPListenerLimit includes disabled reservations: delete one to free a slot.
+func ErrUDPListenerLimit(limit, observed int) *Problem {
+	return NewProblem(http.StatusConflict, CodeUDPListenerLimit,
+		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
 }

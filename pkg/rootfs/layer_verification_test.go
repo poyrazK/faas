@@ -1,6 +1,6 @@
 package rootfs
 
-// adr: 393
+// adr: 429
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 
 func verifiedRootfsLayer(t *testing.T, mode string) (*imagechain.LayerStream, []byte) {
 	t.Helper()
-	body, err := io.ReadAll(gzLayer(t, []entry{{name: "etc/passwd", body: "root:x:0:0:root:/root:/bin/sh\n"}, {name: "app/server", body: "#!/bin/sh\n"}}))
+	body, err := io.ReadAll(gzLayer(t, []entry{{name: "etc/passwd", body: "root:x:0:0:root:/root:/bin/sh\n"}, {name: "app/server", body: "#!/bin/sh\n", mode: 0o755}}))
 	if err != nil {
 		t.Fatal(err)
 	}

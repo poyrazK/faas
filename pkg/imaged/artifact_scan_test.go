@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 393
+// adr: 429
 
 import (
 	"bytes"
@@ -45,7 +45,7 @@ func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handl
 		th.dep.Sidecars = []byte(`[{"name":"metrics","image":"registry.example/team/app:latest","type":"sidecar","port":9090}]`)
 	}
 	th.createReplacementDeployment(t)
-	layer := gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})
+	layer := gzTarWithModes(t, map[string]string{"app/server": "#!/bin/sh\n"}, map[string]int64{"app/server": 0o755})
 	diff := imagechain.Digest(layerPlainBytes(t, layer))
 	baseLayer := gzTar(t, map[string]string{"usr/share/base": "base contents"})
 	baseDiff := imagechain.Digest(layerPlainBytes(t, baseLayer))

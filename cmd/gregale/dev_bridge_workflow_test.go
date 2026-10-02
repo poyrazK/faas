@@ -154,6 +154,17 @@ func TestDevBridgeCommandToLocalProcessToRemoteDependency(t *testing.T) {
 	mu.Lock()
 	session := created
 	mu.Unlock()
+	// The client reports the WebSocket upgrade before the relay finishes
+	// registering its HTTP/2 connection. Wait for that server-side readiness.
+	for !relay.Connected(session.Session.ID) {
+		select {
+		case code := <-done:
+			t.Fatalf("bridge exited before relay readiness: %d output=%s", code, stdout.String())
+		case <-ctx.Done():
+			t.Fatal("relay did not register the bridge")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	request, _ := http.NewRequestWithContext(ctx, "GET", base+"/v1/dev/bridges/"+session.Session.ID+"/traffic/charge", nil)
 	request.Header.Set(devbridge.AccountHeader, "account")
 	request.Header.Set(devbridge.TokenHeader, session.Credentials.RequestToken)

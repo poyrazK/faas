@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.oci_healthcheck_timing import OCIHealthcheckTiming
     from ..models.sidecar_exec_probe import SidecarExecProbe
     from ..models.sidecar_grpc_probe import SidecarGRPCProbe
     from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
@@ -25,6 +26,8 @@ class AppManifestHealthcheck:
 
     """
 
+    image_timing: OCIHealthcheckTiming | Unset = UNSET
+    """Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds."""
     test: list[str] | Unset = UNSET
     """Argv of the check command, prefixed by "CMD", "CMD-SHELL", or "NONE" per Docker semantics."""
     exec_: SidecarExecProbe | Unset = UNSET
@@ -54,6 +57,10 @@ class AppManifestHealthcheck:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        image_timing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.image_timing, Unset):
+            image_timing = self.image_timing.to_dict()
+
         test: list[str] | Unset = UNSET
         if not isinstance(self.test, Unset):
             test = self.test
@@ -109,6 +116,8 @@ class AppManifestHealthcheck:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if image_timing is not UNSET:
+            field_dict["image_timing"] = image_timing
         if test is not UNSET:
             field_dict["test"] = test
         if exec_ is not UNSET:
@@ -140,12 +149,20 @@ class AppManifestHealthcheck:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.oci_healthcheck_timing import OCIHealthcheckTiming
         from ..models.sidecar_exec_probe import SidecarExecProbe
         from ..models.sidecar_grpc_probe import SidecarGRPCProbe
         from ..models.sidecar_http_get_probe import SidecarHTTPGetProbe
         from ..models.sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 
         d = dict(src_dict)
+        _image_timing = d.pop("image_timing", UNSET)
+        image_timing: OCIHealthcheckTiming | Unset
+        if isinstance(_image_timing, Unset):
+            image_timing = UNSET
+        else:
+            image_timing = OCIHealthcheckTiming.from_dict(_image_timing)
+
         test = cast(list[str], d.pop("test", UNSET))
 
         _exec_ = d.pop("exec", UNSET)
@@ -221,6 +238,7 @@ class AppManifestHealthcheck:
         start_period_s = _parse_start_period_s(d.pop("start_period_s", UNSET))
 
         app_manifest_healthcheck = cls(
+            image_timing=image_timing,
             test=test,
             exec_=exec_,
             http_get=http_get,

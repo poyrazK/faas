@@ -1,4 +1,4 @@
-// adr: 386 — exact prepared boot payload and backend-produced receipt.
+// adr: 429 — exact prepared boot payload and backend-produced receipt.
 package sched
 
 import (

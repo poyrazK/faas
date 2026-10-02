@@ -244,6 +244,9 @@ jobs:
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
 
+      - name: npm publication readiness and tag isolation
+        run: bash scripts/publish-npm-packages_test.sh
+
       # Cloudflare Free can replace origin 502/504 bodies. Keep the optional
       # public-timeout Worker contract executable in CI so its marker-based
       # rewrite never drifts from the gateway response headers.
@@ -704,6 +707,36 @@ jobs:
         if: ${{ matrix.state_coverage }}
         run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
 
+      - name: require PostgreSQL operation-policy retirement
+        if: matrix.id == 'a'
+        run: |
+          set -o pipefail
+          python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
+
+      - name: upload PostgreSQL operation-policy retirement log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operation-policy-postgres-contract
+          path: operation-policy-postgres-contract.log
+          if-no-files-found: ignore
+
+      - name: require PostgreSQL UDP contracts
+        if: matrix.id == 'a'
+        env:
+          GOFLAGS: -race
+        run: |
+          set -o pipefail
+          make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
+
+      - name: upload PostgreSQL UDP contract log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: udp-postgres-contract
+          path: udp-postgres-contract.log
+          if-no-files-found: ignore
+
       - name: coverage floor (ship-blocking packages)
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
@@ -881,6 +914,46 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  container-contract:
+    name: portable container contracts (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: cache container contract builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          restore-keys: |
+            go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-container-contract-${{ runner.os }}-
+      - name: require portable container contracts
+        run: |
+          set -o pipefail
+          make test-container-contract 2>&1 | tee container-contract.log
+      - name: require portable UDP contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+      - name: retain container qualification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            container-contract.log
+            udp-contract.log
+          if-no-files-found: warn
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1174,6 +1247,7 @@ jobs:
             pkg/promqlrules/data_placement.yaml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
+          make udp-alert-check tcp-tls-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -1206,6 +1280,7 @@ jobs:
         run: |
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
+          python3 scripts/ci/test_udp_deployment.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -1238,6 +1313,7 @@ jobs:
               https://github.com/ansible-collections/community.postgresql.git \
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
+          ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook

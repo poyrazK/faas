@@ -55,6 +55,9 @@ func TestTCPIngressE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment-1", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "wake-1"); err != nil {
 		t.Fatalf("create running instance: %v", err)
 	}
@@ -188,6 +191,9 @@ func TestTCPIngressSessionGuardsE2E(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment-1", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "wake-1"); err != nil {
 		t.Fatalf("create running instance: %v", err)

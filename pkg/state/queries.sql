@@ -228,6 +228,31 @@ SELECT NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(destination_ids)::uuid[]) AS re
 AND NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(publisher_ids)::uuid[]) AS ref(id)
   WHERE NOT EXISTS (SELECT 1 FROM application_standard_publishers AS p WHERE p.id = ref.id AND p.org_id = sqlc.arg(org_id)::uuid)) AS valid;
 
+-- name: PutTCPListenerTLSObservation :execrows
+INSERT INTO app_tcp_listener_tls_observations
+    (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
+SELECT l.id, sqlc.arg(edge_id)::text, sqlc.arg(hostname)::text,
+       sqlc.arg(intent_updated_at)::timestamptz, sqlc.arg(observed_at)::timestamptz,
+       sqlc.arg(ready)::boolean, sqlc.narg(not_after)::timestamptz
+FROM app_tcp_listeners l
+WHERE l.id = sqlc.arg(listener_id)::uuid AND l.enabled
+  AND l.tls_mode = 'terminate' AND l.tls_hostname = sqlc.arg(hostname)::text
+  AND l.updated_at = sqlc.arg(intent_updated_at)::timestamptz
+ON CONFLICT (listener_id, edge_id) DO UPDATE
+SET hostname = EXCLUDED.hostname, intent_updated_at = EXCLUDED.intent_updated_at,
+    observed_at = EXCLUDED.observed_at, ready = EXCLUDED.ready, not_after = EXCLUDED.not_after
+WHERE app_tcp_listener_tls_observations.observed_at < EXCLUDED.observed_at;
+
+-- name: ListTCPListenerTLSObservations :many
+SELECT listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after
+FROM app_tcp_listener_tls_observations
+WHERE listener_id = sqlc.arg(listener_id)::uuid
+ORDER BY edge_id;
+
+-- name: PruneTCPListenerTLSObservations :execrows
+DELETE FROM app_tcp_listener_tls_observations
+WHERE observed_at <= sqlc.arg(before_at)::timestamptz;
+
 -- name: ReadAccountCreditConsumption :one
 -- An unqualified legacy row blocks the whole key; guessing could double-debit.
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = sqlc.arg(provider)::text), 0)::bigint AS consumed_cents,
@@ -4487,13 +4512,15 @@ WHERE account_id = sqlc.arg(account_id)
 INSERT INTO executions (
   account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
-  source_bytes, input_bytes, deadline_at, created_at, updated_at
+  source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
+  workflow_id, step_label
 ) VALUES (
   sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), 'queued', sqlc.arg(network_mode),
   sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
   sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
   sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
-  sqlc.arg(admitted_at), sqlc.arg(admitted_at)
+  sqlc.arg(admitted_at), sqlc.arg(admitted_at), sqlc.narg(runs_principal_id)::uuid,
+  sqlc.narg(workflow_id), sqlc.narg(step_label)
 )
 RETURNING *;
 
@@ -4511,12 +4538,55 @@ WHERE account_id = sqlc.arg(account_id)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
 
+-- name: ExecutionListForAccountPrincipal :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND runs_principal_id = sqlc.arg(runs_principal_id)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionListForAccountPrincipalStatus :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND runs_principal_id = sqlc.arg(runs_principal_id)
+  AND status = sqlc.arg(status)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
 -- name: ExecutionListForAccountStatus :many
 SELECT * FROM executions
 WHERE account_id = sqlc.arg(account_id)
   AND status = sqlc.arg(status)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionListForWorkflow :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND workflow_id = sqlc.arg(workflow_id)::text
+  AND (sqlc.narg(runs_principal_id)::uuid IS NULL OR runs_principal_id = sqlc.narg(runs_principal_id)::uuid)
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status)::text)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionWorkflowSummary :one
+SELECT count(*)::bigint AS run_count,
+       count(*) FILTER (WHERE status = 'queued')::bigint AS queued,
+       count(*) FILTER (WHERE status = 'restoring')::bigint AS restoring,
+       count(*) FILTER (WHERE status = 'running')::bigint AS running,
+       count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+       count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+       count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+       count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+       count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
+       coalesce(sum(wall_time_ms) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS wall_time_ms,
+       coalesce(sum(cpu_time_ms) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS cpu_time_ms,
+       coalesce(max(peak_memory_mb) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS peak_memory_mb,
+       coalesce(sum(result_bytes + octet_length(stdout) + octet_length(stderr) + octet_length(artifacts)) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS output_bytes
+FROM executions
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND workflow_id = sqlc.arg(workflow_id)::text
+  AND (sqlc.narg(runs_principal_id)::uuid IS NULL OR runs_principal_id = sqlc.narg(runs_principal_id)::uuid);
 
 -- name: ExecutionClaimNext :one
 WITH candidate AS (
@@ -5089,8 +5159,59 @@ VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(fing
 SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id)
 AND (sqlc.arg(state)::text = '' OR state = sqlc.arg(state))
 AND (sqlc.arg(environment)::text = '' OR environment = sqlc.arg(environment))
+AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR assignee_account_id = sqlc.narg(assignee_account_id))
+AND (NOT sqlc.arg(unassigned)::bool OR assignee_account_id IS NULL)
 AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (last_seen_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
 ORDER BY last_seen_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueListByImpact :many
+WITH candidate_issues AS MATERIALIZED (
+    SELECT i.* FROM app_issues i
+    WHERE i.app_id = sqlc.arg(app_id)
+      AND (sqlc.arg(state)::text = '' OR i.state = sqlc.arg(state))
+      AND (sqlc.arg(environment)::text = '' OR i.environment = sqlc.arg(environment))
+      AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR i.assignee_account_id = sqlc.narg(assignee_account_id))
+      AND (NOT sqlc.arg(unassigned)::bool OR i.assignee_account_id IS NULL)
+), issue_impact AS (
+    SELECT e.issue_id,
+           count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+           count(*) AS observed_events,
+           count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+      FROM candidate_issues i
+      JOIN issue_events e ON e.issue_id = i.id
+     WHERE e.occurred_at >= sqlc.arg(since)::timestamptz
+       AND e.occurred_at <= sqlc.arg(until)::timestamptz
+     GROUP BY e.issue_id
+)
+SELECT i.*,
+       COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
+       COALESCE(impact.observed_events,0)::bigint AS observed_events,
+       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
+  FROM candidate_issues i
+  LEFT JOIN issue_impact impact ON impact.issue_id = i.id
+ WHERE COALESCE(impact.identified_customers,0) >= sqlc.arg(min_customers)::bigint
+   AND (
+       (NOT sqlc.arg(sort_by_impact)::bool AND
+        (sqlc.narg(cursor_time)::timestamptz IS NULL OR (i.last_seen_at,i.id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid)))
+       OR
+       (sqlc.arg(sort_by_impact)::bool AND
+        (sqlc.narg(cursor_customers)::bigint IS NULL OR
+         COALESCE(impact.identified_customers,0) < sqlc.narg(cursor_customers) OR
+         (COALESCE(impact.identified_customers,0) = sqlc.narg(cursor_customers) AND
+          (i.last_seen_at,i.id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))))
+   )
+ ORDER BY CASE WHEN sqlc.arg(sort_by_impact)::bool THEN COALESCE(impact.identified_customers,0) END DESC,
+          i.last_seen_at DESC,i.id DESC
+ LIMIT sqlc.arg(page_limit);
+-- name: IssueImpactSummaries :many
+SELECT issue_id,
+       count(*) AS observed_events,
+       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events
+WHERE issue_id = ANY(sqlc.arg(issue_ids)::uuid[])
+  AND occurred_at >= sqlc.arg(since)::timestamptz
+  AND occurred_at <= sqlc.arg(until)::timestamptz
+GROUP BY issue_id;
 -- name: IssueCount :one
 SELECT count(*) FROM app_issues WHERE app_id = sqlc.arg(app_id);
 -- name: IssueCountEvents :one
@@ -5126,6 +5247,20 @@ SELECT * FROM issue_activity WHERE issue_id=sqlc.arg(issue_id) AND (sqlc.narg(cu
 SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
 count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
 FROM issue_events WHERE issue_id=sqlc.arg(issue_id) AND occurred_at >= sqlc.arg(since) AND occurred_at <= sqlc.arg(until);
+-- name: IssueImpactCustomerCount :one
+SELECT count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id))
+FROM issue_events
+WHERE issue_id=sqlc.arg(issue_id)
+  AND occurred_at >= sqlc.arg(since)
+  AND occurred_at <= sqlc.arg(until);
+-- name: IssueGetImpactAlertPolicy :one
+SELECT COALESCE((SELECT minimum_customers FROM app_issue_impact_alert_policies WHERE app_id=sqlc.arg(app_id)),0)::integer AS minimum_customers;
+-- name: IssueUpsertImpactAlertPolicy :exec
+INSERT INTO app_issue_impact_alert_policies(app_id,minimum_customers,updated_at)
+VALUES(sqlc.arg(app_id),sqlc.arg(minimum_customers),sqlc.arg(updated_at))
+ON CONFLICT(app_id) DO UPDATE SET minimum_customers=excluded.minimum_customers,updated_at=excluded.updated_at;
+-- name: IssueDeleteImpactAlertPolicy :exec
+DELETE FROM app_issue_impact_alert_policies WHERE app_id=sqlc.arg(app_id);
 -- name: IssueAttribution :many
 SELECT DISTINCT consumer_id,platform_tenant_id FROM request_telemetry
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
@@ -5191,7 +5326,7 @@ SELECT e.*,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i
 WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
 AND e.attribution_checked_at < sqlc.arg(before) ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit);
 
--- name: IssueEnrichAttribution :exec
+-- name: IssueEnrichAttribution :execrows
 UPDATE issue_events SET verified_consumer_id=sqlc.narg(consumer_id),verified_platform_tenant_id=sqlc.narg(tenant_id),attribution_checked_at=sqlc.arg(now)
 WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND event_id=sqlc.arg(event_id)
 AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL;
@@ -5275,6 +5410,25 @@ VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
 -- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid) AS owned;
+
+-- name: ListFeatureFlagAutoRolloutCandidates :many
+SELECT pe.account_id, pe.project_id, pe.id AS environment_id,
+       p.slug AS project_slug, pe.slug AS environment_slug
+FROM project_environments pe
+JOIN projects p ON p.id = pe.project_id AND p.account_id = pe.account_id
+JOIN LATERAL (
+ SELECT v.config
+ FROM feature_flag_versions v
+ WHERE v.account_id = pe.account_id
+   AND v.project_id = pe.project_id
+   AND v.environment_id = pe.id
+ ORDER BY v.version DESC
+ LIMIT 1
+) current_config ON current_config.config @> '{"flags":[{"rules":[{"progression":{"auto_advance":true}}]}]}'::jsonb
+WHERE sqlc.narg(after_environment_id)::uuid IS NULL
+   OR pe.id > sqlc.narg(after_environment_id)::uuid
+ORDER BY pe.id
+LIMIT sqlc.arg(limit_rows)::int;
 
 -- name: ListFeatureFlagRequestEvidence :many
 SELECT t.id, t.app_id, t.deployment_id, t.platform_tenant_id, t.received_at, t.route, t.method,
@@ -5470,6 +5624,79 @@ WHERE id=sqlc.arg(operation_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
  AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint;
 
 
+-- name: ListServiceRecoveryApps :many
+SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
+LEFT JOIN service_recovery r ON r.app_id = a.id
+WHERE a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND (sqlc.arg(owner_node_id)::text = '' OR a.node_id IS NULL OR a.node_id::text = sqlc.arg(owner_node_id)::text)
+  AND coalesce(r.lease_until, '1970-01-01'::timestamptz) <= sqlc.arg(sampled_at)::timestamptz
+  AND coalesce(r.next_attempt_at, '1970-01-01'::timestamptz) <= sqlc.arg(sampled_at)::timestamptz
+ORDER BY coalesce(r.next_attempt_at, '1970-01-01'::timestamptz), a.id
+LIMIT sqlc.arg(batch_limit)::integer;
+
+-- name: ClaimServiceRecovery :one
+INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
+SELECT a.id, sqlc.arg(revision)::text, sqlc.arg(claim_token)::uuid, sqlc.arg(lease_until)::timestamptz,
+       'reconciling', sqlc.arg(sampled_at)::timestamptz, sqlc.arg(sampled_at)::timestamptz
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+ON CONFLICT (app_id) DO UPDATE SET
+ revision = EXCLUDED.revision, claim_token = EXCLUDED.claim_token, lease_until = EXCLUDED.lease_until,
+ status = 'reconciling', updated_at = EXCLUDED.updated_at,
+ failures = CASE WHEN service_recovery.revision <> EXCLUDED.revision THEN 0 ELSE service_recovery.failures END
+WHERE service_recovery.lease_until <= EXCLUDED.updated_at
+  AND (service_recovery.revision <> EXCLUDED.revision
+    OR service_recovery.status NOT IN ('waiting_capacity', 'retrying_startup', 'waiting_dependency')
+    OR service_recovery.next_attempt_at <= EXCLUDED.updated_at)
+RETURNING *;
+
+-- name: CompleteServiceRecovery :execrows
+UPDATE service_recovery SET status = sqlc.arg(status)::text, failures = sqlc.arg(failures)::integer,
+ next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz, updated_at = sqlc.arg(updated_at)::timestamptz,
+ claim_token = NULL, lease_until = '1970-01-01'::timestamptz
+WHERE app_id = sqlc.arg(app_id)::uuid AND claim_token = sqlc.arg(claim_token)::uuid;
+
+-- name: ServiceRecoveryByApp :one
+SELECT * FROM service_recovery WHERE app_id = $1;
+
+-- ADR-421: keyset paging advances even when a candidate cannot fit.
+-- name: ListOrphanedAppsPage :many
+SELECT a.id, a.node_id, a.ram_mb FROM apps a
+WHERE a.node_id IS NOT NULL AND a.status IN ('active', 'evicted_cold')
+  AND NOT EXISTS (SELECT 1 FROM compute_nodes n WHERE n.id=a.node_id AND n.active)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR a.id > sqlc.narg(after_app_id)::uuid)
+  AND (sqlc.narg(dead_node_id)::uuid IS NULL OR a.node_id=sqlc.narg(dead_node_id)::uuid)
+  AND (sqlc.arg(cooldown_seconds)::integer < 0 OR a.reassigned_at IS NULL
+       OR a.reassigned_at < now() - make_interval(secs => sqlc.arg(cooldown_seconds)::integer))
+ORDER BY a.id LIMIT sqlc.arg(batch_limit)::integer;
+
+-- Lifecycle writers take incompatible locks, held until the transfer commits.
+-- Stable node order avoids deadlocks between transfers in opposite directions.
+-- name: LockOwnershipRecoveryNodes :many
+SELECT id, lifecycle FROM compute_nodes
+WHERE id IN (sqlc.arg(from_node_id)::uuid, sqlc.arg(to_node_id)::uuid)
+ORDER BY id FOR SHARE;
+
+-- name: ReassignOrphanedAppOwner :execrows
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
+  AND status IN ('active', 'evicted_cold')
+  AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL
+       OR reassigned_at < now() - make_interval(secs => sqlc.arg(cooldown_seconds)::integer));
+
+-- name: ServiceCapacityProtection :one
+SELECT service_capacity_snapshot()::jsonb AS snapshot;
+
+-- name: SetServiceCapacityProtection :one
+SELECT set_service_capacity_protection(sqlc.arg(enabled)::boolean)::jsonb AS snapshot;
+
+-- name: ServiceCapacityPlacement :one
+SELECT CASE WHEN enabled THEN service_capacity_snapshot()
+            ELSE jsonb_build_object('enabled', false) END::jsonb AS snapshot
+FROM service_capacity_policy WHERE singleton;
+
 -- name: FeatureFlagRequestOutcomes :many
 WITH evidence AS MATERIALIZED (
  SELECT
@@ -5489,6 +5716,8 @@ WITH evidence AS MATERIALIZED (
   AND t.received_at < sqlc.arg(received_until)::timestamptz
   AND (sqlc.arg(customer_id)::text = '' OR t.platform_tenant_id::text = sqlc.arg(customer_id)::text)
   AND e->>'flag' = sqlc.arg(flag_key)::text
+  AND (sqlc.arg(rule_id)::text = '' OR e->>'rule_id' = sqlc.arg(rule_id)::text)
+  AND (sqlc.arg(config_version)::bigint = 0 OR (e->>'config_version')::bigint = sqlc.arg(config_version)::bigint)
   AND jsonb_typeof(e->'value') IN ('boolean', 'string')
   AND COALESCE(e->>'type', 'boolean') IN ('boolean', 'variant')
 ), totals AS (
@@ -5801,3 +6030,236 @@ WHERE b.id=sqlc.arg(producer_id)::uuid AND b.input_hash=sqlc.arg(producer_hash):
  AND s.scanned_at>=b.published_at AND s.scanned_at<=now AND s.expires_at>now AND s.input_snapshot->>'status'='complete'
  AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz<=now
  AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision);
+
+-- name: LockUDPListenerAppOwner :one
+SELECT account_id::text AS account_id FROM apps
+WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted'
+FOR UPDATE;
+
+-- name: CreateUDPListener :one
+INSERT INTO app_udp_listeners
+(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
+VALUES (sqlc.arg(id)::text::uuid, sqlc.arg(app_id)::text::uuid,
+        sqlc.arg(account_id)::text::uuid, sqlc.arg(listener_name),
+        sqlc.arg(guest_port), sqlc.arg(public_port), sqlc.arg(protocol), sqlc.arg(enabled))
+RETURNING *;
+
+-- name: UDPListenerByID :one
+SELECT * FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: UDPListenerByAppAndName :one
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listener_name);
+
+-- name: UDPListenerByPublicPort :one
+SELECT * FROM app_udp_listeners l
+WHERE public_port = sqlc.arg(public_port) AND enabled
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+
+-- name: ListUDPListenersForApp :many
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
+
+-- name: ListEnabledUDPListeners :many
+SELECT * FROM app_udp_listeners l
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+ORDER BY public_port ASC;
+
+-- name: SetUDPListenerEnabled :one
+UPDATE app_udp_listeners SET enabled = sqlc.arg(enabled), updated_at = now()
+WHERE id = sqlc.arg(id)::text::uuid RETURNING *;
+
+-- name: DeleteUDPListener :execrows
+DELETE FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: CountUDPListenersForApp :one
+SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uuid;
+
+-- name: ActiveTCPListenerByPublicPort :one
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
+  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+
+-- name: ListActiveTCPListeners :many
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+ORDER BY l.public_port;
+-- name: LockExclusiveWorkAccount :one
+SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
+AND status='active' FOR UPDATE;
+
+-- name: ExclusiveWorkAppScope :one
+SELECT id::text, coalesce(project_id::text,'')::text AS project_id
+FROM apps WHERE id=sqlc.arg(app_id)::text::uuid
+AND account_id=sqlc.arg(account_id)::text::uuid AND status<>'deleted' FOR SHARE;
+
+-- name: ExclusiveWorkTenantScope :one
+SELECT id::text, status FROM platform_tenants
+WHERE id=sqlc.arg(tenant_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+FOR SHARE;
+
+-- name: ExclusiveWorkEnvironmentScope :one
+SELECT id::text FROM project_environments
+WHERE id=sqlc.arg(environment_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+AND project_id=sqlc.arg(project_id)::text::uuid FOR SHARE;
+
+-- name: ReadExclusiveWorkPolicy :one
+SELECT * FROM exclusive_work_policies
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text FOR UPDATE;
+
+-- name: ListExclusiveWorkPolicies :many
+SELECT * FROM exclusive_work_policies
+WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY name;
+
+-- name: SaveExclusiveWorkPolicy :one
+INSERT INTO exclusive_work_policies(id,account_id,name,configuration,retired)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name)::text,sqlc.arg(configuration)::jsonb,sqlc.arg(retired)::boolean)
+ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,retired=excluded.retired,
+revision=exclusive_work_policies.revision+1,updated_at=clock_timestamp()
+RETURNING *;
+
+-- name: ExclusiveWorkPolicyInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM exclusive_work_operations o
+    JOIN exclusive_work_keys k ON k.id=o.key_id
+    WHERE k.policy_id=sqlc.arg(policy_id)::text::uuid AND o.state IN ('pending','running')
+) OR EXISTS (
+    SELECT 1 FROM exclusive_work_trigger_bindings
+    WHERE policy_id=sqlc.arg(policy_id)::text::uuid
+) AS in_use;
+
+-- name: EnsureExclusiveWorkKey :one
+INSERT INTO exclusive_work_keys(id,account_id,policy_id,scope_id,environment_id,key_digest)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(policy_id)::text::uuid,
+sqlc.arg(scope_id)::text::uuid,sqlc.arg(environment_id)::text,sqlc.arg(key_digest)::bytea)
+ON CONFLICT(policy_id,scope_id,environment_id,key_digest) DO UPDATE SET id=exclusive_work_keys.id
+RETURNING *;
+
+-- name: ReadExclusiveWorkKey :one
+SELECT * FROM exclusive_work_keys
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
+
+-- name: SaveExclusiveWorkKey :exec
+UPDATE exclusive_work_keys SET generation=sqlc.arg(generation)::bigint,
+next_sequence=sqlc.arg(next_sequence)::bigint WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ReadExclusiveWorkOperation :one
+SELECT * FROM exclusive_work_operations
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ReadExclusiveWorkReplay :one
+SELECT o.* FROM exclusive_work_operations o JOIN exclusive_work_submissions s ON s.operation_id=o.id
+WHERE s.key_id=sqlc.arg(key_id)::text::uuid AND s.idempotency_digest=sqlc.arg(digest)::bytea;
+
+-- name: ListExclusiveWorkActive :many
+SELECT * FROM exclusive_work_operations
+WHERE key_id=sqlc.arg(key_id)::text::uuid AND state IN ('pending','running') ORDER BY sequence;
+
+-- name: CountExclusiveWorkPending :one
+SELECT count(*) FROM exclusive_work_operations
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND state IN ('pending','running');
+
+-- name: InsertExclusiveWorkOperation :one
+INSERT INTO exclusive_work_operations(id,account_id,key_id,app_id,job_id,platform_tenant_id,sequence,
+policy_revision,configuration,request,request_digest,equivalence_digest,idempotency_digest)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(key_id)::text::uuid,
+sqlc.narg(app_id)::text::uuid,sqlc.narg(job_id)::text::uuid,nullif(sqlc.arg(tenant_id)::text,'')::uuid,
+sqlc.arg(sequence)::bigint,sqlc.arg(policy_revision)::bigint,sqlc.arg(configuration)::jsonb,
+sqlc.arg(request)::jsonb,sqlc.arg(request_digest)::bytea,sqlc.narg(equivalence_digest)::bytea,
+sqlc.narg(idempotency_digest)::bytea) RETURNING *;
+
+-- name: SaveExclusiveWorkOperation :exec
+UPDATE exclusive_work_operations SET state=sqlc.arg(state)::text,generation=sqlc.arg(generation)::bigint,
+claim_token=nullif(sqlc.arg(claim_token)::text,'')::uuid,incarnation_id=sqlc.arg(incarnation_id)::text,
+lease_expires_at=sqlc.narg(lease_expires_at)::timestamptz,
+attempt_deadline=sqlc.narg(attempt_deadline)::timestamptz,result=sqlc.narg(result)::jsonb,
+last_error=sqlc.arg(last_error)::text,completed_at=sqlc.narg(completed_at)::timestamptz,
+due_at=sqlc.arg(due_at)::timestamptz,attempts=sqlc.arg(attempts)::integer,
+quota_reserved=sqlc.arg(quota_reserved)::boolean
+WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: InsertExclusiveWorkEffect :exec
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(operation_id)::text::uuid,
+sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb);
+
+-- name: ExclusiveWorkClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: BindExclusiveWorkSubmission :exec
+INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
+VALUES(sqlc.arg(key_id)::text::uuid,sqlc.arg(digest)::bytea,sqlc.arg(operation_id)::text::uuid);
+
+-- name: CheckExclusiveWorkRuntime :one
+SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::text::uuid AND i.wake_id=sqlc.arg(wake_id)::text::uuid
+AND i.node_id=sqlc.arg(node_id)::text::uuid AND i.app_id=sqlc.arg(app_id)::text::uuid
+AND a.account_id=sqlc.arg(account_id)::text::uuid AND i.state='running' AND NOT i.exclusive_capture_blocked
+FOR SHARE OF i;
+
+-- name: ListDueExclusiveWork :many
+WITH heads AS (
+ SELECT DISTINCT ON (o.key_id) o.* FROM exclusive_work_operations o
+ JOIN accounts a ON a.id=o.account_id AND a.status='active'
+ LEFT JOIN platform_tenants t ON t.id=o.platform_tenant_id
+ WHERE o.state IN ('pending','running') AND (t.id IS NULL OR t.status='active')
+ ORDER BY o.key_id,o.sequence
+), ranked AS (
+ SELECT id,row_number() OVER (PARTITION BY account_id ORDER BY due_at,id) AS account_rank,due_at
+ FROM heads WHERE (state='pending' AND due_at<=clock_timestamp())
+ OR (state='running' AND lease_expires_at<=clock_timestamp())
+)
+SELECT o.* FROM exclusive_work_operations o JOIN ranked r ON r.id=o.id
+ORDER BY r.account_rank,r.due_at,o.id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: EnsureExclusiveWorkQuota :exec
+INSERT INTO account_async_quota(account_id,max_inflight)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(max_inflight)::integer)
+ON CONFLICT(account_id) DO UPDATE SET max_inflight=excluded.max_inflight;
+
+-- name: ReserveExclusiveWorkQuota :one
+UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND current_inflight<max_inflight
+RETURNING current_inflight;
+
+-- name: LockExclusiveSnapshotInstance :one
+SELECT id::text,exclusive_capture_blocked FROM instances
+WHERE id=sqlc.arg(instance_id)::text::uuid FOR UPDATE;
+
+-- name: HasExclusiveSnapshotOwner :one
+SELECT EXISTS(SELECT 1 FROM exclusive_work_operations o JOIN instances i
+ON o.incarnation_id=i.id::text||'/'||i.wake_id::text||'/'||i.node_id::text
+WHERE i.id=sqlc.arg(instance_id)::text::uuid AND o.state='running'
+AND o.lease_expires_at>clock_timestamp() AND o.attempt_deadline>clock_timestamp());
+
+-- name: SetExclusiveCaptureBarrier :exec
+UPDATE instances SET exclusive_capture_blocked=sqlc.arg(blocked)::boolean
+WHERE id=sqlc.arg(instance_id)::text::uuid;
+
+-- name: RecordTriggerConsumerHealth :exec
+INSERT INTO trigger_consumer_health (
+    trigger_id, last_poll_at, last_success_at, last_error_at, last_error,
+    lag_messages, lag_age_seconds
+) VALUES (
+    sqlc.arg(trigger_id)::uuid,
+    sqlc.arg(polled_at)::timestamptz,
+    CASE WHEN sqlc.arg(success)::boolean THEN sqlc.arg(polled_at)::timestamptz ELSE NULL END,
+    CASE WHEN sqlc.arg(success)::boolean THEN NULL ELSE sqlc.arg(polled_at)::timestamptz END,
+    CASE WHEN sqlc.arg(success)::boolean THEN NULL ELSE NULLIF(sqlc.arg(error_detail)::text, '') END,
+    sqlc.narg(lag_messages)::bigint,
+    sqlc.narg(lag_age_seconds)::double precision
+)
+ON CONFLICT (trigger_id) DO UPDATE SET
+    last_poll_at = EXCLUDED.last_poll_at,
+    last_success_at = CASE WHEN sqlc.arg(success)::boolean THEN EXCLUDED.last_poll_at ELSE trigger_consumer_health.last_success_at END,
+    last_error_at = CASE WHEN sqlc.arg(success)::boolean THEN trigger_consumer_health.last_error_at ELSE EXCLUDED.last_poll_at END,
+    last_error = CASE WHEN sqlc.arg(success)::boolean THEN trigger_consumer_health.last_error ELSE NULLIF(sqlc.arg(error_detail)::text, '') END,
+    lag_messages = EXCLUDED.lag_messages,
+    lag_age_seconds = EXCLUDED.lag_age_seconds,
+    updated_at = NOW();
+
+-- name: TriggerConsumerHealth :one
+SELECT last_poll_at, last_success_at, last_error_at, last_error,
+       lag_messages, lag_age_seconds
+FROM trigger_consumer_health
+WHERE trigger_id = sqlc.arg(trigger_id)::uuid;

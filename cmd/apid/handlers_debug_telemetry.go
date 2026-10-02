@@ -2664,6 +2664,13 @@ type debugReplayEnqueueResult struct {
 // mirror-rule, and metadata checks in one function prevents the browser
 // surface from drifting into a less restrictive replay path.
 func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
+	return s.enqueueDebugReplayForDeployment(ctx, app, acct, reqID, "", requestedMirrorDeploymentID)
+}
+
+// enqueueDebugReplayForDeployment optionally binds a dashboard issue replay to
+// the deployment already verified by that issue occurrence. This prevents an
+// ambiguous request identifier from replaying a different deployment's request.
+func (s *server) enqueueDebugReplayForDeployment(ctx context.Context, app state.App, acct state.Account, reqID, expectedDeploymentID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
 	identifier, err := normalizeDebugRequestIdentifier(reqID)
 	if err != nil {
 		return debugReplayEnqueueResult{}, api.ErrValidation(err.Error())
@@ -2690,6 +2697,9 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 			"the request route is unavailable or cannot be replayed safely")
 	}
 	depID := uuidFromPg(row.DeploymentID)
+	if expectedDeploymentID != "" && depID != expectedDeploymentID {
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
+	}
 	requestedMirrorDeploymentID = strings.TrimSpace(requestedMirrorDeploymentID)
 	if requestedMirrorDeploymentID != "" {
 		if _, err := uuid.Parse(requestedMirrorDeploymentID); err != nil {

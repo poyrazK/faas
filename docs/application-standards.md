@@ -9,7 +9,7 @@ The implementation is in progress. Candidate version and resource management,
 plus automatic enrollment repair and private reviewed control installation,
 are implemented. Public
 assignment activation, runtime enforcement and controlled rollout
-must pass the acceptance checklist in [ADR-393](adr/393-inherited-application-standards.md)
+must pass the acceptance checklist in [ADR-429](adr/429-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary
@@ -232,6 +232,24 @@ same paused lease; an initial receipt cannot authorize resume. Exact committed
 promotion publication can be retried after a lost acknowledgment without another
 native resume. Current input and native process fences still apply. This supplies no image-content or delivered-log
 proof, and does not mark the standard observed or enable public activation.
+
+Native publication still obeys the fleet recovery-capacity and exclusive-operation
+lifecycle checks. Capacity refusal commits neither a receipt nor a runtime
+transition. An eligible survivor can publish a warm promotion into its declared
+service slot while the fleet is degraded. These storage guarantees remain
+separate from native consumer verification.
+
+An app with no adopted standard or retained managed fields can keep its existing
+resident guest after an account plan change. Its original admission capture is
+preserved; ownership, controls, artifacts, current account eligibility and
+capacity checks remain in force. A new boot still rejects stale plan inputs.
+Managed services retain the strict plan fence for boot and promotion.
+
+Fresh installation and ordinary database upgrade pass. Recovery from missing
+migration ledger entries is still an acceptance gap: the frozen initial standards
+migration fails if its tables already exist. Existing migration files remain
+immutable. Public activation requires a verified recovery path as well as native
+consumer acceptance.
 
 ## Automatic onboarding and repair
 

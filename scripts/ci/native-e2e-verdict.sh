@@ -140,6 +140,9 @@ native_e2e_lane_verdict() {
     if grep -qE "^--- SKIP: ${required}( |\$)" "${log}"; then
       echo "native e2e: ${lane}: required test ${required} SKIPPED" >&2
       rc=1
+    elif grep -qE "^[[:space:]]*--- SKIP: ${required}/" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} has SKIPPED subtests" >&2
+      rc=1
     elif grep -qE "^--- FAIL: ${required}( |\$)" "${log}"; then
       echo "native e2e: ${lane}: required test ${required} FAILED" >&2
       rc=1
@@ -195,4 +198,15 @@ native_e2e_phase_tally() {
     rc=1
   fi
   return "${rc}"
+}
+
+# Companion qualification is source-derived even though the native fcvm runner
+# executes its whole package. Every companion acceptance test must pass.
+native_container_companion_tests() {
+  local file="${1:?repository root required}/pkg/fcvm/sidecar_metal_test.go"
+  [[ -r "${file}" ]] || { echo "companion test source missing: ${file}" >&2; return 1; }
+  grep -qE '^func Test[A-Za-z0-9_]+\(' "${file}" || {
+    echo 'companion source selects no tests' >&2; return 1;
+  }
+  grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" | sed -E 's/^func //; s/\($//' | sort -u
 }

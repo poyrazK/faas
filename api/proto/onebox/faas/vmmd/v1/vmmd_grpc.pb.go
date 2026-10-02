@@ -30,6 +30,7 @@ const (
 	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
 	Vmmd_ExecuteExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
 	Vmmd_ExecuteExecutionStream_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_ExecuteExecutionBrokerStream_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
 	Vmmd_RestoreExecution_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_RestoreAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
@@ -60,6 +61,7 @@ const (
 	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
 	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
 	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
+	Vmmd_ForwardUDPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
 	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
 	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
 	Vmmd_MaterializeVerifiedParentExt4_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/MaterializeVerifiedParentExt4"
@@ -104,6 +106,12 @@ type VmmdClient interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error)
+	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+	// the one-shot execution exchange. The first client frame must be start;
+	// subsequent client frames carry responses to host-authorized outbound
+	// calls. Signed identity assertions are emitted only to schedd, never to the
+	// guest.
+	ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error)
 	// RestoreExecution creates a fresh, networkless disposable execution VM.
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
@@ -374,6 +382,10 @@ type VmmdClient interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error)
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error)
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -413,7 +425,7 @@ type VmmdClient interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(ctx context.Context, in *MaterializeParentExt4Request, opts ...grpc.CallOption) (*MaterializeParentExt4Response, error)
-	// ADR-393: separate capability; old servers refuse instead of ignoring the
+	// ADR-429: separate capability; old servers refuse instead of ignoring the
 	// expected complete artifact identity. Receipt follows copy and cleanup.
 	MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
@@ -597,6 +609,19 @@ func (c *vmmdClient) ExecuteExecutionStream(ctx context.Context, in *ExecuteExec
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamClient = grpc.ServerStreamingClient[ExecuteExecutionEvent]
 
+func (c *vmmdClient) ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionBrokerStreamClient = grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]
+
 func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RestoreExecutionResponse)
@@ -629,7 +654,7 @@ func (c *vmmdClient) ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskReque
 
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -868,7 +893,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -887,7 +912,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -900,7 +925,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -913,7 +938,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -923,6 +948,19 @@ func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOpti
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse]
+
+func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardUDPRequest, ForwardUDPResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamClient = grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse]
 
 func (c *vmmdClient) MountParentExt4ReadOnly(ctx context.Context, in *MountParentExt4ReadOnlyRequest, opts ...grpc.CallOption) (*MountParentExt4ReadOnlyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -1056,6 +1094,12 @@ type VmmdServer interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error
+	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+	// the one-shot execution exchange. The first client frame must be start;
+	// subsequent client frames carry responses to host-authorized outbound
+	// calls. Signed identity assertions are emitted only to schedd, never to the
+	// guest.
+	ExecuteExecutionBrokerStream(grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]) error
 	// RestoreExecution creates a fresh, networkless disposable execution VM.
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
@@ -1326,6 +1370,10 @@ type VmmdServer interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -1365,7 +1413,7 @@ type VmmdServer interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error)
-	// ADR-393: separate capability; old servers refuse instead of ignoring the
+	// ADR-429: separate capability; old servers refuse instead of ignoring the
 	// expected complete artifact identity. Receipt follows copy and cleanup.
 	MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
@@ -1484,6 +1532,9 @@ func (UnimplementedVmmdServer) ExecuteExecution(context.Context, *ExecuteExecuti
 func (UnimplementedVmmdServer) ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteExecutionStream not implemented")
 }
+func (UnimplementedVmmdServer) ExecuteExecutionBrokerStream(grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteExecutionBrokerStream not implemented")
+}
 func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
 }
@@ -1573,6 +1624,9 @@ func (UnimplementedVmmdServer) ForwardRawStream(grpc.BidiStreamingServer[Forward
 }
 func (UnimplementedVmmdServer) ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error {
 	return status.Error(codes.Unimplemented, "method ForwardTCPStream not implemented")
+}
+func (UnimplementedVmmdServer) ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error {
+	return status.Error(codes.Unimplemented, "method ForwardUDPStream not implemented")
 }
 func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountParentExt4ReadOnlyRequest) (*MountParentExt4ReadOnlyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MountParentExt4ReadOnly not implemented")
@@ -1761,6 +1815,13 @@ func _Vmmd_ExecuteExecutionStream_Handler(srv interface{}, stream grpc.ServerStr
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamServer = grpc.ServerStreamingServer[ExecuteExecutionEvent]
+
+func _Vmmd_ExecuteExecutionBrokerStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ExecuteExecutionBrokerStream(&grpc.GenericServerStream[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionBrokerStreamServer = grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]
 
 func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RestoreExecutionRequest)
@@ -2255,6 +2316,13 @@ func _Vmmd_ForwardTCPStream_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamServer = grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]
 
+func _Vmmd_ForwardUDPStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ForwardUDPStream(&grpc.GenericServerStream[ForwardUDPRequest, ForwardUDPResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamServer = grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]
+
 func _Vmmd_MountParentExt4ReadOnly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MountParentExt4ReadOnlyRequest)
 	if err := dec(in); err != nil {
@@ -2618,6 +2686,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 		{
+			StreamName:    "ExecuteExecutionBrokerStream",
+			Handler:       _Vmmd_ExecuteExecutionBrokerStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
 			StreamName:    "ExecuteAppTaskStream",
 			Handler:       _Vmmd_ExecuteAppTaskStream_Handler,
 			ServerStreams: true,
@@ -2642,6 +2716,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ForwardTCPStream",
 			Handler:       _Vmmd_ForwardTCPStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ForwardUDPStream",
+			Handler:       _Vmmd_ForwardUDPStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

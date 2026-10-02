@@ -1,8 +1,8 @@
 package cosign
 
-// adr: 393
+// adr: 429
 
-// ADR-393: real keyed signatures authenticate exact payload bytes and the
+// ADR-429: real keyed signatures authenticate exact payload bytes and the
 // resolved immutable subject. These are cryptographic checks, not native KVM
 // acceptance or a durable proof of the converted rootfs.
 

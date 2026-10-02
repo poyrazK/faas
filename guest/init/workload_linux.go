@@ -46,8 +46,8 @@
 // main_linux.go::mountCgroup2, called between pivotInto and
 // the supervisor's first workload). runSidecar + runAppWithEnv
 // then mkdir a per-workload leaf, write memory.max = spec.
-// RamMB << 20, and after exec.Command.Start writes the child
-// PID into cgroup.procs. Sidecar OOM is scoped to that leaf
+// RamMB << 20, and create the child directly in that leaf
+// using clone3 CLONE_INTO_CGROUP. Sidecar OOM is scoped to that leaf
 // (cgroup v2 memory controller kills only the offending
 // leaf's processes) — the main workload keeps running.
 
@@ -400,6 +400,19 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 
 	coordCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	mainLeaf := ""
+	if roster.Main.RamMB > 0 || roster.Main.CPUMillicores > 0 {
+		mainLeaf = leafDir("main", "app")
+	}
+	if err := runHealthcheckPoll(coordCtx, mainManifest, log, healthcheckPollOptions{
+		Started:    runtimes["main"].state.started,
+		CgroupLeaf: mainLeaf,
+		Environment: func() []string {
+			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, secrets, apiEnv), workloadEnv)
+		},
+	}); err != nil {
+		log.Warn("main healthcheck poll unavailable", "err", err)
+	}
 	for _, rt := range runtimes {
 		if rt.secretManifest != nil && rt.spec.runtimeSecrets != nil {
 			startRuntimeSecretReloaderForWorkload(coordCtx, *rt.secretManifest, rt.spec.runtimeSecrets, rt.sup, log,
@@ -867,13 +880,11 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	}
 	if manifestErr == nil {
 		cmd.Dir = baked.EffectiveWorkingDir()
-		uid := lookupUID(baked.EffectiveUser())
-		if directRoot != "" {
-			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+		credential, err := processCredential(directRoot, baked.EffectiveUser())
+		if err != nil {
+			return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 		}
-		if uid > 0 {
-			procAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
-		}
+		procAttr.Credential = execProcessCredential(credential)
 	}
 	if directRoot != "" || procAttr.Credential != nil {
 		cmd.SysProcAttr = &procAttr
@@ -909,6 +920,13 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// Run the sidecar. exec.Command blocks until the sidecar
 	// exits; the supervisor's Run() loop captures the exit
 	// code via trackExit and decides whether to restart.
+	cgroupFile, err := attachWorkloadCgroup(cmd, leaf)
+	if err != nil {
+		return fmt.Errorf("attach sidecar workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
@@ -1003,14 +1021,6 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 				}
 			}, slog.Default())
 		}()
-	}
-	// Issue #463 / ADR-069 / PR-B AC #4: place the
-	// forked child into the cgroup leaf so the OOM
-	// killer scopes to the leaf (not the workload's
-	// siblings). Race window is benign — see
-	// placeIntoLeaf's doc.
-	if leaf != "" {
-		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
 	}
 	runErr := cmd.Wait()
 	if readinessCancel != nil {

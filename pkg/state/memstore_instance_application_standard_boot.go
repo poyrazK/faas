@@ -172,12 +172,17 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	if boot.Receipt != nil && *boot.Receipt != receipt {
 		return Instance{}, ErrConflict
 	}
+	published := ins
+	published.Netns, published.HostIP, published.GuestUID, published.State, published.StartedAt = receipt.Netns, receipt.HostIP, int(receipt.LeaseUID), string(next), now
+	if err := m.checkStandardNativeRuntimeTransitionLocked(ins, published); err != nil {
+		return Instance{}, err
+	}
 	copy := receipt
 	boot.Receipt = &copy
 	boot.ReceivedAt = now
 	// One mutex commit for receipt + runtime tuple + state; no observation is
 	// advanced. All refusal checks finish before changing any owned map.
-	ins.Netns, ins.HostIP, ins.GuestUID, ins.State, ins.StartedAt = receipt.Netns, receipt.HostIP, int(receipt.LeaseUID), string(next), now
+	ins = published
 	m.instanceApplicationStandardBoots[boot.Binding.Token] = boot
 	if m.instanceApplicationStandardBootTokens == nil {
 		m.instanceApplicationStandardBootTokens = map[string]string{}
@@ -185,6 +190,17 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	m.instanceApplicationStandardBootTokens[ins.ID] = boot.Binding.Token
 	m.instances[ins.ID] = ins
 	return ins, nil
+}
+
+// ADR-429: native receipts authorize standards publication, while the common
+// capacity and exclusive-owner guards still govern every lifecycle commit.
+// Capacity preflight has no side effects; ownership can change only once all
+// refusal checks have passed and the caller has no fallible work remaining.
+func (m *MemStore) checkStandardNativeRuntimeTransitionLocked(old, next Instance) error {
+	if err := m.checkServiceCapacityInstanceLocked(next); err != nil {
+		return err
+	}
+	return m.exclusiveRuntimeTransitionLocked(old, next)
 }
 
 func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture InstanceApplicationStandardAdmission) error {

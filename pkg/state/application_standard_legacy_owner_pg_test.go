@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 393. Real PostgreSQL raw-owner, enrollment and membership fences.
+// adr: 429. Real PostgreSQL raw-owner, enrollment and membership fences.
 
 import (
 	"context"

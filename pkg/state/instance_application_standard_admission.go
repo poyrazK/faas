@@ -87,11 +87,63 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 			return err
 		}
 		var want, got any
-		if json.Unmarshal(raw, &want) != nil || json.Unmarshal(actual[field], &got) != nil || !reflect.DeepEqual(want, got) {
+		if json.Unmarshal(raw, &want) != nil || json.Unmarshal(actual[field], &got) != nil {
+			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
+		}
+		if !reflect.DeepEqual(want, got) {
+			if field == "account_plan" && !capture.Managed && len(enrollment.Adoptions) == 0 && len(enrollment.MaterializedFields) == 0 {
+				allowed, err := unmanagedStandardResidentPlanChange(ctx, store, id)
+				if err != nil {
+					return fmt.Errorf("read unmanaged residency: %w", err)
+				}
+				if allowed {
+					continue
+				}
+			}
 			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
 		}
 	}
 	return nil
+}
+
+func unmanagedStandardResidentPlanChange(ctx context.Context, store InstanceApplicationStandardAdmissionStore, id string) (bool, error) {
+	reader, ok := store.(interface {
+		InstanceByID(context.Context, string) (Instance, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	ins, err := reader.InstanceByID(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return ins.State == string(StateWarm) || ins.State == string(StateRunning) || ins.State == string(StateMigrating), nil
+}
+
+// ADR-429/422: legacy unmanaged residency can retain its original guest shape
+// after a plan change. Current eligibility and capacity checks still apply;
+// every ownership, control, artifact and enrollment input remains immutable.
+func standardRuntimeInputsMatch(captured, current []byte) (bool, error) {
+	inputs := make([]map[string]any, 2)
+	for i, raw := range [][]byte{captured, current} {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&inputs[i]); err != nil {
+			return false, err
+		}
+	}
+	if unmanagedStandardRuntimeInputs(inputs[0]) && unmanagedStandardRuntimeInputs(inputs[1]) {
+		delete(inputs[0], "account_plan")
+		delete(inputs[1], "account_plan")
+	}
+	return reflect.DeepEqual(inputs[0], inputs[1]), nil
+}
+
+func unmanagedStandardRuntimeInputs(input map[string]any) bool {
+	adoptions, ok := input["adoptions"].([]any)
+	fields, fieldsOK := input["materialized_fields"].([]any)
+	_, planOK := input["account_plan"]
+	return ok && fieldsOK && planOK && len(adoptions) == 0 && len(fields) == 0
 }
 
 func standardRuntimeCallerInputs(app App, account Account, dep Deployment) map[string]any {

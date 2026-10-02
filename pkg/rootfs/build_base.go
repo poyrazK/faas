@@ -214,6 +214,11 @@ type BuildFullRootfsInput struct {
 	FunctionRunnerPath  string
 	SBOMRun             func(ctx context.Context, dir string) ([]byte, error)
 	SBOMStorageKey      string
+	// CommandPATH is the effective non-secret PATH at assembly time. Nil
+	// defers bare-command lookup to guest-init when runtime env is unknown.
+	// Explicit command paths are always checked, relative to WorkingDir. This value
+	// is used only for validation; it is never baked into the artifact.
+	CommandPATH *string
 	// Resolver is consulted by ApplyLayerGzWithResolver during the
 	// per-entry chown path. Commit 5 lays the plumbing; commit 7
 	// wires the real image-/etc/passwd parser + merge walk.
@@ -402,6 +407,9 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// Pro 64 / Scale 256.
 	if err := writePasswdTable(staging, passwdEntries, api.UserUIDOverrideMax[in.Plan]); err != nil {
 		return BuildResult{}, fmt.Errorf("rootfs: build passwd table: %w", err)
+	}
+	if err := validateFullRootfsLaunch(staging, in.Manifest, in.CommandPATH); err != nil {
+		return BuildResult{}, err
 	}
 
 	stats, err := InspectStaging(staging)

@@ -126,9 +126,14 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 	if p.Receipt != nil && *p.Receipt != r {
 		return Instance{}, ErrConflict
 	}
+	published := ins
+	published.State, published.StartedAt = string(StateRunning), now
+	if err := m.checkStandardNativeRuntimeTransitionLocked(ins, published); err != nil {
+		return Instance{}, err
+	}
 	copy := r
 	p.Receipt, p.ReceivedAt = &copy, now
-	ins.State, ins.StartedAt = string(StateRunning), now
+	ins = published
 	if m.instanceApplicationStandardPromotionTokens == nil {
 		m.instanceApplicationStandardPromotionTokens = map[string]string{}
 	}

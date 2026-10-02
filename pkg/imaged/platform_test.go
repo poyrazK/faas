@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 393
+// adr: 429
 
-// ADR-393: publisher verification binds the immutable resolved source and
+// ADR-429: publisher verification binds the immutable resolved source and
 // preserves repository-scoped credentials before executable build reads.
 
 import (

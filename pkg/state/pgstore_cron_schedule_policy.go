@@ -35,17 +35,18 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 	var enabled, skipIfRunning bool
 	var suspendedReason string
 	var lastFiredAt pgtype.Timestamptz
-	var schedulePolicyRaw []byte
+	var schedulePolicyRaw, failureRulesRaw []byte
 	err = tx.QueryRow(ctx, `
 		select c.app_id::text, a.account_id::text, c.path, c.command,
 		       c.enabled, c.skip_if_running, c.suspended_reason,
-	       c.last_fired_at, c.schedule_revision, c.schedule_policy
+	       c.last_fired_at, c.schedule_revision, c.schedule_policy,
+	       c.failure_rules
 		  from crons c join apps a on a.id = c.app_id
 		 where c.id = $1::uuid and a.status <> 'deleted'
 		 for update of c`, cronID).Scan(
 		&cron.AppID, &accountID, &cron.Path, &cron.Command,
 		&enabled, &skipIfRunning, &suspendedReason, &lastFiredAt,
-		&cron.ScheduleRevision, &schedulePolicyRaw)
+		&cron.ScheduleRevision, &schedulePolicyRaw, &failureRulesRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invocation{}, ScheduleOccurrence{}, false, nil
 	}
@@ -65,6 +66,13 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 			return Invocation{}, ScheduleOccurrence{}, false, fmt.Errorf("state: decode HTTP cron schedule policy: %w", err)
 		}
 		cron.SchedulePolicy = &policy
+	}
+	if len(failureRulesRaw) > 0 {
+		var failureRules workpolicy.FailureRules
+		if err := json.Unmarshal(failureRulesRaw, &failureRules); err != nil {
+			return Invocation{}, ScheduleOccurrence{}, false, fmt.Errorf("state: decode HTTP cron failure rules: %w", err)
+		}
+		cron.FailureRules = &failureRules
 	}
 	policy := effectiveCronSchedulePolicy(cron)
 	deadline := policy.Deadline(scheduledFor)
@@ -181,6 +189,7 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 	invocation.AccountID = accountID
 	invocation.Source = InvocationCron
 	invocation.CronID = &cronIDCopy
+	invocation.FailureRules = workpolicy.Clone(cron.FailureRules)
 	invocation.OccurrenceID = occurrenceID
 	invocation.StartDeadlineAt = cloneTimePtr(deadline)
 	invocation.DueAt = scheduledFor

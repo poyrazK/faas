@@ -1,6 +1,6 @@
 // verify.go loads operator-controlled mirrored publisher keys and retains the
 // legacy raw P256 digest primitive from ADR-058. The registry deploy path uses
-// VerifyImageSignatureAttachments (ADR-393); raw r||s is not the Cosign
+// VerifyImageSignatureAttachments (ADR-429); raw r||s is not the Cosign
 // simple-signing wire format. ADR-038's local ext4 signer remains unchanged.
 
 package cosign

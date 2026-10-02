@@ -1,4 +1,4 @@
-// adr: 386 — captured intent fences scheduler runtime publication.
+// adr: 429 — captured intent fences scheduler runtime publication.
 
 package sched
 

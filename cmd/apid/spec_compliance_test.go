@@ -72,8 +72,10 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
-	applicationStandardsFile         = "application_standards.go"       // ADR-393 immutable application standards
+	applicationStandardsFile         = "application_standards.go"       // ADR-429 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
+	executionCapabilitiesFile        = "execution_capabilities.go"    // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile      = "execution_artifact_grants.go" // ADR-171 — one-time cross-agent artifact capabilities
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -85,7 +87,8 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":  true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -461,9 +464,11 @@ var dtoExclude = map[string]bool{
 	"ObsCapacityProfile":  true,
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
-	"ObsDeploymentRow":    true,
-	"ObsInstanceRow":      true,
-	"ObsInvocationRow":    true,
+	// ADR-422: this aggregate belongs to the same operator capacity response.
+	"ServiceCapacityProtection": true,
+	"ObsDeploymentRow":          true,
+	"ObsInstanceRow":            true,
+	"ObsInvocationRow":          true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,
@@ -540,11 +545,12 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
-	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
+	"FlagRequestEvidence": true, "FlagEvidencePage": true,
 	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
@@ -1033,6 +1039,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
+		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
@@ -1048,7 +1056,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
+		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
+		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +56,7 @@ type testScenario struct {
 	Timeout          string                 `yaml:"timeout"`
 	Load             *testLoadSpec          `yaml:"load"`
 	Local            *testLocalAppSpec      `yaml:"local"`
+	Chaos            *testChaosSpec         `yaml:"chaos,omitempty"`
 }
 
 type testService struct {
@@ -197,20 +199,43 @@ type testRunReceipt struct {
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
 	Load         *testLoadEvidence                  `json:"load,omitempty"`
 	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Chaos        *testChaosEvidence                 `json:"chaos,omitempty"`
 	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
+type testChaosEvidence struct {
+	ExpiresAt      time.Time    `json:"expires_at"`
+	RulesInstalled int          `json:"rules_installed"`
+	Rules          []chaos.Rule `json:"rules"`
+}
+
 func cmdTest(args []string) int {
+	return cmdTestWithChaos(args, nil)
+}
+
+func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if len(args) > 0 && args[0] == "init" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestInit(args[1:])
 	}
 	if len(args) > 0 && args[0] == "import" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestImport(args[1:])
 	}
 	if len(args) > 0 && args[0] == "compare" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestCompare(args[1:])
 	}
 	if len(args) > 0 && args[0] == "ci" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
 		return cmdTestCI(args[1:])
 	}
 	fs := newFlagSet("test", flag.ContinueOnError)
@@ -287,6 +312,9 @@ func cmdTest(args []string) int {
 		return printErr("Invalid test options", errors.New("--fail-fast applies only to test execution"))
 	}
 	if *suiteName != "" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos selection", errors.New("chaos injection requires --scenario, not --suite"))
+		}
 		if *dataPath != "" {
 			return printErr("Invalid suite data", errors.New("declare data on suite members instead of using --data with --suite"))
 		}
@@ -381,6 +409,18 @@ func cmdTest(args []string) int {
 	if !ok {
 		return printErr("Unknown scenario", fmt.Errorf("%q is not declared in %s", *scenarioName, *manifestPath))
 	}
+	if chaosOverride != nil {
+		if scenario.Chaos != nil {
+			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale chaos inject"))
+		}
+		scenario.Chaos = chaosOverride
+	}
+	if err := validateScenarioChaos(scenario); err != nil {
+		return printErr("Invalid chaos plan", err)
+	}
+	if scenario.Chaos != nil && *engine != "real-vm" {
+		return printErr("Invalid chaos engine", errors.New("scenario chaos requires --engine real-vm; local and simulated runs do not apply proxy faults"))
+	}
 	if *engine == "real-vm" && *maxWorkloadMinutes > 0 {
 		estimate := estimateTestWorkloadMinutes(scenario, len(profiles)*(*repeat))
 		if estimate > *maxWorkloadMinutes {
@@ -469,6 +509,9 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 	for name, scenario := range manifest.Scenarios {
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
+		}
+		if err := validateScenarioChaos(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q chaos: %w", name, err)
 		}
 		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 {
 			return testManifest{}, "", fmt.Errorf("scenario %q needs a command, requests, or checks", name)
@@ -1155,6 +1198,26 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				}
 			}
 			serviceRequestBaseline[workload.name] = seenRequests
+		}
+	}
+	if scenario.Chaos != nil {
+		plan, err := scenario.Chaos.plan()
+		if err != nil {
+			receipt.Error = fmt.Sprintf("prepare chaos plan: %v", err)
+			return
+		}
+		advancePhase("inject_chaos")
+		installed, err := client.InjectScenarioTestChaos(ctx, receipt.RunID, api.InjectScenarioTestChaosRequest{
+			DurationMS: plan.DurationMS,
+			Rules:      scenarioChaosAPIRules(plan.Rules),
+		})
+		if err != nil {
+			receipt.Error = fmt.Sprintf("install scenario chaos plan: %v", err)
+			return
+		}
+		receipt.Chaos = &testChaosEvidence{
+			ExpiresAt: installed.ExpiresAt, RulesInstalled: installed.RulesInstalled,
+			Rules: append([]chaos.Rule(nil), plan.Rules...),
 		}
 	}
 	recorder.reset()

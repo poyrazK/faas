@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -216,6 +217,9 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
+		engine.mu.Lock()
+		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.mu.Unlock()
 	}
 	return l
 }
@@ -1097,6 +1101,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	eventFanoutT := time.NewTicker(5 * time.Second)
 	defer eventFanoutT.Stop()
 	l.dispatchEventFanoutSweep(ctx)
+	serviceRecoveryT := time.NewTicker(time.Duration(api.ServiceRecoveryPollIntervalSeconds) * time.Second)
+	defer serviceRecoveryT.Stop()
+	l.dispatchServiceRecovery(ctx)
 	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
 	defer serviceRolloutRecoveryT.Stop()
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
@@ -1246,6 +1253,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.dispatchTriggerTick(ctx)
 		case <-eventFanoutT.C:
 			l.dispatchEventFanoutSweep(ctx)
+		case <-serviceRecoveryT.C:
+			l.dispatchServiceRecovery(ctx)
 		case <-serviceRolloutRecoveryT.C:
 			l.runServiceRolloutRecovery(ctx)
 		case <-primeRecoveryT.C:
@@ -3483,6 +3492,12 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		"headers":            headers,
 		"body_b64":           base64.StdEncoding.EncodeToString(inv.Payload),
 	}
+	if inv.Source == state.InvocationExclusiveOperation {
+		if inv.ExclusiveClaim == nil {
+			return inv, 0, errors.New("sched: exclusive operation dispatch has no ownership claim")
+		}
+		dispatch["exclusive_claim"] = inv.ExclusiveClaim
+	}
 	if wake != nil {
 		dispatch["instance_id"] = wake.InstanceID
 		dispatch["node_id"] = wake.NodeID
@@ -3508,7 +3523,7 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	// synth socket is DAC-protected, but the workflow contract also needs a
 	// short-lived signed token so gatewayd-internal can distinguish a fresh
 	// schedd delivery from a forged or replayed envelope.
-	if inv.Source == state.InvocationSource("workflow") {
+	if inv.Source == state.InvocationSource("workflow") || inv.Source == state.InvocationExclusiveOperation {
 		if h.mintInternalSvcToken == nil {
 			return inv, 0, errors.New("sched: workflow invocation requires internal service token minter")
 		}
@@ -3555,9 +3570,10 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		return inv, 0, err
 	}
 	var out struct {
-		State      string          `json:"state"`
-		Result     json.RawMessage `json:"result"`
-		StatusCode int             `json:"status_code"`
+		State       string          `json:"state"`
+		Result      json.RawMessage `json:"result"`
+		StatusCode  int             `json:"status_code"`
+		OutcomeCode string          `json:"outcome_code"`
 	}
 	if err := httpjson.Decode(resp.Body, gatewayInvocationResponseMaxBytes, &out); err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation response: %w", err)
@@ -3570,9 +3586,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	if len(out.Result) > 0 {
 		inv.Result = append(json.RawMessage(nil), out.Result...)
 	}
+	inv.OutcomeCode = out.OutcomeCode
 	if out.StatusCode == 0 {
 		out.StatusCode = http.StatusOK
 	}
+	inv.ResponseStatusCode = out.StatusCode
 	return inv, out.StatusCode, nil
 }
 
@@ -3695,6 +3713,74 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 		if job.SchedulePolicy != nil && job.SchedulePolicy.Overlap == "replace" {
 			if err := l.stopPriorScheduledRuns(ctx, job); err != nil {
 				l.log.Warn("schedd: replacement waits for prior run to stop", "job_id", job.ID, "err", err)
+				continue
+			}
+		}
+		if bindingStore, ok := l.engine.Store().(state.ExclusiveTriggerBindingStore); ok {
+			binding, bindingErr := bindingStore.ExclusiveTriggerBinding(ctx, job.AccountID, "job_schedule", job.ID)
+			switch {
+			case bindingErr == nil:
+				if binding.JobID != job.ID || binding.AccountID != job.AccountID || binding.AppID != "" {
+					l.log.Warn("schedd: managed Job schedule binding does not match Job", "job_id", job.ID)
+					continue
+				}
+				if job.SchedulePolicy != nil && workpolicy.DeadlineMissed(job.SchedulePolicy.Deadline(scheduledFor), now) {
+					if occurrenceStore, ok := l.engine.Store().(state.JobScheduleOccurrenceStore); ok {
+						_, _, recordErr := occurrenceStore.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule,
+							job.CronTimezone, cursor, now, state.JobScheduledOccurrenceOptions{
+								ScheduledFor: scheduledFor, ScheduleRevision: job.ScheduleRevision,
+								Disposition: "missed_deadline", Reason: "start deadline expired before the scheduler could dispatch the occurrence",
+							})
+						if recordErr != nil {
+							l.log.Warn("schedd: record missed managed Job occurrence failed", "job_id", job.ID, "err", recordErr)
+						}
+					}
+					continue
+				}
+				owners, ok := l.engine.Store().(state.ExclusiveWorkStore)
+				if !ok {
+					l.log.Warn("schedd: exclusive operation store is unavailable for scheduled Job", "job_id", job.ID)
+					continue
+				}
+				occurrence := firstDue
+				if job.SchedulePolicy != nil {
+					occurrence = scheduledFor
+				}
+				request, marshalErr := json.Marshal(exclusiveJobRunWorkRequest{
+					Kind: "job_run", TriggerKind: "scheduled", Run: api.CreateJobRunRequest{Tasks: 1},
+				})
+				if marshalErr != nil {
+					l.log.Error("schedd: encode managed scheduled Job request failed", "job_id", job.ID, "err", marshalErr)
+					continue
+				}
+				operation, joined, admitErr := owners.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+					AccountID: job.AccountID, JobID: job.ID, PolicyName: binding.PolicyName, Key: binding.Key,
+					Request: request, EquivalenceKey: binding.EquivalenceKey,
+					IdempotencyKey: exclusiveJobScheduleIdempotencyKey(job.ID, job.CronSchedule, job.CronTimezone, occurrence),
+				})
+				if l.ops != nil {
+					l.ops.ObserveExclusiveOperationAdmission("job_schedule", exclusiveAdmissionOutcome(admitErr, joined, operation.Replayed))
+				}
+				if errors.Is(admitErr, exclusivework.ErrBusy) {
+					if _, advanceErr := store.JobScheduleAdvanceOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone, cursor, now); advanceErr != nil {
+						l.log.Warn("schedd: advance rejected managed Job schedule occurrence failed", "job_id", job.ID, "err", advanceErr)
+					}
+					continue
+				}
+				if admitErr != nil {
+					l.log.Warn("schedd: admit managed scheduled Job operation failed", "job_id", job.ID, "err", admitErr)
+					continue
+				}
+				if _, advanceErr := store.JobScheduleAdvanceOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone, cursor, now); advanceErr != nil {
+					l.log.Warn("schedd: advance managed Job schedule cursor failed", "job_id", job.ID, "operation_id", operation.ID, "err", advanceErr)
+					continue
+				}
+				l.log.Info("schedd: scheduled Job operation admitted", "job_id", job.ID, "operation_id", operation.ID, "joined", joined)
+				continue
+			case errors.Is(bindingErr, state.ErrNotFound):
+				// Unbound recurring Jobs preserve their existing direct-run path.
+			case bindingErr != nil:
+				l.log.Warn("schedd: read managed Job schedule binding failed", "job_id", job.ID, "err", bindingErr)
 				continue
 			}
 		}
@@ -3870,9 +3956,10 @@ const (
 // ignores it (the tick path's caller is runCronTick, which has no
 // audit-response surface).
 type CronRun struct {
-	InvocationID string
-	InstanceID   string
-	Success      bool
+	InvocationID         string
+	InstanceID           string
+	ExclusiveOperationID string
+	Success              bool
 }
 
 func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
@@ -3907,12 +3994,6 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		due := make([]time.Time, 0, 4)
 		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
 			due = append(due, next)
-		}
-		if c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
-			if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
-				l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
-				return
-			}
 		}
 		l.dispatchScheduledCommandCron(ctx, c, due, now)
 		return
@@ -3951,6 +4032,31 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			l.log.Warn("cron: mark missed occurrence", "cron_id", c.ID, "err", err)
 		}
 		return
+	}
+	if len(c.Command) == 0 {
+		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
+		if appErr != nil {
+			l.log.Warn("cron: resolve app for exclusive binding", "cron_id", c.ID, "err", appErr)
+			return
+		}
+		_, bound, bindingErr := l.exclusiveCronBinding(ctx, c, app.AccountID)
+		if bindingErr != nil {
+			l.log.Warn("cron: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
+			return
+		}
+		if bound {
+			scheduledAt := sched.NextFireAt(boundary)
+			run, dispatchErr := l.dispatchExclusiveCron(ctx, c, app.AccountID, TriggerSchedule, scheduledAt, exclusiveCronScheduleIdempotencyKey(c.ID, scheduledAt))
+			if dispatchErr != nil && !isExclusiveCronTerminalAdmissionError(dispatchErr) {
+				l.log.Warn("cron: admit exclusive operation", "cron_id", c.ID, "err", dispatchErr)
+				return
+			}
+			if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+				l.log.Warn("cron: mark exclusive operation fire", "cron_id", c.ID, "err", err)
+			}
+			l.emitExclusiveCronFired(ctx, c, app.AccountID, scheduledAt, TriggerSchedule, run.ExclusiveOperationID, dispatchErr)
+			return
+		}
 	}
 	firedBoundary := now
 	if c.SchedulePolicy != nil {
@@ -4110,6 +4216,17 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	if !account.Active() {
 		return
 	}
+	binding, bound, bindingErr := l.exclusiveCronBinding(ctx, c, account.ID)
+	if bindingErr != nil {
+		l.log.Warn("cron command: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
+		return
+	}
+	if !bound && c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
+		if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
+			l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
+			return
+		}
+	}
 	commandStore, ok := store.(state.AppTaskStore)
 	if !ok {
 		l.log.Warn("cron command: app task store is unavailable", "cron_id", c.ID)
@@ -4141,8 +4258,33 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 			expectedLastFiredAt = &missed
 		}
 		scheduledFor := due[len(due)-1]
+		options := state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}
+		if bound {
+			if _, ok := store.(state.ExclusiveWorkStore); !ok {
+				l.log.Warn("cron command: exclusive operation store is unavailable", "cron_id", c.ID)
+				return
+			}
+			admission, admissionErr := exclusiveCommandCronAdmission(binding, c, account.ID, exclusiveCommandCronScheduleIdempotencyKey(c.ID, scheduledFor))
+			if admissionErr != nil {
+				l.log.Warn("cron command: encode exclusive operation request", "cron_id", c.ID, "err", admissionErr)
+				return
+			}
+			options.ExclusiveAdmission = &admission
+		}
 		task, occurrence, created, createErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
-			state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision})
+			options)
+		if bound && l.ops != nil {
+			outcome := "accepted"
+			switch {
+			case createErr != nil:
+				outcome = exclusiveAdmissionOutcome(createErr, false, false)
+			case occurrence.Status == "coalesced":
+				outcome = "joined"
+			case occurrence.Status == "skipped_overlap":
+				outcome = "rejected"
+			}
+			l.ops.ObserveExclusiveOperationAdmission("cron", outcome)
+		}
 		if errors.Is(createErr, state.ErrAppTaskDeploymentUnavailable) {
 			l.suspendCommandCronWithoutDeployment(ctx, c)
 			return
@@ -4156,7 +4298,13 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		}
 		if !created {
 			l.log.Info("cron command: scheduled occurrence recorded", "cron_id", c.ID, "occurrence_id", occurrence.ID, "status", occurrence.Status)
-			l.emitCommandCronFired(ctx, c, account.ID, now, occurrence.Status, "", TriggerSchedule)
+			l.emitCommandCronFired(ctx, c, account.ID, now, occurrence.Status, "", TriggerSchedule, occurrence.ExclusiveOperationID)
+			return
+		}
+		if occurrence.ExclusiveOperationID != "" {
+			l.log.Info("cron command: managed operation admitted", "cron_id", c.ID,
+				"occurrence_id", occurrence.ID, "operation_id", occurrence.ExclusiveOperationID)
+			l.emitCommandCronFired(ctx, c, account.ID, now, "ok", "", TriggerSchedule, occurrence.ExclusiveOperationID)
 			return
 		}
 		l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "occurrence_id", occurrence.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
@@ -4220,7 +4368,7 @@ func (l *Loop) suspendCommandCronWithoutDeployment(ctx context.Context, c state.
 	}
 }
 
-func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger) {
+func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger, operationIDs ...string) {
 	if l.audit == nil {
 		return
 	}
@@ -4228,12 +4376,16 @@ func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID
 	if trigger == TriggerManual {
 		eventName = AuditEventCronFiredManually
 	}
-	l.audit.Emit(ctx, eventName, &accountID, map[string]any{
+	payload := map[string]any{
 		"cron_id": c.ID, "app_id": c.AppID, "schedule": c.Schedule,
 		"task_id": taskID, "invocation_id": "", "instance_id": "",
 		"fired_at": firedAt.UTC().Format(time.RFC3339Nano), "status": outcome,
 		"trigger": string(trigger),
-	})
+	}
+	if len(operationIDs) > 0 && operationIDs[0] != "" {
+		payload["exclusive_operation_id"] = operationIDs[0]
+	}
+	l.audit.Emit(ctx, eventName, &accountID, payload)
 }
 
 func nonZeroSchedTimePtr(value time.Time) *time.Time {
@@ -4396,14 +4548,15 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		return CronRun{}, true
 	}
 	inv := state.Invocation{
-		AppID:     c.AppID,
-		AccountID: acct.ID,
-		Source:    state.InvocationCron,
-		Method:    "POST",
-		Path:      c.Path,
-		CronID:    &cronID,
-		Headers:   cronHeaders,
-		DueAt:     dueAt,
+		AppID:        c.AppID,
+		AccountID:    acct.ID,
+		Source:       state.InvocationCron,
+		Method:       "POST",
+		Path:         c.Path,
+		CronID:       &cronID,
+		Headers:      cronHeaders,
+		DueAt:        dueAt,
+		FailureRules: workpolicy.Clone(c.FailureRules),
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
@@ -4422,12 +4575,14 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
 		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
-		if _, err := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight); err != nil {
+		claimed, claimErr := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight)
+		if claimErr != nil {
 			// The general drain won pending -> dispatching. It now owns
 			// delivery, so invoking from this path would duplicate the fire.
-			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)
+			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", claimErr)
 			return CronRun{InvocationID: enq.ID}, true
 		}
+		inv = claimed
 	}
 	if l.gateway != nil {
 		// Invoke delivers the synthetic HTTP envelope through the
@@ -4436,6 +4591,23 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// (cmd/gatewayd-internal) does its own always-Wake internally and
 		// returns the live instance id on the echoed Invocation.
 		invokeOut, ierr := l.gateway.Invoke(ctx, c.AppID, inv)
+		classificationStamped := false
+		if c.FailureRules != nil && invokeOut.InstanceID != "" {
+			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+				l.log.Warn("cron: stamp classified invocation", "cron_id", c.ID, "inv", enq.ID, "err", err)
+			} else {
+				classificationStamped = true
+			}
+		}
+		if c.FailureRules != nil && l.settleCronWorkClassification(ctx, acct.Plan, inv, invokeOut, ierr) {
+			if ierr == nil && invokeOut.ResponseStatusCode < http.StatusBadRequest &&
+				workpolicy.Evaluate(c.FailureRules, workpolicy.Evidence{Succeeded: true, OutcomeCode: invokeOut.OutcomeCode}).Action == "complete" {
+				fireSucceeded = true
+				invocationID = enq.ID
+				instanceID = invokeOut.InstanceID
+			}
+			return CronRun{InvocationID: enq.ID, InstanceID: invokeOut.InstanceID, Success: fireSucceeded}, true
+		}
 		if ierr != nil {
 			l.log.Warn("cron: invoke", "cron_id", c.ID, "err", ierr)
 			// issue #791 — terminate the row. Before this, a failed
@@ -4470,8 +4642,10 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 			// so the drain's per-tick (state='pending' filter)
 			// never picks it up. The meter join counts this row
 			// once, against the live instance.
-			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
-				l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+			if !classificationStamped {
+				if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+					l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+				}
 			}
 			if err := l.engine.Store().CompleteInvocation(ctx, enq.ID, nil); err != nil {
 				l.log.Warn("cron: complete", "cron_id", c.ID, "err", err)
@@ -4500,6 +4674,66 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		l.log.Warn("cron: notify cron_fired", "err", err)
 	}
 	return CronRun{InvocationID: invocationID, InstanceID: instanceID, Success: fireSucceeded}, true
+}
+
+// settleCronWorkClassification applies a Cron's explicit application-outcome
+// policy to manual HTTP fires as well as scheduled invocations. A missing
+// response receipt stays distinct from a confirmed application response.
+func (l *Loop) settleCronWorkClassification(ctx context.Context, plan api.Plan, inv, response state.Invocation, dispatchErr error) bool {
+	if inv.FailureRules == nil {
+		return false
+	}
+	uncertain := response.ResponseStatusCode == 0 && dispatchErr != nil && !errors.Is(dispatchErr, ErrPermanentInvoke)
+	if response.ResponseStatusCode == 0 && !uncertain {
+		return false
+	}
+	evidence := workpolicy.Evidence{OutcomeCode: response.OutcomeCode}
+	if uncertain {
+		evidence.Uncertain = true
+	} else {
+		evidence.Succeeded = response.ResponseStatusCode < http.StatusBadRequest
+		evidence.HTTPStatus = response.ResponseStatusCode
+	}
+	decision := workpolicy.Evaluate(inv.FailureRules, evidence)
+	if decision.Action == "complete" {
+		store, ok := l.engine.Store().(state.ClassifiedInvocationCompletionStore)
+		if !ok {
+			l.log.Error("cron: classified completion is unsupported by store", "inv", inv.ID)
+			if err := l.engine.Store().CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
+				l.log.Warn("cron: complete invocation fallback", "inv", inv.ID, "err", err)
+			}
+			return true
+		}
+		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
+			l.log.Warn("cron: complete classified invocation", "inv", inv.ID, "err", err)
+		}
+		return true
+	}
+
+	retryAfter, budget := time.Duration(0), 0
+	if decision.Action == "retry" {
+		retryAfter = inv.RetryPolicy().Backoff(inv.Attempts)
+		if retryAfter <= 0 {
+			retryAfter = 5 * time.Second
+		}
+		budget = api.EffectiveRetryMaxAttempts(inv.RetryPolicy().MaxAttempts, api.MustLimitsFor(plan).MaxQueueAttempts)
+	}
+	message := fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
+	if dispatchErr != nil {
+		if uncertain {
+			message = "invoke receipt uncertain: " + dispatchErr.Error()
+		} else {
+			message = "invoke: " + dispatchErr.Error()
+		}
+	}
+	options := []state.FailOption{state.WithWorkClassification(decision, response.OutcomeCode)}
+	if uncertain && decision.Action == "hold" {
+		options = append(options, state.WithOutcome(state.OutcomeUncertain))
+	}
+	if err := l.engine.Store().FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
+		l.log.Warn("cron: settle classified invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+	}
+	return true
 }
 
 // ErrCronDisabled is the typed error returned by RunCronNow when
@@ -4531,6 +4765,10 @@ var ErrNoCapacity = errors.New("sched: no dispatch capacity")
 // (vs. cron.fired for the tick path) and the payload carries the same
 // fields plus trigger="manual".
 func (l *Loop) RunCronNow(ctx context.Context, cronID, accountID string) (CronRun, error) {
+	return l.runCronNowWithRequestID(ctx, cronID, accountID, middleware.NewRequestID())
+}
+
+func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, requestID string) (CronRun, error) {
 	c, err := l.engine.Store().CronByID(ctx, cronID)
 	if err != nil {
 		return CronRun{}, err
@@ -4539,6 +4777,21 @@ func (l *Loop) RunCronNow(ctx context.Context, cronID, accountID string) (CronRu
 		return CronRun{}, ErrCronDisabled
 	}
 	now := l.now()
+	if len(c.Command) == 0 {
+		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
+		if appErr != nil || app.AccountID != accountID {
+			return CronRun{}, state.ErrNotFound
+		}
+		_, bound, bindingErr := l.exclusiveCronBinding(ctx, c, accountID)
+		if bindingErr != nil {
+			return CronRun{}, bindingErr
+		}
+		if bound {
+			run, dispatchErr := l.dispatchExclusiveCron(ctx, c, accountID, TriggerManual, now, exclusiveCronManualIdempotencyKey(requestID))
+			l.emitExclusiveCronFired(ctx, c, accountID, now, TriggerManual, run.ExclusiveOperationID, dispatchErr)
+			return run, dispatchErr
+		}
+	}
 	run, ok := l.dispatchCronLocked(ctx, c, now, TriggerManual)
 	if !ok {
 		// Suspended-account guard rejects the fire. The deferred

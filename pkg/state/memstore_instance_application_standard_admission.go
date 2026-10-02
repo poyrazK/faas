@@ -137,7 +137,11 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 		return nil
 	}
 	if !bytes.Equal(capture.inputs, input) {
-		return ErrApplicationStandardRuntimeStale
+		matches, err := standardRuntimeInputsMatch(capture.inputs, input)
+		old := m.instances[ins.ID]
+		if err != nil || !matches || old.State == string(StateWaking) || old.State == string(StateColdBooting) {
+			return ErrApplicationStandardRuntimeStale
+		}
 	}
 	if capture.Managed && (ins.State == string(StateRunning) || ins.State == string(StateWarm) || ins.State == string(StateMigrating)) {
 		old := m.instances[ins.ID]

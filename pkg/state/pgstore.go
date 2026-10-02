@@ -409,9 +409,10 @@ func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error)
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
-		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
+		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id,
+		        runs_principal_id
 		 from api_keys where key_sha256 = $1`, hash)
-	return scanAPIKey(row)
+	return scanAPIKeyWithRunsPrincipal(row)
 }
 
 // AuthenticateKey resolves a bearer token to its account + key. It is
@@ -763,17 +764,30 @@ func (s *PgStore) AuthenticateKey(ctx context.Context, hash []byte) (Account, AP
 // PR 6 org_id: every SELECT/RETURNING reads the full twelve
 // columns.
 func scanAPIKey(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, false)
+}
+
+func scanAPIKeyWithRunsPrincipal(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, true)
+}
+
+func scanAPIKeyProjection(row pgx.Row, withRunsPrincipal bool) (APIKey, error) {
 	var (
-		k         APIKey
-		hashBytes []byte
-		expiresAt pgtype.Timestamptz
-		revokedAt pgtype.Timestamptz
-		rotated   *string
-		createdIP *string
-		parent    *string
+		k             APIKey
+		hashBytes     []byte
+		expiresAt     pgtype.Timestamptz
+		revokedAt     pgtype.Timestamptz
+		rotated       *string
+		createdIP     *string
+		parent        *string
+		runsPrincipal pgtype.UUID
 	)
-	if err := row.Scan(&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
-		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent); err != nil {
+	dest := []any{&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
+		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent}
+	if withRunsPrincipal {
+		dest = append(dest, &runsPrincipal)
+	}
+	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, ErrNotFound
 		}
@@ -793,6 +807,9 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 		k.CreatedIP = *createdIP
 	}
 	k.ParentKeyID = parent
+	if withRunsPrincipal {
+		k.RunsPrincipalID = pgUUIDString(runsPrincipal)
+	}
 	return k, nil
 }
 
@@ -3492,7 +3509,7 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 		    and state = 'running'`,
 		instanceID, currentNodeID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: mark instance migrating: %w", err)
+		return fmt.Errorf("state: mark instance migrating: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		// Peer rollback / owner change / row gone. The migration
@@ -15046,7 +15063,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
        work_fairness_digest, work_fairness_limit, platform_tenant_id,
-       occurrence_id, start_deadline_at`
+       occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15123,14 +15140,14 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 			 work_policy_name, work_key_digest, work_expires_at,
 			 work_sequence, work_policy_revision, work_fairness_digest,
 			 work_fairness_limit, platform_tenant_id, occurrence_id,
-			 start_deadline_at)
+			 start_deadline_at, failure_rules)
 		values
 			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
 			 coalesce(nullif($6,''),'pending'), $7, $8,
 			 $9, $10, $11, $12, $13,
 			 nullif($14,''), $15,
 			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid,
-			 nullif($29, '')::uuid, $30)
+			 nullif($29, '')::uuid, $30, $31::jsonb)
 		returning `+invocationSelectCols,
 		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
@@ -15140,7 +15157,7 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
 		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
 		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID,
-		occurrenceID, startDeadlineAt)
+		occurrenceID, startDeadlineAt, policyJSON(inv.FailureRules))
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -15437,6 +15454,10 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 	return s.completeInvocation(ctx, id, 0, result)
 }
 
+func (s *PgStore) CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
+	return s.completeInvocation(ctx, id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+}
+
 func (s *PgStore) CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
@@ -15444,7 +15465,7 @@ func (s *PgStore) CompleteKeyedInvocation(ctx context.Context, id string, attemp
 	return s.completeInvocation(ctx, id, attempt, result)
 }
 
-func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
+func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	// outcome (issue #791) is stamped alongside state so the cron
 	// run-history read never has to infer success from state.
 	//
@@ -15458,6 +15479,13 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
 	var quotaReserved bool
+	var decisionJSON any
+	var outcomeCode string
+	hasWorkClassification := len(classification) > 0
+	if hasWorkClassification {
+		decisionJSON = policyJSON(classification[0].Decision)
+		outcomeCode = classification[0].OutcomeCode
+	}
 	if err := tx.QueryRow(ctx, `
 		with target as materialized (
 			select id, account_id, quota_reserved
@@ -15474,10 +15502,12 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       received_at = coalesce(received_at, now()),
 		       last_error = '',
 		       result = coalesce($2, result),
+		       work_decision = case when $6 then $4::jsonb else work_decision end,
+		       outcome_code = case when $6 then $5 else outcome_code end,
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-		 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt).Scan(&accountID, &quotaReserved); err != nil {
+			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -15582,6 +15612,7 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 	// budget CASE stamps 'dead_letter' regardless of what the caller
 	// asked for, mirroring how that branch already overrides state.
 	failOpts := ApplyFailOptions(opts)
+	decisionJSON := policyJSON(failOpts.WorkDecision)
 	switch {
 	case retryAfter > 0 && budget > 0:
 		// Same int→text concat workaround as ClaimInvocation: pass
@@ -15599,13 +15630,15 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 					 for update
 				)
 				update invocations as invocation
-				    set state = case when attempts >= $4 then 'dead_letter' else 'pending' end,
+					    set state = case when attempts >= $4 then 'dead_letter' else 'pending' end,
 				        outcome = case when attempts >= $4 then 'dead_letter' else null end,
 				        due_at = case when attempts >= $4 then due_at else now() + $2::interval end,
 				        completed_at = case when attempts >= $4 then now() else completed_at end,
 				        lease_expires_at = null,
 				        quota_reserved = false,
-				        last_error = $3
+					        last_error = $3,
+					        work_decision = case when $8 then $6::jsonb else work_decision end,
+					        outcome_code = case when $8 then $7 else outcome_code end
 				    -- Do NOT bump attempts on transient re-queue;
 				    -- ClaimInvocation (line 2327) already incremented
 				    -- it for this dispatch attempt. Double-bumping would
@@ -15614,7 +15647,7 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 				  from target
 				 where invocation.id = target.id
 				 returning target.account_id, invocation.state, target.quota_reserved`
-		args = []any{id, retryText, lastError, budget, failOpts.ClaimAttempt}
+		args = []any{id, retryText, lastError, budget, failOpts.ClaimAttempt, decisionJSON, failOpts.OutcomeCode, failOpts.HasWorkClassification}
 		terminalSelect = true
 	case retryAfter > 0:
 		retryText := strconv.FormatInt(retryAfter.Microseconds(), 10) + " microseconds"
@@ -15632,11 +15665,13 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 				        due_at = now() + $2::interval,
 				        lease_expires_at = null,
 				        quota_reserved = false,
-				        last_error = $3
+					    last_error = $3,
+					    work_decision = case when $7 then $5::jsonb else work_decision end,
+					    outcome_code = case when $7 then $6 else outcome_code end
 				  from target
 				 where invocation.id = target.id
 				 returning target.account_id, invocation.state, target.quota_reserved`
-		args = []any{id, retryText, lastError, failOpts.ClaimAttempt}
+		args = []any{id, retryText, lastError, failOpts.ClaimAttempt, decisionJSON, failOpts.OutcomeCode, failOpts.HasWorkClassification}
 		terminalSelect = true
 	default:
 		query = `with target as materialized (
@@ -15652,11 +15687,13 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 				        outcome = $3,
 				        completed_at = now(),
 				        last_error = $2,
-				        quota_reserved = false
+					    quota_reserved = false,
+					    work_decision = case when $7 then $5::jsonb else work_decision end,
+					    outcome_code = case when $7 then $6 else outcome_code end
 				  from target
 				 where invocation.id = target.id
 				 returning target.account_id, invocation.state, target.quota_reserved`
-		args = []any{id, lastError, string(failOpts.Outcome), failOpts.ClaimAttempt}
+		args = []any{id, lastError, string(failOpts.Outcome), failOpts.ClaimAttempt, decisionJSON, failOpts.OutcomeCode, failOpts.HasWorkClassification}
 		terminalSelect = true
 	}
 	if !terminalSelect {
@@ -16348,7 +16385,8 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var scheduledAt, leaseExpires, receivedAt, completedAt, startDeadlineAt *time.Time
 	var queueName string
 	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination, occurrenceID *string
-	var payload, headers, result []byte
+	var payload, headers, result, failureRules, workDecision []byte
+	var outcomeCode string
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
 	var retryPolicy []byte
@@ -16369,6 +16407,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
 		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &occurrenceID, &startDeadlineAt,
+		&failureRules, &workDecision, &outcomeCode,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16424,6 +16463,21 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	if startDeadlineAt != nil {
 		inv.StartDeadlineAt = startDeadlineAt
 	}
+	if len(failureRules) > 0 {
+		var rules workpolicy.FailureRules
+		if err := json.Unmarshal(failureRules, &rules); err != nil {
+			return Invocation{}, fmt.Errorf("state: decode invocation failure rules: %w", err)
+		}
+		inv.FailureRules = &rules
+	}
+	if len(workDecision) > 0 {
+		var decision workpolicy.Decision
+		if err := json.Unmarshal(workDecision, &decision); err != nil {
+			return Invocation{}, fmt.Errorf("state: decode invocation work decision: %w", err)
+		}
+		inv.WorkDecision = &decision
+	}
+	inv.OutcomeCode = outcomeCode
 	if ackURL != nil {
 		inv.AckURL = *ackURL
 	}
@@ -25330,6 +25384,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "application_standard_scope_owner" {
 				return ErrInvalidArgument
+			}
+			if pgErr.ConstraintName == "service_capacity_protection" {
+				return &ServiceCapacityError{}
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended

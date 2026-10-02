@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestIssueOTLPThroughProductionRouter(t *testing.T) {
@@ -97,7 +99,15 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	token := issueCreateToken(t, e, app.Slug, dep)
 	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: `<script>alert("x")</script>`}
 	result := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
-	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + result.IssueID
+	unassigned := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=unassigned", nil, nil), 200)
+	if len(unassigned.Items) != 1 || unassigned.Items[0].ID != result.IssueID {
+		t.Fatalf("unassigned issue filter = %+v", unassigned.Items)
+	}
+	mine := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=me", nil, nil), 200)
+	if len(mine.Items) != 0 {
+		t.Fatalf("mine filter included unassigned issue: %+v", mine.Items)
+	}
+	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + result.IssueID + "&assignee=unassigned"
 	r := httptest.NewRequest("GET", page, nil)
 	e.addAdminSession(t, r)
 	w := httptest.NewRecorder()
@@ -107,6 +117,11 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatal("exception HTML not escaped")
+	}
+	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Most recently seen", "Most verified customers (24h)", "Minimum verified customers (24h)", "issue.impact_threshold_reached", "Customer-impact webhook alert", "Unassigned", `value="unassigned" selected`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("issues inbox missing %q", want)
+		}
 	}
 	var csrf *http.Cookie
 	for _, c := range w.Result().Cookies() {
@@ -137,6 +152,153 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 		if !valid && rec.Code < 400 {
 			t.Fatal("CSRF bypass")
 		}
+	}
+	form := url.Values{"csrf_token": {csrf.Value}, "minimum_customers": {"3"}}
+	policyRequest := httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/impact-alert-policy", strings.NewReader(form.Encode()))
+	policyRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range r.Cookies() {
+		policyRequest.AddCookie(c)
+	}
+	policyRequest.AddCookie(csrf)
+	policyResponse := httptest.NewRecorder()
+	e.h.ServeHTTP(policyResponse, policyRequest)
+	if policyResponse.Code != http.StatusSeeOther {
+		t.Fatalf("policy form %d %s", policyResponse.Code, policyResponse.Body.String())
+	}
+	policy := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issue-impact-alert-policy", nil, nil), http.StatusOK)
+	if !policy.Enabled || policy.MinimumCustomers != 3 {
+		t.Fatalf("dashboard did not persist impact policy: %+v", policy)
+	}
+}
+
+func TestIssueDashboardReplayQueuesMetadataOnlyMirrorInvocation(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	app := seedPGApp(t, e, "issue-replay")
+	source, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + strings.Repeat("a", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, CreatedAt: time.Now().UTC(), Revision: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), source.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(source): %v", err)
+	}
+	target, err := e.store.CreateDeployment(t.Context(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + strings.Repeat("b", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, CreatedAt: time.Now().UTC(), Revision: 43, Scope: "mirror-replay",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), target.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(target): %v", err)
+	}
+	rule, err := e.store.CreateMirrorRuleIfUnderQuota(t.Context(), state.CreateMirrorRuleParams{
+		AccountID: e.acct.ID, AppID: app.ID, SourceDeploymentID: source.ID,
+		MirrorDeploymentID: target.ID, Percent: 100, Enabled: true,
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatalf("CreateMirrorRuleIfUnderQuota: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	if err := e.store.InsertRequestTelemetry(t.Context(), sqlc.InsertRequestTelemetryParams{
+		AccountID:    pgtype.UUID{Bytes: uuid.MustParse(e.acct.ID), Valid: true},
+		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: uuid.MustParse(source.ID), Valid: true},
+		Route:        "GET /exports", Method: "GET", Status: 500, LatencyMs: 120,
+		TraceID:    pgtype.Text{String: traceID, Valid: true},
+		ReceivedAt: pgtype.Timestamptz{Time: now, Valid: true}, Count: 1,
+		UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__",
+	}); err != nil {
+		t.Fatalf("InsertRequestTelemetry: %v", err)
+	}
+	token := issueCreateToken(t, e, app.Slug, source)
+	event := api.IssueEvent{
+		EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "DateFormatError",
+		Message: "export date format rejected", TraceID: traceID,
+	}
+	created := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+	detail := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues/"+created.IssueID, nil, nil), http.StatusOK)
+	if len(detail.Events) != 1 || detail.Events[0].DebugRequestID == "" {
+		t.Fatalf("issue occurrence missing linked request: %+v", detail.Events)
+	}
+	occurrence := detail.Events[0]
+	pageURL := "/dashboard/apps/" + app.Slug + "/issues?issue=" + created.IssueID
+	pageReq := httptest.NewRequest(http.MethodGet, pageURL, nil)
+	e.addAdminSession(t, pageReq)
+	pageRec := httptest.NewRecorder()
+	e.h.ServeHTTP(pageRec, pageReq)
+	if pageRec.Code != http.StatusOK {
+		t.Fatalf("issue page %d: %s", pageRec.Code, pageRec.Body.String())
+	}
+	pageBody := pageRec.Body.String()
+	if !strings.Contains(pageBody, "Replay metadata to mirror") || !strings.Contains(pageBody, target.ID) || !strings.Contains(pageBody, "request bodies and credentials are excluded") {
+		t.Fatalf("issue replay form is missing target or safety copy: %s", pageBody)
+	}
+	var replayCSRF *http.Cookie
+	for _, cookie := range pageRec.Result().Cookies() {
+		if cookie.Name == dashboardDebugReplayCSRFCookie {
+			replayCSRF = cookie
+		}
+	}
+	if replayCSRF == nil {
+		t.Fatal("issue page did not issue debugger replay CSRF cookie")
+	}
+
+	form := url.Values{
+		"csrf_token": {replayCSRF.Value}, "mirror_deployment_id": {target.ID},
+		"return_issue_id": {created.IssueID}, "return_event_id": {occurrence.ID},
+		"return_event_cursor": {""}, "return_since": {""},
+	}
+	postReq := httptest.NewRequest(http.MethodPost,
+		"/dashboard/apps/"+app.Slug+"/debug/requests/"+occurrence.DebugRequestID+"/replay",
+		strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.addAdminSession(t, postReq)
+	postReq.AddCookie(replayCSRF)
+	postRec := httptest.NewRecorder()
+	e.h.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusSeeOther {
+		t.Fatalf("replay POST %d: %s", postRec.Code, postRec.Body.String())
+	}
+	location, err := url.Parse(postRec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("replay redirect: %v", err)
+	}
+	if location.Path != "/dashboard/apps/"+app.Slug+"/issues" || location.Query().Get("issue") != created.IssueID || location.Query().Get("replay_event") != occurrence.ID {
+		t.Fatalf("replay redirect lost issue scope: %s", location)
+	}
+	replayID := location.Query().Get("replay_id")
+	if _, err := uuid.Parse(replayID); err != nil {
+		t.Fatalf("replay redirect id %q is not an invocation ID", replayID)
+	}
+	invocation, err := e.store.InvocationByID(t.Context(), replayID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if invocation.Source != state.InvocationReplay || (len(invocation.Payload) != 0 && string(invocation.Payload) != "{}") {
+		t.Fatalf("replay invocation carried payload or wrong source: source=%s payload=%q", invocation.Source, invocation.Payload)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(invocation.Headers, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata[api.DebugReplayDeploymentIDHeader] != source.ID || metadata[api.DebugReplayMirrorRuleIDHeader] != rule.ID {
+		t.Fatalf("replay metadata = %#v, want source %s and mirror rule %s", metadata, source.ID, rule.ID)
+	}
+
+	receiptReq := httptest.NewRequest(http.MethodGet, location.String(), nil)
+	e.addAdminSession(t, receiptReq)
+	receiptRec := httptest.NewRecorder()
+	e.h.ServeHTTP(receiptRec, receiptReq)
+	if receiptRec.Code != http.StatusOK {
+		t.Fatalf("issue receipt %d: %s", receiptRec.Code, receiptRec.Body.String())
+	}
+	if body := receiptRec.Body.String(); !strings.Contains(body, "Mirror replay queued") || !strings.Contains(body, target.ID) || !strings.Contains(body, "Open replay in the request debugger") {
+		t.Fatalf("queued receipt is incomplete: %s", body)
 	}
 }
 

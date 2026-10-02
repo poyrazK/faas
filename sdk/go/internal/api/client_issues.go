@@ -2,17 +2,48 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/url"
+	"strconv"
 )
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
 func (c *Client) ListIssues(ctx context.Context, slug, state, environment, cursor string) (ListIssuesResponse, error) {
+	return c.ListIssuesFiltered(ctx, slug, state, environment, "", cursor)
+}
+
+func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environment, assignee, cursor string) (ListIssuesResponse, error) {
+	return c.ListIssuesWithOptions(ctx, slug, state, environment, assignee, "", 0, cursor)
+}
+
+func (c *Client) ListIssuesWithOptions(ctx context.Context, slug, state, environment, assignee, sortBy string, minCustomers int64, cursor string) (ListIssuesResponse, error) {
 	q := url.Values{}
 	q.Set("state", state)
 	q.Set("environment", environment)
+	if assignee != "" {
+		q.Set("assignee", assignee)
+	}
+	if sortBy != "" {
+		q.Set("sort", sortBy)
+	}
+	if minCustomers > 0 {
+		q.Set("min_customers", strconv.FormatInt(minCustomers, 10))
+	}
 	q.Set("cursor", cursor)
 	var out ListIssuesResponse
 	err := c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
+	return out, err
+}
+
+func (c *Client) GetIssueImpactAlertPolicy(ctx context.Context, slug string) (IssueImpactAlertPolicy, error) {
+	var out IssueImpactAlertPolicy
+	err := c.do(ctx, http.MethodGet, issueAppPath(slug)+"/issue-impact-alert-policy", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetIssueImpactAlertPolicy(ctx context.Context, slug string, in UpdateIssueImpactAlertPolicyRequest) (IssueImpactAlertPolicy, error) {
+	var out IssueImpactAlertPolicy
+	err := c.do(ctx, http.MethodPut, issueAppPath(slug)+"/issue-impact-alert-policy", in, &out)
 	return out, err
 }
 func (c *Client) GetIssue(ctx context.Context, slug, id, since, cursor string) (IssueDetail, error) {

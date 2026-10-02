@@ -38,6 +38,7 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 	}
 	invocation.AppID, invocation.AccountID = app.ID, app.AccountID
 	invocation.Source = InvocationCron
+	invocation.FailureRules = workpolicy.Clone(cron.FailureRules)
 	cronIDCopy := cronID
 	invocation.CronID = &cronIDCopy
 	if err := m.platformTenantInvocationAllowedLocked(invocation); err != nil {
@@ -183,6 +184,10 @@ func (m *MemStore) syncInvocationOccurrenceLocked(inv Invocation, now time.Time)
 	if !ok {
 		return
 	}
+	if inv.WorkDecision != nil {
+		occurrence.WorkDecision = workpolicy.Clone(inv.WorkDecision)
+	}
+	occurrence.OutcomeCode = inv.OutcomeCode
 	switch inv.State {
 	case InvocationPending:
 		if occurrence.StartedAt == nil {
@@ -201,7 +206,10 @@ func (m *MemStore) syncInvocationOccurrenceLocked(inv Invocation, now time.Time)
 			occurrence.FinishedAt = cloneTimePtr(inv.CompletedAt)
 		}
 	case InvocationFailed, InvocationDeadLetter:
-		if occurrence.StartedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
+		if inv.State == InvocationFailed && inv.WorkDecision != nil && inv.WorkDecision.Classification == "uncertain" {
+			occurrence.Status = "uncertain"
+			occurrence.Reason = inv.WorkDecision.Reason
+		} else if occurrence.StartedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
 			occurrence.Status = "missed_deadline"
 			occurrence.Reason = "invocation did not start before the occurrence start deadline"
 		} else {

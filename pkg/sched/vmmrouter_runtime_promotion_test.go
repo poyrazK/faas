@@ -1,4 +1,4 @@
-// adr: 386 — route fresh promotion authority without a legacy resume fallback.
+// adr: 429 — route fresh promotion authority without a legacy resume fallback.
 
 package sched
 

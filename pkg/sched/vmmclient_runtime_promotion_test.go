@@ -1,4 +1,4 @@
-// adr: 386 — promotion clients bind fresh authority to the historical paused receipt.
+// adr: 429 — promotion clients bind fresh authority to the historical paused receipt.
 
 package sched_test
 

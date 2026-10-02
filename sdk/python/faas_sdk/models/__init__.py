@@ -415,6 +415,7 @@ from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
+from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
 from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
@@ -492,6 +493,8 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_udp_listener_request import CreateUDPListenerRequest
+from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
@@ -605,6 +608,7 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
@@ -774,7 +778,30 @@ from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
+from .exclusive_app_task_operation_request import ExclusiveAppTaskOperationRequest
+from .exclusive_job_operation_request import ExclusiveJobOperationRequest
+from .exclusive_operation_accepted import ExclusiveOperationAccepted
+from .exclusive_operation_record import ExclusiveOperationRecord
+from .exclusive_operation_record_state import ExclusiveOperationRecordState
+from .exclusive_operation_request import ExclusiveOperationRequest
+from .exclusive_operation_request_invocation import ExclusiveOperationRequestInvocation
+from .exclusive_operation_request_invocation_headers import ExclusiveOperationRequestInvocationHeaders
+from .exclusive_operation_request_invocation_payload import ExclusiveOperationRequestInvocationPayload
+from .exclusive_trigger_binding_record import ExclusiveTriggerBindingRecord
+from .exclusive_trigger_binding_record_source import ExclusiveTriggerBindingRecordSource
+from .exclusive_trigger_binding_request import ExclusiveTriggerBindingRequest
+from .exclusive_work_policy_list import ExclusiveWorkPolicyList
+from .exclusive_work_policy_record import ExclusiveWorkPolicyRecord
 from .execution_artifact import ExecutionArtifact
+from .execution_artifact_grant_response import ExecutionArtifactGrantResponse
+from .execution_artifact_input import ExecutionArtifactInput
+from .execution_capabilities_response import ExecutionCapabilitiesResponse
+from .execution_capabilities_response_network_modes_item import ExecutionCapabilitiesResponseNetworkModesItem
+from .execution_capabilities_response_runtimes_item import ExecutionCapabilitiesResponseRuntimesItem
+from .execution_capabilities_response_unavailable_reasons_item import (
+    ExecutionCapabilitiesResponseUnavailableReasonsItem,
+)
+from .execution_capability_limits import ExecutionCapabilityLimits
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -784,6 +811,10 @@ from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
 from .execution_list_response import ExecutionListResponse
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
+from .execution_profile_capability import ExecutionProfileCapability
+from .execution_profile_capability_packages import ExecutionProfileCapabilityPackages
+from .execution_profile_capability_profile import ExecutionProfileCapabilityProfile
+from .execution_profile_capability_runtimes_item import ExecutionProfileCapabilityRuntimesItem
 from .execution_response import ExecutionResponse
 from .execution_response_packages import ExecutionResponsePackages
 from .execution_response_profile import ExecutionResponseProfile
@@ -791,6 +822,9 @@ from .execution_response_runtime import ExecutionResponseRuntime
 from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
+from .execution_workflow_response import ExecutionWorkflowResponse
+from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
+from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
 from .failure_rule import FailureRule
@@ -823,7 +857,12 @@ from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
 from .flag_request_evidence import FlagRequestEvidence
+from .flag_rollout_promotion import FlagRolloutPromotion
+from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
+from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
+from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
+from .flag_rule_rollout_unit import FlagRuleRolloutUnit
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
 from .flags_config import FlagsConfig
@@ -851,6 +890,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
@@ -891,6 +931,8 @@ from .inbound_webhook_receipt_response_status import InboundWebhookReceiptRespon
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
+from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
+from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
@@ -948,6 +990,8 @@ from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
 from .issue_impact import IssueImpact
+from .issue_impact_alert_policy import IssueImpactAlertPolicy
+from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
 from .issue_release import IssueRelease
@@ -1006,6 +1050,7 @@ from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
 from .list_issues_response import ListIssuesResponse
+from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
@@ -1154,6 +1199,7 @@ from .obs_health_response_operator_intent_outcome_missing_total import (
 )
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
 from .oidc_exchange_response import OIDCExchangeResponse
@@ -1410,6 +1456,7 @@ from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
+from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
@@ -1570,6 +1617,7 @@ from .put_outbound_binding_daily_request_budget_request import PutOutboundBindin
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
+from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1647,6 +1695,7 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
@@ -1674,6 +1723,9 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
+from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
+from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
 from .runtime_policy_component_status import RuntimePolicyComponentStatus
 from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
 from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
@@ -1692,6 +1744,8 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -1806,6 +1860,12 @@ from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
+from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
+from .tcp_listener_tls_certificate_status_status import TCPListenerTLSCertificateStatusStatus
+from .tcp_listener_tls_config import TCPListenerTLSConfig
+from .tcp_listener_tls_config_mode import TCPListenerTLSConfigMode
+from .tcp_listener_tls_status_response import TCPListenerTLSStatusResponse
+from .tcp_listener_tls_status_response_scope import TCPListenerTLSStatusResponseScope
 from .template_view import TemplateView
 from .template_view_category import TemplateViewCategory
 from .tenant_hostname_response import TenantHostnameResponse
@@ -1839,6 +1899,8 @@ from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
+from .udp_listener_response import UDPListenerResponse
+from .udp_listener_response_protocol import UDPListenerResponseProtocol
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
 from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
@@ -1902,6 +1964,7 @@ from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHe
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -1939,6 +2002,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
@@ -1948,6 +2012,7 @@ from .upload_start_response import UploadStartResponse
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
+from .upsert_exclusive_operation_trigger_binding_source import UpsertExclusiveOperationTriggerBindingSource
 from .upsert_work_policy_request import UpsertWorkPolicyRequest
 from .upsert_work_policy_request_max_running_per_key import UpsertWorkPolicyRequestMaxRunningPerKey
 from .upsert_work_policy_request_pending_updates import UpsertWorkPolicyRequestPendingUpdates
@@ -2411,6 +2476,7 @@ __all__ = (
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
+    "CreateExecutionArtifactGrantRequest",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
     "CreateIssueIngestTokenRequest",
@@ -2478,6 +2544,8 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateUDPListenerRequest",
+    "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
     "CronResponseKind",
@@ -2591,6 +2659,7 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeleteExclusiveOperationTriggerBindingSource",
     "DeleteSecretPrefer",
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
@@ -2760,7 +2829,28 @@ __all__ = (
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
+    "ExclusiveAppTaskOperationRequest",
+    "ExclusiveJobOperationRequest",
+    "ExclusiveOperationAccepted",
+    "ExclusiveOperationRecord",
+    "ExclusiveOperationRecordState",
+    "ExclusiveOperationRequest",
+    "ExclusiveOperationRequestInvocation",
+    "ExclusiveOperationRequestInvocationHeaders",
+    "ExclusiveOperationRequestInvocationPayload",
+    "ExclusiveTriggerBindingRecord",
+    "ExclusiveTriggerBindingRecordSource",
+    "ExclusiveTriggerBindingRequest",
+    "ExclusiveWorkPolicyList",
+    "ExclusiveWorkPolicyRecord",
     "ExecutionArtifact",
+    "ExecutionArtifactGrantResponse",
+    "ExecutionArtifactInput",
+    "ExecutionCapabilitiesResponse",
+    "ExecutionCapabilitiesResponseNetworkModesItem",
+    "ExecutionCapabilitiesResponseRuntimesItem",
+    "ExecutionCapabilitiesResponseUnavailableReasonsItem",
+    "ExecutionCapabilityLimits",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",
@@ -2770,6 +2860,10 @@ __all__ = (
     "ExecutionListResponse",
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
+    "ExecutionProfileCapability",
+    "ExecutionProfileCapabilityPackages",
+    "ExecutionProfileCapabilityProfile",
+    "ExecutionProfileCapabilityRuntimesItem",
     "ExecutionResponse",
     "ExecutionResponsePackages",
     "ExecutionResponseProfile",
@@ -2777,6 +2871,9 @@ __all__ = (
     "ExecutionResponseStatus",
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
+    "ExecutionWorkflowResponse",
+    "ExecutionWorkflowStatusCounts",
+    "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
     "FailureRule",
@@ -2809,7 +2906,12 @@ __all__ = (
     "FlagOutcomesResponse",
     "FlagOutcomeType",
     "FlagRequestEvidence",
+    "FlagRolloutPromotion",
+    "FlagRolloutPromotionReason",
+    "FlagRolloutPromotionRequest",
+    "FlagRolloutPromotionStatus",
     "FlagRule",
+    "FlagRuleRolloutUnit",
     "FlagsBundle",
     "FlagsConfig",
     "FlagsConfigGroups",
@@ -2837,6 +2939,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
@@ -2877,6 +2980,8 @@ __all__ = (
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
     "IngestIssueOTLPSignal",
+    "InjectScenarioTestChaosRequest",
+    "InjectScenarioTestChaosResponse",
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
@@ -2934,6 +3039,8 @@ __all__ = (
     "IssueEventResponse",
     "IssueFrame",
     "IssueImpact",
+    "IssueImpactAlertPolicy",
+    "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
     "IssueRelease",
@@ -2992,6 +3099,7 @@ __all__ = (
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
     "ListIssuesResponse",
+    "ListIssuesSort",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -3136,6 +3244,7 @@ __all__ = (
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
     "ObsNodeOperationPreflight",
+    "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
     "OIDCExchangeResponse",
@@ -3372,6 +3481,7 @@ __all__ = (
     "ProgrammaticAuthResponsePlan",
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
+    "ProgressiveRollout",
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",
@@ -3512,6 +3622,7 @@ __all__ = (
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
+    "PutOutboundRunsBindingRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -3589,6 +3700,7 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperatorRuntimeConfigRequest",
@@ -3614,6 +3726,9 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimeConfigRestartStatusResponse",
+    "RuntimeConfigRestartStatusResponseFailureReason",
+    "RuntimeConfigRestartStatusResponseStatus",
     "RuntimePolicyComponentStatus",
     "RuntimePolicyComponentStatusScope",
     "RuntimePolicyComponentStatusState",
@@ -3632,6 +3747,8 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
@@ -3740,6 +3857,12 @@ __all__ = (
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
+    "TCPListenerTLSCertificateStatus",
+    "TCPListenerTLSCertificateStatusStatus",
+    "TCPListenerTLSConfig",
+    "TCPListenerTLSConfigMode",
+    "TCPListenerTLSStatusResponse",
+    "TCPListenerTLSStatusResponseScope",
     "TemplateView",
     "TemplateViewCategory",
     "TenantHostnameResponse",
@@ -3773,6 +3896,8 @@ __all__ = (
     "TriggerSourceType3Type1",
     "TriggerWorkBinding",
     "TrustedSigner",
+    "UDPListenerResponse",
+    "UDPListenerResponseProtocol",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",
     "UpdateAccountReleaseWebhookRequestDeliveryFormat",
@@ -3832,6 +3957,7 @@ __all__ = (
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueImpactAlertPolicyRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
@@ -3861,6 +3987,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
@@ -3870,6 +3997,7 @@ __all__ = (
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",
+    "UpsertExclusiveOperationTriggerBindingSource",
     "UpsertWorkPolicyRequest",
     "UpsertWorkPolicyRequestMaxRunningPerKey",
     "UpsertWorkPolicyRequestPendingUpdates",

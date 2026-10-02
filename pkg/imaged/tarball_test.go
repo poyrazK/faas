@@ -11,14 +11,22 @@ import (
 // one file per `name` with body `body`. Used to feed fake layer blobs into
 // the imaged handler's ManifestPuller so the build path stays honest.
 func gzTar(t *testing.T, files map[string]string) []byte {
+	return gzTarWithModes(t, files, nil)
+}
+
+func gzTarWithModes(t *testing.T, files map[string]string, modes map[string]int64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 	for name, body := range files {
+		mode := int64(0o644)
+		if selected, ok := modes[name]; ok {
+			mode = selected
+		}
 		hdr := &tar.Header{
 			Name:     name,
-			Mode:     0o644,
+			Mode:     mode,
 			Size:     int64(len(body)),
 			Typeflag: tar.TypeReg,
 		}

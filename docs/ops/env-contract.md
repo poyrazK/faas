@@ -382,6 +382,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_SCHEDD_FC_VERSION` | schedd | `dev-only` |  |  | `` | pins the Firecracker version instead of detecting it, so KVM-free acceptance can reach the snapshot-restore path and the ADR-005 staleness contract; must never be set on a production host, where the running binary is the only truthful source |
 | `FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` |  |
+| `FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` | schedd, shared | `dropin` |  | 0 | `` | ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification |
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
@@ -429,6 +430,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TCPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_TLS_CERT_DIR` | gatewayd-public | `default` |  |  | `` | optional absolute directory of atomically provisioned hostname.pem certificate/key bundles for raw TCP TLS termination |
 | `FAAS_TCPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
@@ -457,6 +459,16 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TWO_NODE_NODE_B` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_TWO_NODE_REMOTE` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_TWO_NODE_SSH_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
+| `FAAS_UDPD_ALLOWED_SOURCE_CIDRS` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | IPv4 literal (default 0.0.0.0); hostnames and IPv6 rejected before dependency dialing; delivered by udpd.env |
+| `FAAS_UDPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_SCHEDD_TARGET` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_SCHEDD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_SCHEDD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
 | `FAAS_UPSTREAM_AFFINITY` | schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
 | `FAAS_UPSTREAM_AFFINITY_TTL` | schedd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE` | meterd, schedd | `default` |  |  | `` | off by design until the §9.A rollout gate (spec) |
@@ -474,6 +486,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_STREAM_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_TARGET_URL` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_TCP_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
+| `FAAS_VMMD_UDP_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMM_SOCK` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_CA_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |  | `` |  |

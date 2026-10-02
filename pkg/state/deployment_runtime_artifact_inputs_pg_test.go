@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 393. Producer identity and renewable leases on real PostgreSQL.
+// adr: 429. Producer identity and renewable leases on real PostgreSQL.
 
 import "testing"
 

@@ -5044,18 +5044,42 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
 			return 0
 		}
-		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
+		flags, positional := splitArgsForFlags(args[1:])
+		fs := newFlagSet("keys add", flag.ContinueOnError)
+		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		if err := fs.Parse(flags); err != nil {
 			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
+			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			return 1
+		}
+		var scopes []string
+		if flagWasSet(fs, "scopes") {
+			if strings.TrimSpace(*scopesCSV) == "" {
+				return printErr("Invalid scopes", errors.New("--scopes must contain at least one scope"))
+			}
+			for _, scope := range strings.Split(*scopesCSV, ",") {
+				scope = strings.TrimSpace(scope)
+				if scope == "" {
+					return printErr("Invalid scopes", errors.New("--scopes cannot contain an empty scope"))
+				}
+				scopes = append(scopes, scope)
+			}
+			var err error
+			scopes, err = api.NormalizeCreateKeyScopes(scopes)
+			if err != nil {
+				return printErr("Invalid scopes", err)
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), args[1], nil)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
 			return printErr("Create failed", err)
 		}

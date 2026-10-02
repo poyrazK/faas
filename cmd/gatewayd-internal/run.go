@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -83,6 +84,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // scheddSocket is schedd's gRPC unix socket (ADR-018). Phase 2 /
@@ -577,11 +579,10 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		out.Result = encoded
 	}
 	if a.store != nil {
-		var storedMirrorBodyHash, storedSourceBodyHash []byte
-		if rule.IncludeBody {
-			storedMirrorBodyHash = mirrorBodyHash
-			storedSourceBodyHash = sourceBodyHash
-		}
+		// This replay API compares exact body hashes supplied by its caller,
+		// unlike live mirror comparisons which use keyed per-request HMACs.
+		// Retain only the resulting bodyDiff bit; raw SHA-256 fingerprints of
+		// response bodies may be low-entropy and are not written to the ledger.
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
 			MirrorRuleID:         rule.ID,
 			AccountID:            rule.AccountID,
@@ -593,8 +594,6 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			SourceStatusCode:     sourceStatus,
 			LatencyMs:            latencyMs,
 			SourceLatencyMs:      sourceLatency,
-			BodyHash:             storedMirrorBodyHash,
-			SourceBodyHash:       storedSourceBodyHash,
 			StatusDiff:           statusDiff,
 			SchemaDiff:           false,
 			BodyDiff:             bodyDiff,
@@ -710,6 +709,12 @@ func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv s
 // server echoes the status to schedd so a runner-generated handler error is
 // reported with its real HTTP code and retryable 5xx responses remain distinct.
 func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, int, error) {
+	if inv.ExclusiveClaim != nil {
+		parts := strings.Split(inv.ExclusiveClaim.IncarnationID, "/")
+		if len(parts) != 3 || target.InstanceID != parts[0] || target.WakeID != parts[1] || target.NodeID != parts[2] {
+			return inv, 0, fmt.Errorf("gateway synth: target does not match exclusive owner incarnation")
+		}
+	}
 	var err error
 	inv, err = admitPlatformTenantInvocation(ctx, a.store, appID, inv)
 	if err != nil {
@@ -821,6 +826,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if inv.ExclusiveClaim != nil {
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
@@ -831,6 +840,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
 	}
+	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	body := rec.Body.Bytes()
 	if len(body) > 0 {
 		// Function handlers conventionally return JSON. Preserve valid JSON
@@ -859,9 +869,17 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	return inv, rec.Code, append([]byte(nil), body...), nil
 }
 
+func scheduledInvocationOutcomeCode(headers http.Header) string {
+	values := headers.Values(api.ScheduledOutcomeCodeHeader)
+	if len(values) != 1 || !workpolicy.ValidOutcomeCode(values[0]) {
+		return ""
+	}
+	return values[0]
+}
+
 func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {
 	switch source {
-	case state.InvocationAsyncInvoke, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
+	case state.InvocationAsyncInvoke, state.InvocationExclusiveOperation, state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron:
 		return true
 	default:
 		return false
@@ -3518,6 +3536,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			AllowAlias: guestServiceAliasAllowed,
+			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
+				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
+			},
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and

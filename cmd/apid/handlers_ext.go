@@ -1474,7 +1474,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -3663,10 +3667,6 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
-	if len(cronCommand) == 0 && req.FailureRules != nil {
-		api.WriteProblem(w, api.ErrValidation("failure rules require a deployment command cron"))
-		return
-	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
 	// Fires BEFORE AppByID so a Free customer gets a clean 402 rather
 	// than a 404 (no app can be theirs anyway, but the wire shape
@@ -3806,10 +3806,6 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if req.Path != nil && len(c.Command) > 0 {
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
-		return
-	}
-	if len(c.Command) == 0 && req.FailureRules != nil {
-		api.WriteProblem(w, api.ErrValidation("failure rules require a deployment command cron"))
 		return
 	}
 	var retryOptions []state.CronOptions

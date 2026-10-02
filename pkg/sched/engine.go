@@ -418,6 +418,8 @@ type Engine struct {
 	notif  Notifier
 	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
 	log    *slog.Logger
+	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
+	serviceReconcileSubmit func(context.Context, string)
 	// ops is the per-daemon Prometheus registry (issue #1059 /
 	// ADR-127). e.ops.WakeFailure is the schedd-side emitter for
 	// the wake-failure observability surface (cluster A commit 3
@@ -523,6 +525,10 @@ type Engine struct {
 	// WithRebalanceConfig. The same per-engine-instance rationale
 	// applies (no global state).
 	rebalanceMaxPerTick int
+	// ADR-421: notification and periodic sweeps share one bounded batch. The
+	// cursor advances past refused apps so a large app cannot starve later ones.
+	rebalanceMu     sync.Mutex
+	rebalanceCursor string
 
 	// migrateLiveMaxPerTick (Tier A5 / ADR-066) caps the
 	// per-drain-event batch for live-instance migration. Default
@@ -4377,6 +4383,21 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	if isServiceReplicaPlacementSpread(ctx) {
+		capacity, err := e.store.ServiceCapacityPlacement(ctx)
+		if err != nil {
+			return placementSnapshot{}, fmt.Errorf("sched: placement: read service recovery slots: %w", err)
+		}
+		if capacity.Enabled {
+			eligible := make([]state.ComputeNode, 0, len(nodes))
+			for _, node := range nodes {
+				if slots, healthy := capacity.Nodes[node.ID]; healthy && slots.Used < slots.Slots {
+					eligible = append(eligible, node)
+				}
+			}
+			nodes = eligible
+		}
+	}
 	// One pass over the fleet — use fresh vmmd capacity where available, and
 	// resolve all misses through one bulk store aggregate (Tier A1). The
 	// ledger's per-node UsedVCPU remains an independent local reservation view.
@@ -4627,219 +4648,6 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	}
 	e.log.Info("sched: claim unplaced: stamped owner",
 		"app_id", appID, "node_id", placement.NodeID, "node_name", placement.Name)
-	return nil
-}
-
-// RebalanceOrphanedApps reassigns active/evicted_cold apps orphaned
-// by a dead node to the local schedd's owner_node. Tier A4
-// (ADR-064). Triggered by the rebalancer watcher's
-// compute_node_changed(active=false) handler; also invoked
-// once at schedd cold-start with deadNodeID="" to sweep apps
-// missed by a missed notify.
-//
-// Contract (mirrors the post-#509 placement-claim rationale):
-//
-//   - Idempotent. A peer schedd's claim + our conditional
-//     UPDATE means only one wins per app (RowsAffected()==0 on
-//     the loser; surfaced as state.ErrConflict).
-//   - Paced. A per-app cooldown (default 60s,
-//     api.RebalanceCooldownSeconds) suppresses flap-loops; the
-//     apps.reassigned_at column is the timestamp source.
-//   - Capped. Per-drain-event work is bounded by
-//     api.RebalanceMaxPerTickPerNode (default 50) so a
-//     5,000-app orphaned node doesn't monopolise the worker
-//     pool. Excess apps stay pinned on the dead node — the
-//     next compute_node_changed re-fires (or
-//     heartbeat-staleness in issue #97 §3).
-//   - Admission-aware. The rebalancer threads the live
-//     compute_node_used_mb into the per-app decision so we
-//     never blow api.RAMAdmissionCeilingMB on a 9,500-MB node
-//     by re-stamping a 1,024-MB app.
-//   - Outcome-observable. Each decision increments
-//     schedd_rebalance_decisions_total{outcome=…}
-//     (migrated / conflict / no_headroom / cooldown / no_eligibility).
-//
-// deadNodeID is the node whose apps we want to migrate.
-//
-// When non-empty: filter ListOrphanedApps results to that
-// node in memory (the SQL already excludes active owners).
-// When empty: cold-start sweep — every orphaned app is in
-// scope regardless of which dead node originally owned it.
-func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) error {
-	if e.ownerNodeID == "" {
-		// Legacy single-box posture: there's no peer to migrate
-		// to. The orphaned apps are already ours in spirit (the
-		// synthetic default-local is the only active owner); do
-		// nothing and let the next cold-boot stamp clean rows.
-		e.log.Info("sched: rebalance skipped — no owner_node_id",
-			"dead_node_id", deadNodeID)
-		return nil
-	}
-	// Every schedd receives the same compute_node_changed notification. The
-	// scheduler on the node being drained must not race its healthy peers and
-	// reassign the orphan back to itself; that keeps public routing pinned to
-	// the node which is about to stop. Live migration already has this guard.
-	if deadNodeID != "" && deadNodeID == e.ownerNodeID {
-		e.log.Info("sched: rebalance skipped — source node cannot reclaim its own apps",
-			"dead_node_id", deadNodeID)
-		return nil
-	}
-
-	// Load the full orphan set; cap + cooldown filter are SQL
-	// constraints, not in-memory filters, so the caller's
-	// Store already trims the result set. Per-engine overrides
-	// (FAAS_REBALANCE_COOLDOWN_SECONDS /
-	// FAAS_REBALANCE_MAX_PER_TICK via WithRebalanceConfig)
-	// take precedence over the api.* constants.
-	cooldownSec := api.RebalanceCooldownSeconds
-	maxPerTick := api.RebalanceMaxPerTickPerNode
-	if e.rebalanceCooldownSeconds > 0 {
-		cooldownSec = e.rebalanceCooldownSeconds
-	}
-	if e.rebalanceMaxPerTick > 0 {
-		maxPerTick = e.rebalanceMaxPerTick
-	}
-	orphans, err := e.store.ListOrphanedApps(ctx, cooldownSec, maxPerTick)
-	if err != nil {
-		return fmt.Errorf("sched: rebalance: list orphaned: %w", err)
-	}
-	if len(orphans) == 0 {
-		return nil
-	}
-
-	// Read the live per-node used RAM once up-front so the
-	// admission filter accounts for everything currently
-	// resident on this schedd. A deadNodeID-driven event does
-	// not change this (only successful reassignments do, and
-	// we decrement locally as we go).
-	usedMB, err := e.store.ComputeNodeUsedMB(ctx, e.ownerNodeID)
-	if err != nil {
-		return fmt.Errorf("sched: rebalance: read used mb: %w", err)
-	}
-
-	// Per-node ceiling for the admission check. Fall back to
-	// the global api.RAMAdmissionCeilingMB for the legacy
-	// single-box posture (and for un-registered compute_nodes).
-	ceiling := e.admissionCeilingForOwn(ctx)
-	if ceiling <= 0 {
-		ceiling = api.RAMAdmissionCeilingMB
-	}
-
-	migrated, conflict, noHeadroom, cooldown, ineligible := 0, 0, 0, 0, 0
-	defer func() {
-		// One summary line per call — keeps the logs compact
-		// without losing the per-outcome breakdown, which
-		// operators read off the metric for normal ops.
-		e.log.Info("sched: rebalance batch done",
-			"dead_node_id", deadNodeID,
-			"migrated", migrated, "conflict", conflict,
-			"no_headroom", noHeadroom, "cooldown", cooldown,
-			"ineligible", ineligible,
-			"processed", migrated+conflict+noHeadroom+cooldown+ineligible)
-	}()
-
-	now := time.Now().UTC()
-	for _, app := range orphans {
-		// deadNodeID filter (cold-start sweep with empty
-		// deadNodeID skips this — every orphan is in scope).
-		if deadNodeID != "" && app.NodeID != deadNodeID {
-			continue
-		}
-		// Defense-in-depth: the SQL filter on store.ListOrphanedApps
-		// already restricts to non-deleted app statuses, but the
-		// in-memory check documents the contract + survives a
-		// future store-port without a SQL review. apps.status
-		// CHECK is 'active'|'evicted_cold'|'deleted', not instance
-		// states ('parked'/'stopped' are instance states — see
-		// pkg/state/machine.go).
-		if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
-			if e.ops != nil {
-				e.ops.RebalanceDecisions("no_eligibility").Inc()
-			}
-			ineligible++
-			continue
-		}
-		// Cooldown filter — apps.reassigned_at is the
-		// authoritative source (set by ReassignAppOwner). The
-		// SQL filter already excludes in-window apps; the
-		// in-memory recheck tolerates a clock-skewed row that
-		// would otherwise escape via the SQL "< now() - interval"
-		// comparison. Conservative: this branch can only over-
-		// skip, never over-claim.
-		if app.ReassignedAt != nil && now.Sub(*app.ReassignedAt) < time.Duration(cooldownSec)*time.Second {
-			if e.ops != nil {
-				e.ops.RebalanceDecisions("cooldown").Inc()
-			}
-			cooldown++
-			continue
-		}
-		// Admission filter — admission ceiling is conservative
-		// (the API surface is "ceilings are inclusive"; billable
-		// RAM is RAMMB + api.PerVMOverheadMB so we count the
-		// overhead in the prospective reservation).
-		neededMB := int64(app.RAMMB) + int64(api.PerVMOverheadMB)
-		if usedMB+neededMB > int64(ceiling) {
-			if e.ops != nil {
-				e.ops.RebalanceDecisions("no_headroom").Inc()
-			}
-			noHeadroom++
-			continue
-		}
-		// Optimistically reserve the headroom; a lost race
-		// rolls it back below. This keeps the cap honest
-		// within a batch — a 50-app drain doesn't double-count
-		// the per-app RAM.
-		usedMB += neededMB
-		if err := e.store.ReassignAppOwner(ctx, app.ID, app.NodeID, e.ownerNodeID); err != nil {
-			usedMB -= neededMB
-			if errors.Is(err, state.ErrConflict) {
-				// Peer won between our ListOrphanedApps
-				// and our ReassignAppOwner. Expected under
-				// contention; keep going.
-				if e.ops != nil {
-					e.ops.RebalanceDecisions("conflict").Inc()
-				}
-				conflict++
-				continue
-			}
-			// Non-conflict failures (network blip, FK
-			// violation, ErrNotFound on a soft-deleted
-			// app) surface as a per-app Warn but do NOT
-			// halt the batch — the remaining apps still
-			// need a decision. A non-conflict error on the
-			// last app of a batch is recoverable on the next
-			// compute_node_changed re-fire, so swallowing
-			// it (vs. returning) is the safer default.
-			e.log.Warn("sched: rebalance: reassign failed",
-				"app_id", app.ID, "from_node", app.NodeID,
-				"to_node", e.ownerNodeID, "err", err)
-			continue
-		}
-		migrated++
-		if e.ops != nil {
-			e.ops.RebalanceDecisions("migrated").Inc()
-		}
-
-		// Emit the per-app reassignment notify. The gateway's
-		// per-node schedd client cache subscribes to this
-		// channel and evicts the now-stale dial target for
-		// the dead node; pkg/sched/placement_claim.go's
-		// subscriber drops the rebalanced kind so no re-
-		// entry loop happens.
-		if e.notif != nil {
-			payload := string(safetext.JSONObject(appPlacementChange{
-				Kind: "rebalanced", AppID: app.ID, FromNode: app.NodeID, ToNode: e.ownerNodeID,
-			}))
-			if err := e.notif.Notify(ctx, db.NotifyAppChanged, payload); err != nil {
-				e.log.Warn("sched: rebalance: notify rebalanced",
-					"app_id", app.ID, "from", app.NodeID,
-					"to", e.ownerNodeID, "err", err)
-			}
-		}
-		e.log.Info("sched: rebalance: migrated app",
-			"app_id", app.ID, "slug", app.Slug,
-			"from_node", app.NodeID, "to_node", e.ownerNodeID)
-	}
 	return nil
 }
 
@@ -5169,19 +4977,6 @@ func (e *Engine) pressureSweepCounterValue(appID string) int {
 	e.pressureSweepMu.Lock()
 	defer e.pressureSweepMu.Unlock()
 	return e.pressureSweepCounter[appID]
-}
-
-// admissionCeilingForOwn returns the active per-node
-// admission ceiling for ownerNodeID, or 0 when the row is
-// missing/un-registered. Mirrors choosePlacementLocked's
-// lookup at engine.go:1665-1678; small enough to inline.
-// Called with e.mu NOT held — the lookup is read-only.
-func (e *Engine) admissionCeilingForOwn(ctx context.Context) int {
-	n, err := e.store.ComputeNodeByID(ctx, e.ownerNodeID)
-	if err != nil {
-		return 0
-	}
-	return n.AdmissionCeilingMB
 }
 
 // resolveNodeCeiling returns (ceilingMB, vcpuBudget) for a nodeID
@@ -7262,6 +7057,18 @@ func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) e
 }
 
 func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) error {
+	if barrier, ok := e.store.(state.ExclusiveSnapshotStore); ok {
+		if err := barrier.BeginExclusiveSnapshot(ctx, ins.ID); err != nil {
+			return fmt.Errorf("sched: park: exclusive operation owns or is capturing this instance: %w", err)
+		}
+		defer func() {
+			endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := barrier.EndExclusiveSnapshot(endCtx, ins.ID); err != nil {
+				e.log.Error("sched: park: release exclusive snapshot barrier", "instance", ins.ID, "err", err)
+			}
+		}()
+	}
 	// Issue #667 / ADR-078 — waitUntil drain watchdog. If the instance
 	// has active waitUntil tasks (ins.TailCount > 0), the runner is
 	// still draining them in-process after the response was flushed.
@@ -7471,7 +7278,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// above keeps the resumed guest routable and is canceled by activity.
 	now := time.Now()
 	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
-		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
+		return fmt.Errorf("snapshotAndPark: enter snapshotting: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
 	if e.events != nil {

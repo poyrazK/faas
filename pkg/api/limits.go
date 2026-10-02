@@ -103,6 +103,14 @@ const (
 	ImageSignatureVerificationTTL                   = 24 * time.Hour
 )
 
+// OCI healthcheck image durations are nanoseconds. Docker permits zero for
+// inheritance and otherwise requires at least one millisecond.
+const (
+	OCIHealthcheckMinimumDuration      = time.Millisecond
+	OCIHealthcheckDefaultStartInterval = 5 * time.Second
+	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (
@@ -138,6 +146,8 @@ const (
 	FlagsMaxVariants           = 16
 	FlagsMaxCustomers          = 1000
 	FlagsMaxCustomerIDBytes    = 128
+	FlagsMaxSubjects           = 1000
+	FlagsMaxSubjectIDBytes     = 128
 	FlagsMaxBundleBytes        = 256 << 10
 	FlagsMaxEvidencePerRequest = 32
 	FlagsMaxEvidenceBytes      = 16 << 10
@@ -150,6 +160,15 @@ const (
 	FlagsMaxOutcomeGroups      = 100
 	FlagsMaxCursorBytes        = 2048
 	FlagsMaxConfigVersion      = int64(9007199254740991)
+)
+
+// Progressive rollout controls are structural bounds, not plan allowances.
+const (
+	FlagsMaxProgressiveStages                = 8
+	FlagsMaxProgressiveMinimumRequests int64 = 100000000
+	FlagsMaxProgressiveLatencyMS             = 600000
+	FlagsMinProgressiveWindowSeconds         = 60
+	FlagsMaxProgressiveWindowSeconds         = 604800
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a
@@ -247,6 +266,25 @@ const (
 	InvoiceHistoryTimeout = 2 * time.Minute
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
+	// Managed operations bound durable configuration, queue growth, and leases.
+	// MaxExclusivePoliciesPerAccount counts non-retired policies (ADR-427).
+	MaxExclusivePoliciesPerAccount = 64
+	MaxExclusivePendingPerAccount  = 10000
+	MinExclusiveLeaseSeconds       = 5
+	MaxExclusiveLeaseSeconds       = 300
+	DefaultExclusiveLeaseSeconds   = 30
+	MaxExclusiveAttemptSeconds     = 86400
+	MaxExclusiveMembers            = 100
+	MaxExclusiveIdentityBytes      = 128
+	MaxExclusiveEffectsPerCommit   = 32
+	DefaultExclusiveAttempts       = 5
+	MaxExclusiveAttempts           = 100
+	DefaultExclusiveRetrySeconds   = 5
+	MaxExclusiveRetrySeconds       = 3600
+	MaxExclusiveResultBytes        = 1 << 20
+	MaxExclusiveRequestBytes       = 2 << 20
+	MaxExclusiveErrorBytes         = 1024
+	MaxExclusiveInspectionRows     = 100
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -404,6 +442,13 @@ func PlanMeetsFullRootfs(p Plan) bool {
 	}
 	return false
 }
+
+// OCI identity resolution shares the existing image ownership trust boundary
+// and guest passwd read budget across main, companion, probe, and task launch.
+const (
+	OCIIdentityIDMax        = 65534
+	OCIIdentityFileMaxBytes = 1 << 20
+)
 
 // UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
@@ -4502,11 +4547,15 @@ const (
 	//
 	// RebalanceMaxPerTickPerNode caps the per-drain-event batch so
 	// a 5,000-app orphaned node doesn't monopolise the schedd
-	// worker pool. Excess apps stay pinned; the next
-	// compute_node_changed event retries (heartbeat-staleness also
-	// re-fires). Tunable via FAAS_REBALANCE_MAX_PER_TICK.
+	// worker pool. The ADR-421 periodic sweep retries excess apps.
+	// Tunable via FAAS_REBALANCE_MAX_PER_TICK.
 	RebalanceCooldownSeconds   = 60
 	RebalanceMaxPerTickPerNode = 50
+	// Ownership recovery runs independently of best-effort node notifications.
+	// Each sweep is bounded even when Postgres is slow; later pages remain due.
+	OwnershipRecoveryIntervalSeconds     = 5
+	OwnershipRecoveryTimeoutSeconds      = 30
+	OwnershipRecoveryStoreTimeoutSeconds = 5
 
 	// Tier A5 (cross-node live-instance migration, ADR-070
 	// follow-up to ADR-064): pacing + lease window on
@@ -7810,6 +7859,67 @@ func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	return reason, forbidden
 }
 
+// UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
+// a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
+const UDPDatagramMaxBytes = 65507
+
+// UDPStreamMaxBytes and UDPStreamMaxDatagrams bound each direction of one
+// admitted peer session. Empty datagrams consume the message budget.
+const UDPStreamMaxBytes int64 = 64 * 1024 * 1024
+const UDPStreamMaxDatagrams uint64 = 65536
+
+// UDPIdleTimeoutDefault bounds quiet admitted peer sessions at the edge.
+const UDPIdleTimeoutDefault = 30 * time.Second
+
+// UDP peer buffering stays small during admission/wake. A full peer queue
+// drops the newest datagram instead of blocking the shared public listener.
+const UDPPeerQueueDepth = 4
+const UDPMaxPeersDefault = 64
+const UDPMaxPeersPerAccountDefault = 16
+
+const UDPReplyQueueDepth = 64
+const UDPWriteTimeout = time.Second
+
+// UDP rate budgets apply independently in both directions for each account
+// across the listeners sharing one edge limiter.
+const UDPPacketsPerSecondPerAccount = 1000
+const UDPPacketBurstPerAccount = 200
+const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
+const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
+const UDPRateLimitMaxAccounts = 4096
+const UDPRateLimitIdleTTL = 2 * time.Minute
+
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999
+
+// UDPListenerRefreshInterval bounds intent reconciliation latency at the edge.
+const UDPListenerRefreshInterval = 2 * time.Second
+
+// UDPListenerReadTimeout bounds a durable intent refresh without replacing the
+// last successfully validated socket set on a transient read failure.
+const UDPListenerReadTimeout = 5 * time.Second
+
+// UDPAdmissionTimeout bounds queued peers waiting for scheduler admission.
+const UDPAdmissionTimeout = 30 * time.Second
+
+// TCPListenerTLSHandshakeTimeout bounds public listener TLS negotiation.
+const TCPListenerTLSHandshakeTimeout = 10 * time.Second
+
+const TCPListenerTLSHostnameMaxBytes = 253
+const TCPListenerTLSDNSLabelMaxBytes = 63
+
+// TCPListenerTLSBundleMaxBytes bounds a certificate chain plus private key.
+const TCPListenerTLSBundleMaxBytes = 64 * 1024
+
+// TCPListenerTLSObservationMaxAge prevents a stopped edge from advertising
+// certificate readiness indefinitely through its last durable observation.
+const TCPListenerTLSObservationMaxAge = 60 * time.Second
+
+const TCPListenerTLSObservationEdgeIDMaxBytes = 128
+
+const TCPListenerTLSObservationRefreshInterval = 15 * time.Second
+const TCPListenerTLSObservationWriteTimeout = 2 * time.Second
+
 // Issues limits bound ingestion and storage independently of trace sampling.
 const (
 	IssueEventMaxBytes    = 64 << 10
@@ -7833,6 +7943,9 @@ type IssueLimits struct {
 	TokensPerApp    int
 }
 
+// IssueImpactAlertMaxCustomers bounds the configurable customer-impact alert threshold.
+const IssueImpactAlertMaxCustomers = 10000
+
 func (p Plan) IssueLimits() IssueLimits {
 	switch p {
 	case PlanHobby:
@@ -7849,6 +7962,40 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// DeploymentTrafficPercentTotal is the complete serving traffic weight.
+const DeploymentTrafficPercentTotal = 100
+
+// NamespaceBridgeReadinessTimeout allows the TCP helper's 30-second guest dial
+// plus launcher overhead, while bounding an unresponsive TCP or UDP helper.
+const NamespaceBridgeReadinessTimeout = 35 * time.Second
+
+// NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
+// readiness record, including its delimiter and any diagnostic text.
+const NamespaceBridgeReadinessMaxBytes = 4096
+
+// WorkloadPortCapMax bounds image metadata and the guest endpoint environment.
+// Listeners are a local workload contract, not an unbounded service registry.
+const WorkloadPortCapMax = 16
+
+// UDPListenerReservationsPerAppMax bounds all durable reservations, including
+// disabled ones and reservations retained across manifest changes.
+const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
+
+// ADR-420: service recovery is bounded independently of notification volume.
+const (
+	ServiceRecoveryPollIntervalSeconds    = 5
+	ServiceRecoveryHealthyIntervalSeconds = 30
+	ServiceRecoveryRetryBaseSeconds       = 5
+	ServiceRecoveryRetryMaxSeconds        = 300
+	ServiceRecoveryAttemptTimeoutSeconds  = 600
+	ServiceRecoveryFailureCountMax        = 32
+	ServiceRecoveryConcurrentApps         = 8
+	ServiceRecoveryBatchSize              = 32
+)
+
+// ServiceCapacityMinimumHosts is the minimum fleet for one-host compute recovery (ADR-422).
+const ServiceCapacityMinimumHosts = 2
 
 // Versioned work-policy wire bounds; plan retry/task/concurrency limits still
 // apply independently to every execution admitted under one of these policies.

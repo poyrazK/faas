@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
@@ -952,6 +953,10 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// RunsPrincipalID is a stable, internal key-family identity used to
+	// partition disposable execution receipts between narrow Runs agents.
+	// It is preserved across key rotation and never returned in API DTOs.
+	RunsPrincipalID string `json:"-"`
 	// PlatformTenantID is set only on the synthetic APIKey projection for a
 	// tenant-bound self-service bearer. Persisted account keys leave it empty.
 	PlatformTenantID string
@@ -3022,6 +3027,7 @@ type FireNowRequest struct {
 	RequestedAt  time.Time
 	Status       FireNowStatus
 	InvocationID *string // nil while pending/running; set on terminal
+	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
 	FinishedAt   *time.Time
@@ -3461,6 +3467,7 @@ const (
 	AppWebhookEventIssueReopened                    AppWebhookEvent = "issue.reopened"
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
+	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3495,6 +3502,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueReopened,
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
+	AppWebhookEventIssueImpactThresholdReached,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -3684,6 +3692,8 @@ type TCPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	TLSMode      api.TCPListenerTLSMode
+	TLSHostname  string
 }
 
 // AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
@@ -3875,7 +3885,8 @@ func (e *CorsPresetQuotaError) Is(target error) bool {
 type InvocationSource string
 
 const (
-	InvocationAsyncInvoke InvocationSource = "async_invoke"
+	InvocationAsyncInvoke        InvocationSource = "async_invoke"
+	InvocationExclusiveOperation InvocationSource = "exclusive_operation"
 	// InvocationInboundWebhook is a provider-verified public callback that
 	// apid accepted durably before acknowledgement. Keeping it distinct from
 	// async_invoke gives the guest an unspoofable platform-owned source marker.
@@ -3928,9 +3939,12 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID        string `json:"id"`
-	AppID     string `json:"app_id"`
-	AccountID string `json:"account_id"`
+	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
+	// is never stored in the invocation ledger or exposed by the customer API.
+	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	ID             string               `json:"id"`
+	AppID          string               `json:"app_id"`
+	AccountID      string               `json:"account_id"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
@@ -3973,6 +3987,16 @@ type Invocation struct {
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.
 	Outcome *InvocationOutcome `json:"outcome,omitempty"`
+	// FailureRules is the immutable policy snapshot pinned when a scheduled
+	// HTTP Cron occurrence is created. WorkDecision and OutcomeCode record the
+	// most recent confirmed application result used by that policy.
+	FailureRules *workpolicy.FailureRules `json:"-"`
+	WorkDecision *workpolicy.Decision     `json:"-"`
+	OutcomeCode  string                   `json:"-"`
+	// ResponseStatusCode is returned by the internal gateway dispatch RPC and
+	// is never persisted. It distinguishes a confirmed HTTP response from a
+	// missing completion receipt.
+	ResponseStatusCode int `json:"-"`
 	// DeadlineAt is the absolute hard-stop time for this invocation
 	// (ADR-134 PR-B). NULL means "use the plan default"
 	// (MaxAsyncInvocationDeadlineSeconds from pkg/api.Limits). The
@@ -4198,6 +4222,9 @@ const (
 	OutcomeDeadLetter InvocationOutcome = "dead_letter"
 	OutcomeSuperseded InvocationOutcome = "superseded"
 	OutcomeExpired    InvocationOutcome = "expired"
+	// OutcomeUncertain records that delivery may have reached the app but no
+	// completion receipt was received and policy selected hold.
+	OutcomeUncertain InvocationOutcome = "uncertain"
 )
 
 // FailOptions carries the optional, non-breaking extras for
@@ -4214,6 +4241,11 @@ type FailOptions struct {
 	// ClaimAttempt fences a keyed dispatch against a newer lease of the
 	// same invocation. Zero is valid only for pre-claim or unkeyed work.
 	ClaimAttempt int
+	WorkDecision *workpolicy.Decision
+	OutcomeCode  string
+	// HasWorkClassification distinguishes an explicit empty outcome code from
+	// a call site that does not update scheduled-work classification.
+	HasWorkClassification bool
 }
 
 // FailOption mutates FailOptions. See WithOutcome.
@@ -4229,6 +4261,16 @@ func WithOutcome(o InvocationOutcome) FailOption {
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithWorkClassification persists the application result and policy decision
+// with the invocation transition so occurrence history cannot disagree with it.
+func WithWorkClassification(decision workpolicy.Decision, outcomeCode string) FailOption {
+	return func(f *FailOptions) {
+		f.WorkDecision = &decision
+		f.OutcomeCode = outcomeCode
+		f.HasWorkClassification = true
+	}
 }
 
 // ApplyFailOptions folds opts over the defaults. Exported so both
@@ -8640,4 +8682,19 @@ const (
 
 func (e *AppLogDrainQuotaError) Error() string {
 	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
+}
+
+// UDPListener is an app-owned UDP endpoint with a stable public port.
+// Its port namespace is independent from TCP listener endpoints.
+type UDPListener struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ListenerName string
+	GuestPort    int
+	PublicPort   int
+	Protocol     string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

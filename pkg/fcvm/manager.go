@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -426,6 +427,12 @@ type Instance struct {
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly bool
+	// ExecutionID is the Runs execution principal (the one-shot instance ID).
+	// The lease and grant list are host-only broker inputs and must never be
+	// serialized into guest-visible state.
+	ExecutionID                     string   `json:"-"`
+	ExecutionLeaseToken             string   `json:"-"`
+	ExecutionOutboundIntegrationIDs []string `json:"-"`
 	// AppTaskOnly marks a fresh deployment-attached VM that waits for exactly
 	// one command. It retains normal app networking but cannot be used as an
 	// ordinary routed app instance or by the source-execution API.
@@ -2618,6 +2625,32 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 	return inst.AppID, inst.AccountID, nil
 }
 
+// ExecutionOutboundIdentity returns the current lease-fenced Runs principal
+// only when the requested integration was included in the scheduler grant
+// set. The single lock-held lookup prevents a destroy/reuse race from mixing
+// identity fields from different live instances.
+func (m *Manager) ExecutionOutboundIdentity(instance, integrationID string) (accountID, executionID, leaseToken string, err error) {
+	ids, normalizeErr := api.NormalizeExecutionIntegrationIDs([]string{integrationID})
+	if normalizeErr != nil {
+		return "", "", "", fmt.Errorf("fcvm: execution outbound identity: invalid integration id")
+	}
+	if m == nil {
+		return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: not authorized", instance)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.ExecutionOnly || inst.ExecutionID == "" || inst.ExecutionLeaseToken == "" {
+		return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: not authorized", instance)
+	}
+	for _, allowedID := range inst.ExecutionOutboundIntegrationIDs {
+		if allowedID == ids[0] {
+			return inst.AccountID, inst.ExecutionID, inst.ExecutionLeaseToken, nil
+		}
+	}
+	return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: integration not granted", instance)
+}
+
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account
 // principal for a live guest stream under one lock. Keeping the tuple atomic
 // prevents a park/reuse race from mixing identities during runtime secret
@@ -3151,6 +3184,10 @@ type WakeRequest struct {
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
 	ExecutionOnly bool
+	// Runs broker metadata is host-only and is accepted only from
+	// WakeExecution. Ordinary app wake paths leave these fields empty.
+	ExecutionLeaseToken             string   `json:"-"`
+	ExecutionOutboundIntegrationIDs []string `json:"-"`
 	// AppTaskOnly is the internal lifecycle fence set only by WakeAppTask.
 	// The guest receives scoped app runtime files and normal networking, but
 	// skips HTTP readiness, characterization, and background app monitors.
@@ -3349,6 +3386,10 @@ type ExecutionWakeRequest struct {
 	VcpuCount     int
 	MemSizeMiB    int
 	CPUMillicores int
+	// LeaseToken and OutboundIntegrationIDs are trusted host-side broker
+	// metadata. They are never serialized into the guest request or manifest.
+	LeaseToken             string   `json:"-"`
+	OutboundIntegrationIDs []string `json:"-"`
 }
 
 // WakeExecution restores or cold-boots one dedicated networkless execution
@@ -3371,6 +3412,7 @@ func (m *Manager) WakeExecution(ctx context.Context, req ExecutionWakeRequest) (
 	}
 	return m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, AccountID: req.AccountID,
+		ExecutionLeaseToken: req.LeaseToken, ExecutionOutboundIntegrationIDs: req.OutboundIntegrationIDs,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount,
 		MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
 		Snapshot: req.Snapshot, Plan: req.Plan, Runtime: req.Runtime,
@@ -3840,6 +3882,25 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		req.EgressPorts = append([]uint16{}, policy.ports...)
 	}
 	m.mu.Unlock()
+
+	if req.ExecutionOnly {
+		integrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(req.ExecutionOutboundIntegrationIDs)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("wake %s: invalid execution outbound integration grants", req.Instance)
+		}
+		if len(integrationIDs) > 0 {
+			leaseID, parseErr := uuid.Parse(req.ExecutionLeaseToken)
+			if parseErr != nil {
+				return nil, fmt.Errorf("wake %s: execution outbound grants require a valid lease fence", req.Instance)
+			}
+			req.ExecutionLeaseToken = leaseID.String()
+		} else if req.ExecutionLeaseToken != "" {
+			return nil, fmt.Errorf("wake %s: execution lease fence requires outbound integration grants", req.Instance)
+		}
+		req.ExecutionOutboundIntegrationIDs = integrationIDs
+	} else if req.ExecutionLeaseToken != "" || len(req.ExecutionOutboundIntegrationIDs) != 0 {
+		return nil, fmt.Errorf("wake %s: execution broker metadata requires execution-only mode", req.Instance)
+	}
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
 	}
@@ -3890,7 +3951,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
 	}
-	lease.MemoryMaxMiB = req.MemSizeMiB
+	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
 	m.mu.Lock()
@@ -4316,7 +4377,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, req.MemSizeMiB, req.CPUMillicores)
+			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -4412,10 +4473,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			"observed_port", report.ObservedPort, "exit", report.ExitCode,
 			"port_norm_mode", report.PortNormalizationMode)
 	}
+	executionID := ""
+	if req.ExecutionOnly {
+		executionID = req.Instance
+	}
 	inst := &Instance{
 		Lease: lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
-		AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
+		ExecutionID:                     executionID,
+		ExecutionLeaseToken:             req.ExecutionLeaseToken,
+		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
+		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
 		LivenessProbe:    append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:   append(json.RawMessage(nil), req.ReadinessProbe...),
@@ -4614,7 +4682,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
+	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
@@ -4742,7 +4810,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// guard against double-spec'ing the main workload.
 		LayerKey:   layerKeyForColdBoot(req),
 		VcpuCount:  req.VcpuCount,
-		MemSizeMiB: req.MemSizeMiB,
+		MemSizeMiB: wakeGuestMemoryMiB(req),
 		Tap:        nc.Tap,
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
@@ -7441,4 +7509,24 @@ func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []u
 		m.mu.Unlock()
 	}
 	return errors.Join(errs...)
+}
+
+// wakeGuestMemoryMiB matches scheduler admission and billing: main RAM plus
+// explicitly allocated companion RAM. The host adds its overhead separately.
+func wakeGuestMemoryMiB(req WakeRequest) int {
+	companionRAM := make([]int, len(req.Sidecars))
+	for i, workload := range req.Sidecars {
+		companionRAM[i] = workload.RamMB
+	}
+	return api.BillableRAMMBWithSidecars(req.MemSizeMiB, companionRAM) - api.PerVMOverheadMB
+}
+
+// Older companion snapshots contain only the main app's physical RAM.
+// A snapshot cannot grow RAM on restore; unknown or different logical memory
+// lengths must use the cold fallback. Single-workload compatibility is retained.
+func companionSnapshotMemoryMatches(req WakeRequest) bool {
+	if len(req.Sidecars) == 0 {
+		return true
+	}
+	return req.Snapshot != nil && req.Snapshot.MemBytes == int64(wakeGuestMemoryMiB(req))<<20
 }

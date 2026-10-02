@@ -16,6 +16,10 @@ gregale run --runtime node22 --file handler.js --watch
 gregale run --runtime node22 --file handler.js --watch --json
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
 gregale runs list --status running --json
+gregale runs list --workflow-id incident-42 --json
+gregale runs workflow incident-42 --json
+gregale runs workflow run --manifest incident.json --json
+gregale runs capabilities --json
 gregale runs status <execution-id>
 gregale runs cancel <execution-id>
 ```
@@ -30,22 +34,149 @@ terminal event also includes the complete `receipt` for agent consumers.
 only a regular, non-symlink file. `--dir` walks regular files below the
 directory (skipping `.git`), rejects symlinks and special files, and enforces a
 256-file / 1 MiB source cap before upload. `--entrypoint` must be a normalized
-relative path present in the bundle. Use `--json` for a machine-readable
+relative path present in the bundle. Repeat `--artifact-input
+RUN_ID:ARTIFACT_NAME=DESTINATION_PATH` with `--dir` to stage successful
+same-account run artifacts in that bundle. Use `--json` for a machine-readable
 receipt.
+
+Agents can call `gregale runs capabilities --json` before submitting work. The
+response reports the account's Runs entitlement, accepted runtimes and
+profiles, network mode, plan limits, and fixed request caps. It lets an agent
+reject or resize work locally before upload. `admission_available` means the
+account is entitled and the apid admission gate is enabled; it does not promise
+that schedd dispatch or a requested profile image is ready at that moment.
 
 ## API
 
-The API is account-scoped and requires a Bearer API key:
+The API requires a Bearer API key. A key granted only `runs:read` and/or
+`runs:write` sees runs created by that key family. Separate agent keys in the
+same account therefore have independent receipts, event streams, cancellation
+rights, and artifact handoff. Existing broad keys with `admin`, `apps:read`, or
+`deploy:write` retain account-wide access; dashboard sessions remain account
+wide as well.
 
-* `POST /v1/executions` — admit a run and return a queued receipt.
-* `GET /v1/executions` — list account-scoped receipts with `limit`, `offset`, and optional `status` filters.
-* `GET /v1/executions/{id}` — read the current or terminal receipt.
-* `GET /v1/executions/{id}/events` — stream ordered status/output events over SSE; reconnect with `after` or `Last-Event-ID`.
-* `DELETE /v1/executions/{id}` — request idempotent cancellation.
+* `POST /v1/executions` — admit a run and return a queued receipt; requires `runs:write`, `deploy:write`, or `admin`.
+* `GET /v1/executions/capabilities` — read the account's Runs admission contract and request limits; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
+* `GET /v1/executions` — list receipts visible to the caller with `limit`, `offset`, and optional `status` filters; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
+* `GET /v1/executions?workflow_id=...` — list receipts in one workflow, with the same visibility and pagination rules.
+* `GET /v1/execution-workflows/{workflow_id}` — aggregate lifecycle counts and terminal-run usage for one visible workflow.
+* `GET /v1/executions/{id}` — read the current or terminal receipt; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
+* `GET /v1/executions/{id}/events` — stream ordered status/output events over SSE; reconnect with `after` or `Last-Event-ID`; requires `runs:read`, `runs:write`, `apps:read`, or `admin`.
+* `DELETE /v1/executions/{id}` — request idempotent cancellation; requires `runs:write`, `deploy:write`, or `admin`.
+
+`runs:write` includes Reads, so an agent can create work and inspect its
+receipt and event stream using one narrow key. The stable owner identity belongs
+to the API-key family and survives key rotation. Runs created before ownership
+tracking have no agent owner; only broad account principals can see them.
+Creating a new API key creates a new agent boundary, even when it receives the
+same Runs scopes as another key.
+
+An orchestrator can set `workflow_id` and an optional `step_label` on each
+`POST /v1/executions` request. The workflow ID is a caller-generated grouping
+value (1–96 ASCII letters, digits, periods, underscores, colons, or hyphens);
+the step label is bounded to 128 UTF-8 bytes. The label requires a workflow ID.
+Both values are control-plane metadata: the guest receives neither field, and
+each execution still uses a new microVM and ephemeral scratch filesystem.
+
+Workflow filters and summaries follow the same ownership boundary as run
+receipts. If two agent keys happen to use the same workflow ID, each narrow key
+sees only its own runs and usage. Sharing an artifact through a one-time grant
+does not expose the producer's workflow metadata. Broad account credentials
+can aggregate all matching runs. The workflow summary reports counts for every
+lifecycle state; its wall time, CPU time, output bytes, and maximum per-run peak
+memory cover terminal runs only.
+
+`gregale runs workflow run --manifest PLAN.json` is a restartable sequential
+runner for agent-owned plans. Each step is an ordinary Run with a namespaced
+step label; Gregale persists its receipt, event log, result, and artifacts as
+usual. The label contains a short digest of the complete manifest, including
+its version and every step request, so changing a later step cannot silently
+reuse earlier receipts. The control plane enforces one `gwf:` step receipt per
+workflow and API-key family; if two copies of the same manifest resume at once,
+the runner adopts the receipt created by the other copy. Before creating Runs,
+the CLI checks every pending step against the account's current runtime,
+profile, network, and statically knowable request limits. The API checks again
+at admission because capabilities can change after preflight, and artifact
+size and ownership depend on the producer's stored receipt.
+Later steps can consume the previous JSON result or explicitly named artifacts
+from earlier successful steps. If a step uses artifact inputs with inline
+`source`, the runner wraps that source as a one-file ephemeral bundle. If the
+CLI exits or the machine restarts, rerun the same manifest and workflow ID:
+completed steps are reused, in-flight steps are watched to terminal state, and
+later steps continue only after success. A failed step stops the plan. The
+runner does not retry a terminal failure or cancel a Run when local waiting is
+interrupted, so it will not silently repeat a side effect. The manifest remains
+with the caller and must be supplied again; this command does not create a
+persistent guest workspace or a server-side workflow definition. JSON output
+includes a `plan_id` digest, a `complete` flag, and retains the current Run
+receipt if local waiting is interrupted. Use a new `workflow_id` when you want
+to run an edited manifest.
+
+```json
+{
+  "workflow_id": "incident-42",
+  "version": "v1",
+  "steps": [
+    {
+      "label": "collect",
+      "request": {
+        "runtime": "python313",
+        "source": "print('collect evidence')",
+        "output_files": ["evidence.json"]
+      }
+    },
+    {
+      "label": "analyze",
+      "input_from_previous_result": true,
+      "artifact_inputs": [
+        {"from_step": "collect", "name": "evidence.json", "path": "input/evidence.json"}
+      ],
+      "request": {
+        "runtime": "python313",
+        "source": "print(input)"
+      }
+    }
+  ]
+}
+```
+
+The manifest supports up to 16 sequential steps. Step labels are unique within
+the plan. Its short `version` is namespaced into the persisted step labels.
+Keep the manifest unchanged when resuming the same workflow ID and version: the
+runner reuses matching step receipts and does not compare source contents. Use
+a new workflow ID whenever an already-started plan changes. Each step still
+gets its own normal Run limits, execution, result budget, and billing.
+
+```json
+{
+  "workflow_id": "incident-42",
+  "step_label": "collect logs",
+  "runtime": "python313",
+  "source": "def main(input, context): return {'items': input}"
+}
+```
+
+The response receipt echoes the workflow metadata. Use
+`GET /v1/executions?workflow_id=incident-42` to inspect its visible run receipts
+and `GET /v1/execution-workflows/incident-42` for aggregate counts and usage.
+
+Successful submissions and accepted cancellation requests emit the account
+audit events `execution.created` and `execution.cancel_requested`. For API-key
+requests, the audit actor is `api:<key-id>` and the metadata includes the key
+ID and sanitized label. The payload records the execution ID, runtime, and
+normalized profile; it excludes source, input, result, stdout/stderr, artifact
+bytes, and host details.
 
 The event stream is backed by a bounded control-plane replay log. It does not
 provide a persistent guest workspace: each run still uses a fresh microVM and
 its ephemeral scratch filesystem is destroyed before terminal acknowledgement.
+
+`GET /v1/executions/capabilities` is a read-only account-scoped preflight for
+agents. Its profile matrix describes the API contract and declared package
+set, while `limits` contains plan-specific resource bounds and fixed bundle and
+artifact caps. `admission_available` combines plan entitlement with the apid
+gate only; scheduler dispatcher and image deployment readiness remain runtime
+conditions and must not be inferred from this response.
 
 Output is persisted into that replay log while the guest is still running.
 Schedulers negotiate the additive vmmd streaming transport when it is
@@ -61,6 +192,43 @@ injection, and persistent volumes are intentionally not supported. Source
 bundles contain regular file bytes only—there is no symlink, device, or host
 path representation. Source and input are encrypted before durable admission
 and are never returned by reads.
+
+## Managed outbound integrations
+
+A Run may name already-bound managed integrations in the optional
+`integration_ids` request field. This list grants access only for that
+Run; an app binding does not grant Run access. Each call is authorized against
+the current Runs binding and integration policy. `network.mode` remains
+`none`: the guest has no network interface, DNS, general egress, or provider
+credentials. The trusted runtime wrapper exposes a temporary loopback helper
+which sends only through Gregale's host broker and `outboundd`.
+
+JavaScript can call:
+
+```js
+const response = await context.outbound.request(integrationId, {
+  method: "GET",
+  path: "/v1/issues?state=open",
+});
+const issues = JSON.parse(response.body);
+```
+
+Python uses the same request fields:
+
+```python
+response = context["outbound"]["request"](
+    integration_id, method="GET", path="/v1/issues?state=open"
+)
+issues = json.loads(response["body"])
+```
+
+The helper accepts an integration ID, an allowed HTTP method, a relative
+provider path, and an optional JSON body. It does not accept origins, caller
+headers, credentials, or redirect targets. Responses contain status, a small
+safe header set, and a text body. Request and response bodies are capped at
+1 MiB each; the whole Run is capped at 128 calls and 8 MiB of broker frames.
+These bytes exist only for the active Run and do not create a workspace or
+persisted disk state.
 
 ## Preinstalled dependency profiles
 
@@ -132,6 +300,59 @@ When dispatch is enabled, schedd uses one worker by default. Set
 the bounded worker pool; each account's plan concurrency limit still applies,
 and the scheduler rotates claims across accounts so one busy tenant cannot
 monopolize the pool.
+
+## Pass artifacts between runs
+
+An agent can use `artifact_inputs` when submitting an entrypoint bundle to
+stage up to eight successful-run artifacts in the new guest's ephemeral
+bundle. A Runs-only key can directly reference runs from its own key family;
+each reference names the source execution and artifact, plus the destination
+path:
+
+```json
+{
+  "runtime": "python313",
+  "entrypoint": "analyze.py",
+  "files": [{"path": "analyze.py", "content": "...base64..."}],
+  "artifact_inputs": [{
+    "execution_id": "<successful-run-id>",
+    "name": "clean.csv",
+    "path": "input/clean.csv"
+  }]
+}
+```
+
+Admission verifies the source receipt, success status, artifact checksum, and
+the new run's plan byte limit before sealing the copied bytes with its request.
+Broad account principals can directly reference any account artifact. For
+least-privilege sharing between separate agent keys, the producer can create a
+short-lived, single-use grant for one named artifact:
+
+```http
+POST /v1/executions/<producer-run-id>/artifact-grants
+Content-Type: application/json
+
+{"artifact_name":"clean.csv","expires_in_seconds":300}
+```
+
+The response contains a bearer `token` once. Share it with the intended agent
+over the orchestrator's secure channel. The receiver supplies only that token
+and its destination path; it cannot read the source receipt, events, other
+artifacts, or cancel the producer's run:
+
+```json
+{"artifact_inputs":[{"grant_token":"rag_<one-time-token>","path":"input/clean.csv"}]}
+```
+
+Grants expire after 30 seconds to one hour (five minutes by default), can be
+revoked before redemption with `DELETE /v1/execution-artifact-grants/<grant-id>`,
+and are consumed atomically with the receiving run's admission. Concurrent
+replays cannot redeem the same grant twice. The database stores only a hash of
+the token. Grant creation, redemption, and revocation are audited without the
+token or artifact bytes. Once redeemed, the new run has its own encrypted
+request and ephemeral guest copy; revocation cannot remove that admitted copy.
+Artifact handoff requires a bundle request with an `entrypoint`; source-string
+requests can use a one-file bundle when they also need staged artifacts.
 
 ## Scheduler observability
 

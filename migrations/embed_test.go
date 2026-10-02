@@ -136,7 +136,7 @@ func TestMigrationsLegacyContiguous(t *testing.T) {
 // returning. Five-digit migrations stop at 00590; every later migration must
 // be a valid 17-digit UTC YYYYMMDDHHMMSSmmm timestamp at or after the cutover.
 // Three already-applied IDs retain their immutable names and exact contents;
-// issued_timestamp_test.go freezes that closed compatibility set (ADR-393).
+// issued_timestamp_test.go freezes that closed compatibility set (ADR-429).
 func TestMigrationsVersionNamespaces(t *testing.T) {
 	for _, f := range LoadMigrations(t) {
 		prefix := strings.SplitN(f.Name, "_", 2)[0]

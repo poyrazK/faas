@@ -52,12 +52,18 @@ HTTP request Crons retain their synthetic-request contract but queue the
 synthetic invocation in the same transaction that advances the cursor and
 records its occurrence. The first-start deadline is checked atomically when a
 worker claims a pending invocation; an expiry sweep records work that never
-started as `missed_deadline`. Failure rules remain unavailable for HTTP Crons:
-Gregale does not infer business retry safety from an HTTP status or transport
-error. A `replace` policy cancels only a pending scheduled invocation; if work
-has started, the new occurrence waits until the prior invocation reaches a
-terminal state because Gregale has no confirmed stop signal for an HTTP
-request already delivered to the application.
+started as `missed_deadline`. HTTP Crons can use failure rules that match an
+application-supplied `X-Gregale-Outcome-Code` response header. Gregale never
+maps a generic HTTP status to a business result: the configured code mapping
+and `unmatched_failure` policy decide how a confirmed response is handled.
+When no completion receipt arrives, `uncertain_outcome` decides whether to
+hold the occurrence as `uncertain` or retry it with possible duplicate
+execution. HTTP Cron retries use the account plan's existing finite durable
+invocation budget; the per-Cron retry limit remains specific to deployment
+command Crons. A `replace` policy cancels only a pending scheduled invocation;
+if work has started, the new occurrence waits until the prior invocation
+reaches a terminal state because Gregale has no confirmed stop signal for an
+HTTP request already delivered to the application.
 
 ## Storage and interfaces
 
@@ -72,15 +78,16 @@ Gregale CLI mirrors both endpoints.
 `FailureRules` are an explicit versioned mapping from guest exit codes or
 structured application outcome codes to `retry` or `fail_partition`. Job and
 command-Cron guests report structured codes in the bounded result manifest;
-a mapped code can classify a zero exit. Unmatched failures use the declared policy.
-Infrastructure failures remain retryable. A configured `uncertain_outcome`
-decides whether a missing completion receipt is held for reconciliation or
-retried; retry must be explicit because it can repeat guest side effects.
-Definitions without `FailureRules` retain their existing retry behavior. No
-generic HTTP or guest error is treated as proof of business retry-safety. HTTP
-status matchers remain unavailable on the scheduled-work execution path. The
-per-partition attempt journal and linked replay continue to preserve confirmed
-outcomes.
+HTTP Cron handlers report a code using the `X-Gregale-Outcome-Code` response
+header. A mapped code can classify a zero exit or successful HTTP response.
+Unmatched failures use the declared policy. Infrastructure failures remain
+retryable. A configured `uncertain_outcome` decides whether a missing
+completion receipt is held for reconciliation or retried; retry must be
+explicit because it can repeat guest side effects. Definitions without
+`FailureRules` retain their existing retry behavior. No generic HTTP or guest
+error is treated as proof of business retry-safety. HTTP status matchers remain
+unavailable on the scheduled-work execution path. The per-partition attempt
+journal and linked replay continue to preserve confirmed outcomes.
 
 ## Rollout
 

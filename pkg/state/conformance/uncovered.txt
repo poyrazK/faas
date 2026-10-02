@@ -116,7 +116,6 @@ CreateCustomDomain
 CreateDeploymentScopeExclusion
 CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
-CreateInstanceWithMode
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateProjectEnvironmentApproval
@@ -230,7 +229,6 @@ GithubInstallBindingForRepoBranchInstallation
 HasPaddleOverageMonth
 HasSnapshotHistory
 HasStripePushHour
-HeartbeatComputeNode
 IncInstanceRequestCount
 IncrementAppError
 InsertAppErrorRequest
@@ -332,7 +330,6 @@ ListDeploymentScopeExclusions
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
-ListDeploymentsForApp
 ListDeploymentsForCompare
 ListDistinctUpstreamHostHashes
 ListDomainsForAccount
@@ -446,12 +443,10 @@ MinCertExpiryForApp
 MirrorSummary
 NodeGet
 NodeGetByName
-NodeList
 NodeListDrainable
 NodeListRecoverable
 NodeMarkDrainCompleted
 NodeMarkRecovered
-NodeSetLifecycle
 OAuthLinkByProviderSubject
 OldestDoctorObservation
 OperatorActionTraceCompleteness
@@ -538,7 +533,6 @@ SetAlertRuleLastEvaluated
 SetAlertRuleState
 SetAppMinInstances
 SetAppWorkloadClass
-SetComputeNodeActive
 SetComputeNodeRole
 SetDeploymentFailed
 SetDeploymentFailedEx
@@ -574,7 +568,6 @@ TransferOrgOwnership
 TriggerByID
 TriggerRecordIDByItemIdentifier
 UpdateAccountBillingInfo
-UpdateAccountPlan
 UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus

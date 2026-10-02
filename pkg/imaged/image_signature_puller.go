@@ -9,7 +9,7 @@ import (
 )
 
 // ociImageSignaturePuller preserves repository-scoped credentials and keeps
-// registry transport separate from publisher cryptography (ADR-393).
+// registry transport separate from publisher cryptography (ADR-429).
 type ociImageSignaturePuller struct {
 	oci  oci.Puller
 	auth *oci.BasicAuth
