@@ -154,7 +154,7 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		}
 		releaseCheckpoint = func() {
 			if guard != nil {
-				_, _ = guard.Exec(context.Background(), `SELECT pg_advisory_unlock(7420366)`)
+				_, _ = guard.Exec(ctx, `SELECT pg_advisory_unlock(7420366)`)
 				guard.Release()
 				guard = nil
 			}

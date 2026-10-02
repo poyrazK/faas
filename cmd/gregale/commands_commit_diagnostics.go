@@ -272,7 +272,7 @@ func waitCommitEvent(ctx context.Context, client commitReadClient, source, event
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return last, fmt.Errorf("Commit wait interrupted: %w", ctx.Err())
+			return last, fmt.Errorf("commit wait interrupted: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
