@@ -28,6 +28,7 @@ type ObjectBucketMutation struct {
 type ObjectBucketWriteFence struct {
 	Bucket                 ObjectBucket
 	BucketID, Token        string
+	CloneOperationID       string
 	Requests, NativeGrants int64
 }
 

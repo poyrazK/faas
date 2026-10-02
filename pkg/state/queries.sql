@@ -5328,6 +5328,7 @@ UPDATE project_environment_clone_operations
 SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(release_id)::uuid, updated_at = now(),
     lease_token = NULL, lease_until = NULL
 WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint
+  AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
@@ -5418,6 +5419,8 @@ SET status = sqlc.arg(next_status)::text, revision = revision + 1,
     lease_until = CASE WHEN sqlc.arg(next_status)::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
 WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND status = sqlc.arg(expected_status)::text AND revision = sqlc.arg(expected_revision)::bigint
+  AND (sqlc.arg(next_status)::text IN ('capturing', 'compensating')
+    OR NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
@@ -7852,7 +7855,29 @@ FROM object_bucket_write_fences f WHERE f.bucket_id=sqlc.arg(bucket_id);
 DELETE FROM object_bucket_write_fences
 WHERE bucket_id=sqlc.arg(bucket_id) AND token=sqlc.arg(token)
 AND backend_id=sqlc.arg(backend_id) AND backend_fingerprint=sqlc.arg(backend_fingerprint)
-AND physical_name=sqlc.arg(physical_name);
+AND physical_name=sqlc.arg(physical_name) AND clone_operation_id IS NULL;
+
+-- name: CloneObjectWriteFenceInsert :execrows
+INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name, clone_operation_id)
+SELECT sqlc.arg(bucket_id), op.id, sqlc.arg(backend_id), sqlc.arg(backend_fingerprint), sqlc.arg(physical_name), op.id
+FROM project_environment_clone_operations op
+WHERE op.id=sqlc.arg(operation_id) AND op.status='capturing'
+AND op.revision=sqlc.arg(expected_revision) AND op.lease_token=sqlc.arg(worker_token)::uuid
+AND op.lease_until > clock_timestamp()
+ON CONFLICT (bucket_id) DO NOTHING;
+
+-- name: CloneObjectWriteFenceBuckets :many
+SELECT b.* FROM object_buckets b JOIN object_bucket_write_fences f ON f.bucket_id=b.id
+WHERE f.clone_operation_id=sqlc.arg(operation_id) ORDER BY b.id;
+
+-- name: CloneObjectWriteFenceDelete :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations op
+WHERE f.bucket_id=sqlc.arg(bucket_id) AND f.clone_operation_id=op.id AND f.token=op.id
+AND f.backend_id=sqlc.arg(backend_id) AND f.backend_fingerprint=sqlc.arg(backend_fingerprint)
+AND f.physical_name=sqlc.arg(physical_name)
+AND op.id=sqlc.arg(operation_id) AND op.status='compensating'
+AND op.revision=sqlc.arg(expected_revision) AND op.lease_token=sqlc.arg(worker_token)::uuid
+AND op.lease_until > clock_timestamp();
 
 -- name: ObjectUploadGrantInsert :one
 WITH receipt_clock AS (SELECT clock_timestamp() AS at)

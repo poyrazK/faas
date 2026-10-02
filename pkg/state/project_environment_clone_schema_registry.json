@@ -380,7 +380,7 @@
   {"table": "object_bucket_mutations", "kind": "operational",
     "columns": ["backend_fingerprint", "backend_id", "bucket_id", "created_at", "id", "kind", "physical_name"]},
   {"table": "object_bucket_write_fences", "kind": "operational",
-    "columns": ["backend_fingerprint", "backend_id", "bucket_id", "created_at", "physical_name", "token"]},
+    "columns": ["backend_fingerprint", "backend_id", "bucket_id", "clone_operation_id", "created_at", "physical_name", "token"]},
   {"table": "object_buckets", "kind": "configuration",
     "columns": ["account_id", "app_id", "attempt_count", "backend_fingerprint", "backend_id", "created_at", "environment_clone_operation_id", "environment_clone_source_bucket_id", "id", "last_error_code", "lease_token", "lease_until", "name", "physical_name", "public_read", "region", "retry_at", "scope", "serve_at", "state", "updated_at"]},
   {"table": "object_storage_access_grants", "kind": "configuration",

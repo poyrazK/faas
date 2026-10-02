@@ -9008,8 +9008,10 @@ CREATE TABLE public.object_bucket_write_fences (
     backend_fingerprint text NOT NULL,
     physical_name text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    clone_operation_id uuid,
     CONSTRAINT object_bucket_write_fences_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
     CONSTRAINT object_bucket_write_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_clone_token_check CHECK (((clone_operation_id IS NULL) OR (token = clone_operation_id))),
     CONSTRAINT object_bucket_write_fences_physical_name_check CHECK ((physical_name <> ''::text))
 );
 
@@ -19238,6 +19240,13 @@ CREATE INDEX object_bucket_mutations_bucket_idx ON public.object_bucket_mutation
 
 
 --
+-- Name: object_bucket_write_fences_clone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_write_fences_clone_idx ON public.object_bucket_write_fences USING btree (clone_operation_id) WHERE (clone_operation_id IS NOT NULL);
+
+
+--
 -- Name: object_buckets_account_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24781,6 +24790,14 @@ ALTER TABLE ONLY public.object_bucket_mutations
 
 ALTER TABLE ONLY public.object_bucket_write_fences
     ADD CONSTRAINT object_bucket_write_fences_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_clone_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_clone_operation_id_fkey FOREIGN KEY (clone_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --

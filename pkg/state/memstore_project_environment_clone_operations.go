@@ -94,6 +94,9 @@ func (m *MemStore) AdvanceProjectEnvironmentCloneOperation(_ context.Context, ac
 	if err := validateCloneResourceTransition(op, nextStatus, resources, errorCode); err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
+	if nextStatus != CloneOperationCapturing && nextStatus != CloneOperationCompensating && m.cloneHasObjectWriteFencesLocked(id) {
+		return ProjectEnvironmentCloneOperation{}, ErrConflict
+	}
 	if nextStatus == CloneOperationPublishing || nextStatus == CloneOperationReady {
 		if err := m.verifyClonePublicationLocked(op, resources); err != nil {
 			return ProjectEnvironmentCloneOperation{}, err

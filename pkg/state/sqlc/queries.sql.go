@@ -300,6 +300,8 @@ SET status = $1::text, revision = revision + 1,
     lease_until = CASE WHEN $1::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
 WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
   AND status = $7::text AND revision = $8::bigint
+  AND ($1::text IN ('capturing', 'compensating')
+    OR NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id))
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
@@ -1749,6 +1751,125 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneObjectWriteFenceBuckets = `-- name: CloneObjectWriteFenceBuckets :many
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b JOIN object_bucket_write_fences f ON f.bucket_id=b.id
+WHERE f.clone_operation_id=$1 ORDER BY b.id
+`
+
+func (q *Queries) CloneObjectWriteFenceBuckets(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, cloneObjectWriteFenceBuckets, operationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cloneObjectWriteFenceDelete = `-- name: CloneObjectWriteFenceDelete :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations op
+WHERE f.bucket_id=$1 AND f.clone_operation_id=op.id AND f.token=op.id
+AND f.backend_id=$2 AND f.backend_fingerprint=$3
+AND f.physical_name=$4
+AND op.id=$5 AND op.status='compensating'
+AND op.revision=$6 AND op.lease_token=$7::uuid
+AND op.lease_until > clock_timestamp()
+`
+
+type CloneObjectWriteFenceDeleteParams struct {
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	OperationID        pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        pgtype.UUID
+}
+
+func (q *Queries) CloneObjectWriteFenceDelete(ctx context.Context, db DBTX, arg CloneObjectWriteFenceDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, cloneObjectWriteFenceDelete,
+		arg.BucketID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const cloneObjectWriteFenceInsert = `-- name: CloneObjectWriteFenceInsert :execrows
+INSERT INTO object_bucket_write_fences (bucket_id, token, backend_id, backend_fingerprint, physical_name, clone_operation_id)
+SELECT $1, op.id, $2, $3, $4, op.id
+FROM project_environment_clone_operations op
+WHERE op.id=$5 AND op.status='capturing'
+AND op.revision=$6 AND op.lease_token=$7::uuid
+AND op.lease_until > clock_timestamp()
+ON CONFLICT (bucket_id) DO NOTHING
+`
+
+type CloneObjectWriteFenceInsertParams struct {
+	BucketID           pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	OperationID        pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        pgtype.UUID
+}
+
+func (q *Queries) CloneObjectWriteFenceInsert(ctx context.Context, db DBTX, arg CloneObjectWriteFenceInsertParams) (int64, error) {
+	result, err := db.Exec(ctx, cloneObjectWriteFenceInsert,
+		arg.BucketID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const completeLayerArtifactDeletion = `-- name: CompleteLayerArtifactDeletion :execrows
 UPDATE layer_artifact_retention SET state = 'deleted', deleted_at = coalesce(deleted_at, clock_timestamp())
 WHERE storage_key = $1::text AND deletion_id = $2::uuid
@@ -1773,6 +1894,7 @@ UPDATE project_environment_clone_operations
 SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid, updated_at = now(),
     lease_token = NULL, lease_until = NULL
 WHERE id = $2::uuid AND status = 'publishing' AND revision = $3::bigint
+  AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id = project_environment_clone_operations.id)
   AND ((attempt_count = 0 AND lease_token IS NULL)
     OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
@@ -18463,7 +18585,7 @@ const objectBucketWriteFenceDelete = `-- name: ObjectBucketWriteFenceDelete :exe
 DELETE FROM object_bucket_write_fences
 WHERE bucket_id=$1 AND token=$2
 AND backend_id=$3 AND backend_fingerprint=$4
-AND physical_name=$5
+AND physical_name=$5 AND clone_operation_id IS NULL
 `
 
 type ObjectBucketWriteFenceDeleteParams struct {
@@ -18514,7 +18636,7 @@ func (q *Queries) ObjectBucketWriteFenceInsert(ctx context.Context, db DBTX, arg
 }
 
 const objectBucketWriteFenceRead = `-- name: ObjectBucketWriteFenceRead :one
-SELECT f.bucket_id, f.token, f.backend_id, f.backend_fingerprint, f.physical_name, f.created_at,
+SELECT f.bucket_id, f.token, f.backend_id, f.backend_fingerprint, f.physical_name, f.created_at, f.clone_operation_id,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='request') AS requests,
  (SELECT count(*) FROM object_bucket_mutations m WHERE m.bucket_id=f.bucket_id AND m.kind='native_grant') AS native_grants
 FROM object_bucket_write_fences f WHERE f.bucket_id=$1
@@ -18527,6 +18649,7 @@ type ObjectBucketWriteFenceReadRow struct {
 	BackendFingerprint string
 	PhysicalName       string
 	CreatedAt          pgtype.Timestamptz
+	CloneOperationID   pgtype.UUID
 	Requests           int64
 	NativeGrants       int64
 }
@@ -18541,6 +18664,7 @@ func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucke
 		&i.BackendFingerprint,
 		&i.PhysicalName,
 		&i.CreatedAt,
+		&i.CloneOperationID,
 		&i.Requests,
 		&i.NativeGrants,
 	)

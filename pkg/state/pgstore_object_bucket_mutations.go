@@ -80,14 +80,18 @@ func (s *PgStore) FinishObjectBucketMutation(ctx context.Context, receipt Object
 }
 
 func readObjectWriteFenceTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, token string) (ObjectBucketWriteFence, error) {
+	return readOwnedObjectWriteFenceTx(ctx, tx, b, token, "")
+}
+
+func readOwnedObjectWriteFenceTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, token, operationID string) (ObjectBucketWriteFence, error) {
 	row, err := sqlc.New().ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(b.ID))
 	if err != nil {
 		return ObjectBucketWriteFence{}, mapErr(err)
 	}
-	if pgUUIDString(row.Token) != token || row.BackendID != b.BackendID || row.BackendFingerprint != b.BackendFingerprint || row.PhysicalName != b.PhysicalName {
+	if pgUUIDString(row.Token) != token || pgUUIDString(row.CloneOperationID) != operationID || row.BackendID != b.BackendID || row.BackendFingerprint != b.BackendFingerprint || row.PhysicalName != b.PhysicalName {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
-	return ObjectBucketWriteFence{Bucket: b, BucketID: b.ID, Token: token, Requests: row.Requests, NativeGrants: row.NativeGrants}, nil
+	return ObjectBucketWriteFence{Bucket: b, BucketID: b.ID, Token: token, CloneOperationID: operationID, Requests: row.Requests, NativeGrants: row.NativeGrants}, nil
 }
 
 func (s *PgStore) objectBucketWriteFence(ctx context.Context, b ObjectBucket, token string, acquire bool) (ObjectBucketWriteFence, error) {

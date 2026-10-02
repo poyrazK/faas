@@ -2920,6 +2920,7 @@ type ObjectBucketWriteFence struct {
 	BackendFingerprint string
 	PhysicalName       string
 	CreatedAt          pgtype.Timestamptz
+	CloneOperationID   pgtype.UUID
 }
 
 type ObjectStorageAccessGrant struct {

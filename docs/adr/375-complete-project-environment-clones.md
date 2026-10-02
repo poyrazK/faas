@@ -3190,3 +3190,70 @@ importing the objectstorageactivity wrapper would create a package cycle.
 Eleven targeted upload-route contracts passed (0.826 s), including
 active/unknown writer coverage and retry after fence rejection. The complete object-storage provider
 suite has not been rerun in this increment.
+
+### Clone-owned object barriers and abandonment recovery (2026-10-02)
+
+Object write fences now optionally reference their owning clone with a
+restrictive foreign key. The durable operation owns the fence, rather than the
+current worker token. Its stable fence token is the operation UUID. An expired
+or relinquished worker lease never reopens writes. The private leased acquisition
+writer authenticates the frozen binding catalogue, locks the exact ready source
+placement, and commits ownership together with the fence. It cannot adopt an
+unrelated generic fence, including one with an identical token. Generic read,
+acquire and release operations cannot take ownership of a clone's fence.
+
+Replacement workers can read and reacquire the same owned barriers using their
+current operation revision, status and lease token. Counts remain observations
+of instrumented requests and native grants, not claims that all writers have
+drained. Successful synchronous requests can still record completion. The
+source placement and ownership are rechecked after source-row lock waits;
+fresh SQL clock checks reject workers whose leases expired during the wait.
+
+Abandonment is a separate private transaction allowed only in `compensating`.
+It releases all of this operation's object fences atomically after authenticating
+every source placement. It does not delete unknown request/native-grant receipts
+or another owner's fences. Repeated abandonment after a lost commit reply is
+idempotent. The coordinator invokes this recovery before provider snapshot
+cleanup, so unavailable provider cleanup cannot keep an already abandoned
+object capture's source admission closed. Other cleanup remains outstanding.
+Ordinary source lifecycle deletion still rejects an active fence. Operation
+advancement into copying, publishing or terminal states and direct release-set
+publication reject remaining owned object fences; the operation cannot discard
+recovery authority while holding source writes closed.
+
+There is deliberately no successful-capture release path yet. It must require
+the verified coordinated checkpoint and retained immutable source identities.
+Pending/capturing coordinator dispatch still returns
+`data_checkpoint_unavailable` before acquiring these barriers. Complete public
+clone admission remains closed. This increment implements barrier ownership and
+abandoned-capture recovery, not PostgreSQL drainage, writer coverage, a common
+application/data point, snapshot restorability, or complete compensation.
+Workers using this protocol must all run compatible fence ownership queries
+before capture activation; older generic release queries do not enforce the
+new ownership condition.
+
+Provider review also confirms why the current Neon controls cannot by themselves
+establish the missing barrier. The pinned `EndpointUpdateRequest.disabled`
+description states that `check_availability` operations periodically reenable
+disabled computes. Neon documents that roles created with its API receive
+`neon_superuser` membership, including the credentials issued by this adapter;
+its session termination privilege only covers roles outside that membership.
+See [Neon role privileges](https://neon.com/docs/manage/roles#the-neonsuperuser-role)
+and [endpoint update](https://api-docs.neon.tech/reference/updateprojectendpoint).
+A durable database connection closure, privileged maintenance/recovery access,
+existing-session drainage, background writer control and preservation of original
+access settings still need an implemented and provider-verified strategy.
+Endpoint suspension, default read-only settings and cooperative advisory locks
+are insufficient evidence on their own.
+
+Verification: 15 selected original state contracts passed (25.909 s), including
+the memory/PostgreSQL ownership and takeover contracts, placement substitution,
+three confirmed source-lock waits with lease expiry, object writer/lifecycle
+regressions and migrated-schema coverage. Twelve selected API contracts passed
+(31.490 s), including real PostgreSQL coordinator recovery across failed and
+lost abandonment replies, source admission reopening with an unknown writer
+still tracked, and existing coordinator/native snapshot regressions. There were
+no skips. The focused overlays keep all production files and original selected
+tests/helpers. Independently regenerated SQLC output matches exactly. Full state,
+API/repository suites, deployed mixed-version protocol and live-provider/native
+acceptance have not been established by these checks.

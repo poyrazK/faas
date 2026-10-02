@@ -50,11 +50,15 @@ func (m *MemStore) FinishObjectBucketMutation(ctx context.Context, receipt Objec
 }
 
 func (m *MemStore) objectWriteFenceLocked(b ObjectBucket, token string) (ObjectBucketWriteFence, error) {
+	return m.ownedObjectWriteFenceLocked(b, token, "")
+}
+
+func (m *MemStore) ownedObjectWriteFenceLocked(b ObjectBucket, token, operationID string) (ObjectBucketWriteFence, error) {
 	if !sameObjectMutationBucket(b, m.objectBuckets[b.ID]) {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
 	fence, exists := m.objectWriteFences[b.ID]
-	if !exists || fence.Token != token || !sameObjectMutationBucket(b, fence.Bucket) {
+	if !exists || fence.Token != token || fence.CloneOperationID != operationID || !sameObjectMutationBucket(b, fence.Bucket) {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
 	fence.Requests, fence.NativeGrants = 0, 0

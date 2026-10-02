@@ -140,6 +140,9 @@ func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, a
 	if op.Status != CloneOperationPublishing || op.Revision != revision || op.TargetReleaseSetID != "" || !m.cloneOperationLeaseLiveLocked(operationID) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
+	if m.cloneHasObjectWriteFencesLocked(operationID) {
+		return ProjectReleaseSet{}, ErrConflict
+	}
 	if err := validateCloneResourceTransition(op, CloneOperationReady, op.Resources, op.ErrorCode); err != nil {
 		return ProjectReleaseSet{}, err
 	}
