@@ -232,7 +232,7 @@ jobs:
         run: bash scripts/materialize-release-manifest_test.sh
 
       - name: signed component hotfix controller contracts
-        run: python3 -m unittest discover -s scripts/ops -p 'request_evidence_hotfix_test.py' -v
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
 
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
