@@ -3869,7 +3869,7 @@ Tail the wake queue
 
 Enqueue a wake request
 
-`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4392,7 +4392,7 @@ gregale secrets refs list --app my-api --environment production
 
 Select an existing scoped secret; respects Git field ownership
 
-`gregale secrets refs set <KEY=secret:NAME> --app <slug> --environment <ENV>`
+`gregale secrets refs set --app <slug> --environment <ENV> <KEY=secret:NAME>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4409,7 +4409,7 @@ gregale secrets refs set --app my-api --environment production DATABASE_URL=secr
 
 Suppress a primary workload secret destination and preserve the sealed source
 
-`gregale secrets refs unset <KEY> --app <slug> --environment <ENV>`
+`gregale secrets refs unset --app <slug> --environment <ENV> <KEY>`
 
 | Flag | Meaning | |
 |---|---|---|
