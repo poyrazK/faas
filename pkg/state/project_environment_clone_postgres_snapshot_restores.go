@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 )
 
@@ -13,6 +15,19 @@ type ProjectEnvironmentClonePostgresSnapshotRestore struct {
 	TargetCreatedAt, RequestStartedAt, ObservedAt, RestoredAt      time.Time
 	DeletionStartedAt, DeletedAt                                   time.Time
 	DeletionOperations                                             string
+	AdoptedDatabaseID                                              string
+	AdoptedAt                                                      time.Time
+}
+
+// Transfers the existing native owner into an unready private database row.
+// It supplies no target readiness, SQL isolation or publication authority.
+type ProjectEnvironmentClonePostgresSnapshotRestoreAdoptionStore interface {
+	AdoptProjectEnvironmentClonePostgresSnapshotRestore(context.Context, ProjectEnvironmentCloneLease, string) (ProjectEnvironmentCloneDatabaseTarget, bool, error)
+}
+
+func ProjectEnvironmentClonePostgresSnapshotRestoreDatabaseName(op ProjectEnvironmentCloneOperation, sourceID string) string {
+	sum := sha256.Sum256([]byte(op.ID + "\x00" + sourceID))
+	return "checkpoint-" + hex.EncodeToString(sum[:12])
 }
 
 type ProjectEnvironmentClonePostgresSnapshotRestoreDeletion struct {
@@ -59,3 +74,4 @@ func validateCloneSnapshotRestoreObservation(snapshot ProjectEnvironmentClonePos
 
 var _ ProjectEnvironmentClonePostgresSnapshotRestoreStore = (*PgStore)(nil)
 var _ ProjectEnvironmentClonePostgresSnapshotRestoreCleanupStore = (*PgStore)(nil)
+var _ ProjectEnvironmentClonePostgresSnapshotRestoreAdoptionStore = (*PgStore)(nil)

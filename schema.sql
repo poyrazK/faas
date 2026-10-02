@@ -8515,6 +8515,7 @@ CREATE TABLE public.managed_postgres_databases (
     restore_point_in_time timestamp with time zone,
     environment_clone_operation_id uuid,
     data_resource_id text,
+    clone_resource_role text DEFAULT 'target'::text NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -8526,6 +8527,8 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check2 CHECK (((state <> 'ready'::text) OR ((provider_resource_id IS NOT NULL) AND (observed_generation = desired_generation)))),
     CONSTRAINT managed_postgres_databases_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT managed_postgres_databases_check4 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (provider_resource_id IS NOT NULL)))),
+    CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
+    CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
@@ -10548,18 +10551,25 @@ CREATE TABLE public.project_environment_clone_postgres_snapshot_restores (
     deletion_started_at timestamp with time zone,
     deleted_at timestamp with time zone,
     delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    adopted_database_id uuid,
+    adopted_at timestamp with time zone,
+    CONSTRAINT clone_postgres_snapshot_fork_adoption_shape CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'restoring'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['restored'::text, 'adopted'::text])) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NOT NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) AND (((request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (((target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))))))),
     CONSTRAINT project_environment_clone_pos_target_provider_resource_id_check CHECK (((target_provider_resource_id IS NULL) OR ((target_provider_resource_id <> ''::text) AND (length(target_provider_resource_id) <= 255)))),
     CONSTRAINT project_environment_clone_postgres_s_backend_fingerprint_check1 CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_clone_postgres_s_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
     CONSTRAINT project_environment_clone_postgres_snapshot_re_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
-    CONSTRAINT project_environment_clone_postgres_snapshot_restore_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'restoring'::text, 'restored'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restore_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'restoring'::text, 'restored'::text, 'adopted'::text, 'deleting'::text, 'deleted'::text]))),
     CONSTRAINT project_environment_clone_postgres_snapshot_restores_check CHECK ((target_owner_id <> source_database_id)),
     CONSTRAINT project_environment_clone_postgres_snapshot_restores_check1 CHECK (((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) = (deletion_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check10 CHECK (((adopted_at IS NULL) OR (deletion_started_at IS NULL) OR (deletion_started_at >= adopted_at))),
     CONSTRAINT project_environment_clone_postgres_snapshot_restores_check2 CHECK (((target_created_at IS NULL) OR (target_created_at <= observed_at))),
     CONSTRAINT project_environment_clone_postgres_snapshot_restores_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT project_environment_clone_postgres_snapshot_restores_check4 CHECK (((deleted_at IS NULL) OR (deleted_at >= deletion_started_at))),
-    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check5 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'restoring'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'restored'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NOT NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) AND (((request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (((target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))))))),
-    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6 CHECK (((state <> 'deleted'::text) OR (request_started_at IS NULL) OR ((target_provider_resource_id IS NOT NULL) AND (jsonb_array_length(delete_operation_ids) > 0))))
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check5 CHECK (((adopted_database_id IS NULL) = (adopted_at IS NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6 CHECK (((state <> 'deleted'::text) OR (request_started_at IS NULL) OR ((target_provider_resource_id IS NOT NULL) AND (jsonb_array_length(delete_operation_ids) > 0)))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check7 CHECK (((adopted_database_id IS NULL) OR (adopted_database_id = target_owner_id))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check8 CHECK ((((adopted_at IS NULL) AND (state <> 'adopted'::text)) OR ((adopted_at IS NOT NULL) AND (state = ANY (ARRAY['adopted'::text, 'deleting'::text, 'deleted'::text]))))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check9 CHECK (((adopted_at IS NULL) OR ((restored_at IS NOT NULL) AND (adopted_at >= restored_at))))
 );
 
 
@@ -15410,6 +15420,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 
 --
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snap_adopted_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snap_adopted_database_id_key UNIQUE (adopted_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_restores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19142,6 +19160,13 @@ CREATE UNIQUE INDEX managed_postgres_bindings_target_idx ON public.managed_postg
 
 
 --
+-- Name: managed_postgres_clone_capture_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_clone_capture_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'checkpoint'::text));
+
+
+--
 -- Name: managed_postgres_clone_owner_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19152,7 +19177,7 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 -- Name: managed_postgres_clone_reservation_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE (environment_clone_operation_id IS NOT NULL);
+CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
 
 
 --
@@ -19873,7 +19898,7 @@ CREATE INDEX project_environment_clone_operations_status_idx ON public.project_e
 -- Name: project_environment_clone_postgres_fork_account_quota; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX project_environment_clone_postgres_fork_account_quota ON public.project_environment_clone_postgres_snapshot_restores USING btree (account_id) WHERE (state <> 'deleted'::text);
+CREATE INDEX project_environment_clone_postgres_fork_account_quota ON public.project_environment_clone_postgres_snapshot_restores USING btree (account_id) WHERE ((state <> 'deleted'::text) AND (adopted_database_id IS NULL));
 
 
 --
@@ -25805,6 +25830,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_sna_adopted_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_sna_adopted_database_id_fkey FOREIGN KEY (adopted_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --

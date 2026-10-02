@@ -2607,6 +2607,7 @@ type ManagedPostgresDatabase struct {
 	RestorePointInTime          pgtype.Timestamptz
 	EnvironmentCloneOperationID pgtype.UUID
 	DataResourceID              pgtype.Text
+	CloneResourceRole           string
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -3837,6 +3838,8 @@ type ProjectEnvironmentClonePostgresSnapshotRestore struct {
 	DeletionStartedAt        pgtype.Timestamptz
 	DeletedAt                pgtype.Timestamptz
 	DeleteOperationIds       []byte
+	AdoptedDatabaseID        pgtype.UUID
+	AdoptedAt                pgtype.Timestamptz
 }
 
 type ProjectEnvironmentClonePostgresWriteFence struct {

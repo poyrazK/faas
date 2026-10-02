@@ -9,8 +9,9 @@ import (
 )
 
 // The capture owner calls this only after freezing the common point and
-// retaining owned snapshots. Native storage completion neither releases source
-// writers nor advances to copying. Public data capture remains separately gated.
+// retaining owned snapshots. Completed forks transfer to private, unready
+// catalogue reservations. This neither releases source writers nor advances to
+// copying. Public data capture remains separately gated.
 func (s *server) restoreProjectEnvironmentClonePostgresSnapshots(ctx context.Context, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, bool, error) {
 	if lease.Operation.Status != state.CloneOperationCapturing {
 		return lease, false, state.ErrConflict
@@ -26,9 +27,10 @@ func (s *server) restoreProjectEnvironmentClonePostgresSnapshots(ctx context.Con
 		return lease, false, err
 	}
 	restores, restoreOK := s.store.(state.ProjectEnvironmentClonePostgresSnapshotRestoreStore)
+	adoptions, adoptionOK := s.store.(state.ProjectEnvironmentClonePostgresSnapshotRestoreAdoptionStore)
 	snapshots, snapshotOK := s.store.(state.ProjectEnvironmentClonePostgresSnapshotStore)
 	leases, leaseOK := s.store.(state.ProjectEnvironmentCloneWorkerLeaseStore)
-	if !restoreOK || !snapshotOK || !leaseOK || s.managedPostgres == nil {
+	if !restoreOK || !adoptionOK || !snapshotOK || !leaseOK || s.managedPostgres == nil {
 		return lease, false, managedpostgres.ErrUnavailable
 	}
 	complete := true
@@ -63,6 +65,12 @@ func (s *server) restoreProjectEnvironmentClonePostgresSnapshots(ctx context.Con
 			cancel()
 			return lease, false, err
 		}
+		if receipt.State == "adopted" {
+			// The lease reader authenticates the still-unready catalogue owner.
+			// A committed adoption reply loss cannot create or rediscover a fork.
+			cancel()
+			continue
+		}
 		receipt, dispatch, err := restores.ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(restoreCtx, lease, plan.source.ID)
 		if err != nil {
 			cancel()
@@ -84,6 +92,9 @@ func (s *server) restoreProjectEnvironmentClonePostgresSnapshots(ctx context.Con
 				state.ProjectEnvironmentClonePostgresSnapshotRestoreObservation{ProviderSnapshotID: actual.ProviderSnapshotID,
 					SourceDataResourceID: actual.SourceDataResourceID, TargetProviderResourceID: actual.ProviderResourceID,
 					CapturePoint: actual.PointInTime, SnapshotCreatedAt: actual.SnapshotCreatedAt, TargetCreatedAt: actual.TargetCreatedAt, Restored: actual.Restored})
+		}
+		if err == nil && receipt.State == "restored" {
+			_, _, err = adoptions.AdoptProjectEnvironmentClonePostgresSnapshotRestore(restoreCtx, lease, plan.source.ID)
 		}
 		cancel()
 		if err != nil {

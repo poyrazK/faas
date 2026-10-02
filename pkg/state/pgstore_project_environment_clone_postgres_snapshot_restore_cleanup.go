@@ -158,6 +158,15 @@ func (s *PgStore) mutateCloneForkDeletionProof(ctx context.Context, lease Projec
 	q := new(sqlc.Queries)
 	var row sqlc.ProjectEnvironmentClonePostgresSnapshotRestore
 	if finish {
+		if receipt.AdoptedDatabaseID != "" {
+			if _, err := q.RetireProjectEnvironmentCloneNativeForkDatabase(ctx, tx, sqlc.RetireProjectEnvironmentCloneNativeForkDatabaseParams{
+				OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(sourceID), ExpectedRevision: op.Revision, WorkerToken: lease.Token}); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return receipt, ErrConflict
+				}
+				return receipt, mapErr(err)
+			}
+		}
 		row, err = q.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx, tx, sqlc.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams{
 			OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(sourceID), ExpectedRevision: op.Revision, WorkerToken: lease.Token,
 			TargetProviderResourceID: proof.TargetProviderResourceID, DeleteOperationIds: encoded})

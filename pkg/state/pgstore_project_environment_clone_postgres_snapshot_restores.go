@@ -14,7 +14,8 @@ func clonePostgresSnapshotRestoreFromSQL(r sqlc.ProjectEnvironmentClonePostgresS
 		AccountID: pgUUIDString(r.AccountID), TargetOwnerID: pgUUIDString(r.TargetOwnerID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint,
 		State: r.State, TargetProviderResourceID: r.TargetProviderResourceID.String, TargetCreatedAt: r.TargetCreatedAt.Time,
 		RequestStartedAt: r.RequestStartedAt.Time, ObservedAt: r.ObservedAt.Time, RestoredAt: r.RestoredAt.Time,
-		DeletionStartedAt: r.DeletionStartedAt.Time, DeletedAt: r.DeletedAt.Time, DeletionOperations: string(r.DeleteOperationIds)}
+		DeletionStartedAt: r.DeletionStartedAt.Time, DeletedAt: r.DeletedAt.Time, DeletionOperations: string(r.DeleteOperationIds),
+		AdoptedDatabaseID: pgUUIDString(r.AdoptedDatabaseID), AdoptedAt: r.AdoptedAt.Time}
 }
 
 func cloneSnapshotRestoreContextTx(ctx context.Context, tx pgx.Tx, lease ProjectEnvironmentCloneLease, sourceID string, reservation bool) (ProjectEnvironmentCloneOperation, ProjectEnvironmentClonePostgresSnapshot, error) {
@@ -80,6 +81,11 @@ func readCloneSnapshotRestoreTx(ctx context.Context, tx pgx.Tx, op ProjectEnviro
 		actual.BackendID != snapshot.BackendID || actual.BackendFingerprint != snapshot.BackendFingerprint ||
 		!validCloneCredentialSourceID(actual.TargetOwnerID) || actual.TargetOwnerID == snapshot.SourceDatabaseID {
 		return actual, ErrConflict
+	}
+	if actual.AdoptedDatabaseID != "" {
+		if err := validateCloneNativeAdoptedDatabaseTx(ctx, tx, op, actual); err != nil {
+			return actual, err
+		}
 	}
 	return actual, nil
 }

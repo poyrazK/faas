@@ -3755,3 +3755,71 @@ resources. Local disk exhaustion interrupted the first API build and an
 inactive task-template cleanup; the private test server recovered and the final
 API run passed. Full repository, live-provider and native acceptance remain
 unverified.
+
+### Private native capture catalogue ownership (2026-10-03)
+
+A restored native snapshot fork now transfers its existing owner into a private
+managed database catalogue row in the same transaction as its adoption receipt.
+The row keeps the exact native provider identity and frozen source definition,
+source dataset and common capture point. Adoption does not consult live PITR
+retention or reselect today's source configuration. The account quota lock,
+operation lease and snapshot/fork ownership are rechecked before commit. A lost
+commit reply recovers the same catalogue owner without another provider restore.
+
+This row has `clone_resource_role='checkpoint'`, a separate deterministic private
+name, no qualified data-resource identity and observed generation zero. It is
+not the final stage database. The ordinary target and capture have separate
+reservation keys for the same operation and captured source. Customer get/list
+and customer database locks exclude captures even if a broad or forged operation
+receipt names one as a published target. Ordinary provisioning, deletion and
+background reconciliation cannot claim the capture owner. Its frozen metadata
+and still-unready state are checked whenever the fork receipt is read or reused.
+
+The quota charge transfers from the native receipt to its catalogue row without
+release or double counting. Pending retirement retains that charge and the
+source snapshot. Independent native deletion proof retires both the capture
+catalogue row and fork receipt atomically under the compensation lease. Deleted
+receipts remain recoverable after source snapshot cleanup. Downgrades refuse to
+remove adoption or capture ownership that the older protocol cannot represent.
+
+Neon's `history_retention_seconds` and network access configuration belong to
+its provider project; a same-project fork cannot isolate changes to those
+settings. Its snapshot finalization operation also reassigns the original
+branch's computes and names. Therefore the native preview fork is an immutable
+capture resource for this workflow, not a qualified complete stage database.
+The final stage requires an independently configured provider project and a
+verified copy from the owned capture (or a provider operation with equivalent
+independent configuration and immutable data proof). Native source finalization
+and source-project setting changes cannot implement stage activation or
+promotion. See the [project update API](https://api-docs.neon.tech/reference/updateproject)
+and [snapshot finalization API](https://api-docs.neon.tech/reference/finalizerestorebranch).
+
+The private capture worker adopts completed native forks, retaining an unready
+catalogue owner on failure and skipping remote discovery after a committed
+adoption. The public data-bearing capture gate remains closed. Remaining work
+includes independent target-project materialization, copied SQL admission,
+roles/credentials and background-resource isolation, complete writer coverage,
+coordinated database/object capture and successful disposal, all configuration
+strategies, promotion/rollback, and provider/native acceptance. No live provider
+resource was changed.
+
+Verification: all 20 selected state contracts pass against the private migrated
+PostgreSQL harness (38.142 s, no skips), including the four adoption contracts,
+existing fork/snapshot lifecycle and schema inventory contracts. They cover
+frozen configuration after PITR expiry, exact owner reuse, quota transfer and
+retirement, metadata substitution, capture/final-target coexistence, customer
+visibility even with a forged publication receipt, and independently confirmed
+account/fork/catalogue lock waits with expired leases. All 22 selected original
+API contracts pass (20.074 s, no skips), including the two adoption recovery and
+cleanup contracts and the ordinary captured PITR worker regression. State and
+API runs retain all 525 and 443 production files through external test-only AST
+overlays. Provider observations are metadata fixtures; this increment does not
+qualify provider data/configuration isolation. Independent SQLC regeneration
+matches both packages byte-for-byte (nine files). Vet for state, API and the
+managed PostgreSQL/Neon packages and `git diff --check` pass. Both new migrations
+also pass a rolled-back private schema Down/Up round trip without owned rows.
+An initial SQLC boolean-expression type mismatch was corrected by a single
+EXISTS over the two hold sources. Disk exhaustion interrupted intermediate
+state/API runs; only verified inactive task test databases were removed before
+the final passing sequential runs. Full repository, live-provider and native
+acceptance remain unverified.

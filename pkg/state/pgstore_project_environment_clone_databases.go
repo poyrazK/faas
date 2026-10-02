@@ -38,7 +38,7 @@ func cloneDatabaseReservationTx(ctx context.Context, tx pgx.Tx, lease ProjectEnv
 func validateCloneDatabaseReservation(op ProjectEnvironmentCloneOperation, source ProjectEnvironmentClonePostgresBinding, resource ProjectEnvironmentCloneResource, point time.Time, actual sqlc.ManagedPostgresDatabase) error {
 	if pgUUIDString(actual.ID) == "" || pgUUIDString(actual.ID) == source.DatabaseID || pgUUIDString(actual.AccountID) != op.AccountID ||
 		actual.Name != ProjectEnvironmentCloneDatabaseName(op, source.DatabaseID) || resource.TargetID != "" && resource.TargetID != pgUUIDString(actual.ID) ||
-		pgUUIDString(actual.EnvironmentCloneOperationID) != op.ID || actual.Region != source.Region || int(actual.PostgresMajor) != source.PostgresMajor ||
+		pgUUIDString(actual.EnvironmentCloneOperationID) != op.ID || actual.CloneResourceRole != "target" || actual.Region != source.Region || int(actual.PostgresMajor) != source.PostgresMajor ||
 		actual.ServiceClass != source.ServiceClass || actual.Availability != source.Availability || actual.ScaleToZero != source.ScaleToZero ||
 		actual.StorageLimitBytes != source.StorageLimitBytes || actual.RestoreWindowSeconds != source.RestoreWindowSeconds ||
 		actual.BackendID != source.BackendID || actual.BackendFingerprint != source.BackendFingerprint ||
@@ -119,7 +119,7 @@ func (s *PgStore) ReserveProjectEnvironmentCloneDatabase(ctx context.Context, le
 			return ProjectEnvironmentCloneDatabaseTarget{}, false, err
 		}
 		actual, err = q.InsertProjectEnvironmentCloneDatabase(ctx, tx, sqlc.InsertProjectEnvironmentCloneDatabaseParams{
-			ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(op.AccountID), Name: ProjectEnvironmentCloneDatabaseName(op, sourceID),
+			ID: mustPgUUID(uuid.NewString()), AccountID: mustPgUUID(op.AccountID), Name: ProjectEnvironmentCloneDatabaseName(op, sourceID), CloneResourceRole: "target",
 			Region: source.Region, PostgresMajor: int16(source.PostgresMajor), ServiceClass: source.ServiceClass, Availability: source.Availability, ScaleToZero: source.ScaleToZero,
 			StorageLimitBytes: source.StorageLimitBytes, RestoreWindowSeconds: source.RestoreWindowSeconds, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint,
 			RestoreSourceDatabaseID: mustPgUUID(sourceID), RestoreSourceResourceID: pgtype.Text{String: source.DataResourceID, Valid: true},
