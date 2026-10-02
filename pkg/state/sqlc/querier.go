@@ -104,6 +104,7 @@ type Querier interface {
 	CaptureProjectEnvironmentCloneQueues(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneQueuesParams) (CaptureProjectEnvironmentCloneQueuesRow, error)
 	CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneWorkPoliciesParams) (CaptureProjectEnvironmentCloneWorkPoliciesRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
+	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
 	ClaimEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ClaimEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
 	ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error)
 	ClaimManagedPostgresLifecycleDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresLifecycleDeleteParams) (ManagedPostgresDatabase, error)
@@ -473,6 +474,7 @@ type Querier interface {
 	// on app_errors is bumped on the paired IncrementAppError
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
+	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	InsertClonePostgresWriteFence(ctx context.Context, db DBTX, arg InsertClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	// CP-1 (operator observability): append one row to the heartbeat
 	// history. The schedd Heartbeat.Tick goroutine is the only writer.
@@ -1279,6 +1281,8 @@ type Querier interface {
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	// ADR-375: resource ownership is separate from an operation's writer barrier.
+	ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sourceDatabaseID pgtype.UUID) (ManagedPostgresCheckpointMaintenance, error)
 	// ADR-375: source recovery holds precede any remote PostgreSQL closure.
 	ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg ReadClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
@@ -1413,6 +1417,7 @@ type Querier interface {
 	RecordAppSecretRuntimeReloadApplicationAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadApplicationAckParams) (int64, error)
 	RecordAppSecretRuntimeReloadObservation(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadObservationParams) (int64, error)
 	RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error)
+	RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
 	// (ADR-115 §D.3, RFC 8058 follow-on). One row per (source,

@@ -3459,3 +3459,46 @@ run was interrupted by a local disk-full PostgreSQL restart; its verified owned
 fixture leftovers were removed before the successful rerun. No test databases
 or roles remain, and the shared bootstrap database remains unmigrated. Full
 repository, live-provider and native acceptance remain required.
+
+### Durable maintenance ownership registry (2026-10-02)
+
+`managed_postgres_checkpoint_maintenance` now retains a private maintenance UUID
+for each exact source dataset. It records the initial reserving operation,
+backend fingerprint, lifecycle resource, dataset identity, owner/database OIDs,
+and each bootstrap dispatch intent before remote work. Its lifetime is separate
+from an operation's source writer hold. A later clone may reuse a ready owner
+only after acquiring its own authenticated source hold; it cannot rebase the
+owner, placement, initial operation or dispatch timestamps.
+
+The private store requires a live capturing lease and held source fence, or a
+compensating lease and persisted abandonment intent. It locks the operation,
+source fence, source catalogue and maintenance receipt in that order, then
+rechecks SQL-clock lease authority after lock waits. Source placement must still
+match the frozen capture and receipt. Bootstrap progresses through role,
+database and activation request/acknowledgement states. Replacement workers
+recover the original dispatch receipt. OIDs are immutable once observed; the
+trusted adapter must authenticate them independently before recording them.
+The OID checks use PostgreSQL's unsigned 32-bit identity representation.
+
+Ready means maintenance readiness only. It cannot move an operation to copying,
+select a data point, or release writers. Compensation retains the source hold
+while an owned maintenance bootstrap is unresolved, then still requires the
+separate authenticated remote terminal barrier record. The registry may finish
+an owned bootstrap during compensation so that the remote abandonment ledger
+can become available. Activated cleanup, registry retirement and project/account
+deletion integration remain required. No provider bootstrap is dispatched by
+the coordinator in this increment, and data capture/admission remain closed.
+
+Verification: 28 selected original state contracts passed (29.469 s, no skips),
+including the first six maintenance contracts and existing PostgreSQL/object
+barrier, source snapshot and migrated-schema inventory contracts. All eight new
+maintenance contracts subsequently passed (31.294 s, no skips), adding placement
+substitution and four independently confirmed maintenance-row lock waits with
+lease expiry. They cover private owner recovery, stale workers, phase ordering,
+immutable observations, compensation and reuse across operations. Observed OIDs
+in these state contracts are metadata fixtures; the real PostgreSQL bootstrap
+contracts above provide separate SQL evidence. Both focused runs retain all
+production files and selected original tests/helpers through an external AST
+overlay and use the opt-in private migrated PostgreSQL harness. Independent
+SQLC regeneration and `git diff --check` pass. Full state/API/repository suites,
+live-provider and native acceptance remain unverified.

@@ -329,6 +329,8 @@
     "columns": ["account_id", "created_at", "email", "expires_at", "id", "provider_event_id", "reason", "source"]},
   {"table": "managed_postgres_bindings", "kind": "configuration",
     "columns": ["access", "account_id", "app_id", "attempt_count", "created_at", "credential_generation", "credential_ref", "database_id", "deleted_at", "environment_key", "id", "last_error_code", "lease_token", "lease_until", "provider_identity_id", "retry_at", "rotation_cleanup_ready", "rotation_previous_generation", "rotation_wake_id", "scope", "state", "updated_at"]},
+  {"table": "managed_postgres_checkpoint_maintenance", "kind": "operational",
+    "columns": ["activation_requested_at", "backend_fingerprint", "backend_id", "created_at", "database_oid", "database_requested_at", "id", "owner_oid", "ready_at", "reserved_by_operation_id", "role_requested_at", "source_data_resource_id", "source_database_id", "source_provider_resource_id", "state", "updated_at"]},
   {"table": "managed_postgres_databases", "kind": "configuration",
     "columns": ["account_id", "attempt_count", "availability", "backend_fingerprint", "backend_id", "created_at", "data_resource_id", "deleted_at", "desired_generation", "environment_clone_operation_id", "id", "last_error_code", "lease_token", "lease_until", "name", "observed_generation", "postgres_major", "provider_resource_id", "region", "restore_point_in_time", "restore_source_database_id", "restore_source_resource_id", "restore_window_seconds", "retry_at", "scale_to_zero", "service_class", "state", "storage_limit_bytes", "updated_at"]},
   {"table": "managed_postgres_restore_proofs", "kind": "operational",

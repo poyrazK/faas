@@ -2558,6 +2558,25 @@ type ManagedPostgresBinding struct {
 	RotationCleanupReady       bool
 }
 
+type ManagedPostgresCheckpointMaintenance struct {
+	ID                       pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	ReservedByOperationID    pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	State                    string
+	OwnerOid                 pgtype.Int8
+	DatabaseOid              pgtype.Int8
+	RoleRequestedAt          pgtype.Timestamptz
+	DatabaseRequestedAt      pgtype.Timestamptz
+	ActivationRequestedAt    pgtype.Timestamptz
+	ReadyAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
 type ManagedPostgresDatabase struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID

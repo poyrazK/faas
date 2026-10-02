@@ -7945,6 +7945,47 @@ UPDATE project_environment_clone_postgres_write_fences f SET state='released',re
  remote_released_at=sqlc.arg(remote_released_at)::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.arg(source_database_id)::uuid
  AND f.state='abandoning' AND sqlc.arg(remote_released_at)::timestamptz<=clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
  AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
   WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
    AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING f.*;
+
+-- ADR-375: resource ownership is separate from an operation's writer barrier.
+-- name: ReadClonePostgresMaintenance :one
+SELECT * FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE;
+
+-- name: InsertClonePostgresMaintenance :one
+INSERT INTO managed_postgres_checkpoint_maintenance(source_database_id,reserved_by_operation_id,
+ backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
+SELECT f.source_database_id,f.operation_id,f.backend_id,f.backend_fingerprint,f.source_provider_resource_id,f.source_data_resource_id
+FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.arg(source_database_id)::uuid
+ AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
+-- name: ClaimClonePostgresMaintenanceDispatch :one
+UPDATE managed_postgres_checkpoint_maintenance m SET state=sqlc.arg(requested_state)::text,
+ role_requested_at=CASE WHEN sqlc.arg(requested_state)::text='role_requested' THEN clock_timestamp() ELSE m.role_requested_at END,
+ database_requested_at=CASE WHEN sqlc.arg(requested_state)::text='database_requested' THEN clock_timestamp() ELSE m.database_requested_at END,
+ activation_requested_at=CASE WHEN sqlc.arg(requested_state)::text='activation_requested' THEN clock_timestamp() ELSE m.activation_requested_at END,
+ updated_at=clock_timestamp()
+WHERE m.source_database_id=sqlc.arg(source_database_id)::uuid AND m.state=sqlc.arg(before_state)::text
+ AND EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+  WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=m.source_database_id
+   AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+   AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+RETURNING m.*;
+
+-- name: RecordClonePostgresMaintenance :one
+UPDATE managed_postgres_checkpoint_maintenance m SET state=sqlc.arg(complete_state)::text,
+ owner_oid=sqlc.arg(owner_oid)::bigint,database_oid=sqlc.narg(database_oid)::bigint,
+ ready_at=CASE WHEN sqlc.arg(complete_state)::text='ready' THEN clock_timestamp() ELSE m.ready_at END,updated_at=clock_timestamp()
+WHERE m.source_database_id=sqlc.arg(source_database_id)::uuid AND m.state=sqlc.arg(requested_state)::text
+ AND (m.owner_oid IS NULL OR m.owner_oid=sqlc.arg(owner_oid)::bigint)
+ AND (m.database_oid IS NULL OR m.database_oid IS NOT DISTINCT FROM sqlc.narg(database_oid)::bigint)
+ AND EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+  WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=m.source_database_id
+   AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+   AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+RETURNING m.*;

@@ -8450,6 +8450,38 @@ CREATE TABLE public.managed_postgres_bindings (
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_checkpoint_maintenance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_database_id uuid NOT NULL,
+    reserved_by_operation_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    owner_oid bigint,
+    database_oid bigint,
+    role_requested_at timestamp with time zone,
+    database_requested_at timestamp with time zone,
+    activation_requested_at timestamp with time zone,
+    ready_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_checkpoint_m_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maint_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenan_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_check CHECK ((((state = 'reserved'::text) AND (role_requested_at IS NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_reserved'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_created'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'activation_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NULL)) OR ((state = 'ready'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NOT NULL)))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_database_oid_check CHECK (((database_oid > 0) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text])))
+);
+
+
+--
 -- Name: managed_postgres_databases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14330,6 +14362,30 @@ ALTER TABLE ONLY public.mail_suppressions
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, source_data_resource_id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
 
 
 --
@@ -24577,6 +24633,22 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey FOREIGN KEY (reserved_by_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --

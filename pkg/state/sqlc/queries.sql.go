@@ -1061,6 +1061,60 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const claimClonePostgresMaintenanceDispatch = `-- name: ClaimClonePostgresMaintenanceDispatch :one
+UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
+ role_requested_at=CASE WHEN $1::text='role_requested' THEN clock_timestamp() ELSE m.role_requested_at END,
+ database_requested_at=CASE WHEN $1::text='database_requested' THEN clock_timestamp() ELSE m.database_requested_at END,
+ activation_requested_at=CASE WHEN $1::text='activation_requested' THEN clock_timestamp() ELSE m.activation_requested_at END,
+ updated_at=clock_timestamp()
+WHERE m.source_database_id=$2::uuid AND m.state=$3::text
+ AND EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+  WHERE f.operation_id=$4::uuid AND f.source_database_id=m.source_database_id
+   AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+   AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp())
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+`
+
+type ClaimClonePostgresMaintenanceDispatchParams struct {
+	RequestedState   string
+	SourceDatabaseID pgtype.UUID
+	BeforeState      string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error) {
+	row := db.QueryRow(ctx, claimClonePostgresMaintenanceDispatch,
+		arg.RequestedState,
+		arg.SourceDatabaseID,
+		arg.BeforeState,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ManagedPostgresCheckpointMaintenance
+	err := row.Scan(
+		&i.ID,
+		&i.SourceDatabaseID,
+		&i.ReservedByOperationID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.OwnerOid,
+		&i.DatabaseOid,
+		&i.RoleRequestedAt,
+		&i.DatabaseRequestedAt,
+		&i.ActivationRequestedAt,
+		&i.ReadyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimEnvironmentQueueDeliveryInvocation = `-- name: ClaimEnvironmentQueueDeliveryInvocation :one
 WITH delivery_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
 UPDATE invocations i SET state='dispatching',quota_reserved=true,received_at=delivery_clock.at,
@@ -6322,6 +6376,7 @@ UPDATE project_environment_clone_postgres_write_fences f SET state='released',re
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid
  AND f.state='abandoning' AND $2::timestamptz<=clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
  AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
   WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$5::bigint
    AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
@@ -7831,6 +7886,53 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.ImageDigest,
 	)
 	return err
+}
+
+const insertClonePostgresMaintenance = `-- name: InsertClonePostgresMaintenance :one
+INSERT INTO managed_postgres_checkpoint_maintenance(source_database_id,reserved_by_operation_id,
+ backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
+SELECT f.source_database_id,f.operation_id,f.backend_id,f.backend_fingerprint,f.source_provider_resource_id,f.source_data_resource_id
+FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
+ AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+ AND o.revision=$3::bigint AND o.lease_token::text=$4::text
+ AND o.lease_until>clock_timestamp() RETURNING id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at
+`
+
+type InsertClonePostgresMaintenanceParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error) {
+	row := db.QueryRow(ctx, insertClonePostgresMaintenance,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ManagedPostgresCheckpointMaintenance
+	err := row.Scan(
+		&i.ID,
+		&i.SourceDatabaseID,
+		&i.ReservedByOperationID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.OwnerOid,
+		&i.DatabaseOid,
+		&i.RoleRequestedAt,
+		&i.DatabaseRequestedAt,
+		&i.ActivationRequestedAt,
+		&i.ReadyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertClonePostgresWriteFence = `-- name: InsertClonePostgresWriteFence :one
@@ -21513,6 +21615,35 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readClonePostgresMaintenance = `-- name: ReadClonePostgresMaintenance :one
+SELECT id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE
+`
+
+// ADR-375: resource ownership is separate from an operation's writer barrier.
+func (q *Queries) ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sourceDatabaseID pgtype.UUID) (ManagedPostgresCheckpointMaintenance, error) {
+	row := db.QueryRow(ctx, readClonePostgresMaintenance, sourceDatabaseID)
+	var i ManagedPostgresCheckpointMaintenance
+	err := row.Scan(
+		&i.ID,
+		&i.SourceDatabaseID,
+		&i.ReservedByOperationID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.OwnerOid,
+		&i.DatabaseOid,
+		&i.RoleRequestedAt,
+		&i.DatabaseRequestedAt,
+		&i.ActivationRequestedAt,
+		&i.ReadyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const readClonePostgresWriteFence = `-- name: ReadClonePostgresWriteFence :one
 SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
@@ -24660,6 +24791,64 @@ func (q *Queries) RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DB
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordClonePostgresMaintenance = `-- name: RecordClonePostgresMaintenance :one
+UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
+ owner_oid=$2::bigint,database_oid=$3::bigint,
+ ready_at=CASE WHEN $1::text='ready' THEN clock_timestamp() ELSE m.ready_at END,updated_at=clock_timestamp()
+WHERE m.source_database_id=$4::uuid AND m.state=$5::text
+ AND (m.owner_oid IS NULL OR m.owner_oid=$2::bigint)
+ AND (m.database_oid IS NULL OR m.database_oid IS NOT DISTINCT FROM $3::bigint)
+ AND EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f JOIN project_environment_clone_operations o ON o.id=f.operation_id
+  WHERE f.operation_id=$6::uuid AND f.source_database_id=m.source_database_id
+   AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
+   AND o.revision=$7::bigint AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp())
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+`
+
+type RecordClonePostgresMaintenanceParams struct {
+	CompleteState    string
+	OwnerOid         int64
+	DatabaseOid      pgtype.Int8
+	SourceDatabaseID pgtype.UUID
+	RequestedState   string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error) {
+	row := db.QueryRow(ctx, recordClonePostgresMaintenance,
+		arg.CompleteState,
+		arg.OwnerOid,
+		arg.DatabaseOid,
+		arg.SourceDatabaseID,
+		arg.RequestedState,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ManagedPostgresCheckpointMaintenance
+	err := row.Scan(
+		&i.ID,
+		&i.SourceDatabaseID,
+		&i.ReservedByOperationID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.State,
+		&i.OwnerOid,
+		&i.DatabaseOid,
+		&i.RoleRequestedAt,
+		&i.DatabaseRequestedAt,
+		&i.ActivationRequestedAt,
+		&i.ReadyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const recordMailSuppression = `-- name: RecordMailSuppression :one
