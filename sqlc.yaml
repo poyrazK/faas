@@ -28,3 +28,16 @@ sql:
         emit_empty_slices: true
         rename:
           id: "ID"
+
+  # Customer cluster maintenance SQL is separate from control-plane state.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/connectionfence/queries.sql"
+    schema: "pkg/managedpostgres/connectionfence/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/connectionfence/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true

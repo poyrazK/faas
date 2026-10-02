@@ -3257,3 +3257,68 @@ no skips. The focused overlays keep all production files and original selected
 tests/helpers. Independently regenerated SQLC output matches exactly. Full state,
 API/repository suites, deployed mixed-version protocol and live-provider/native
 acceptance have not been established by these checks.
+
+### Private PostgreSQL connection closure and abandonment (2026-10-02)
+
+The SQL component of a database barrier lives in
+`pkg/managedpostgres/connectionfence`. It requires a private maintenance database
+on the exact source cluster and a private role that owns every selected source
+database. Its installer rejects public/other-role connection grants, login-role
+membership that exposes maintenance authority, foreign maintenance sessions,
+and schema/function grants. PostgreSQL infrastructure superusers remain trusted
+operators; their active maintenance sessions still invalidate isolation checks.
+The maintenance schema is not a control-plane migration or a cloned application
+configuration input. SQLC owns the installer, catalogue reads and transactional
+functions, and `make sqlc-check` verifies both generated packages.
+
+Closing admission transactionally records the durable operation UUID, immutable
+source identity supplied by the caller, exact database OIDs/names/owners, and
+original connection flags before setting `ALLOW_CONNECTIONS false`. One active
+owner is allowed per maintenance database. Recovery reuses those exact pins;
+another owner or a renamed/replaced/reowned/reopened database is rejected. No
+worker lease expiry automatically reopens admission. Release restores only the
+recorded flags and cannot reopen a database that was originally closed. Names
+are quoted inside SQL-owned functions, including punctuation and quote
+characters; Go does not build production SQL.
+
+Admission closure is distinct from session drainage. Existing sessions can
+continue writing. Observation independently rechecks the selected identities and
+counts all sessions for their OIDs; `Drained` requires a closed selected set with
+zero observed sessions. The controller neither terminates sessions nor attests
+complete cluster/background writer coverage. PostgreSQL documents the admission
+setting in [ALTER DATABASE](https://www.postgresql.org/docs/16/sql-alterdatabase.html).
+Its backend initialization code also permits specially initialized background
+workers to override this setting; a provider coverage qualification must account
+for that separately. See
+[PostgreSQL connection initialization](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/utils/init/postinit.c).
+
+Client cancellation after dispatch is an unknown commit outcome. A disconnected
+client can leave a SQL statement waiting for a database lock, and it can commit
+after the lock becomes available. Recovery authority must remain durable. The
+separate abandonment function serializes against close in the maintenance
+ledger. If no closure is visible yet, it records an `abandoned` terminal marker;
+otherwise it restores the exact original settings. Both outcomes reject a later
+close from the same operation. A lost abandonment reply is recovered without
+changing the terminal timestamp or releasing another operation's barrier.
+Terminal records must not be deleted while old dispatch attempts can arrive.
+Successful release requires an existing closure and does not accept an
+abandonment marker as proof of completed capture.
+
+This component is not yet wired to the clone worker or the Neon adapter. Private
+maintenance resource bootstrap/ownership/cleanup, exact provider placement
+attestation, complete database inventory and writer closure, control-plane
+lease authority for remote dispatch, application drainage, and the common
+database/object checkpoint remain required. Neither a local session count nor
+this provider-local ledger establishes those properties. The existing capture
+and public complete-clone admission gates remain closed for data-bearing
+operations until the coordinated protocol is implemented and qualified.
+
+Verification: all eight connection-fence top-level contracts and their nine
+identity/privacy subcases passed against isolated databases and roles on a real
+PostgreSQL 16 cluster (7.833 s), with no skips. They include existing-session
+writes after admission closure, independently observed drainage, replacement
+controller recovery, exact original-flag restoration, concurrent-owner rejection,
+a confirmed database-lock wait with server timeout and transactional rollback,
+abandonment before delayed dispatch, and recovery of a client-cancelled in-flight
+close. This does not establish Neon behavior, full repository acceptance or the
+complete coordinated checkpoint.
