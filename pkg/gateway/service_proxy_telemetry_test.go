@@ -1,3 +1,5 @@
+// adr: 127 — request telemetry preserves route, status, latency, and trace evidence.
+// adr: 168 — internal service calls use the authorized node-local service proxy.
 package gateway
 
 import (
