@@ -3,13 +3,18 @@ package e2e_test
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +25,7 @@ import (
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -28,11 +34,11 @@ import (
 // PostgreSQL databases are exercised. Customer connections require verified TLS.
 // VMMD is the existing normal-path protocol fixture; native VM acceptance is
 // a separate gate and cannot be inferred from this test.
-func TestE2E_CommitProducerDeathReachesCompletedInvocation(t *testing.T) {
+func TestE2E_CommitProducerDeathReachesCompletedOperation(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Skip("DATABASE_URL required")
 	}
-	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-worker", api.PlanHobby, "FAAS_COMMIT_API_ENABLED=true")
+	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-worker", api.PlanHobby, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
 	if f == nil {
 		t.Fatal("commit acceptance requires the PostgreSQL harness")
 	}
@@ -44,13 +50,17 @@ func TestE2E_CommitProducerDeathReachesCompletedInvocation(t *testing.T) {
 
 type commitHandoffOptions struct{ SourceRecovery bool }
 
-func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string, options ...commitHandoffOptions) api.Invocation {
+func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string, options ...commitHandoffOptions) state.ExclusiveOperation {
 	t.Helper()
 	before, err := store.ListInvocationsForApp(context.Background(), appID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	beforeCount := len(before)
+	var beforeOperations int
+	if err := h.Pool.QueryRow(t.Context(), `SELECT count(*) FROM exclusive_work_operations WHERE app_id=$1::uuid`, appID).Scan(&beforeOperations); err != nil {
+		t.Fatal(err)
+	}
 	cluster := pgtest.OpenTLSCluster(t)
 	customer := cluster.Admin
 	ctx := context.Background()
@@ -64,7 +74,13 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := store.CreateCommitSource(ctx, state.CommitSource{AccountID: account.AccountID, AppID: appID, Name: sourceName})
+	if _, err := store.UpsertExclusiveWorkPolicy(ctx, account.AccountID, exclusivework.Policy{
+		Name: sourceName, Scope: "account", Contention: "queue", MemberAppIDs: []string{appID},
+		LeaseSeconds: 15, MaxAttemptSeconds: 60, MaxAttempts: 5, RetryAfterSeconds: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src, err := store.CreateCommitSource(ctx, state.CommitSource{AccountID: account.AccountID, AppID: appID, Name: sourceName, OperationPolicy: sourceName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,10 +249,10 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	completed := pollUntilCompleted(t, h, key, receipt.InvocationID, 20*time.Second)
-	if completed.State != string(state.InvocationCompleted) {
-		t.Fatalf("state=%s error=%s", completed.State, completed.LastError)
+	if receipt.OperationID == "" || receipt.InvocationID != "" {
+		t.Fatalf("Commit did not accept managed work: %+v", receipt)
 	}
+	completed := waitCommitOperationCompleted(t, h, store, key, src.AccountID, receipt.OperationID, 30*time.Second)
 	// Wait for the source checkpoint, then restart the real scheduler. A
 	// post-restart source health update proves it scanned the accepted event.
 	deadline = time.Now().Add(30 * time.Second)
@@ -284,8 +300,12 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		time.Sleep(100 * time.Millisecond)
 	}
 	invocations, err := store.ListInvocationsForApp(ctx, appID)
-	if err != nil || len(invocations) != beforeCount+1 {
+	if err != nil || len(invocations) != beforeCount {
 		t.Fatalf("logical invocations=%d err=%v", len(invocations), err)
+	}
+	var afterOperations int
+	if err := h.Pool.QueryRow(ctx, `SELECT count(*) FROM exclusive_work_operations WHERE app_id=$1::uuid`, appID).Scan(&afterOperations); err != nil || afterOperations != beforeOperations+1 {
+		t.Fatalf("logical managed operations=%d before=%d err=%v", afterOperations, beforeOperations, err)
 	}
 	if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, rolledBackID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("scheduler accepted a rolled-back event: %v", err)
@@ -294,12 +314,70 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	if status != http.StatusOK {
 		t.Fatalf("receipt API: %d %s", status, body)
 	}
-	body, status = doReq(t, h, key, http.MethodGet, "/v1/operations/"+receipt.InvocationID, nil)
+	body, status = doReq(t, h, key, http.MethodGet, "/v1/operations/"+receipt.OperationID, nil)
 	var operation api.CommitOperationResponse
 	if err := json.Unmarshal(body, &operation); err != nil || status != http.StatusOK || operation.State != "completed" || operation.CompletedAt == nil || operation.EventID != eventID {
 		t.Fatalf("completed operation API: %d %+v %v", status, operation, err)
 	}
 	return completed
+}
+
+func waitCommitOperationCompleted(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, account, id string, timeout time.Duration) state.ExclusiveOperation {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		body, code := doReq(t, h, key, http.MethodGet, "/v1/operations/"+id, nil)
+		var operation api.CommitOperationResponse
+		if err := json.Unmarshal(body, &operation); err != nil || code != http.StatusOK {
+			t.Fatalf("managed Commit operation API: %d %s (%v)", code, body, err)
+		}
+		if operation.State == "completed" {
+			owned, err := store.ExclusiveOperationByID(t.Context(), account, id)
+			if err != nil || owned.State != "completed" || owned.CompletedAt == nil || owned.IncarnationID == "" {
+				t.Fatalf("managed Commit completion lacks owner evidence: %+v (%v)", owned, err)
+			}
+			return owned
+		}
+		if operation.State == "failed" || operation.State == "cancelled" || operation.State == "expired" || time.Now().After(deadline) {
+			h.DumpLogs(t)
+			t.Fatalf("managed Commit operation did not complete: %s", body)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func commitOperationEnvironment(t *testing.T, env ...string) []string {
+	t.Helper()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "commit-schedd.pem")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := json.Marshal(map[string]string{"schedd": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(env, "FAAS_INTERNAL_SVC_KEY_PATH="+keyPath, "FAAS_INTERNAL_SVC_PUBKEYS="+string(keys))
+}
+
+func commitOperationInstance(t *testing.T, operation state.ExclusiveOperation) string {
+	t.Helper()
+	parts := strings.Split(operation.IncarnationID, "/")
+	if len(parts) != 3 || parts[0] == "" {
+		t.Fatalf("invalid managed operation incarnation: %q", operation.IncarnationID)
+	}
+	return parts[0]
 }
 
 func waitCommitSourceHealth(t *testing.T, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {

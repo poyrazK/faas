@@ -12,7 +12,8 @@ import (
 
 type Receipt struct {
 	ID           string `json:"receipt_id"`
-	InvocationID string `json:"invocation_id"`
+	InvocationID string `json:"invocation_id,omitempty"`
+	OperationID  string `json:"operation_id,omitempty"`
 }
 
 // Acceptor must durably deduplicate source/event identity and return the
@@ -108,8 +109,12 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 			if _, err := uuid.Parse(receipt.ID); err != nil {
 				acceptErr = errors.New("commit: invalid acceptance receipt")
 			}
-			if _, err := uuid.Parse(receipt.InvocationID); err != nil {
-				acceptErr = errors.New("commit: invalid acceptance invocation")
+			workID := receipt.OperationID
+			if workID == "" {
+				workID = receipt.InvocationID
+			}
+			if _, err := uuid.Parse(workID); err != nil || (receipt.OperationID != "" && receipt.InvocationID != "") {
+				acceptErr = errors.New("commit: invalid acceptance work identity")
 			}
 		}
 		if acceptErr != nil {
@@ -128,8 +133,8 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 			continue
 		}
 		result, err := r.Pool.Exec(ctx, `UPDATE public.gregale_outbox SET accepted_at=clock_timestamp(),
-   receipt_id=$3::uuid,invocation_id=$4::uuid,lease_token=NULL,lease_until=NULL
-   WHERE event_id=$1::uuid AND lease_token=$2::uuid AND accepted_at IS NULL`, e.ID, token, receipt.ID, receipt.InvocationID)
+   receipt_id=$3::uuid,invocation_id=NULLIF($4,'')::uuid,operation_id=NULLIF($5,'')::uuid,lease_token=NULL,lease_until=NULL
+   WHERE event_id=$1::uuid AND lease_token=$2::uuid AND accepted_at IS NULL`, e.ID, token, receipt.ID, receipt.InvocationID, receipt.OperationID)
 		if err != nil {
 			failures = append(failures, err)
 			continue

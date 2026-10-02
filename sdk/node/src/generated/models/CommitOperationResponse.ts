@@ -7,7 +7,7 @@ export type CommitOperationResponse = {
   receipt_id: string;
   source_id: string;
   event_id: string;
-  state: 'accepted' | 'running' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+  state: 'accepted' | 'pending' | 'running' | 'completed' | 'cancelled' | 'failed' | 'expired' | 'unknown';
   accepted_at: string;
   completed_at?: string;
 };

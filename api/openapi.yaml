@@ -19083,7 +19083,7 @@ paths:
     post:
       tags: [queues]
       operationId: createCommitSource
-      summary: Register an internal PostgreSQL outbox source.
+      summary: Bind an internal PostgreSQL outbox source to managed Operations.
       parameters:
         - $ref: '#/components/parameters/Slug'
       requestBody:
@@ -19092,9 +19092,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name]
+              required: [name, operation_policy]
               properties:
                 name: { type: string, minLength: 1, maxLength: 128 }
+                operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active account-scoped queue policy containing this application. The source application and policy are immutable. }
       responses:
         '201':
           description: Successful Commit request.
@@ -24630,6 +24631,7 @@ components:
         app_id: { type: string, format: uuid }
         name: { type: string }
         enabled: { type: boolean }
+        operation_policy: { type: string, description: Immutable managed Operations policy. Absent only for legacy internal sources. }
         relay_status: { type: string }
         last_checked_at: { type: string, format: date-time }
         pending_events: { type: integer, format: int64 }
@@ -24664,12 +24666,14 @@ components:
         data: {}
     CommitReceiptResponse:
       type: object
-      required: [receipt_id, source_id, event_id, invocation_id, accepted_at, operation_url]
+      required: [receipt_id, source_id, event_id, accepted_at, operation_url]
+      description: Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return invocation_id instead. Exactly one work identity is present.
       properties:
         receipt_id: { type: string, format: uuid }
         source_id: { type: string, format: uuid }
         event_id: { type: string, format: uuid }
         invocation_id: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
         accepted_at: { type: string, format: date-time }
         operation_url: { type: string }
     CommitOperationResponse:
@@ -24680,7 +24684,7 @@ components:
         receipt_id: { type: string, format: uuid }
         source_id: { type: string, format: uuid }
         event_id: { type: string, format: uuid }
-        state: { type: string, enum: [accepted, running, completed, cancelled, failed, unknown] }
+        state: { type: string, enum: [accepted, pending, running, completed, cancelled, failed, expired, unknown] }
         accepted_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     OutboundIntegrationOffer:

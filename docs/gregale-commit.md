@@ -5,8 +5,8 @@ contains the customer transaction helper, polling relay library, and a
 PostgreSQL-backed durable acceptance API. The scheduler relay is internally gated; source-bound credential registration,
 pause/resume, and transaction helpers are implemented. Blocked-event snapshots, durable replay requests, accepted-row cleanup,
 SDK/CLI source management are implemented. Strict Linux process acceptance
-passed on 2026-10-01 UTC and native KVM correctness acceptance passed on
-2026-10-02 UTC on the GCP internal test node. The remaining
+and native KVM correctness acceptance passed on 2026-10-02 UTC for the managed
+Operations target on the GCP internal test node. The remaining
 production qualification work below still prevents customer promotion.
 
 ## Transaction contract
@@ -18,22 +18,24 @@ time, not commit time. The platform relay observes only committed events.
 
 The relay claims bounded batches with expiring, fenced leases. Remote acceptance
 runs outside the customer transaction. A lost response or checkpoint retries
-the same source/event identity. Gregale commits the receipt and invocation
+the same source/event identity. Gregale commits the receipt and managed Operation
 together and returns the original receipt for identical retries. Changed type
 or JSON content conflicts. Identity records currently have no expiry and survive
-invocation retention; deleting the source/account deletes its identity history.
+operation/result retention; deleting the source/account deletes its identity history.
 
 Delivery is at least once. Consumers must transactionally record event IDs
 alongside their business effects. Acceptance does not imply execution completion.
-The receipt links to `/v1/operations/{invocation_id}` for retained execution status.
-The existing invocation endpoint exposes execution details until their retention expires.
+New receipts carry `operation_id` and link to `/v1/operations/{operation_id}`.
+The managed Operations owner supplies pending/running/terminal status, ownership
+generation and results. Retained Commit facts remain readable after owner cleanup.
+Historical internal receipts keep their original `invocation_id`.
 
 ## Current API
 
 - `POST /v1/apps/{slug}/commit-sources` creates a fixed destination source from
-  `{"name":"orders"}`. A connection is sealed through the endpoint below; the managed relay enforces operator-defined network policy and qualifies the source table.
-  Names are unique within an account. Registering the same name and application
-  returns the existing source; using that name for another application returns
+  `{"name":"orders","operation_policy":"orders"}`. A connection is sealed through the endpoint below; the managed relay enforces operator-defined network policy and qualifies the source table.
+  Names are unique within an account. Registering the same name, application and policy
+  returns the existing source; using that name for another destination returns
   HTTP 409 with `commit_source_name_conflict` and preserves the destination.
 - `PUT /v1/commit-sources/{source}/connection` seals a TLS-verified PostgreSQL `connection_url` with source-bound encryption. Credentials are never returned.
 - `PATCH /v1/commit-sources/{source}` sets `enabled` for pause/resume. Existing receipts remain recoverable while paused.
@@ -72,97 +74,52 @@ delivery and Firecracker execution in an isolated qualification environment.
 
 ## Revision qualification
 
-The branch was rebased onto main commit
-`a3e1800e37962a3341ef13703b28a3d3c628191b`. The rebased implementation passed
-all 14 strict process gates, the Go/Node/Python transaction helpers, and leakcheck
-on the GCP internal node at 23:00 UTC on 2026-10-01. The combined consumer
-scenario now includes repeated source-database outage observations and a
-credential rotation before recovery. It still completes after three deliveries
-and preserves one business effect under concurrent duplicates. The source
-archive SHA-256 is
-`9063bee415f631b0e61df5dc3a1a31ea9564eeafc84a1fa249853ec3f7037d29`; all
-13,364 source files matched manifest
-`8f0e359ac0abbd5eb74d91a2eed84bd3864a6a9d7b5e50e67c9663a889b5f265`.
-The disposable PostgreSQL cluster stopped successfully.
+The branch is based on main commit
+`a3e1800e37962a3341ef13703b28a3d3c628191b`. The current managed Operations
+qualification uses source archive SHA-256
+`33bfb31f41301ba90a8e160e8b9ddeb16a318870469fc0381daabeb6eada7703`.
+Its 46 changed files were verified before execution. The forward migration
+uses the repository's 17-digit timestamp format. The checked-in PostgreSQL
+schema was regenerated from live migrations; sqlc regeneration matches.
 
-The same rebased runtime passed the full native KVM suite at 00:22 UTC on
-2026-10-02. Its parent and all 11 subtests passed in 421.27 seconds, including
-source deployment, snapshot wake, forced cold boot, corrupt-capture fallback
-and replacement restore, and both Commit producer-death wake cases. The
-pre-reaper leak check passed and the disposable PostgreSQL cluster stopped.
-Snapshots used a bounded 8 GiB tmpfs inside the run's private mount namespace;
-this qualifies execution correctness and does not qualify SSD latency. Earlier
-attempts with an isolated disk root failed because of incomplete inputs, a
-legacy device-state path mismatch, or storage performance/capacity; their
-failed test events are retained separately from the successful evidence.
+On 2026-10-02 UTC, all 22 required PostgreSQL/Linux process gates passed on
+`gregale-internal-test-1` in project `gregale-prod`, zone `us-east1-b`.
+Go, Node and Python transaction helpers passed against real PostgreSQL.
+The actual scheduler relay delivered a committed event after producer death,
+ignored rollback, preserved its receipt through restart, and completed one
+managed Operation without creating a legacy invocation. The HTTP consumer
+survived crashes before and after its business commit; eight concurrent duplicate
+requests preserved one business effect. Source outages and credential rotation
+were included. Receipt insertion failure rolled back owner admission; concurrent
+acceptance, immutable policy bindings, policy retirement, explicit customer
+schema upgrade and retained completion facts passed their database gates.
+The process unit exited successfully, leakcheck passed, and the disposable
+PostgreSQL cluster stopped cleanly.
 
-The current Commit target remains a durable HTTP invocation. Main now also
-contains policy-backed managed Operations; the shared operation-status route
-preserves access to Commit receipts, but Commit does not yet admit work into
-those policies. This is a delivery-target gap, not evidence of policy-backed
-Commit execution. Python client generation now uses the shared status endpoint
-and decodes both response types. Its 116 unit/contract tests and deterministic
-regeneration pass; real PostgreSQL acceptance is a separate strict gate.
+All 11 native source-deployment scenarios passed, including both Commit
+producer-death profiles completing real managed Operations after snapshot restore
+and cold boot. The Operations owner/policy regression suite passed 10 parent
+tests; the wake suite passed 16, including cancellation, concurrent park requests,
+and retained deployment pins. Required scenarios had no failures or skips.
+Pre/post native leakcheck passed, and PostgreSQL stopped cleanly.
 
-The regenerated Python transaction helper and existing managed Operations
-API/PostgreSQL owner contracts passed on the same node after the native run.
-The incoming policy-retirement test needed explicit migration when using a
-fresh schema; it now passes with both fresh-schema and migrated-template
-fixtures. This follow-up changes test setup and SDK decoding, not the native
-runtime qualified above. Its pre-reaper leak check passed and its disposable
-PostgreSQL cluster stopped successfully.
+Managed dispatch now uses the coordinated app wake lifecycle, including
+activation, rollback, and park/account fencing. The regression reproduces the
+original direct-wake defect for both current and retained revisions: it left the
+app in `evicted_cold`, allowing lifecycle reconciliation to cancel its cold boot.
+The corrected path passes the same checks and the real KVM cold-boot scenario.
 
-## GCP acceptance evidence
-
-On 2026-10-01, `sh scripts/test-commit.sh` passed on
-`gregale-internal-test-1` in `gregale-prod`, zone `us-east1-b`, using an isolated
-PostgreSQL 16 cluster. This includes the Go, Node, and Python customer transaction
-helpers, PostgreSQL relay and durable receipt tests, API integration, and
-`TestE2E_CommitProducerDeathReachesCompletedInvocation` with the actual scheduler
-relay and a verified TLS customer database.
-
-The process test verifies producer death after commit, rollback invisibility,
-pause/resume, completed invocation state, and stable identity after a scheduler
-restart. Its VMMD fixture exercises the daemon protocol. The separate
-`sh scripts/test-commit-native.sh` gate passed on that same node at 21:54 UTC,
-with real Firecracker execution, the parent source-deployment suite, both Commit
-wake profiles, and a clean pre-reaper leak check. The native suite took 445 seconds.
-Commit snapshot wake completed in 10.08 seconds and Commit cold-boot wake in
-10.74 seconds. These are fixture timings, not latency guarantees.
-
-The expanded strict process gate also passed with
-`TestE2E_CommitCLISourceLifecycle`. Credential setup uses the actual connection
-registration endpoint, the fleet public recipient, and the scheduler's loaded
-fleet private key. The consumer example additionally qualifies source-scoped
-event identities; a UUID from another source must not be suppressed.
-CLI acceptance includes registration, pause/resume, repeated registration,
-receipt recovery, and completed operation reads. SDK acceptance uses real
-PostgreSQL transactions in Go database/sql, Node pg, and Python psycopg,
-including commit/rollback, duplicate identities, and a conflicting search path.
-
-The native qualification source matched the 103 changed code files at the time
-of that run. The SHA-256 of its code manifest is
-`a4f13233788df3dee51e2912c152ee12c2aff04f3282f100e08ac3df205e1e5f`.
-The evidence bundle records source and binary checksums, runtime versions,
-per-test events, terminal service results, and strict gate/leak-check verdicts.
-
-`TestE2E_CommitHTTPConsumerCrashRecovery` subsequently passed on the same node
-at 22:28 UTC. A real child HTTP consumer uses a separate business database and
-dies before its first transaction commits, then after its next transaction
-commits but before it responds. Three delivery attempts complete the operation.
-The same source/event identity reaches each attempt; eight concurrent duplicate
-HTTP requests leave one durable deduplication marker and one business effect.
-The test also includes producer termination, rollback invisibility, and a real
-scheduler restart. Its pre-reaper leak check passed. This test uses the VMMD
-protocol fixture; the native gate above supplies the separate Firecracker proof.
-
-The expanded strict process gate passed again at 22:33 UTC with all 14 required
-scenarios, the three SDK transaction helpers, and a clean leak check. All 105
-changed code files matched the uploaded qualification source; its manifest
-SHA-256 is `95ef47b5cc3728d39d80dc8cdab1450accd2c9b8cc2103b237471097e36fb735`.
-The rebuilt daemon binaries include closed database vocabularies for source
-health and operation state. The disposable platform PostgreSQL cluster stopped
-successfully after the run. No serving deployment was promoted.
+The evidence bundle SHA-256 is
+`01856570ac7c626b6e015a20cddc78938f4d318a80f97c49f3fa3e0332bf1791`.
+It retains test JSON, logs, source/binary/kernel hashes, runner scripts, earlier
+failed attempts, and systemd completion journals. The completed transient units
+were garbage-collected; each journal verifies PID 1's successful completion for
+the same invocation that started the unit. The snapshot cache used bounded
+8 GiB tmpfs in a private mount namespace; this proves correctness and does not
+qualify the reference SSD latency target. After testing, this summary was updated
+and one extra trailing newline was removed from the forward migration. All other
+runtime and client files still match the qualified manifest.
+Customer promotion remains gated by the production qualification work above.
 
 ## Scheduler configuration
 
@@ -187,14 +144,14 @@ The Node SDK exports `insertCommitEvent`; Python exports `insert_commit_event`.
 Both insert using the existing customer transaction and leave commit/rollback to
 the application. Using an autocommit connection defeats business-write atomicity.
 
-`TestE2E_CommitProducerDeathReachesCompletedInvocation` exercises real Linux
+`TestE2E_CommitProducerDeathReachesCompletedOperation` exercises real Linux
 processes and the VMMD protocol fixture. macOS cannot run the daemon boot checks;
 this test does not replace the native KVM qualification gate.
 
 ## CLI setup
 
 ```sh
-gregale commit add order-worker --name orders
+gregale commit add order-worker --name orders --operation-policy orders
 gregale commit connection <source-id> --file /private/path/database-url
 gregale commit pause <source-id>
 gregale commit resume <source-id>
@@ -202,8 +159,15 @@ gregale commit info <source-id>
 gregale commit receipt <source-id> <event-id>
 ```
 
-Before registering the connection, install `pkg/commit/schema.sql` in the
-customer database as its owner. Bind the outbox to the source ID returned by
+Create a policy JSON file containing `scope: "account"`, `contention: "queue"`,
+`member_app_ids: ["<order-worker-app-id>"]`, `lease_seconds: 15` and
+`max_attempt_seconds: 60`. Save it through
+`gregale operations policy upsert --file orders-policy.json orders` before adding
+the source. Omit `environment_id` for this release. Before registering the connection, install `pkg/commit/schema.sql` in the
+customer database as its owner. An older internal outbox needs the explicit
+owner upgrade in `pkg/commit/schema_operations_upgrade.sql`; the relay refuses
+a schema without the managed `operation_id` checkpoint column. The upgrade
+preserves legacy accepted identities and refuses unknown delivery constraints. Bind the outbox to the source ID returned by
 `commit add`, and grant the dedicated relay role these table permissions:
 
 ```sql
@@ -221,7 +185,7 @@ change it. Each customer database supports one bound source in this release.
 The connection file is read with an 8192-byte cap and its contents are never
 printed. Source registration replays the same destination/name without changing
 its credentials or paused state. Receipt recovery reports durable acceptance;
-use the referenced invocation to inspect execution status.
+use the referenced managed Operation to inspect execution status.
 
 Source info includes the latest relay health, observation timestamp, pending and
 blocked counts, and oldest pending insertion time. Unavailable database scans
@@ -257,7 +221,7 @@ the legacy `/srv/fc/snap` device-state locator must resolve to the same snapshot
 objects as the storage backend. The GCP runner provides this mapping inside a
 private mount namespace. Capacity must include temporary private-drive copies
 while publishing replacement captures; final artifact size understates peak use.
-On the GCP internal node, the full native gate passed in one strict run:
+The current managed Operations target passed the full GCP native gate:
 source deployment, public HTTP readiness, snapshot HTTP wake, forced cold boot,
 corrupted-snapshot fallback, both Commit producer-death wake profiles, and cleanup.
 VMMD now fences exit notifications by process attempt so a retired restore
@@ -271,15 +235,20 @@ primary key before processing. The database role needs SELECT, INSERT, UPDATE,
 and DELETE permissions on that table.
 
 Acceptance receipts include `operation_url`. Read that URL or run
-`gregale commit operation <invocation-id>` to distinguish accepted, running,
+`gregale commit operation <operation-id>` to distinguish accepted, running,
 completed, cancelled, and failed work. Execution state is copied into the durable
-receipt in the same database transaction as invocation state changes, so it
-survives invocation retention. This interface remains under qualification.
+receipt in the same database transaction as managed owner state changes, so it
+survives operation/result retention. This interface remains under qualification.
 
-Commit targets request-serving apps through the asynchronous invocation drain,
-independently of queue-trigger bindings. Worker/job destinations are rejected
-before acceptance. Commit admission counts both queued and asynchronous pending
-work; its per-app lock serializes competing Commit admissions.
+Commit targets request-serving apps through the managed Operations dispatcher.
+Each source fixes an active account-scoped queue policy with no environment pin
+and containing its application. The source UUID defines one serialization lane;
+the event UUID defines owner idempotency. Policies control leases, retry delay and
+attempt limits. The existing account lock and pending-operation quota serialize
+admissions with other managed work. Enabled sources prevent policy retirement
+and incompatible changes. Pause the source and finish outstanding work before
+retiring its policy. A retired or incompatible policy cannot be resumed.
+Worker/job and tenant-required destinations remain unsupported.
 
 ## Consumer transaction recipe
 

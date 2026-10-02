@@ -8,17 +8,25 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="CommitReceiptResponse")
 
 
 @_attrs_define
 class CommitReceiptResponse:
+    """Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return
+    invocation_id instead. Exactly one work identity is present.
+
+    """
+
     receipt_id: UUID
     source_id: UUID
     event_id: UUID
-    invocation_id: UUID
     accepted_at: datetime.datetime
     operation_url: str
+    invocation_id: UUID | Unset = UNSET
+    operation_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,11 +36,17 @@ class CommitReceiptResponse:
 
         event_id = str(self.event_id)
 
-        invocation_id = str(self.invocation_id)
-
         accepted_at = self.accepted_at.isoformat()
 
         operation_url = self.operation_url
+
+        invocation_id: str | Unset = UNSET
+        if not isinstance(self.invocation_id, Unset):
+            invocation_id = str(self.invocation_id)
+
+        operation_id: str | Unset = UNSET
+        if not isinstance(self.operation_id, Unset):
+            operation_id = str(self.operation_id)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,11 +55,14 @@ class CommitReceiptResponse:
                 "receipt_id": receipt_id,
                 "source_id": source_id,
                 "event_id": event_id,
-                "invocation_id": invocation_id,
                 "accepted_at": accepted_at,
                 "operation_url": operation_url,
             }
         )
+        if invocation_id is not UNSET:
+            field_dict["invocation_id"] = invocation_id
+        if operation_id is not UNSET:
+            field_dict["operation_id"] = operation_id
 
         return field_dict
 
@@ -58,19 +75,32 @@ class CommitReceiptResponse:
 
         event_id = UUID(d.pop("event_id"))
 
-        invocation_id = UUID(d.pop("invocation_id"))
-
         accepted_at = datetime.datetime.fromisoformat(d.pop("accepted_at"))
 
         operation_url = d.pop("operation_url")
+
+        _invocation_id = d.pop("invocation_id", UNSET)
+        invocation_id: UUID | Unset
+        if isinstance(_invocation_id, Unset):
+            invocation_id = UNSET
+        else:
+            invocation_id = UUID(_invocation_id)
+
+        _operation_id = d.pop("operation_id", UNSET)
+        operation_id: UUID | Unset
+        if isinstance(_operation_id, Unset):
+            operation_id = UNSET
+        else:
+            operation_id = UUID(_operation_id)
 
         commit_receipt_response = cls(
             receipt_id=receipt_id,
             source_id=source_id,
             event_id=event_id,
-            invocation_id=invocation_id,
             accepted_at=accepted_at,
             operation_url=operation_url,
+            invocation_id=invocation_id,
+            operation_id=operation_id,
         )
 
         commit_receipt_response.additional_properties = d

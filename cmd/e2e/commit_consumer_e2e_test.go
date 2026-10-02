@@ -40,7 +40,7 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	if _, err := consumer.Exec(ctx, `CREATE TABLE processed_events(consumer text NOT NULL,source text NOT NULL,event_id uuid NOT NULL,PRIMARY KEY(consumer,source,event_id)); CREATE TABLE business_effects(id integer PRIMARY KEY,total integer NOT NULL); INSERT INTO business_effects VALUES(1,0)`); err != nil {
 		t.Fatal(err)
 	}
-	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-consumer", api.PlanPro, "FAAS_COMMIT_API_ENABLED=true")
+	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-consumer", api.PlanPro, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
 	if f == nil {
 		t.Fatal("Commit consumer acceptance requires PostgreSQL")
 	}
@@ -125,8 +125,14 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	if completed.Attempts < 3 {
 		t.Fatalf("consumer crashes did not cause durable retries: attempts=%d", completed.Attempts)
 	}
-	if completed.InstanceID != instance.ID || string(completed.Result) != `{"ok":true}` {
-		t.Fatalf("recovered HTTP consumer did not complete the operation: instance=%s result=%s", completed.InstanceID, completed.Result)
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(completed.Result, &result); err != nil {
+		t.Fatalf("decode completed consumer result: %v", err)
+	}
+	if commitOperationInstance(t, completed) != instance.ID || !result.OK {
+		t.Fatalf("recovered HTTP consumer did not complete the operation: incarnation=%s result=%s", completed.IncarnationID, completed.Result)
 	}
 	before, err := os.ReadFile(beforeFile)
 	if err != nil {
@@ -136,8 +142,8 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("consumer retry changed source/event identity: before=%q after=%q err=%v", before, after, err)
 	}
-	invocation, err := f.store.InvocationByID(ctx, completed.ID)
-	if err != nil {
+	var invocation api.InvokeRequest
+	if err := json.Unmarshal(completed.Request, &invocation); err != nil {
 		t.Fatal(err)
 	}
 	var delivered events.Envelope

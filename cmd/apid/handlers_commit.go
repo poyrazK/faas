@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,7 +33,8 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name            string `json:"name"`
+		OperationPolicy string `json:"operation_policy"`
 	}
 	if !decodeJSONLimit(w, r, &req, 4096) {
 		return
@@ -41,14 +43,22 @@ func (s *server) createCommitSource(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrValidation("source name must contain 1-128 bytes"))
 		return
 	}
+	if strings.TrimSpace(req.OperationPolicy) == "" {
+		api.WriteProblem(w, api.ErrValidation("operation_policy is required; use an account-scoped queue policy containing this application"))
+		return
+	}
 	store, ok := s.store.(state.CommitStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("commit store unavailable"))
 		return
 	}
-	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name})
+	src, err := store.CreateCommitSource(r.Context(), state.CommitSource{AccountID: acct.ID, AppID: app.ID, Name: req.Name, OperationPolicy: req.OperationPolicy})
 	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name belongs to another application"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_source_name_conflict", "Source name already used", "This source name has a different application or operation policy"))
+		return
+	}
+	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrValidation("operation_policy must be an active account-scoped queue policy containing this application"))
 		return
 	}
 	if err != nil {
@@ -78,12 +88,10 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	if limits.MaxQueueDepth == 0 {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
-		return
-	}
 	var event commitwork.Event
-	if !decodeJSONLimit(w, r, &event, int64(limits.MaxSourceBytesPerInvocation)) {
+	// Recovery uses the platform cap so a plan downgrade cannot prevent an
+	// already accepted identity from returning its original receipt.
+	if !decodeJSONLimit(w, r, &event, int64(api.MaxExclusiveRequestBytes)) {
 		return
 	}
 	if err := event.Validate(); err != nil {
@@ -103,6 +111,14 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 		return
 	} else if !errors.Is(lookupErr, state.ErrNotFound) {
 		api.WriteProblem(w, api.ErrCapacity("lookup commit receipt"))
+		return
+	}
+	if limits.MaxQueueDepth == 0 {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
+		return
+	}
+	if len(event.Data) > limits.MaxSourceBytesPerInvocation {
+		api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, "commit_payload_too_large", "Commit payload too large", "event data exceeds the current plan's invocation input limit"))
 		return
 	}
 	// The event source is assigned by Gregale, not supplied by the producer.
@@ -137,10 +153,12 @@ func (s *server) acceptCommitEvent(w http.ResponseWriter, r *http.Request, acct 
 	}
 	receipt, err := store.AcceptCommitEvent(r.Context(), acct.ID, source, event.ID, event.Type, event.Data, inv, limits.MaxQueueDepth)
 	switch {
-	case errors.Is(err, state.ErrConflict):
+	case errors.Is(err, state.ErrConflict), errors.Is(err, exclusivework.ErrIdentityConflict):
 		api.WriteProblem(w, api.NewProblem(409, "commit_identity_conflict", "Event identity conflict", "event ID was already accepted with different content"))
 	case errors.Is(err, state.ErrCommitQueueFull):
 		api.WriteProblem(w, api.ErrCapacity("commit destination queue full"))
+	case errors.Is(err, state.ErrQuotaExceeded):
+		writeExclusiveError(w, err)
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.NewProblem(409, "commit_source_paused", "Source unavailable", "commit source is not accepting new events"))
 	case err != nil:
@@ -197,6 +215,10 @@ func (s *server) setCommitSourceEnabled(w http.ResponseWriter, r *http.Request, 
 	src, err := store.SetCommitSourceEnabled(r.Context(), acct.ID, id, *req.Enabled)
 	if errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.NewProblem(404, "commit_source_not_found", "Source not found", "commit source is unavailable"))
+		return
+	}
+	if errors.Is(err, state.ErrInvalidArgument) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "commit_operation_policy_unavailable", "Operation policy unavailable", "the source requires an active account-scoped queue policy containing its application"))
 		return
 	}
 	if err != nil {
@@ -333,8 +355,7 @@ func (s *server) loadCommitRecoverySource(w http.ResponseWriter, r *http.Request
 	return store, source, true
 }
 
-// Operations reuse invocation identities and dispatch. This view preserves
-// minimal acceptance/completion facts without creating another execution loop.
+// Retained Commit facts remain readable after the managed owner prunes results.
 func (s *server) getCommitOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.store.(state.CommitStore)
 	if !ok {

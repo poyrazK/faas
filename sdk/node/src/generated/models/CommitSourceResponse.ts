@@ -7,6 +7,10 @@ export type CommitSourceResponse = {
   app_id: string;
   name: string;
   enabled: boolean;
+  /**
+   * Immutable managed Operations policy. Absent only for legacy internal sources.
+   */
+  operation_policy?: string;
   relay_status?: string;
   last_checked_at?: string;
   pending_events?: number;

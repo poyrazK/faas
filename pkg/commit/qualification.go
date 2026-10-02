@@ -16,7 +16,7 @@ func QualifySchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	required := map[string]string{
 		"event_id": "uuid", "event_type": "text", "payload": "jsonb", "created_at": "timestamptz",
-		"accepted_at": "timestamptz", "receipt_id": "uuid", "invocation_id": "uuid",
+		"accepted_at": "timestamptz", "receipt_id": "uuid", "invocation_id": "uuid", "operation_id": "uuid",
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
 		"attempts": "int4", "blocked_code": "text",
 	}

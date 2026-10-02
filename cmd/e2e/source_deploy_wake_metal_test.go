@@ -116,7 +116,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
-	h := e2etest.Start(t, pool, e2etest.All, "FAAS_COMMIT_API_ENABLED=true")
+	h := e2etest.Start(t, pool, e2etest.All, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// Hobby defaults to require_authn=true post #695 / ADR-080. The wake
@@ -640,7 +640,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			}
 			completed := runCommitProducerHandoff(t, h, state.NewPgStore(pool), key, appID, profile.name)
 			var wakeID string
-			if err := pool.QueryRow(ctx, `SELECT wake_id::text FROM instances WHERE id=$1`, completed.InstanceID).Scan(&wakeID); err != nil {
+			if err := pool.QueryRow(ctx, `SELECT wake_id::text FROM instances WHERE id=$1`, commitOperationInstance(t, completed)).Scan(&wakeID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := e2etest.WaitForWakeMethod(ctx, t, pool, wakeID, profile.method, 10*time.Second); err != nil {

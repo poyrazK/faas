@@ -95,7 +95,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceBody,
 ) -> Response[CommitSourceResponse | Problem]:
-    """Register an internal PostgreSQL outbox source.
+    """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
@@ -127,7 +127,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceBody,
 ) -> CommitSourceResponse | Problem | None:
-    """Register an internal PostgreSQL outbox source.
+    """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
@@ -154,7 +154,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceBody,
 ) -> Response[CommitSourceResponse | Problem]:
-    """Register an internal PostgreSQL outbox source.
+    """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
@@ -184,7 +184,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceBody,
 ) -> CommitSourceResponse | Problem | None:
-    """Register an internal PostgreSQL outbox source.
+    """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):

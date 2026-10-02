@@ -12,6 +12,7 @@ type CommitSourceResponse struct {
 	AppID           string     `json:"app_id"`
 	Name            string     `json:"name"`
 	Enabled         bool       `json:"enabled"`
+	OperationPolicy string     `json:"operation_policy,omitempty"`
 	RelayStatus     string     `json:"relay_status,omitempty"`
 	LastCheckedAt   *time.Time `json:"last_checked_at,omitempty"`
 	PendingEvents   *int64     `json:"pending_events,omitempty"`
@@ -29,7 +30,8 @@ type CommitReceiptResponse struct {
 	ID           string    `json:"receipt_id"`
 	SourceID     string    `json:"source_id"`
 	EventID      string    `json:"event_id"`
-	InvocationID string    `json:"invocation_id"`
+	InvocationID string    `json:"invocation_id,omitempty"`
+	OperationID  string    `json:"operation_id,omitempty"`
 	AcceptedAt   time.Time `json:"accepted_at"`
 	OperationURL string    `json:"operation_url"`
 }
@@ -78,9 +80,9 @@ func (c *Client) ReplayCommitBlockedEvent(ctx context.Context, source, event str
 	return c.do(ctx, "POST", "/v1/commit-sources/"+url.PathEscape(source)+"/events/"+url.PathEscape(event)+"/replay", nil, nil)
 }
 
-func (c *Client) CreateCommitSource(ctx context.Context, slug, name string) (CommitSourceResponse, error) {
+func (c *Client) CreateCommitSource(ctx context.Context, slug, name, operationPolicy string) (CommitSourceResponse, error) {
 	var out CommitSourceResponse
-	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/commit-sources", map[string]string{"name": name}, &out)
+	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/commit-sources", map[string]string{"name": name, "operation_policy": operationPolicy}, &out)
 	return out, err
 }
 func (c *Client) SetCommitSourceEnabled(ctx context.Context, source string, enabled bool) (CommitSourceResponse, error) {

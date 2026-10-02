@@ -29,7 +29,7 @@ func TestPostgresRelayCommitRollbackAndLostAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	receipt := Receipt{ID: uuid.NewString(), InvocationID: uuid.NewString()}
+	receipt := Receipt{ID: uuid.NewString(), OperationID: uuid.NewString()}
 	lost := true
 	relay := Relay{Pool: pool, Acceptor: acceptFunc(func(_ context.Context, e Event) (Receipt, error) {
 		calls++
@@ -72,7 +72,7 @@ func TestPostgresRelayCommitRollbackAndLostAcceptance(t *testing.T) {
 		t.Fatalf("recovery: %d %v", n, err)
 	}
 	var got Receipt
-	if err := pool.QueryRow(ctx, `SELECT receipt_id::text,invocation_id::text FROM gregale_outbox WHERE event_id=$1`, event.ID).Scan(&got.ID, &got.InvocationID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT receipt_id::text,COALESCE(invocation_id::text,''),COALESCE(operation_id::text,'') FROM gregale_outbox WHERE event_id=$1`, event.ID).Scan(&got.ID, &got.InvocationID, &got.OperationID); err != nil {
 		t.Fatal(err)
 	}
 	if got != receipt || calls != 2 {

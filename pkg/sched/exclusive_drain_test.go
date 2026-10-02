@@ -89,4 +89,92 @@ func TestExclusiveOperationDrainDispatchesAndCommitsUnderClaim(t *testing.T) {
 	}
 }
 
+func TestExclusiveOperationDrainUnparksAcceptedDeployment(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		name := "current"
+		if pinned {
+			name = "pinned"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			drain, base, _, _, _ := newDrainHarness(t, api.PlanPro, false)
+			store := base.(*state.MemStore)
+			apps, err := store.ListAllApps(ctx)
+			if err != nil || len(apps) != 1 {
+				t.Fatalf("apps=%d err=%v", len(apps), err)
+			}
+			app := apps[0]
+			deployment, err := store.LiveDeployment(ctx, app.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parked := state.AppEvictedCold
+			manifest := app.Manifest
+			manifest.RevisionPinTTLSeconds = 60
+			if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &parked, Manifest: &manifest}); err != nil {
+				t.Fatal(err)
+			}
+			owners := state.ExclusiveWorkStore(store)
+			if _, err := owners.UpsertExclusiveWorkPolicy(ctx, app.AccountID, exclusivework.Policy{
+				Name: "orders", Scope: "account", MemberAppIDs: []string{app.ID},
+				Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 30,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			request := api.InvokeRequest{Method: "POST", Path: "/sync"}
+			if pinned {
+				request.Headers, err = json.Marshal(map[string]string{api.RevisionHeader: deployment.ID})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			payload, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation, _, err := owners.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+				AccountID: app.AccountID, AppID: app.ID, PolicyName: "orders",
+				Key: json.RawMessage(`"orders"`), Request: payload,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pinned {
+				// Cut over after acceptance. The old revision stays explicitly
+				// reachable, and a wake must preserve the accepted pin.
+				newer, err := store.CreateDeployment(ctx, state.Deployment{
+					AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:newer",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.MarkDeploymentLive(ctx, newer.ID); err != nil {
+					t.Fatal(err)
+				}
+				live, err := store.LiveDeployment(ctx, app.ID)
+				if err != nil || live.ID != newer.ID {
+					t.Fatalf("current deployment=%s want=%s err=%v", live.ID, newer.ID, err)
+				}
+				_, version, err := state.ResolveInvocationVersion(ctx, store, state.Invocation{
+					AppID: app.ID, Headers: request.Headers,
+				})
+				if err != nil || version.DeploymentID != deployment.ID {
+					t.Fatalf("accepted pin=%s want=%s err=%v", version.DeploymentID, deployment.ID, err)
+				}
+			}
+			gateway := &exclusiveDrainGateway{}
+			drain.gateway = gateway
+			drain.Tick(ctx)
+			ready, err := store.AppByID(ctx, app.ID)
+			if err != nil || ready.Status != state.AppActive {
+				t.Fatalf("managed wake left app parked: status=%s err=%v", ready.Status, err)
+			}
+			completed, err := owners.ExclusiveOperationByID(ctx, app.AccountID, operation.ID)
+			if err != nil || completed.State != "completed" || gateway.calls != 1 || gateway.wake.DeploymentID != deployment.ID {
+				t.Fatalf("operation=%+v wake=%+v calls=%d err=%v", completed, gateway.wake, gateway.calls, err)
+			}
+		})
+	}
+}
+
 var _ prewokenGatewaySynth = (*exclusiveDrainGateway)(nil)

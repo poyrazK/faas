@@ -19,6 +19,7 @@ func cmdCommit(args []string) int {
 	flags, positional := splitArgsForFlags(args[1:])
 	fs := newFlagSet("commit "+args[0], flag.ContinueOnError)
 	name := fs.String("name", "", "unique account source name")
+	operationPolicy := fs.String("operation-policy", "", "account-scoped queue policy for managed Operations")
 	file := fs.String("file", "", "file containing PostgreSQL connection URL (never print it)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -27,9 +28,12 @@ func cmdCommit(args []string) int {
 		return 1
 	}
 	verb := args[0]
+	if verb != "add" && *operationPolicy != "" {
+		return 1
+	}
 	switch verb {
 	case "add":
-		if len(positional) != 1 || strings.TrimSpace(*name) == "" || *file != "" {
+		if len(positional) != 1 || strings.TrimSpace(*name) == "" || strings.TrimSpace(*operationPolicy) == "" || *file != "" {
 			return 1
 		}
 	case "connection":
@@ -63,7 +67,7 @@ func cmdCommit(args []string) int {
 	var result any
 	switch verb {
 	case "add":
-		result, err = client.CreateCommitSource(ctx, positional[0], *name)
+		result, err = client.CreateCommitSource(ctx, positional[0], *name, *operationPolicy)
 	case "pause", "resume":
 		result, err = client.SetCommitSourceEnabled(ctx, positional[0], verb == "resume")
 	case "blocked":

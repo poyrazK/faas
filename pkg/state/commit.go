@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCommitQueueFull = errors.New("state: commit queue full")
@@ -18,6 +19,7 @@ type CommitSource struct {
 	AppID           string     `json:"app_id"`
 	Name            string     `json:"name"`
 	Enabled         bool       `json:"enabled"`
+	OperationPolicy string     `json:"operation_policy,omitempty"`
 	RelayStatus     string     `json:"relay_status,omitempty"`
 	LastCheckedAt   *time.Time `json:"last_checked_at,omitempty"`
 	PendingEvents   *int64     `json:"pending_events,omitempty"`
@@ -28,7 +30,8 @@ type CommitReceipt struct {
 	ID           string    `json:"receipt_id"`
 	SourceID     string    `json:"source_id"`
 	EventID      string    `json:"event_id"`
-	InvocationID string    `json:"invocation_id"`
+	InvocationID string    `json:"invocation_id,omitempty"`
+	OperationID  string    `json:"operation_id,omitempty"`
 	AcceptedAt   time.Time `json:"accepted_at"`
 	OperationURL string    `json:"operation_url"`
 }
@@ -44,10 +47,10 @@ type CommitOperation struct {
 }
 
 func (s *PgStore) CommitOperationByID(ctx context.Context, account, id string) (CommitOperation, error) {
-	var operation CommitOperation
-	err := s.pool.QueryRow(ctx, `SELECT invocation_id::text,id::text,source_id::text,event_id::text,operation_state,accepted_at,completed_at
- FROM commit_receipts WHERE account_id=$1::uuid AND invocation_id=$2::uuid`, account, id).Scan(&operation.ID, &operation.ReceiptID, &operation.SourceID, &operation.EventID, &operation.State, &operation.AcceptedAt, &operation.CompletedAt)
-	return operation, mapErr(err)
+	row, err := sqlc.New().CommitOperationHistory(ctx, s.pool, sqlc.CommitOperationHistoryParams{AccountID: account, OperationID: id})
+	return CommitOperation{ID: row.OperationID, ReceiptID: row.ReceiptID, SourceID: row.SourceID,
+		EventID: row.EventID, State: row.OperationState, AcceptedAt: row.AcceptedAt.Time,
+		CompletedAt: exclusiveTime(row.CompletedAt)}, mapErr(err)
 }
 
 // CommitRelaySource is an internal projection. Ciphertext never appears in the
@@ -155,7 +158,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	if limit < 1 || limit > 64 {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,sealed_connection,credential_revision
+	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),sealed_connection,credential_revision
  FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
  AND ($1::text='' OR id>NULLIF($1,'')::uuid) ORDER BY id LIMIT $2`, after, limit)
 	if err != nil {
@@ -165,7 +168,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	var sources []CommitRelaySource
 	for rows.Next() {
 		var src CommitRelaySource
-		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.SealedConnection, &src.CredentialRevision); err != nil {
+		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.SealedConnection, &src.CredentialRevision); err != nil {
 			return nil, err
 		}
 		sources = append(sources, src)
@@ -179,6 +182,7 @@ type CommitStore interface {
 	SetCommitSourceEnabled(context.Context, string, string, bool) (CommitSource, error)
 	SetCommitSourceConnection(context.Context, string, string, []byte) error
 	AcceptCommitEvent(context.Context, string, string, string, string, json.RawMessage, Invocation, int) (CommitReceipt, error)
+	AcceptCommitOperation(context.Context, string, string, string, string, json.RawMessage, Invocation) (CommitReceipt, error)
 	CommitReceiptByEvent(context.Context, string, string, string) (CommitReceipt, error)
 	ListCommitBlockedEvents(context.Context, string, string) ([]CommitBlockedEvent, error)
 	RequestCommitReplay(context.Context, string, string, string) error
@@ -203,21 +207,21 @@ func (s *PgStore) SetCommitSourceConnection(ctx context.Context, account, id str
 // SetCommitSourceEnabled takes the same row lock as acceptance. Once pause
 // returns, no new event can be accepted; existing receipts remain recoverable.
 func (s *PgStore) SetCommitSourceEnabled(ctx context.Context, account, id string, enabled bool) (CommitSource, error) {
-	src := CommitSource{AccountID: account}
-	err := s.pool.QueryRow(ctx, `UPDATE commit_sources SET enabled=$3 WHERE account_id=$1::uuid AND id=$2::uuid
- RETURNING id::text,app_id::text,name,enabled`, account, id, enabled).Scan(&src.ID, &src.AppID, &src.Name, &src.Enabled)
-	return src, mapErr(err)
+	return s.setCommitSourceEnabled(ctx, account, id, enabled)
 }
 
 func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (CommitSource, error) {
+	if src.OperationPolicy != "" {
+		return s.CreateManagedCommitSource(ctx, src)
+	}
 	err := s.pool.QueryRow(ctx, `INSERT INTO commit_sources(account_id,app_id,name)
  SELECT $1::uuid,id,$3 FROM apps WHERE id=$2::uuid AND account_id=$1::uuid
  ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
- WHERE commit_sources.app_id=excluded.app_id
+ WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy IS NULL
  RETURNING id::text,enabled`, src.AccountID, src.AppID, src.Name).Scan(&src.ID, &src.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var conflict bool
-		lookupErr := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM commit_sources WHERE account_id=$1::uuid AND name=$2 AND app_id<>$3::uuid)`, src.AccountID, src.Name, src.AppID).Scan(&conflict)
+		lookupErr := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM commit_sources WHERE account_id=$1::uuid AND name=$2 AND (app_id<>$3::uuid OR operation_policy IS NOT NULL))`, src.AccountID, src.Name, src.AppID).Scan(&conflict)
 		if lookupErr != nil {
 			return src, lookupErr
 		}
@@ -228,8 +232,16 @@ func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (Com
 	return src, mapErr(err)
 }
 func (s *PgStore) CommitSourceByID(ctx context.Context, account, id string) (CommitSource, error) {
-	src := CommitSource{AccountID: account}
-	err := s.pool.QueryRow(ctx, `SELECT id::text,app_id::text,name,enabled,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at FROM commit_sources WHERE account_id=$1::uuid AND id=$2::uuid`, account, id).Scan(&src.ID, &src.AppID, &src.Name, &src.Enabled, &src.RelayStatus, &src.LastCheckedAt, &src.PendingEvents, &src.BlockedEvents, &src.OldestPendingAt)
+	row, err := sqlc.New().CommitSourceIdentity(ctx, s.pool, sqlc.CommitSourceIdentityParams{AccountID: account, SourceID: id})
+	src := CommitSource{ID: row.ID, AccountID: account, AppID: row.AppID, Name: row.Name,
+		Enabled: row.Enabled, OperationPolicy: row.OperationPolicy, RelayStatus: row.RelayStatus,
+		LastCheckedAt: exclusiveTime(row.LastCheckedAt), OldestPendingAt: exclusiveTime(row.OldestPendingAt)}
+	if row.PendingEvents.Valid {
+		src.PendingEvents = &row.PendingEvents.Int64
+	}
+	if row.BlockedEvents.Valid {
+		src.BlockedEvents = &row.BlockedEvents.Int64
+	}
 	return src, mapErr(err)
 }
 
@@ -240,9 +252,10 @@ func (s *PgStore) RecordCommitRelayStatus(ctx context.Context, src CommitRelaySo
 	return err
 }
 func (s *PgStore) CommitReceiptByEvent(ctx context.Context, account, source, event string) (CommitReceipt, error) {
-	var receipt CommitReceipt
-	err := s.pool.QueryRow(ctx, `SELECT id::text,source_id::text,event_id::text,invocation_id::text,accepted_at FROM commit_receipts WHERE account_id=$1::uuid AND source_id=$2::uuid AND event_id=$3::uuid`, account, source, event).Scan(&receipt.ID, &receipt.SourceID, &receipt.EventID, &receipt.InvocationID, &receipt.AcceptedAt)
-	receipt.OperationURL = "/v1/operations/" + receipt.InvocationID
+	row, err := sqlc.New().CommitReceiptIdentity(ctx, s.pool, sqlc.CommitReceiptIdentityParams{AccountID: account, SourceID: source, EventID: event})
+	receipt := CommitReceipt{ID: row.ID, SourceID: row.SourceID, EventID: row.EventID,
+		InvocationID: row.InvocationID, OperationID: row.OperationID, AcceptedAt: row.AcceptedAt.Time}
+	receipt.OperationURL = "/v1/operations/" + receipt.WorkID()
 	return receipt, mapErr(err)
 }
 
@@ -250,11 +263,23 @@ func (s *PgStore) CommitReceiptByEvent(ctx context.Context, account, source, eve
 // capacity. Receipt and invocation commit together; receipt retention is
 // independent of invocation retention. The source fixes the destination.
 func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event, kind string, data json.RawMessage, inv Invocation, maxPending int) (CommitReceipt, error) {
+	src, err := s.CommitSourceByID(ctx, account, source)
+	if err != nil {
+		return CommitReceipt{}, err
+	}
+	if src.OperationPolicy != "" {
+		return s.AcceptCommitOperation(ctx, account, source, event, kind, data, inv)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return CommitReceipt{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Use the same account/source lock order as managed admission and pause.
+	owner := &exclusivePostgresTx{ctx: ctx, db: tx, q: sqlc.New()}
+	if err := owner.lockAccount(account); err != nil {
+		return CommitReceipt{}, exclusiveSQLError(err)
+	}
 	var app string
 	var enabled bool
 	var tenantRequired bool

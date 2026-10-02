@@ -1027,6 +1027,314 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const commitManagedReceipt = `-- name: CommitManagedReceipt :one
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::text,$6::jsonb,
+ $7::text::uuid,$8::text,$9::timestamptz)
+RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at
+`
+
+type CommitManagedReceiptParams struct {
+	ID             string
+	AccountID      string
+	SourceID       string
+	EventID        string
+	EventType      string
+	Payload        []byte
+	OperationID    string
+	OperationState string
+	CompletedAt    pgtype.Timestamptz
+}
+
+type CommitManagedReceiptRow struct {
+	ID          string
+	SourceID    string
+	EventID     string
+	OperationID string
+	AcceptedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitManagedReceiptParams) (CommitManagedReceiptRow, error) {
+	row := db.QueryRow(ctx, commitManagedReceipt,
+		arg.ID,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+		arg.OperationID,
+		arg.OperationState,
+		arg.CompletedAt,
+	)
+	var i CommitManagedReceiptRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.OperationID,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
+const commitManagedReceiptReplay = `-- name: CommitManagedReceiptReplay :one
+SELECT id::text, source_id::text, event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id, accepted_at,
+ event_type=$1::text AND payload=$2::jsonb AS matches
+FROM commit_receipts WHERE account_id=$3::text::uuid
+ AND source_id=$4::text::uuid AND event_id=$5::text::uuid
+`
+
+type CommitManagedReceiptReplayParams struct {
+	EventType string
+	Payload   []byte
+	AccountID string
+	SourceID  string
+	EventID   string
+}
+
+type CommitManagedReceiptReplayRow struct {
+	ID           string
+	SourceID     string
+	EventID      string
+	InvocationID string
+	OperationID  string
+	AcceptedAt   pgtype.Timestamptz
+	Matches      pgtype.Bool
+}
+
+func (q *Queries) CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg CommitManagedReceiptReplayParams) (CommitManagedReceiptReplayRow, error) {
+	row := db.QueryRow(ctx, commitManagedReceiptReplay,
+		arg.EventType,
+		arg.Payload,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+	)
+	var i CommitManagedReceiptReplayRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.InvocationID,
+		&i.OperationID,
+		&i.AcceptedAt,
+		&i.Matches,
+	)
+	return i, err
+}
+
+const commitManagedSource = `-- name: CommitManagedSource :one
+INSERT INTO commit_sources(account_id,app_id,name,operation_policy)
+SELECT $1::text::uuid,id,$2::text,$3::text
+FROM apps WHERE id=$4::text::uuid AND account_id=$1::text::uuid
+ AND NOT platform_tenant_required AND status<>'deleted'
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
+RETURNING id::text, enabled
+`
+
+type CommitManagedSourceParams struct {
+	AccountID       string
+	Name            string
+	OperationPolicy string
+	AppID           string
+}
+
+type CommitManagedSourceRow struct {
+	ID      string
+	Enabled bool
+}
+
+func (q *Queries) CommitManagedSource(ctx context.Context, db DBTX, arg CommitManagedSourceParams) (CommitManagedSourceRow, error) {
+	row := db.QueryRow(ctx, commitManagedSource,
+		arg.AccountID,
+		arg.Name,
+		arg.OperationPolicy,
+		arg.AppID,
+	)
+	var i CommitManagedSourceRow
+	err := row.Scan(&i.ID, &i.Enabled)
+	return i, err
+}
+
+const commitOperationHistory = `-- name: CommitOperationHistory :one
+SELECT COALESCE(operation_id,invocation_id)::text AS operation_id,id::text AS receipt_id,
+ source_id::text,event_id::text,operation_state,accepted_at,completed_at
+FROM commit_receipts WHERE account_id=$1::text::uuid
+ AND COALESCE(operation_id,invocation_id)=$2::text::uuid
+`
+
+type CommitOperationHistoryParams struct {
+	AccountID   string
+	OperationID string
+}
+
+type CommitOperationHistoryRow struct {
+	OperationID    string
+	ReceiptID      string
+	SourceID       string
+	EventID        string
+	OperationState string
+	AcceptedAt     pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) CommitOperationHistory(ctx context.Context, db DBTX, arg CommitOperationHistoryParams) (CommitOperationHistoryRow, error) {
+	row := db.QueryRow(ctx, commitOperationHistory, arg.AccountID, arg.OperationID)
+	var i CommitOperationHistoryRow
+	err := row.Scan(
+		&i.OperationID,
+		&i.ReceiptID,
+		&i.SourceID,
+		&i.EventID,
+		&i.OperationState,
+		&i.AcceptedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const commitPolicyWouldInvalidateSource = `-- name: CommitPolicyWouldInvalidateSource :one
+SELECT EXISTS(SELECT 1 FROM commit_sources c
+ WHERE c.account_id=$1::text::uuid AND c.operation_policy=$2::text AND c.enabled
+ AND ($3::boolean OR $4::jsonb->>'scope'<>'account'
+ OR $4::jsonb->>'contention'<>'queue'
+ OR NOT COALESCE($4::jsonb->'member_app_ids' ? c.app_id::text,false))) AS incompatible
+`
+
+type CommitPolicyWouldInvalidateSourceParams struct {
+	AccountID     string
+	Name          string
+	Retired       bool
+	Configuration []byte
+}
+
+func (q *Queries) CommitPolicyWouldInvalidateSource(ctx context.Context, db DBTX, arg CommitPolicyWouldInvalidateSourceParams) (bool, error) {
+	row := db.QueryRow(ctx, commitPolicyWouldInvalidateSource,
+		arg.AccountID,
+		arg.Name,
+		arg.Retired,
+		arg.Configuration,
+	)
+	var incompatible bool
+	err := row.Scan(&incompatible)
+	return incompatible, err
+}
+
+const commitReceiptIdentity = `-- name: CommitReceiptIdentity :one
+SELECT id::text,source_id::text,event_id::text,
+ COALESCE(invocation_id::text,'')::text AS invocation_id,
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+FROM commit_receipts WHERE account_id=$1::text::uuid
+ AND source_id=$2::text::uuid AND event_id=$3::text::uuid
+`
+
+type CommitReceiptIdentityParams struct {
+	AccountID string
+	SourceID  string
+	EventID   string
+}
+
+type CommitReceiptIdentityRow struct {
+	ID           string
+	SourceID     string
+	EventID      string
+	InvocationID string
+	OperationID  string
+	AcceptedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error) {
+	row := db.QueryRow(ctx, commitReceiptIdentity, arg.AccountID, arg.SourceID, arg.EventID)
+	var i CommitReceiptIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.EventID,
+		&i.InvocationID,
+		&i.OperationID,
+		&i.AcceptedAt,
+	)
+	return i, err
+}
+
+const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
+SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
+ a.platform_tenant_required
+FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
+WHERE c.account_id=$1::text::uuid AND c.id=$2::text::uuid
+FOR UPDATE OF c FOR SHARE OF a
+`
+
+type CommitSourceForManagedAdmissionParams struct {
+	AccountID string
+	SourceID  string
+}
+
+type CommitSourceForManagedAdmissionRow struct {
+	CAppID                 string
+	Enabled                bool
+	OperationPolicy        string
+	PlatformTenantRequired bool
+}
+
+func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, arg CommitSourceForManagedAdmissionParams) (CommitSourceForManagedAdmissionRow, error) {
+	row := db.QueryRow(ctx, commitSourceForManagedAdmission, arg.AccountID, arg.SourceID)
+	var i CommitSourceForManagedAdmissionRow
+	err := row.Scan(
+		&i.CAppID,
+		&i.Enabled,
+		&i.OperationPolicy,
+		&i.PlatformTenantRequired,
+	)
+	return i, err
+}
+
+const commitSourceIdentity = `-- name: CommitSourceIdentity :one
+SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
+ relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
+`
+
+type CommitSourceIdentityParams struct {
+	AccountID string
+	SourceID  string
+}
+
+type CommitSourceIdentityRow struct {
+	ID              string
+	AppID           string
+	Name            string
+	Enabled         bool
+	OperationPolicy string
+	RelayStatus     string
+	LastCheckedAt   pgtype.Timestamptz
+	PendingEvents   pgtype.Int8
+	BlockedEvents   pgtype.Int8
+	OldestPendingAt pgtype.Timestamptz
+}
+
+func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error) {
+	row := db.QueryRow(ctx, commitSourceIdentity, arg.AccountID, arg.SourceID)
+	var i CommitSourceIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.OperationPolicy,
+		&i.RelayStatus,
+		&i.LastCheckedAt,
+		&i.PendingEvents,
+		&i.BlockedEvents,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const completeServiceRecovery = `-- name: CompleteServiceRecovery :execrows
 UPDATE service_recovery SET status = $1::text, failures = $2::integer,
  next_attempt_at = $3::timestamptz, updated_at = $4::timestamptz,
@@ -2735,6 +3043,10 @@ SELECT EXISTS (
 ) OR EXISTS (
     SELECT 1 FROM exclusive_work_trigger_bindings
     WHERE policy_id=$1::text::uuid
+) OR EXISTS (
+    SELECT 1 FROM commit_sources c JOIN exclusive_work_policies p
+    ON p.account_id=c.account_id AND p.name=c.operation_policy
+    WHERE p.id=$1::text::uuid AND c.enabled
 ) AS in_use
 `
 
@@ -5953,7 +6265,7 @@ VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
 $4::text::uuid,$5::text::uuid,nullif($6::text,'')::uuid,
 $7::bigint,$8::bigint,$9::jsonb,
 $10::jsonb,$11::bytea,$12::bytea,
-$13::bytea) RETURNING id, account_id, key_id, app_id, job_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved
+$13::bytea) RETURNING id, account_id, key_id, app_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved, job_id
 `
 
 type InsertExclusiveWorkOperationParams struct {
@@ -5994,7 +6306,6 @@ func (q *Queries) InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg
 		&i.AccountID,
 		&i.KeyID,
 		&i.AppID,
-		&i.JobID,
 		&i.PlatformTenantID,
 		&i.Sequence,
 		&i.State,
@@ -6016,6 +6327,7 @@ func (q *Queries) InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg
 		&i.DueAt,
 		&i.Attempts,
 		&i.QuotaReserved,
+		&i.JobID,
 	)
 	return i, err
 }
@@ -9560,7 +9872,7 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 
 const listDueExclusiveWork = `-- name: ListDueExclusiveWork :many
 WITH heads AS (
- SELECT DISTINCT ON (o.key_id) o.id, o.account_id, o.key_id, o.app_id, o.job_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved FROM exclusive_work_operations o
+ SELECT DISTINCT ON (o.key_id) o.id, o.account_id, o.key_id, o.app_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved, o.job_id FROM exclusive_work_operations o
  JOIN accounts a ON a.id=o.account_id AND a.status='active'
  LEFT JOIN platform_tenants t ON t.id=o.platform_tenant_id
  WHERE o.state IN ('pending','running') AND (t.id IS NULL OR t.status='active')
@@ -9570,7 +9882,7 @@ WITH heads AS (
  FROM heads WHERE (state='pending' AND due_at<=clock_timestamp())
  OR (state='running' AND lease_expires_at<=clock_timestamp())
 )
-SELECT o.id, o.account_id, o.key_id, o.app_id, o.job_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved FROM exclusive_work_operations o JOIN ranked r ON r.id=o.id
+SELECT o.id, o.account_id, o.key_id, o.app_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved, o.job_id FROM exclusive_work_operations o JOIN ranked r ON r.id=o.id
 ORDER BY r.account_rank,r.due_at,o.id LIMIT $1::integer
 `
 
@@ -9588,7 +9900,6 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 			&i.AccountID,
 			&i.KeyID,
 			&i.AppID,
-			&i.JobID,
 			&i.PlatformTenantID,
 			&i.Sequence,
 			&i.State,
@@ -9610,6 +9921,7 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 			&i.DueAt,
 			&i.Attempts,
 			&i.QuotaReserved,
+			&i.JobID,
 		); err != nil {
 			return nil, err
 		}
@@ -10069,7 +10381,7 @@ func (q *Queries) ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEvent
 }
 
 const listExclusiveWorkActive = `-- name: ListExclusiveWorkActive :many
-SELECT id, account_id, key_id, app_id, job_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved FROM exclusive_work_operations
+SELECT id, account_id, key_id, app_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved, job_id FROM exclusive_work_operations
 WHERE key_id=$1::text::uuid AND state IN ('pending','running') ORDER BY sequence
 `
 
@@ -10087,7 +10399,6 @@ func (q *Queries) ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID st
 			&i.AccountID,
 			&i.KeyID,
 			&i.AppID,
-			&i.JobID,
 			&i.PlatformTenantID,
 			&i.Sequence,
 			&i.State,
@@ -10109,6 +10420,7 @@ func (q *Queries) ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID st
 			&i.DueAt,
 			&i.Attempts,
 			&i.QuotaReserved,
+			&i.JobID,
 		); err != nil {
 			return nil, err
 		}
@@ -15771,7 +16083,7 @@ func (q *Queries) ReadExclusiveWorkKey(ctx context.Context, db DBTX, arg ReadExc
 }
 
 const readExclusiveWorkOperation = `-- name: ReadExclusiveWorkOperation :one
-SELECT id, account_id, key_id, app_id, job_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved FROM exclusive_work_operations
+SELECT id, account_id, key_id, app_id, platform_tenant_id, sequence, state, policy_revision, configuration, request, request_digest, equivalence_digest, idempotency_digest, generation, claim_token, incarnation_id, lease_expires_at, attempt_deadline, result, last_error, created_at, completed_at, due_at, attempts, quota_reserved, job_id FROM exclusive_work_operations
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -15788,7 +16100,6 @@ func (q *Queries) ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg R
 		&i.AccountID,
 		&i.KeyID,
 		&i.AppID,
-		&i.JobID,
 		&i.PlatformTenantID,
 		&i.Sequence,
 		&i.State,
@@ -15810,6 +16121,7 @@ func (q *Queries) ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg R
 		&i.DueAt,
 		&i.Attempts,
 		&i.QuotaReserved,
+		&i.JobID,
 	)
 	return i, err
 }
@@ -15841,7 +16153,7 @@ func (q *Queries) ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg Read
 }
 
 const readExclusiveWorkReplay = `-- name: ReadExclusiveWorkReplay :one
-SELECT o.id, o.account_id, o.key_id, o.app_id, o.job_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved FROM exclusive_work_operations o JOIN exclusive_work_submissions s ON s.operation_id=o.id
+SELECT o.id, o.account_id, o.key_id, o.app_id, o.platform_tenant_id, o.sequence, o.state, o.policy_revision, o.configuration, o.request, o.request_digest, o.equivalence_digest, o.idempotency_digest, o.generation, o.claim_token, o.incarnation_id, o.lease_expires_at, o.attempt_deadline, o.result, o.last_error, o.created_at, o.completed_at, o.due_at, o.attempts, o.quota_reserved, o.job_id FROM exclusive_work_operations o JOIN exclusive_work_submissions s ON s.operation_id=o.id
 WHERE s.key_id=$1::text::uuid AND s.idempotency_digest=$2::bytea
 `
 
@@ -15858,7 +16170,6 @@ func (q *Queries) ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg Read
 		&i.AccountID,
 		&i.KeyID,
 		&i.AppID,
-		&i.JobID,
 		&i.PlatformTenantID,
 		&i.Sequence,
 		&i.State,
@@ -15880,6 +16191,7 @@ func (q *Queries) ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg Read
 		&i.DueAt,
 		&i.Attempts,
 		&i.QuotaReserved,
+		&i.JobID,
 	)
 	return i, err
 }
@@ -18345,6 +18657,22 @@ type SetAppManifestParams struct {
 
 func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error {
 	_, err := db.Exec(ctx, setAppManifest, arg.ID, arg.Manifest)
+	return err
+}
+
+const setCommitSourceEnabled = `-- name: SetCommitSourceEnabled :exec
+UPDATE commit_sources SET enabled=$1::boolean
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid
+`
+
+type SetCommitSourceEnabledParams struct {
+	Enabled   bool
+	AccountID string
+	SourceID  string
+}
+
+func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error {
+	_, err := db.Exec(ctx, setCommitSourceEnabled, arg.Enabled, arg.AccountID, arg.SourceID)
 	return err
 }
 

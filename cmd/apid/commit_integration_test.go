@@ -15,6 +15,7 @@ import (
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/commitmanaged"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -25,7 +26,29 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if created.Code != http.StatusCreated {
 		t.Fatalf("app: %d %s", created.Code, created.Body.String())
 	}
-	source := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "orders"}, nil)
+	var app struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &app); err != nil {
+		t.Fatal(err)
+	}
+	otherAppResponse := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-other"}, nil)
+	var otherApp struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(otherAppResponse.Body.Bytes(), &otherApp); err != nil || otherAppResponse.Code != http.StatusCreated {
+		t.Fatalf("other app: %d %s (%v)", otherAppResponse.Code, otherAppResponse.Body.String(), err)
+	}
+	if _, err := state.NewPgStore(e.pool).UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+		Name: "orders", Scope: "account", Contention: "queue", MemberAppIDs: []string{app.ID, otherApp.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60, MaxAttempts: 3, RetryAfterSeconds: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	missingPolicy := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "missing-policy"}, nil)
+	if missingPolicy.Code != http.StatusBadRequest {
+		t.Fatalf("source without managed policy: %d", missingPolicy.Code)
+	}
+	source := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
 	if source.Code != http.StatusCreated {
 		t.Fatalf("source: %d %s", source.Code, source.Body.String())
 	}
@@ -35,10 +58,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err := json.Unmarshal(source.Body.Bytes(), &src); err != nil {
 		t.Fatal(err)
 	}
-	if response := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "commit-other"}, nil); response.Code != http.StatusCreated {
-		t.Fatalf("other app: %d %s", response.Code, response.Body.String())
-	}
-	conflict := e.do(t, http.MethodPost, "/v1/apps/commit-other/commit-sources", map[string]string{"name": "orders"}, nil)
+	conflict := e.do(t, http.MethodPost, "/v1/apps/commit-other/commit-sources", map[string]string{"name": "orders", "operation_policy": "orders"}, nil)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("source destination conflict: %d %s", conflict.Code, conflict.Body.String())
 	}
@@ -93,8 +113,21 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first.InvocationID == "" {
+	if first != second || first.OperationID == "" || first.InvocationID != "" {
 		t.Fatalf("unstable receipt: %+v %+v", first, second)
+	}
+	if _, err := e.pool.Exec(ctx, `UPDATE apps SET streaming_enabled=false WHERE account_id=$1::uuid`, e.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(ctx, `UPDATE accounts SET plan='free' WHERE id=$1::uuid`, e.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	downgradedReplay, err := acceptor.Accept(ctx, event)
+	if err != nil || downgradedReplay != first {
+		t.Fatalf("plan downgrade lost accepted receipt: %+v (%v)", downgradedReplay, err)
+	}
+	if _, err := e.pool.Exec(ctx, `UPDATE accounts SET plan='pro' WHERE id=$1::uuid`, e.acct.ID); err != nil {
+		t.Fatal(err)
 	}
 	pause := e.do(t, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": false}, nil)
 	if pause.Code != http.StatusOK {
@@ -120,23 +153,14 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if status.Code != http.StatusOK {
 		t.Fatalf("receipt lookup: %d %s", status.Code, status.Body.String())
 	}
-	invocation := e.do(t, http.MethodGet, "/v1/invocations/"+first.InvocationID, nil, nil)
-	if invocation.Code != http.StatusOK {
-		t.Fatalf("invocation lookup: %d %s", invocation.Code, invocation.Body.String())
+	invocation := e.do(t, http.MethodGet, "/v1/invocations/"+first.OperationID, nil, nil)
+	if invocation.Code != http.StatusNotFound {
+		t.Fatalf("managed operation created a legacy invocation: %d %s", invocation.Code, invocation.Body.String())
 	}
-	operation := e.do(t, http.MethodGet, "/v1/operations/"+first.InvocationID, nil, nil)
+	operation := e.do(t, http.MethodGet, "/v1/operations/"+first.OperationID, nil, nil)
 	var op api.CommitOperationResponse
-	if err := json.Unmarshal(operation.Body.Bytes(), &op); err != nil || operation.Code != http.StatusOK || op.State != "accepted" || op.ReceiptID != first.ID {
+	if err := json.Unmarshal(operation.Body.Bytes(), &op); err != nil || operation.Code != http.StatusOK || op.State != "pending" || op.ReceiptID != first.ID {
 		t.Fatalf("operation status: %d %+v %v", operation.Code, op, err)
-	}
-	var queued struct {
-		Source string `json:"source"`
-	}
-	if err := json.Unmarshal(invocation.Body.Bytes(), &queued); err != nil || queued.Source != string(state.InvocationAsyncInvoke) {
-		t.Fatalf("Commit must bypass queue-trigger routing: %+v %v", queued, err)
-	}
-	if _, err := e.pool.Exec(ctx, `UPDATE apps SET retry_policy='{"max_attempts":3,"base_seconds":7,"max_seconds":21}'::jsonb WHERE id=(SELECT app_id FROM commit_sources WHERE id=$1::uuid)`, src.ID); err != nil {
-		t.Fatal(err)
 	}
 	managedEvent := event
 	managedEvent.ID = uuid.NewString()
@@ -160,13 +184,13 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("managed handoff: %v", err)
 	}
-	managedInvocation, err := state.NewPgStore(e.pool).InvocationByID(ctx, managedReceipt.InvocationID)
+	managedOperation, err := state.NewPgStore(e.pool).ExclusiveOperationByID(ctx, e.acct.ID, managedReceipt.OperationID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := managedInvocation.RetryPolicy()
-	if policy.MaxAttempts != 3 || policy.BaseSeconds != 7 || policy.MaxSeconds != 21 {
-		t.Fatalf("managed handoff lost app retry policy: %+v", policy)
+	policy := managedOperation.Policy
+	if policy.MaxAttempts != 3 || policy.RetryAfterSeconds != 7 || managedReceipt.InvocationID != "" {
+		t.Fatalf("managed handoff lost Operations policy: %+v", policy)
 	}
 	health := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
 	if health.Code != http.StatusOK {
@@ -214,7 +238,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 		t.Fatalf("blocked replay acceptance: %v", err)
 	}
 	// A second source using the same database cannot acquire this outbox.
-	otherResponse := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "wrong-source"}, nil)
+	otherResponse := e.do(t, http.MethodPost, "/v1/apps/commit-worker/commit-sources", map[string]string{"name": "wrong-source", "operation_policy": "orders"}, nil)
 	var other api.CommitSourceResponse
 	if err := json.Unmarshal(otherResponse.Body.Bytes(), &other); err != nil || otherResponse.Code != http.StatusCreated {
 		t.Fatalf("other source: %d %v", otherResponse.Code, err)

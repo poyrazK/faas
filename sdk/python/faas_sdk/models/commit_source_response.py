@@ -19,6 +19,8 @@ class CommitSourceResponse:
     app_id: UUID
     name: str
     enabled: bool
+    operation_policy: str | Unset = UNSET
+    """Immutable managed Operations policy. Absent only for legacy internal sources."""
     relay_status: str | Unset = UNSET
     last_checked_at: datetime.datetime | Unset = UNSET
     pending_events: int | Unset = UNSET
@@ -34,6 +36,8 @@ class CommitSourceResponse:
         name = self.name
 
         enabled = self.enabled
+
+        operation_policy = self.operation_policy
 
         relay_status = self.relay_status
 
@@ -59,6 +63,8 @@ class CommitSourceResponse:
                 "enabled": enabled,
             }
         )
+        if operation_policy is not UNSET:
+            field_dict["operation_policy"] = operation_policy
         if relay_status is not UNSET:
             field_dict["relay_status"] = relay_status
         if last_checked_at is not UNSET:
@@ -82,6 +88,8 @@ class CommitSourceResponse:
         name = d.pop("name")
 
         enabled = d.pop("enabled")
+
+        operation_policy = d.pop("operation_policy", UNSET)
 
         relay_status = d.pop("relay_status", UNSET)
 
@@ -108,6 +116,7 @@ class CommitSourceResponse:
             app_id=app_id,
             name=name,
             enabled=enabled,
+            operation_policy=operation_policy,
             relay_status=relay_status,
             last_checked_at=last_checked_at,
             pending_events=pending_events,

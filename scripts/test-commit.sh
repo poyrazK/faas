@@ -29,8 +29,8 @@ cd "$task_root"
 sh "$task_root/scripts/test-commit-sdk.sh"
 task_results=$(mktemp "${TMPDIR:-/tmp}/gregale-commit-acceptance.XXXXXX")
 trap 'rm -f "$task_results"' EXIT HUP INT TERM
-if ! "${GO:-go}" test -p 1 -json -timeout 20m ./pkg/commit ./pkg/state ./cmd/apid ./cmd/e2e \
-  -count=1 -run '^(TestConnectionCredentialSourceBindingAndRotation|TestHTTPAcceptorRefusesCredentialRedirect|TestPostgresRelay.*|TestPostgresConsumerDeduplication|TestPostgresTLSConnectionRecovery|TestPostgresSchemaQualificationRejectsMissingIdentity|TestPostgresSourceBindingRejectsAnotherDestination|TestPgCommitAcceptanceReplayConflictAndConcurrency|TestCommitPostgresToAPIHandoff|TestE2E_CommitProducerDeathReachesCompletedInvocation|TestE2E_CommitCLISourceLifecycle|TestE2E_CommitHTTPConsumerCrashRecovery)$' > "$task_results"; then
+if ! "${GO:-go}" test -p 1 -json -timeout 20m ./pkg/commit ./pkg/state ./pkg/sched ./cmd/apid ./cmd/e2e \
+  -count=1 -run '^(TestConnectionCredentialSourceBindingAndRotation|TestHTTPAcceptorRefusesCredentialRedirect|TestPostgresRelay.*|TestPostgresOutbox.*|TestPostgresConsumerDeduplication|TestPostgresTLSConnectionRecovery|TestPostgresSchemaQualificationRejectsMissingIdentity|TestPostgresSourceBindingRejectsAnotherDestination|TestPgCommitManagedOperation.*|TestPgCommitManagedSource.*|TestPgCommitAcceptanceReplayConflictAndConcurrency|TestExclusiveOperationDrainDispatchesAndCommitsUnderClaim|TestExclusiveOperationDrainUnparksAcceptedDeployment|TestCommitPostgresToAPIHandoff|TestE2E_CommitProducerDeathReachesCompletedOperation|TestE2E_CommitCLISourceLifecycle|TestE2E_CommitHTTPConsumerCrashRecovery)$' > "$task_results"; then
   cat "$task_results"
   exit 1
 fi
@@ -45,17 +45,27 @@ required = {
     "TestPostgresConsumerDeduplication",
     "TestPostgresTLSConnectionRecovery",
     "TestPostgresRelayCommitRollbackAndLostAcceptance",
+    "TestPostgresOutboxManagedOperationsUpgrade",
+    "TestPostgresOutboxUpgradeRefusesUnknownConstraint",
     "TestPostgresRelayBlockedReplayAndPendingCleanup",
     "TestPostgresRelayExpiredLeaseFencesOriginalWorker",
     "TestPgCommitAcceptanceReplayConflictAndConcurrency",
+    "TestPgCommitManagedOperationAtomicReplayAndCompletion",
+    "TestPgCommitManagedOperationReceiptFailureRollsBackAdmission",
+    "TestPgCommitManagedSourcePolicyScopeAndImmutableDestination",
+    "TestPgCommitManagedSourcePolicyLifecycle",
+    "TestExclusiveOperationDrainDispatchesAndCommitsUnderClaim",
+    "TestExclusiveOperationDrainUnparksAcceptedDeployment",
     "TestCommitPostgresToAPIHandoff",
-    "TestE2E_CommitProducerDeathReachesCompletedInvocation",
+    "TestE2E_CommitProducerDeathReachesCompletedOperation",
     "TestE2E_CommitCLISourceLifecycle",
     "TestE2E_CommitHTTPConsumerCrashRecovery",
 }
 passed = set()
 for line in open(sys.argv[1]):
     event = json.loads(line)
+    if event.get("Action") in {"fail", "skip"}:
+        raise SystemExit("Commit acceptance failed or skipped: " + str(event.get("Test", event.get("Package"))))
     if event.get("Action") == "pass" and event.get("Test") in required:
         passed.add(event["Test"])
 missing = required - passed

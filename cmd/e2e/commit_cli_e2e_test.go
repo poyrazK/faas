@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -46,12 +47,12 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 	if err := secretbox.WriteRecipientFile(recipientPath, fleetIdentity); err != nil {
 		t.Fatal(err)
 	}
-	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-cli", api.PlanHobby,
+	f := newNormalPathFixtureWithPlanAndEnv(t, "commit-cli", api.PlanHobby, commitOperationEnvironment(t,
 		"FAAS_COMMIT_API_ENABLED=true", "FAAS_COMMIT_RELAY_ENABLED=true",
 		"FAAS_FLEET_AGE_RECIPIENT_PATH="+recipientPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH="+identityPath,
 		"FAAS_COMMIT_DATABASE_HOSTS=localhost", "FAAS_COMMIT_DATABASE_CIDRS=127.0.0.1/32",
-		"PGSSLROOTCERT="+cluster.CAPath)
+		"PGSSLROOTCERT="+cluster.CAPath)...)
 	if f == nil {
 		t.Fatal("Commit CLI acceptance requires the PostgreSQL harness")
 	}
@@ -81,15 +82,20 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 		return output
 	}
 	var source api.CommitSourceResponse
-	if err := json.Unmarshal(run("add", "commit-cli", "--name", "cli-orders"), &source); err != nil || source.ID == "" {
-		t.Fatalf("CLI source registration: %+v (%v)", source, err)
-	}
-	run("pause", source.ID)
-	ctx := context.Background()
+	ctx := t.Context()
 	app, err := f.store.AppByID(ctx, f.app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.store.UpsertExclusiveWorkPolicy(ctx, app.AccountID, exclusivework.Policy{
+		Name: "cli-orders", Scope: "account", Contention: "queue", MemberAppIDs: []string{f.app.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(run("add", "commit-cli", "--name", "cli-orders", "--operation-policy", "cli-orders"), &source); err != nil || source.ID == "" || source.OperationPolicy != "cli-orders" {
+		t.Fatalf("CLI source registration: %+v (%v)", source, err)
+	}
+	run("pause", source.ID)
 	if _, err := cluster.Admin.Exec(ctx, commitwork.Schema); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +111,7 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 	}
 	run("connection", source.ID, "--file", connectionFile)
 	var repeated api.CommitSourceResponse
-	if err := json.Unmarshal(run("add", "commit-cli", "--name", "cli-orders"), &repeated); err != nil || repeated.ID != source.ID || repeated.Enabled {
+	if err := json.Unmarshal(run("add", "commit-cli", "--name", "cli-orders", "--operation-policy", "cli-orders"), &repeated); err != nil || repeated.ID != source.ID || repeated.Enabled {
 		t.Fatalf("CLI source retry changed identity or paused state: %+v (%v)", repeated, err)
 	}
 	event := commitwork.Event{ID: uuid.NewString(), Type: "order.created", Data: json.RawMessage(`{"order_id":"cli"}`)}
@@ -136,16 +142,16 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	completed := pollUntilCompleted(t, f.h, f.key, receipt.InvocationID, 20*time.Second)
-	if completed.State != string(state.InvocationCompleted) {
+	completed := waitCommitOperationCompleted(t, f.h, f.store, f.key, app.AccountID, receipt.OperationID, 30*time.Second)
+	if completed.State != "completed" || receipt.OperationID == "" || receipt.InvocationID != "" {
 		t.Fatalf("CLI operation did not complete: %+v", completed)
 	}
 	var recovered api.CommitReceiptResponse
-	if err := json.Unmarshal(run("receipt", source.ID, event.ID), &recovered); err != nil || recovered.ID != receipt.ID || recovered.InvocationID != receipt.InvocationID {
+	if err := json.Unmarshal(run("receipt", source.ID, event.ID), &recovered); err != nil || recovered.ID != receipt.ID || recovered.OperationID != receipt.OperationID || recovered.InvocationID != "" {
 		t.Fatalf("CLI receipt identity: %+v (%v)", recovered, err)
 	}
 	var operation api.CommitOperationResponse
-	if err := json.Unmarshal(run("operation", receipt.InvocationID), &operation); err != nil || operation.State != "completed" || operation.EventID != event.ID || operation.CompletedAt == nil {
+	if err := json.Unmarshal(run("operation", receipt.OperationID), &operation); err != nil || operation.State != "completed" || operation.EventID != event.ID || operation.CompletedAt == nil {
 		t.Fatalf("CLI completed operation: %+v (%v)", operation, err)
 	}
 	var info api.CommitSourceResponse

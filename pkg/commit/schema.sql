@@ -8,13 +8,16 @@ CREATE TABLE IF NOT EXISTS public.gregale_outbox (
     accepted_at timestamptz,
     receipt_id uuid,
     invocation_id uuid,
+    operation_id uuid,
     lease_token uuid,
     lease_until timestamptz,
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     blocked_code text,
-    CHECK ((accepted_at IS NULL AND receipt_id IS NULL AND invocation_id IS NULL)
-        OR (accepted_at IS NOT NULL AND receipt_id IS NOT NULL AND invocation_id IS NOT NULL))
+    CONSTRAINT gregale_outbox_delivery_identity CHECK (
+        (accepted_at IS NULL AND receipt_id IS NULL AND invocation_id IS NULL AND operation_id IS NULL)
+        OR (accepted_at IS NOT NULL AND receipt_id IS NOT NULL
+            AND (invocation_id IS NOT NULL)::integer + (operation_id IS NOT NULL)::integer = 1))
 );
 CREATE INDEX IF NOT EXISTS gregale_outbox_pending
     ON public.gregale_outbox(next_attempt_at, created_at, event_id)

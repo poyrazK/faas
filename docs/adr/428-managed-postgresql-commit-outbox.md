@@ -3,10 +3,10 @@
 - **Status:** accepted; customer promotion remains gated
 - **Date:** 2026-10-02
 - **Decision:** Gregale Commit observes a customer-owned PostgreSQL outbox and
-  starts one durable HTTP operation through the existing invocation ledger and
-  request-app drain. The customer inserts the business write and event in their
+  starts one policy-backed managed Operation through its existing owner ledger
+  and request-app dispatcher. The customer inserts the business write and event in their
   existing transaction. Gregale operates the polling relay and records the
-  acceptance receipt and invocation atomically in its own database.
+  acceptance receipt and managed Operation atomically in its own database.
 - **Why:** An application-defined webhook outbox does not establish atomicity
   with a customer database write. Observing the committed customer outbox removes
   the publish-after-commit gap and the customer's relay service.
@@ -32,13 +32,31 @@ The relay uses bounded batches, short claims, expiring leases and token-fenced
 checkpoints. Permanent errors become visible blocked events with bounded
 observations and explicit replay requests. Cleanup deletes bounded batches of
 accepted customer rows after retention; it preserves pending and blocked work.
-Platform identity history survives invocation retention. Its current indefinite
-retention and interaction with other invocation producers require the production
+Platform identity history survives operation/result retention. Its current indefinite
+retention requires the production
 storage and quota audit documented in `docs/gregale-commit.md`.
 
 Request-serving applications are supported. Worker/job and tenant-required
 destinations are rejected; payload fields cannot confer tenant identity. A future
 delivery contract must define those targets before enabling them.
+
+Each new source fixes its application and an active account-scoped queue policy.
+The source UUID defines one serialization key; the event UUID is the owner
+idempotency key. Commit uses the existing account lock, pending-work limit,
+ownership leases, retry policy and fenced completion transitions. Receipt insertion
+and owner admission share one PostgreSQL transaction. New receipts expose
+`operation_id`; historical internal receipts retain `invocation_id` and never
+change identity. Enabled sources prevent policy retirement and incompatible
+changes. Pause permits policy retirement after outstanding work ends; resuming
+requires a compatible active policy. The customer outbox checkpoint stores the
+same managed operation ID. Owner transitions update retained completion facts in
+their transaction, so pruning operation results does not erase the receipt.
+
+Request dispatch uses the existing coordinated app wake lifecycle before claiming
+an operation. A parked app becomes active before its VM boots; a subsequent park
+or suspension still takes precedence. Accepted deployment pins survive the
+coordinated wake, and a follower that receives another deployment's wake retries
+without claiming or delivering to that target.
 
 Qualification requires real PostgreSQL transaction helpers, the actual scheduler
 relay, producer termination after commit, rollback invisibility, stable receipts

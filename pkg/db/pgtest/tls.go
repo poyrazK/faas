@@ -66,10 +66,12 @@ func OpenTLSCluster(t *testing.T) *TLSCluster {
 		c.credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 	}
 	// Short paths avoid PostgreSQL's Unix socket path limit on macOS.
-	tempRoot := ""
-	if c.credential != nil {
+	tempRoot := os.Getenv("FAAS_COMMIT_TLS_PG_TMPDIR")
+	if tempRoot == "" && c.credential != nil {
 		// A native harness may use a root-only TMPDIR. The dropped PostgreSQL
 		// user needs to traverse the parent of its own private fixture directory.
+		// An explicit fixture root lets disk-backed qualification keep database
+		// writes off a full system disk without changing arbitrary permissions.
 		tempRoot = "/tmp"
 	}
 	dir, err := os.MkdirTemp(tempRoot, "gcpg-")

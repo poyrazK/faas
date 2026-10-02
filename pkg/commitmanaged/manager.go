@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -241,8 +242,8 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 	return convert(r, err)
 }
 func convert(r state.CommitReceipt, err error) (commitwork.Receipt, error) {
-	if errors.Is(err, state.ErrConflict) {
+	if errors.Is(err, state.ErrConflict) || errors.Is(err, exclusivework.ErrIdentityConflict) {
 		err = &commitwork.PermanentError{Code: "identity_conflict"}
 	}
-	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID}, err
+	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID}, err
 }

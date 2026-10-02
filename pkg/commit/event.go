@@ -12,11 +12,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Schema is the version-one customer outbox schema. Installation is an explicit
+// Schema is the supported customer outbox schema. Installation is an explicit
 // owner action; inserting an event never performs DDL or contacts Gregale.
 //
 //go:embed schema.sql
 var Schema string
+
+// UpgradeSchema explicitly upgrades the earlier internal invocation-only outbox.
+// Only the database owner executes this DDL; the relay never changes its schema.
+//
+//go:embed schema_operations_upgrade.sql
+var UpgradeSchema string
 
 type Event struct {
 	ID   string          `json:"id"`

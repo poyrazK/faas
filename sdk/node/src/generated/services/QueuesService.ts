@@ -233,7 +233,7 @@ export class QueuesService {
     });
   }
   /**
-   * Register an internal PostgreSQL outbox source.
+   * Bind an internal PostgreSQL outbox source to managed Operations.
    * @returns CommitSourceResponse Successful Commit request.
    * @throws ApiError
    */
@@ -247,6 +247,10 @@ export class QueuesService {
     slug: string,
     requestBody: {
       name: string;
+      /**
+       * Active account-scoped queue policy containing this application. The source application and policy are immutable.
+       */
+      operation_policy: string;
     },
   }): CancelablePromise<CommitSourceResponse> {
     return __request(OpenAPI, {

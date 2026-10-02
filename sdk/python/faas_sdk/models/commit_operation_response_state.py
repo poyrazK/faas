@@ -1,12 +1,16 @@
 from typing import Literal
 
-CommitOperationResponseState = Literal["accepted", "cancelled", "completed", "failed", "running", "unknown"]
+CommitOperationResponseState = Literal[
+    "accepted", "cancelled", "completed", "expired", "failed", "pending", "running", "unknown"
+]
 
 COMMIT_OPERATION_RESPONSE_STATE_VALUES: set[CommitOperationResponseState] = {
     "accepted",
     "cancelled",
     "completed",
+    "expired",
     "failed",
+    "pending",
     "running",
     "unknown",
 }

@@ -12,16 +12,22 @@ T = TypeVar("T", bound="CreateCommitSourceBody")
 @_attrs_define
 class CreateCommitSourceBody:
     name: str
+    operation_policy: str
+    """Active account-scoped queue policy containing this application. The source application and policy are
+    immutable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
+
+        operation_policy = self.operation_policy
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "name": name,
+                "operation_policy": operation_policy,
             }
         )
 
@@ -32,8 +38,11 @@ class CreateCommitSourceBody:
         d = dict(src_dict)
         name = d.pop("name")
 
+        operation_policy = d.pop("operation_policy")
+
         create_commit_source_body = cls(
             name=name,
+            operation_policy=operation_policy,
         )
 
         create_commit_source_body.additional_properties = d
