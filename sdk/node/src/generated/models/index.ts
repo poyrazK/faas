@@ -564,6 +564,8 @@ export type { ObjectBucket } from './ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './ObjectBucketAccessGrantList.js';
 export type { ObjectBucketList } from './ObjectBucketList.js';
+export type { ObjectBucketVersioning } from './ObjectBucketVersioning.js';
+export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';
 export type { ObjectMultipartCompletedPart } from './ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './ObjectMultipartPart.js';

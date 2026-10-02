@@ -9,6 +9,9 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "versioning" {
+		return cmdBucketVersioning(args[1:])
+	}
 	if len(args) > 0 && args[0] == "writes" {
 		return cmdBucketWrites(args[1:])
 	}

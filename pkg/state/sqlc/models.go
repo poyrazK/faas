@@ -2652,6 +2652,23 @@ type ObjectBucket struct {
 	EnvironmentCloneSourceBucketID pgtype.UUID
 }
 
+type ObjectBucketVersioning struct {
+	BucketID         pgtype.UUID
+	DesiredStatus    string
+	ObservedStatus   string
+	State            string
+	Revision         int64
+	VersionsRequired bool
+	Dispatched       bool
+	PropagationUntil pgtype.Timestamptz
+	CapacityJobID    pgtype.UUID
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	RetryAt          pgtype.Timestamptz
+	LastErrorCode    string
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ObjectStorageAccessGrant struct {
 	AccountID  pgtype.UUID
 	BucketID   pgtype.UUID

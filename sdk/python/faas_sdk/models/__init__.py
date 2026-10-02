@@ -1073,6 +1073,12 @@ from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
+from .object_bucket_versioning import ObjectBucketVersioning
+from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
+from .object_bucket_versioning_observed_status import ObjectBucketVersioningObservedStatus
+from .object_bucket_versioning_request import ObjectBucketVersioningRequest
+from .object_bucket_versioning_request_status import ObjectBucketVersioningRequestStatus
+from .object_bucket_versioning_state import ObjectBucketVersioningState
 from .object_capacity_reconciliation import ObjectCapacityReconciliation
 from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
@@ -3013,6 +3019,12 @@ __all__ = (
     "ObjectBucketAccessGrantPermission",
     "ObjectBucketList",
     "ObjectBucketState",
+    "ObjectBucketVersioning",
+    "ObjectBucketVersioningDesiredStatus",
+    "ObjectBucketVersioningObservedStatus",
+    "ObjectBucketVersioningRequest",
+    "ObjectBucketVersioningRequestStatus",
+    "ObjectBucketVersioningState",
     "ObjectCapacityReconciliation",
     "ObjectCapacityReconciliationState",
     "ObjectMultipartCompletedPart",

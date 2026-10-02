@@ -802,6 +802,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/buckets/{bucket}/signed-url":                                         "SignBucketObject",
 	"GET /v1/apps/{slug}/buckets/{bucket}/write-receipts":                                      "ListObjectWriteReceipts",
 	"GET /v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}":                            "GetObjectWriteReceipt",
+	"GET /v1/apps/{slug}/buckets/{bucket}/versioning":                                          "GetObjectBucketVersioning",
+	"PUT /v1/apps/{slug}/buckets/{bucket}/versioning":                                          "PutObjectBucketVersioning",
 	"POST /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations":                           "CreateObjectCapacityReconciliation",
 	"GET /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}":           "GetObjectCapacityReconciliation",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}":        "CancelObjectCapacityReconciliation",

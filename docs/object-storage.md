@@ -1209,3 +1209,39 @@ exact reads and restoration by same-key selected-version copy are implemented
 See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
 See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
 rolling-upgrade guarantees.
+
+
+## Bucket versioning configuration
+
+Configure a capable S3 backend using the standard AWS SDK `GetBucketVersioning`
+and `PutBucketVersioning` operations, or the control API:
+
+- `GET /v1/apps/{slug}/buckets/{bucket}/versioning`
+- `PUT /v1/apps/{slug}/buckets/{bucket}/versioning` with `{"status":"Enabled"}` or `{"status":"Suspended"}`
+
+The control PUT returns 202 with durable progress. `desired_status` records the
+request and `observed_status` records provider truth. The state progresses through
+`waiting`, `propagating`, `inventory`, then `ready`. New writes and bucket deletion
+remain fenced until existing work drains, propagation finishes (at least fifteen
+minutes), all versions are inventoried and the provider status is verified again.
+The returned `capacity_job_id` exposes the existing inventory progress API.
+Cancelling that inventory retains the configuration fence and queues replacement
+work. Repeated requests for the active target are safe; opposite targets conflict
+until readiness. An uncertain provider acknowledgment can return an S3 503 while
+the durable worker continues; inspect control progress or retry the same target.
+S3 PUT returns 200 once the desired provider status is observed, before object
+writes reopen. Suspension continues to account for retained versions.
+
+```sh
+gregale bucket versioning enable <app> <bucket-id>
+gregale bucket versioning status <app> <bucket-id>
+gregale bucket versioning suspend <app> <bucket-id>
+```
+
+Control requests require storage manage scope and bucket write access; S3 PUT
+requires a bucket write credential. Discovery of provider versioning also fences
+an empty bucket until adoption is verified. Unresolved legacy direct-write grants
+block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
+GCS configuration and unsupported provider endpoints return NotImplemented.
+See [ADR-403](adr/403-durable-bucket-versioning-configuration.md). Delete-marker
+admission, version deletion/tagging and replay-safe direct writes remain gaps.

@@ -7803,3 +7803,14 @@ const (
 	MaxObjectS3ListCursorBytes   = 8192
 	MaxObjectS3UploadMarkerBytes = 128
 )
+
+// Versioning transitions fence writes through provider propagation and inventory.
+const (
+	ObjectBucketVersioningPropagation        = 15 * time.Minute
+	ObjectBucketVersioningLease              = 2 * time.Minute
+	ObjectBucketVersioningRetry              = 30 * time.Second
+	ObjectBucketVersioningBatch        int32 = 50
+	MaxObjectBucketVersioningBodyBytes int64 = 16 << 10
+)
+
+const ObjectBucketVersioningOperationTimeout = time.Minute

@@ -79,6 +79,13 @@ func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, accou
 	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return ObjectCapacityReconciliation{}, mapErr(err)
 	}
+	v, e := readObjectVersioning(ctx, tx, bucket)
+	if e == nil && versioningActive(v) {
+		return ObjectCapacityReconciliation{}, ErrConflict
+	}
+	if e != nil && !errors.Is(e, ErrNotFound) {
+		return ObjectCapacityReconciliation{}, e
+	}
 	active, err := q.ObjectCapacityActive(ctx, tx, mustPgUUID(bucket))
 	if err == nil {
 		j, e := readObjectCapacityJob(ctx, tx, pgUUIDString(active.ID))
@@ -210,6 +217,13 @@ func (s *PgStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, tok
 	}
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(snap, j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
+	allowed, e := objectVersioningInventoryAllowed(ctx, tx, j.BucketID, id)
+	if e != nil {
+		return j, e
+	}
+	if !allowed {
+		ready.Pending = max(ready.Pending, 1)
+	}
 	j = prepareObjectCapacityClaim(j, token, ready.Pending, ready.Unsafe, ready.Multipart, ready.Versions.Bool, now)
 	if !objectCapacityActive(j.State) {
 		j.InventoryCursor = ""
@@ -237,7 +251,11 @@ func (s *PgStore) FinishObjectCapacityReconciliation(ctx context.Context, id, to
 	if err != nil {
 		return j, err
 	}
-	if ready.Pending > 0 || ready.Unsafe || ready.Multipart || ready.Versions.Bool {
+	allowed, e := objectVersioningInventoryAllowed(ctx, tx, j.BucketID, id)
+	if e != nil {
+		return j, e
+	}
+	if !allowed || ready.Pending > 0 || ready.Unsafe || ready.Multipart || ready.Versions.Bool {
 		return j, ErrConflict
 	}
 	n, err := q.ObjectCapacityRebase(ctx, tx, sqlc.ObjectCapacityRebaseParams{ID: mustPgUUID(j.BucketID), Bytes: bytes, Keys: keys})

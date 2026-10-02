@@ -20,7 +20,7 @@ func (m *MemStore) versionAccountingStatusLocked(bucket string) ObjectVersionAcc
 	for _, u := range m.objectMultipartUploads {
 		s.VersionsObserved = s.VersionsObserved || u.BucketID == bucket && u.CompletionVersionsObserved
 	}
-	s.VersionsObserved = s.VersionsObserved || m.objectVersionObservations[bucket]
+	s.VersionsObserved = s.VersionsObserved || m.objectVersionObservations[bucket] || m.objectBucketVersioning[bucket].VersionsRequired
 	for _, j := range m.objectCapacityJobs {
 		s.NativeScanActive = s.NativeScanActive || j.BucketID == bucket && j.InventoryScope == ObjectInventoryAllVersions && objectCapacityActive(j.State)
 	}
@@ -47,8 +47,11 @@ func (m *MemStore) StageObjectVersionInventoryPage(_ context.Context, id, token,
 	if !ok {
 		return cloneObjectCapacityJob(j), ErrNotFound
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	if !validObjectCapacityFinish(j, token, 0, 0, now) || j.InventoryScope != ObjectInventoryAllVersions || j.ScannedPages >= api.ObjectStorageInventoryMaxPages || m.objectBuckets[j.BucketID].State != "ready" {
+		return cloneObjectCapacityJob(j), ErrConflict
+	}
+	if v, exists := m.objectBucketVersioning[j.BucketID]; exists && versioningActive(v) && (v.State != "inventory" || v.CapacityJobID != id) {
 		return cloneObjectCapacityJob(j), ErrConflict
 	}
 	pending, unsafe, multipart, _ := m.capacityReadinessLocked(j.BucketID)

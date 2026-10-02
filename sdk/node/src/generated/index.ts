@@ -568,6 +568,8 @@ export type { ObjectBucket } from './models/ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
+export type { ObjectBucketVersioning } from './models/ObjectBucketVersioning.js';
+export type { ObjectBucketVersioningRequest } from './models/ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
 export type { ObjectMultipartCompletedPart } from './models/ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './models/ObjectMultipartPart.js';

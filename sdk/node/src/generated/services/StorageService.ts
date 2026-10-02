@@ -11,6 +11,8 @@ import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
+import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
@@ -626,6 +628,56 @@ export class StorageService {
       query: {
         'key': key,
       },
+    });
+  }
+  /**
+   * Read bucket versioning configuration and cutover progress
+   * Requires storage manage scope and the bucket write grant. Observes provider truth; discovering native versioning fences writes until a propagated, verified inventory accounts for all versions. Cache-Control no-store.
+   * @returns ObjectBucketVersioning Observed configuration and persisted progress
+   * @returns Problem Access denied, unavailable bucket or unsupported provider
+   * @throws ApiError
+   */
+  public static getObjectBucketVersioning({
+    slug,
+    bucket,
+  }: {
+    slug: string,
+    bucket: string,
+  }): CancelablePromise<ObjectBucketVersioning | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request durable bucket versioning configuration
+   * Requires storage manage scope and the bucket write grant. Enabled and Suspended are supported on capable S3 backends. Opposite targets conflict until the current transition is ready. New writes and bucket deletion remain fenced while existing work drains, configuration propagates for at least fifteen minutes and a complete all-version inventory commits. Unresolved legacy write grants reject the request. Cancellation cannot reopen writes. Suspension retains all-version accounting. MFA Delete changes are unsupported.
+   * @returns Problem Invalid status, busy bucket, unresolved legacy writes or unsupported provider
+   * @returns ObjectBucketVersioning Durable intent recorded; inspect GET for progress
+   * @throws ApiError
+   */
+  public static putObjectBucketVersioning({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    slug: string,
+    bucket: string,
+    requestBody: ObjectBucketVersioningRequest,
+  }): CancelablePromise<Problem | ObjectBucketVersioning> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

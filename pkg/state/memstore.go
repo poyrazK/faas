@@ -167,6 +167,7 @@ type MemStore struct {
 	objectTrackedGrants       map[string]map[string]bool
 	objectWriteAdmissions     map[string]objectWriteAdmission
 	objectCapacityJobs        map[string]ObjectCapacityReconciliation
+	objectBucketVersioning    map[string]ObjectBucketVersioning
 	objectVersionReferences   map[string]ObjectVersionIdentity
 	objectVersionReferenceIDs map[string]string
 	objectVersionObservations map[string]bool
@@ -20461,6 +20462,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 				}
 			}
 			delete(m.objectVersionObservations, bucketID)
+			delete(m.objectBucketVersioning, bucketID)
 			for writeID, w := range m.objectWriteAdmissions {
 				if w.BucketID == bucketID {
 					delete(m.objectWriteAdmissions, writeID)

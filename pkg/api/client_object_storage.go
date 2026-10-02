@@ -238,3 +238,14 @@ func (c *Client) CancelObjectCapacityReconciliation(ctx context.Context, slug, b
 	err := c.do(ctx, http.MethodDelete, objectCapacityPath(slug, bucket)+"/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
+
+func (c *Client) GetObjectBucketVersioning(ctx context.Context, slug, bucket string) (ObjectBucketVersioning, error) {
+	var out ObjectBucketVersioning
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/versioning", nil, &out)
+	return out, err
+}
+func (c *Client) PutObjectBucketVersioning(ctx context.Context, slug, bucket, status string) (ObjectBucketVersioning, error) {
+	var out ObjectBucketVersioning
+	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/versioning", ObjectBucketVersioningRequest{Status: status}, &out)
+	return out, err
+}

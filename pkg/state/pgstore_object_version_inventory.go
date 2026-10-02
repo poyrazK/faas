@@ -33,7 +33,11 @@ func (s *PgStore) StageObjectVersionInventoryPage(ctx context.Context, id, token
 	if err != nil {
 		return j, err
 	}
-	if ready.Pending > 0 || ready.Unsafe || ready.Multipart {
+	allowed, e := objectVersioningInventoryAllowed(ctx, tx, j.BucketID, id)
+	if e != nil {
+		return j, e
+	}
+	if !allowed || ready.Pending > 0 || ready.Unsafe || ready.Multipart {
 		return j, ErrConflict
 	}
 	for _, item := range items {

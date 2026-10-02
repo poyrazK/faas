@@ -1569,6 +1569,48 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/versioning:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: bucket, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketVersioning
+      summary: Read bucket versioning configuration and cutover progress
+      description: Requires storage manage scope and the bucket write grant. Observes provider truth; discovering native versioning fences writes until a propagated, verified inventory accounts for all versions. Cache-Control no-store.
+      tags: [storage]
+      responses:
+        '200':
+          description: Observed configuration and persisted progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketVersioning' }
+        default:
+          description: Access denied, unavailable bucket or unsupported provider
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketVersioning
+      summary: Request durable bucket versioning configuration
+      description: Requires storage manage scope and the bucket write grant. Enabled and Suspended are supported on capable S3 backends. Opposite targets conflict until the current transition is ready. New writes and bucket deletion remain fenced while existing work drains, configuration propagates for at least fifteen minutes and a complete all-version inventory commits. Unresolved legacy write grants reject the request. Cancellation cannot reopen writes. Suspension retains all-version accounting. MFA Delete changes are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectBucketVersioningRequest' }
+      responses:
+        '202':
+          description: Durable intent recorded; inspect GET for progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketVersioning' }
+        default:
+          description: Invalid status, busy bucket, unresolved legacy writes or unsupported provider
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations:
     parameters:
       - { name: slug, description: App requesting a fenced bucket inventory., in: path, required: true, schema: { type: string } }
@@ -24379,6 +24421,27 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
+
+    ObjectBucketVersioningRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [Enabled, Suspended] }
+    ObjectBucketVersioning:
+      type: object
+      required: [bucket_id, desired_status, observed_status, state, revision, versions_required, updated_at]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        desired_status: { type: string, enum: ['', Enabled, Suspended] }
+        observed_status: { type: string, enum: ['', Enabled, Suspended] }
+        state: { type: string, enum: [ready, waiting, propagating, inventory] }
+        revision: { type: integer, format: int64, minimum: 0 }
+        versions_required: { type: boolean }
+        propagation_until: { type: string, format: date-time }
+        capacity_job_id: { type: string, format: uuid }
+        last_error_code: { type: string }
+        updated_at: { type: string, format: date-time }
 
     ObjectCapacityReconciliation:
       type: object

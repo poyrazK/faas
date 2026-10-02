@@ -376,6 +376,10 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		h.listMultipartUploads(w, r, req)
 		return
 	}
+	if query.Has("versioning") && (r.Method == http.MethodGet || r.Method == http.MethodPut) && queryKeysOnly(query, "versioning") && query.Get("versioning") == "" {
+		h.bucketVersioning(w, r, req)
+		return
+	}
 	if r.Method == http.MethodGet && query.Has("versions") {
 		h.listObjectVersions(w, r, req, query)
 		return

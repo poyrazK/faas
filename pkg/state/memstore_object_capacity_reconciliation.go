@@ -12,6 +12,9 @@ import (
 var _ ObjectCapacityStore = (*MemStore)(nil)
 
 func (m *MemStore) objectCapacityFencedLocked(bucket string) bool {
+	if j, ok := m.objectBucketVersioning[bucket]; ok && versioningActive(j) {
+		return true
+	}
 	for _, j := range m.objectCapacityJobs {
 		if j.BucketID == bucket && objectCapacityActive(j.State) {
 			return true
@@ -91,6 +94,9 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 	if !ok || b.AccountID != account || b.AppID != app {
 		return ObjectCapacityReconciliation{}, ErrNotFound
 	}
+	if j, exists := m.objectBucketVersioning[bucket]; exists && versioningActive(j) {
+		return ObjectCapacityReconciliation{}, ErrConflict
+	}
 	if b.State != "ready" {
 		return ObjectCapacityReconciliation{}, ErrConflict
 	}
@@ -104,7 +110,7 @@ func (m *MemStore) RequestObjectCapacityReconciliation(_ context.Context, accoun
 			return ObjectCapacityReconciliation{}, ErrConflict
 		}
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	bytes, keys := objectCapacityTotals(m.objectUsageLocked(account, now), bucket)
 	j := ObjectCapacityReconciliation{ObjectCapacityReconciliation: api.ObjectCapacityReconciliation{ID: uuid.NewString(), BucketID: bucket, State: "waiting", InventoryScope: ObjectInventoryCurrent, BeforeBytes: bytes, BeforeKeys: keys, AfterBytes: bytes, AfterKeys: keys, CreatedAt: now, UpdatedAt: now}, AccountID: account, AppID: app, RetryAt: now, DeadlineAt: now.Add(api.ObjectCapacityReconciliationTimeout)}
 	if m.objectCapacityJobs == nil {
@@ -140,7 +146,7 @@ func (m *MemStore) CancelObjectCapacityReconciliation(_ context.Context, account
 		return j, ErrNotFound
 	}
 	if objectCapacityActive(j.State) {
-		now := time.Now().UTC()
+		now := m.clock().UTC()
 		j.InventoryCursor = ""
 		j.InventoryEntries = nil
 		j.InventoryCursors = nil
@@ -159,7 +165,7 @@ func (m *MemStore) DueObjectCapacityReconciliations(_ context.Context, limit int
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
+	now := m.clock()
 	out := []ObjectCapacityReconciliation{}
 	for _, j := range m.objectCapacityJobs {
 		if objectCapacityActive(j.State) && !j.RetryAt.After(now) && !j.LeaseUntil.After(now) {
@@ -173,7 +179,7 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j, ok := m.objectCapacityJobs[id]
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	if !ok {
 		return j, ErrNotFound
 	}
@@ -181,6 +187,9 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 		return j, ErrConflict
 	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(j.BucketID)
+	if v, exists := m.objectBucketVersioning[j.BucketID]; exists && versioningActive(v) && (v.State != "inventory" || v.CapacityJobID != id) {
+		pending = max(pending, 1)
+	}
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(m.objectUsageLocked(j.AccountID, now), j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
 	j = prepareObjectCapacityClaim(j, token, pending, unsafe, multipart, versions, now)
@@ -196,12 +205,15 @@ func (m *MemStore) FinishObjectCapacityReconciliation(_ context.Context, id, tok
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j, ok := m.objectCapacityJobs[id]
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	if !ok {
 		return j, ErrNotFound
 	}
 	if !validObjectCapacityFinish(j, token, bytes, keys, now) {
 		return j, ErrConflict
+	}
+	if v, exists := m.objectBucketVersioning[j.BucketID]; exists && versioningActive(v) && (v.State != "inventory" || v.CapacityJobID != id) {
+		return cloneObjectCapacityJob(j), ErrConflict
 	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(j.BucketID)
 	if pending > 0 || unsafe || multipart || versions || m.objectBuckets[j.BucketID].State != "ready" {
@@ -236,7 +248,7 @@ func (m *MemStore) RetryObjectCapacityReconciliation(_ context.Context, id, toke
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j, ok := m.objectCapacityJobs[id]
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	if !ok {
 		return ErrNotFound
 	}
