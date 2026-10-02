@@ -443,7 +443,7 @@ func TestNativeJournalRejectsCorruptOrUntrustedRecords(t *testing.T) {
 }
 
 func TestNativeJournalRefusesCommandsThatCanBypassItsGate(t *testing.T) {
-	for _, corrupt := range []string{"direct", "uid", "parent", "instance", "namespace", "daemonize", "cgroup_v1"} {
+	for _, corrupt := range []string{"direct", "uid", "parent", "instance", "namespace", "daemonize", "new_pid_namespace", "cgroup_v1"} {
 		t.Run(corrupt, func(t *testing.T) {
 			j, lease := preparedNativeJournal(t)
 			cmd := nativeJournalFixtureCommand(t, j, lease)
@@ -452,6 +452,8 @@ func TestNativeJournalRefusesCommandsThatCanBypassItsGate(t *testing.T) {
 				cmd.Args = cmd.Args[4:]
 			case "daemonize":
 				cmd.Args = append(cmd.Args, "--daemonize")
+			case "new_pid_namespace":
+				cmd.Args = append(cmd.Args, "--new-pid-ns")
 			default:
 				flag, value := "", ""
 				switch corrupt {

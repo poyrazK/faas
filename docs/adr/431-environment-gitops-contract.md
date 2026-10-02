@@ -1265,15 +1265,40 @@ This establishes cleanup ownership without installing a live row or guest CID
 join. Releasing a quarantine still requires confirmed exit and resource
 cleanup; it is not authorized by a scan error or generic terminal state.
 
-These primitives are not yet wired into JailerVMM launch/stop or Manager startup
-and recovery. The existing unknown-instance RPC behavior is therefore not a
-durable physical-retirement receipt. The next integration must establish the
-journal before any native boot, reseed every occupied slot before new boot or
-prepared-network admission, join recovery cleanup, and persist exact
-attempt-bound scheduler evidence. Journal retention and legacy launches also
-need explicit handling. The qualification consumer, serving proofs, graph
-activation and apid executor remain disabled/unwired, and native `test-metal`
-and `leakcheck` remain mandatory and unverified.
+The journal-backed lifecycle is now available behind vmmd's explicit
+`native_process_recovery = true` configuration; the default remains disabled
+pending native acceptance. Manager recovers all held journal/native slots
+before boot or prepared-network admission, without granting readiness or CID
+authority. A process-lifetime lock prevents a second daemon from opening an
+independent allocator for the same root. Disabling the mode while its journal
+exists refuses admission instead of passing ownership to legacy reapers.
+Legacy jail and layer-clone reaping is skipped while the mode is enabled.
+
+App and job admission persist a full lease before host setup. Jailer starts
+through the release-matched pipe gate; every fork gets a watchdog even if
+publication fails. Restore fallback can replace only its locally registered,
+confirmed prior incarnation. Finished generations remain immutable in the
+private archive; a crash after archiving but before publishing the next
+generation is retryable. Forking jailer options, including `--new-pid-ns`, are
+refused so the journal's PID still identifies the actual Firecracker process.
+
+Process exit and resource removal have separate durable acknowledgements.
+Local cleanup verifies both ordinary and private host interfaces, namespaces,
+cgroups and all managed Firecracker-version chroots before releasing a slot.
+Cgroup removal uses directory removal rather than unlinking control files.
+Bind cleanup preserves metadata and source modes across failure, and unknown
+mounts refuse deletion. Recovered builder export cannot borrow artifact
+provenance or fabricate a historical guest exit code.
+
+A restarted daemon can revoke and confirm the exact VM's exit, but unfinished
+records retain their quarantine: provisioning/export helper processes and
+their producer frames are not yet durably recovered. Firecracker exit cannot
+prove those helpers are gone. Previously completed resource acknowledgements
+can be rechecked for idempotent stops. Exact helper recovery, bind provenance,
+journal retention, legacy adoption and attempt-bound scheduler evidence still
+remain necessary. The qualification consumer, serving proofs, graph activation
+and apid executor remain disabled/unwired. Native `test-metal` and `leakcheck`
+remain mandatory and unverified.
 
 The complete portable `fcvm`, `vmmdgrpc` and `jailsetup` suites pass with these
 primitives. Recovery discovery, pinned-handle retirement, producer crash/gate

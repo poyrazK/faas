@@ -22,15 +22,16 @@ import (
 // A prepared record has no authorized process. An authorized record binds one
 // exact PID/start-time incarnation; revocation is irreversible for that token.
 type nativeLaunchRecord struct {
-	Version       int    `json:"version"`
-	Generation    string `json:"generation"`
-	KernelBootID  string `json:"kernel_boot_id"`
-	Lease         Lease  `json:"lease"`
-	Authorized    bool   `json:"authorized"`
-	PID           int    `json:"pid"`
-	StartTime     uint64 `json:"start_time"`
-	Revoked       bool   `json:"revoked"`
-	ExitConfirmed bool   `json:"exit_confirmed"`
+	Version          int    `json:"version"`
+	Generation       string `json:"generation"`
+	KernelBootID     string `json:"kernel_boot_id"`
+	Lease            Lease  `json:"lease"`
+	Authorized       bool   `json:"authorized"`
+	PID              int    `json:"pid"`
+	StartTime        uint64 `json:"start_time"`
+	Revoked          bool   `json:"revoked"`
+	ExitConfirmed    bool   `json:"exit_confirmed"`
+	ResourcesRemoved bool   `json:"resources_removed"`
 }
 
 type nativeLaunchJournal struct {
@@ -46,7 +47,7 @@ type nativeLaunchJournal struct {
 // cannot turn a damaged record into fresh boot authority. The lease has the
 // exact canonical fields emitted by this journal version, including zeroes.
 func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"version", "generation", "kernel_boot_id", "lease", "authorized", "pid", "start_time", "revoked", "exit_confirmed"})
+	fields, err := nativeJournalObjectFields(data, []string{"version", "generation", "kernel_boot_id", "lease", "authorized", "pid", "start_time", "revoked", "exit_confirmed", "resources_removed"})
 	if err != nil {
 		return err
 	}
@@ -306,7 +307,7 @@ func (j *nativeLaunchJournal) validateLaunchCommand(lease Lease, cmd *exec.Cmd) 
 		return errors.New("native journal: launch command namespace differs from its lease")
 	}
 	for _, arg := range args {
-		if arg == "--daemonize" || lease.Networkless && arg == "--netns" {
+		if arg == "--daemonize" || arg == "--new-pid-ns" || lease.Networkless && arg == "--netns" {
 			return errors.New("native journal: launch command cannot fork or change network ownership")
 		}
 	}
@@ -391,10 +392,25 @@ func (j *nativeLaunchJournal) read(instance string) (record nativeLaunchRecord, 
 	if err := checkNativeJournalPath(j.root, true); err != nil {
 		return record, err
 	}
-	if err := checkNativeJournalPath(j.path(instance), false); err != nil {
+	record, err = readNativeLaunchRecord(j.path(instance), instance)
+	if err != nil {
 		return record, err
 	}
-	file, err := openNativeJournalFile(j.path(instance), os.O_RDONLY)
+	bootID, err := j.currentBootID()
+	if err != nil {
+		return record, err
+	}
+	if record.KernelBootID != bootID {
+		return record, errors.New("native journal: record belongs to another kernel boot")
+	}
+	return record, nil
+}
+
+func readNativeLaunchRecord(path, instance string) (record nativeLaunchRecord, err error) {
+	if err := checkNativeJournalPath(path, false); err != nil {
+		return record, err
+	}
+	file, err := openNativeJournalFile(path, os.O_RDONLY)
 	if err != nil {
 		return record, err
 	}
@@ -409,13 +425,6 @@ func (j *nativeLaunchJournal) read(instance string) (record nativeLaunchRecord, 
 	}
 	if err := record.validate(instance); err != nil {
 		return record, err
-	}
-	bootID, err := j.currentBootID()
-	if err != nil {
-		return record, err
-	}
-	if record.KernelBootID != bootID {
-		return record, errors.New("native journal: record belongs to another kernel boot")
 	}
 	return record, nil
 }
@@ -443,7 +452,7 @@ func (r nativeLaunchRecord) validate(instance string) error {
 	if bootID, err := uuid.Parse(r.KernelBootID); err != nil || bootID == uuid.Nil {
 		return errors.New("native journal: record kernel boot identity is invalid")
 	}
-	if r.Authorized && (r.PID <= 0 || r.PID > math.MaxInt32 || r.StartTime == 0) || !r.Authorized && (r.PID != 0 || r.StartTime != 0) || r.ExitConfirmed && !r.Revoked {
+	if r.Authorized && (r.PID <= 0 || r.PID > math.MaxInt32 || r.StartTime == 0) || !r.Authorized && (r.PID != 0 || r.StartTime != 0) || r.ExitConfirmed && !r.Revoked || r.ResourcesRemoved && !r.ExitConfirmed {
 		return errors.New("native journal: launch state is inconsistent")
 	}
 	return nil

@@ -729,9 +729,12 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	alloc            *Allocator
-	preparedNetworks *preparedNetworkPool
-	run              Runner
+	alloc                *Allocator
+	nativeRecoveryReady  bool // guarded by mu; precedes all native admission
+	nativeRecoveryFlight *nativeRecoveryInitFlight
+	nativeRecovered      map[string][]Lease
+	preparedNetworks     *preparedNetworkPool
+	run                  Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist
@@ -3694,6 +3697,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
+	if m.nativeVMM() != nil && !req.Plan.Valid() {
+		return nil, fmt.Errorf("boot job %s: invalid plan %q", req.Instance, req.Plan)
+	}
 	bootCtx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -3745,6 +3751,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// job VM is rejected the same way.
 	if !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
+	}
+	if err := m.prepareNativeLease(bootCtx, lease); err != nil {
+		return nil, fmt.Errorf("manager: prepare native job ownership: %w", err)
 	}
 
 	// Plumb the netns (tap0, 10.0.0.2/30, NAT, jailer cgroup).
@@ -3883,6 +3892,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if m.nativeVMM() != nil && !req.Plan.Valid() {
+		return nil, fmt.Errorf("wake %s: invalid plan %q", req.Instance, req.Plan)
+	}
 	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
@@ -3992,6 +4004,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			}
 		}
 	}()
+	if err := m.prepareNativeLease(ctx, lease); err != nil {
+		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
+	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	if req.ExecutionOnly {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
@@ -5395,6 +5410,10 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	}
 	if !ok {
 		// Unknown instance — match Destroy's idempotent shape.
+		if m.nativeVMM() != nil {
+			code, err := m.retireUnknownNative(ctx, instance, "")
+			return false, int32(code), err // A historical guest exit cause is unknown.
+		}
 		return false, 0, nil
 	}
 	if inst.IsJob {
@@ -5487,6 +5506,9 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	if !ok {
 		// Already gone — still safe to export (idempotent), and the exit code
 		// is meaningless here.
+		if m.nativeVMM() != nil {
+			return m.retireUnknownNative(ctx, instance, exportDir)
+		}
 		if exportDir != "" {
 			_ = m.vmm // touch nothing; vmmd's recursion handles unknown
 		}
@@ -7343,6 +7365,22 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			// dedicated counter belongs with the leak reaper.
 			m.log.Warn("cleanup: netns survived teardown (leak)",
 				"instance", lease.Instance, "netns", nc.Netns)
+		}
+	}
+	if v := m.nativeVMM(); v != nil {
+		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
+			return fmt.Errorf("cleanup: resource retirement uncertain: %w", err)
+		}
+		if released, err := m.releaseNativeRecovered(lease.Instance); released || err != nil {
+			return err
+		}
+		// Completed retained records make duplicate stops idempotent after
+		// their quarantine has already been released.
+		m.alloc.mu.Lock()
+		_, held := m.alloc.byInstance[lease.Instance]
+		m.alloc.mu.Unlock()
+		if !held {
+			return nil
 		}
 	}
 	// cleanup runs exactly once per lease (failed boot OR Destroy, never both),

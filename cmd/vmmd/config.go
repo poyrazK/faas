@@ -27,6 +27,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// NativeProcessRecovery enables journal-backed launch and strict recovery.
+	// Experimental until the dedicated native VM/leak acceptance gates pass.
+	NativeProcessRecovery bool `toml:"native_process_recovery"`
 	// PreparedNetworks bounds the optional cache of unused namespaces.
 	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
 	PreparedNetworks int `toml:"prepared_networks"`

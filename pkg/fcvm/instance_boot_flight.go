@@ -16,6 +16,9 @@ type instanceBootFlight struct {
 }
 
 func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (context.Context, *instanceBootFlight, error) {
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		return nil, nil, fmt.Errorf("manager: native ownership recovery: %w", err)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, fmt.Errorf("manager: boot %s: %w", instance, err)
 	}

@@ -51,11 +51,12 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	chrootBase     string        // /srv/fc/jail
-	fcName         string        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
-	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
-	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	nativeRecovery *nativeProcessRecoveryRuntime // opt-in, configured before admission
+	chrootBase     string                        // /srv/fc/jail
+	fcName         string                        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	destroyWait    time.Duration                 // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes int64                         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
 	// small gate prevents admitted wake bursts from making every restore miss
 	// its latency SLO through CPU and mount contention. nil preserves the
@@ -855,6 +856,9 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 }
 
 func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+	if err := v.ensureNativeLaunch(ctx, l); err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	bootStartedAt := time.Now()
 	root, err := v.mkChroot(l.Instance)
@@ -1564,6 +1568,9 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	if err := v.ensureNativeLaunch(ctx, l); err != nil {
+		return err
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
@@ -3190,7 +3197,10 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // Kill stops the jailer process (if any) and removes the chroot. Idempotent.
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
-func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
+func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
+	if v.nativeRecovery != nil {
+		return v.killNative(ctx, l)
+	}
 	v.cancelStartupCPUBoostTail(l.Instance)
 	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()
@@ -3292,6 +3302,14 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 // grace timer races against the watchdog to fire SIGKILL on the
 // customer-configured deadline.
 func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	if v.nativeRecovery != nil {
+		v.mu.Lock()
+		rec := v.recs[l.Instance]
+		v.mu.Unlock()
+		if rec == nil {
+			return false, -1, v.Kill(ctx, l)
+		}
+	}
 	// Legacy Destroy shape: signal=0, grace=0. Delegate to Kill and
 	// report killSignalSent=true (the SIGKILL is what killed it).
 	if signal == 0 && grace == 0 {
@@ -3437,6 +3455,13 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 	rec, ok := v.recs[l.Instance]
 	v.mu.Unlock()
 	if !ok {
+		if v.nativeRecovery != nil {
+			if exportDir != "" {
+				_, retireErr := v.nativeRetirementRecord(ctx, l)
+				return -1, errors.Join(retireErr, errors.New("native recovery: recovered builder has no artifact export provenance"))
+			}
+			return -1, v.Kill(ctx, l)
+		}
 		v.mu.Lock()
 		_, processTracked := v.proc[l.Instance]
 		v.mu.Unlock()
@@ -3531,6 +3556,9 @@ exited:
 	}
 
 	// 3. Tear down the chroot + per-instance state.
+	if v.nativeRecovery != nil {
+		return exitCode, errors.Join(exportErr, v.Kill(context.WithoutCancel(ctx), l))
+	}
 	v.mu.Lock()
 	delete(v.recs, l.Instance)
 	delete(v.proc, l.Instance)
@@ -3557,6 +3585,9 @@ func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32,
 	rec := v.recs[instance]
 	v.mu.Unlock()
 	if rec == nil {
+		if v.nativeRecovery != nil {
+			return -1, v.Kill(ctx, Lease{Instance: instance})
+		}
 		return 0, nil
 	}
 	v.killProcess(instance)
@@ -4599,7 +4630,7 @@ func (v *JailerVMM) mkChroot(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
-func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...string) error {
+func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
 	execFile, err := exec.LookPath(FirecrackerBin)
 	if err != nil {
 		return fmt.Errorf("vmm: locate firecracker binary: %w", err)
@@ -4629,6 +4660,32 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if r := v.nativeRecovery; r != nil {
+		jailerPath, err := exec.LookPath(argv[0])
+		if err != nil {
+			return fmt.Errorf("vmm: locate jailer: %w", err)
+		}
+		if real, err := filepath.EvalSymlinks(jailerPath); err == nil {
+			jailerPath = real
+		}
+		argv[0] = jailerPath
+		for i, arg := range argv {
+			if arg == "--chroot-base-dir" {
+				argv[i+1] = v.chrootBase
+			}
+		}
+		helper := r.helper
+		if helper == "" {
+			helper, err = v.ensureMountHelper()
+			if err != nil {
+				return err
+			}
+		}
+		cmd, err = newNativeLaunchCommand(helper, argv)
+		if err != nil {
+			return err
+		}
+	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
 	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
@@ -4653,11 +4710,19 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	} else {
 		cmd.Stderr = io.Discard
 	}
-	if err := cmd.Start(); err != nil {
+	var startErr error
+	started := false
+	if r := v.nativeRecovery; r != nil {
+		started, startErr = r.journal.launch(ctx, l, cmd, r.startTime)
+	} else {
+		startErr = cmd.Start()
+		started = startErr == nil
+	}
+	if !started {
 		if consoleFile != nil {
 			_ = consoleFile.Close()
 		}
-		return fmt.Errorf("vmm: start jailer: %w", err)
+		return fmt.Errorf("vmm: start jailer: %w", startErr)
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
@@ -4673,7 +4738,13 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.
 	go func() {
-		state, _ := cmd.Process.Wait()
+		var state *os.ProcessState
+		if v.nativeRecovery != nil {
+			_ = cmd.Wait()
+			state = cmd.ProcessState
+		} else {
+			state, _ = cmd.Process.Wait()
+		}
 		if consoleFile != nil {
 			_ = consoleFile.Close()
 		}
@@ -4704,7 +4775,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			sink(l.Instance, exitCode)
 		}
 	}()
-	return nil
+	return startErr
 }
 
 // isolateLifecycleChild prevents jailer/firecracker from inheriting vmmd's
