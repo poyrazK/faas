@@ -51,7 +51,7 @@ func (m *MemStore) ReserveRuntimeLogArchive(_ context.Context, a RuntimeLogArchi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.runtimeLogArchiveBindings[a.InstanceID]
-	if !ok || m.apps[b.AppID].Status != AppActive || m.accounts[b.AccountID].Status != AccountActive {
+	if !ok {
 		return ErrNotFound
 	}
 	if b != a.RuntimeLogArchiveBinding {
@@ -59,6 +59,11 @@ func (m *MemStore) ReserveRuntimeLogArchive(_ context.Context, a RuntimeLogArchi
 	}
 	if a.Day < m.runtimeLogArchiveExpiry[a.InstanceID] {
 		return ErrRuntimeLogArchiveExpired
+	}
+	// Match PostgreSQL's write-miss diagnosis: a retained expiry fence survives
+	// soft deletion, allowing confirmed local collection without new publication.
+	if m.apps[b.AppID].Status != AppActive || m.accounts[b.AccountID].Status != AccountActive {
+		return ErrNotFound
 	}
 	k := archiveMapKey(a.InstanceID, a.Day)
 	if old, ok := m.runtimeLogArchives[k]; ok {
@@ -151,6 +156,11 @@ func (m *MemStore) dropRuntimeLogArchivesForAppLocked(appID string) {
 		if b.AppID == appID {
 			delete(m.runtimeLogArchiveBindings, key)
 			delete(m.runtimeLogArchiveExpiry, key)
+			for receipt := range m.runtimeLogArchiveCollected {
+				if strings.HasPrefix(receipt, key+"\x00") {
+					delete(m.runtimeLogArchiveCollected, receipt)
+				}
+			}
 		}
 	}
 }

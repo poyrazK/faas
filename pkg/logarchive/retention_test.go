@@ -233,7 +233,10 @@ func TestArchiveRetentionWaitsForPublisherAndBlocksLateSpool(t *testing.T) {
 		}
 		t.Fatalf("late PUT resurrected object: %v", err)
 	}
-	if len(spool.FilesSnapshot()) != 1 {
-		t.Fatal("remote expiry silently discarded pending local backlog")
+	if len(spool.FilesSnapshot()) != 0 || spool.LocalBytes() != 0 {
+		t.Fatal("confirmed collection retained expired local backlog")
+	}
+	if _, err := spool.Write(ref.InstanceID, 3, "stdout", at, "later pending line"); !errors.Is(err, ErrSpoolDayCollected) {
+		t.Fatalf("late writer recreated collected day: %v", err)
 	}
 }

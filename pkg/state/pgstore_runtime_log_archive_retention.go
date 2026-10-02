@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -76,12 +77,38 @@ func (s *PgStore) DeleteCollectedRuntimeLogArchive(ctx context.Context, ref Runt
 	}
 	date, _ := runtimeLogDay(ref.Day)
 	app, _ := parsePgUUID(ref.AppID)
-	n, err := sqlc.New().DeleteCollectedRuntimeLogArchive(ctx, s.pool, sqlc.DeleteCollectedRuntimeLogArchiveParams{InstanceID: ref.InstanceID, ArchiveDay: date, StorageKey: ref.StorageKey, AppID: app})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if err := q.RecordRuntimeLogArchiveCollection(ctx, tx, sqlc.RecordRuntimeLogArchiveCollectionParams{InstanceID: ref.InstanceID, ArchiveDay: date, StorageKey: ref.StorageKey, AppID: app}); err != nil {
+		return err
+	}
+	n, err := q.DeleteCollectedRuntimeLogArchive(ctx, tx, sqlc.DeleteCollectedRuntimeLogArchiveParams{InstanceID: ref.InstanceID, ArchiveDay: date, StorageKey: ref.StorageKey, AppID: app})
 	if err == nil && n != 1 {
 		return ErrNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 var _ RuntimeLogArchiveRetentionStore = (*PgStore)(nil)
 var _ RuntimeLogArchiveRetentionStore = (*MemStore)(nil)
+
+func (s *PgStore) RuntimeLogArchiveDayCollected(ctx context.Context, instance, day string) (bool, error) {
+	if !region.ValidRuntimeLogInstance(instance) {
+		return false, ErrInvalidArgument
+	}
+	date, err := runtimeLogDay(day)
+	if err != nil {
+		return false, err
+	}
+	return sqlc.New().RuntimeLogArchiveDayCollected(ctx, s.pool, sqlc.RuntimeLogArchiveDayCollectedParams{InstanceID: instance, ArchiveDay: date})
+}
+
+var _ RuntimeLogArchiveCollectionReader = (*PgStore)(nil)
+var _ RuntimeLogArchiveCollectionReader = (*MemStore)(nil)

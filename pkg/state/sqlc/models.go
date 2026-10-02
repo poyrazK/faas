@@ -3988,6 +3988,12 @@ type RuntimeLogArchiveBinding struct {
 	ExpiredBefore pgtype.Date
 }
 
+type RuntimeLogArchiveCollection struct {
+	InstanceID  string
+	ArchiveDay  pgtype.Date
+	CollectedAt pgtype.Timestamptz
+}
+
 type RuntimeLogArchiveFragment struct {
 	InstanceID     string
 	ArchiveDay     pgtype.Date

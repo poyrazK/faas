@@ -91,6 +91,10 @@ func (m *MemStore) DeleteCollectedRuntimeLogArchive(_ context.Context, ref Runti
 	if actual.StorageKey != ref.StorageKey {
 		return ErrInvalidArgument
 	}
+	if m.runtimeLogArchiveCollected == nil {
+		m.runtimeLogArchiveCollected = make(map[string]bool)
+	}
+	m.runtimeLogArchiveCollected[key] = true
 	delete(m.runtimeLogArchives, key)
 	for fragment := range m.runtimeLogArchiveFragments {
 		if strings.HasPrefix(fragment, key+"\x00") {
@@ -98,4 +102,15 @@ func (m *MemStore) DeleteCollectedRuntimeLogArchive(_ context.Context, ref Runti
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) RuntimeLogArchiveDayCollected(_ context.Context, instance, day string) (bool, error) {
+	if !region.ValidRuntimeLogInstance(instance) || !region.ValidRuntimeLogDay(day) {
+		return false, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := archiveMapKey(instance, day)
+	_, pending := m.runtimeLogArchives[key]
+	return m.runtimeLogArchiveCollected[key] && day < m.runtimeLogArchiveExpiry[instance] && !pending, nil
 }

@@ -2,7 +2,7 @@
 
 Status: Accepted; internal rollout pending native qualification
 Date: 2026-10-02
-Extends ADR-434.
+Extends ADR-434. Local backlog policy is superseded by ADR-436.
 
 ## Context
 

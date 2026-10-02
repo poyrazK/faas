@@ -1198,6 +1198,7 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
+	RecordRuntimeLogArchiveCollection(ctx context.Context, db DBTX, arg RecordRuntimeLogArchiveCollectionParams) error
 	RecordRuntimeLogArchiveFragment(ctx context.Context, db DBTX, arg RecordRuntimeLogArchiveFragmentParams) error
 	RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
@@ -1301,6 +1302,7 @@ type Querier interface {
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
 	RuntimeLogArchiveBindingByInstance(ctx context.Context, db DBTX, instanceID string) (RuntimeLogArchiveBindingByInstanceRow, error)
 	RuntimeLogArchiveByInstanceDay(ctx context.Context, db DBTX, arg RuntimeLogArchiveByInstanceDayParams) (RuntimeLogArchiveByInstanceDayRow, error)
+	RuntimeLogArchiveDayCollected(ctx context.Context, db DBTX, arg RuntimeLogArchiveDayCollectedParams) (bool, error)
 	RuntimeLogArchiveDayExpired(ctx context.Context, db DBTX, arg RuntimeLogArchiveDayExpiredParams) (bool, error)
 	RuntimeLogArchiveFragmentPublished(ctx context.Context, db DBTX, arg RuntimeLogArchiveFragmentPublishedParams) (bool, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)

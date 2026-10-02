@@ -141,6 +141,7 @@ type MemStore struct {
 	runtimeLogArchives          map[string]RuntimeLogArchive
 	runtimeLogArchiveFragments  map[string]bool
 	runtimeLogArchiveExpiry     map[string]string
+	runtimeLogArchiveCollected  map[string]bool
 	exclusivePolicies           map[string]ExclusiveWorkPolicy
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
 	exclusiveKeys               map[string]exclusiveKey

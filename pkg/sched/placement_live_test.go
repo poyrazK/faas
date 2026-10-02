@@ -1,3 +1,4 @@
+// adr: 424
 // placement_live_test.go — end-to-end chooser tests under a live
 // capacity publisher (Tier A1).
 //

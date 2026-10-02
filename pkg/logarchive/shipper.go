@@ -274,8 +274,18 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 // evictions can continue into a fresh .partial file while the upload runs;
 // failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
+	marked, err := s.spool.collectedDayMarked(f.Instance, f.Day)
+	if err != nil {
+		return 0, err
+	}
+	if marked {
+		return 0, s.discardLocalCollection(f)
+	}
 	ref, unlock, err := s.publication(ctx, f)
 	if err != nil {
+		if errors.Is(err, state.ErrRuntimeLogArchiveExpired) {
+			return 0, s.collectExpiredLocalDay(ctx, f, err)
+		}
 		return 0, err
 	}
 	defer unlock(context.WithoutCancel(ctx))

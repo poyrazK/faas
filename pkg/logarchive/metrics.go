@@ -70,13 +70,15 @@ const (
 // the counters to the supplied registry so the daemon's
 // /metrics scrape surfaces them.
 type promMetrics struct {
-	filesUploaded  *prometheus.CounterVec
-	bytesUploaded  prometheus.Counter
-	failures       *prometheus.CounterVec
-	localBytes     prometheus.Gauge
-	localBytesMax  prometheus.Gauge
-	flushDuration  prometheus.Histogram
-	uploadDuration prometheus.Histogram
+	filesUploaded              *prometheus.CounterVec
+	bytesUploaded              prometheus.Counter
+	failures                   *prometheus.CounterVec
+	localBytes                 prometheus.Gauge
+	localBytesMax              prometheus.Gauge
+	flushDuration              prometheus.Histogram
+	uploadDuration             prometheus.Histogram
+	localCollectedFiles        prometheus.Counter
+	localCollectedPendingBytes prometheus.Counter
 }
 
 // NewMetrics constructs the Prometheus-backed Metrics using the
@@ -127,7 +129,15 @@ func NewMetricsWithPrefix(reg prometheus.Registerer, prefix string) Metrics {
 		Help:    "Wall-clock time for a single log archive PutObject (issue #562).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 	})
-	reg.MustRegister(files, bytes, failures, localBytes, localBytesMax, flushDur, uploadDur)
+	localCollectedFiles := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_log_archive_local_collected_files_total",
+		Help: "Local spool payload files removed after confirmed remote archive collection.",
+	})
+	localCollectedPendingBytes := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_log_archive_local_collected_pending_bytes_total",
+		Help: "Unshipped spool bytes reclaimed after confirmed remote collection, including discarded writer buffers.",
+	})
+	reg.MustRegister(files, bytes, failures, localBytes, localBytesMax, flushDur, uploadDur, localCollectedFiles, localCollectedPendingBytes)
 	for _, status := range []string{"ok", "err"} {
 		files.WithLabelValues(status)
 	}
@@ -135,13 +145,15 @@ func NewMetricsWithPrefix(reg prometheus.Registerer, prefix string) Metrics {
 		failures.WithLabelValues(reason)
 	}
 	return &promMetrics{
-		filesUploaded:  files,
-		bytesUploaded:  bytes,
-		failures:       failures,
-		localBytes:     localBytes,
-		localBytesMax:  localBytesMax,
-		flushDuration:  flushDur,
-		uploadDuration: uploadDur,
+		filesUploaded:              files,
+		bytesUploaded:              bytes,
+		failures:                   failures,
+		localBytes:                 localBytes,
+		localBytesMax:              localBytesMax,
+		flushDuration:              flushDur,
+		uploadDuration:             uploadDur,
+		localCollectedFiles:        localCollectedFiles,
+		localCollectedPendingBytes: localCollectedPendingBytes,
 	}
 }
 
@@ -254,4 +266,18 @@ func (r *recordingMetrics) ObserveFlushDuration(s float64) {
 
 func (r *recordingMetrics) ObserveUploadDuration(s float64) {
 	r.uploadDurations = append(r.uploadDurations, s)
+}
+
+// ObserveLocalCollection is optional so existing Metrics implementations remain
+// compatible. Count progress even if a later payload needs a cleanup retry.
+func (p *promMetrics) ObserveLocalCollection(files int, pendingBytes int64) {
+	if p == nil {
+		return
+	}
+	if files > 0 {
+		p.localCollectedFiles.Add(float64(files))
+	}
+	if pendingBytes > 0 {
+		p.localCollectedPendingBytes.Add(float64(pendingBytes))
+	}
 }

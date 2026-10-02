@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -82,5 +83,28 @@ func TestVMMDArchiveSinkRequiresCapturedOwner(t *testing.T) {
 	}
 	if strings.Count(string(raw), `"msg":"owned"`) != 1 || strings.Contains(string(raw), "unowned") {
 		t.Fatalf("uncaptured lines spooled: %s", raw)
+	}
+}
+
+func TestVMMDLogArchiveSinkIgnoresCollectedDay(t *testing.T) {
+	root := t.TempDir()
+	day := "2026-06-01"
+	dir := filepath.Join(root, "instance-expired", "2026", "06")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Witness installed by the catalog-aware shipper before payload removal.
+	if err := os.WriteFile(filepath.Join(dir, "log-"+day+".jsonl.collected"), []byte("gregale-collected-v1\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	spool := logarchive.NewSpool(root, 1<<20)
+	var logs bytes.Buffer
+	sink := newVMMDLogArchiveSink(spool, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	sink.Enqueue("instance-expired", logbuf.Line{Seq: 1, Stream: "stdout", WrittenAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), Line: "delayed"})
+	if err := sink.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(spool.FilesSnapshot()) != 0 || spool.LocalBytes() != 0 || logs.Len() != 0 {
+		t.Fatalf("collected frame wrote data or emitted failure: %s", logs.String())
 	}
 }

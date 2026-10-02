@@ -108,14 +108,14 @@ route available to cleanup workers until its metadata is removed.
 Drain old pending spools before upgrading. Unattributed files and historical global
 archives of regional apps need a separate verified backfill or purge; filenames and
 worker placement do not establish ownership. Configure archive retention on each
-regional store's `faas-logs/` prefix (or OCI repository). Catalog-aware remote
-retention and orphan collection remain follow-up work.
+regional store's `faas-logs/` prefix (or OCI repository). Catalog-aware remote retention and confirmed local spool collection are described
+below; uncataloged objects require verified operator backfill.
 
 Configure all publishers and consumers, restart them, verify storage access with
 their respective credentials, then run native regional acceptance and resource
 leak checks on the dedicated Linux x86_64/KVM fleet. This file configures runtime
-artifact delivery; source builds require native qualification. Runtime log lifecycle qualification, archive retention/orphan collection,
-SBOM orphan collection, persistent services, regional ingress and control-plane independence require
+artifact delivery; source builds require native qualification. Runtime log lifecycle qualification, uncataloged archive backfill,
+SBOM orphan collection, persistent service recovery auditing, regional ingress and control-plane independence require
 further implementation or qualification.
 
 ## Runtime archive remote retention
@@ -137,8 +137,8 @@ an old local spool from reserving or publishing that day again.
 
 Storage failures retain the descriptor and receipts. If DELETE succeeded but the
 metadata update failed, a later pass confirms the object is missing and completes
-metadata cleanup. Expired local pending fragments are retained; they require the
-separate local backlog cleanup policy and still count against the local byte cap.
+metadata cleanup. Expired local pending fragments remain until an exact collection receipt authorizes
+the local cleanup described below. They still count against the local byte cap.
 Uncataloged objects with no verified owner are not collected automatically. Backfill
 verified instance/app/account/region ownership or remove them explicitly after an
 operator inventory; a filename or worker region alone is insufficient evidence.
@@ -149,3 +149,31 @@ collected counters. A successful page is not proof that the entire expired inven
 has been drained. Size collector throughput against archive volume before expanding
 admission. Native KVM and operational qualification remain pending; region admission
 stays internal and default-off.
+
+
+## Runtime archive local collection
+
+Install migration `20261002164048463` before updated apid and vmmd (ADR-436).
+Remote collection records an immutable per-day receipt atomically with reservation
+removal. A shipper requires that receipt under the app publication lock before
+reclaiming expired partial/upload backlog, committed history, or compressed files.
+A remote or metadata failure retains local data. A binding's expiry floor alone
+does not prove that older never-reserved days were collected.
+
+Each private spool root retains a durable `.jsonl.collected` witness before payload
+removal. The writer rejects delayed frames for that day, including after restart;
+cleanup retries can use the witness during a database outage. Keep roots private to
+one daemon process and preserve witnesses. Cleanup rejects symlinked descendants,
+nonregular payloads and damaged witnesses; investigate the per-file failure before
+removing or replacing any entry. The configured root itself may be an operator
+mount/symlink, but its instance/year/month descendants must be real directories.
+
+Observe `{apid,vmmd}_log_archive_local_collected_files_total` and
+`{apid,vmmd}_log_archive_local_collected_pending_bytes_total`, together with local
+bytes/capacity and remote retention failures. The pending-byte counter includes
+explicitly collected writer buffers; collection never increments upload counters.
+Receipts/witnesses from this rollout do not retroactively prove collection of older
+uncataloged data. Historical backlog still needs verified operator backfill or
+explicit inventory/removal. Account for one small witness per collected day in
+spool inode capacity. Native qualification remains pending and admission stays
+internal and default-off.

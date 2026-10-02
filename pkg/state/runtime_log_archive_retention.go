@@ -32,3 +32,9 @@ type RuntimeLogArchiveRetentionStore interface {
 	DeleteCollectedRuntimeLogArchive(context.Context, RuntimeLogArchive) error
 	RuntimeLogArchiveDayExpired(context.Context, string, string) (bool, error)
 }
+
+// RuntimeLogArchiveCollectionReader proves an exact day was collected. An
+// expired floor or a missing descriptor alone never authorizes local deletion.
+type RuntimeLogArchiveCollectionReader interface {
+	RuntimeLogArchiveDayCollected(context.Context, string, string) (bool, error)
+}

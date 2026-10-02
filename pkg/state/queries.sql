@@ -5782,3 +5782,15 @@ DELETE FROM runtime_log_archives r USING runtime_log_archive_bindings b
 WHERE r.instance_id = b.instance_id AND r.instance_id = sqlc.arg(instance_id)::text
   AND r.archive_day = sqlc.arg(archive_day)::date AND r.archive_day < b.expired_before
   AND r.storage_key = sqlc.arg(storage_key)::text AND b.app_id = sqlc.arg(app_id)::uuid;
+
+-- name: RecordRuntimeLogArchiveCollection :exec
+INSERT INTO runtime_log_archive_collections(instance_id, archive_day)
+SELECT r.instance_id, r.archive_day FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id=r.instance_id
+WHERE r.instance_id=sqlc.arg(instance_id)::text AND r.archive_day=sqlc.arg(archive_day)::date
+  AND r.storage_key=sqlc.arg(storage_key)::text AND b.app_id=sqlc.arg(app_id)::uuid AND r.archive_day < b.expired_before
+ON CONFLICT DO NOTHING;
+
+-- name: RuntimeLogArchiveDayCollected :one
+SELECT EXISTS(SELECT 1 FROM runtime_log_archive_collections c JOIN runtime_log_archive_bindings b ON b.instance_id=c.instance_id
+WHERE c.instance_id=sqlc.arg(instance_id)::text AND c.archive_day=sqlc.arg(archive_day)::date AND c.archive_day < b.expired_before
+  AND NOT EXISTS (SELECT 1 FROM runtime_log_archives r WHERE r.instance_id=c.instance_id AND r.archive_day=c.archive_day));

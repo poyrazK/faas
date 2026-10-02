@@ -41,6 +41,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/region"
 )
 
 // DefaultBufferBytes is the bufio.Writer buffer size. 64 KiB
@@ -111,9 +113,10 @@ type Spool struct {
 	maxBytes int64 // FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX (DefaultLocalBytesMax)
 	bufBytes int   // bufio buffer size (DefaultBufferBytes)
 
-	mu      sync.Mutex
-	files   map[spoolKey]*fileHandle
-	written int64 // current local-spool size
+	mu        sync.Mutex
+	files     map[spoolKey]*fileHandle
+	collected map[spoolKey]bool // durable local witnesses cached for active writers
+	written   int64             // current local-spool size
 }
 
 // NewSpool constructs a Spool rooted at root. maxBytes is the
@@ -126,11 +129,12 @@ func NewSpool(root string, maxBytes int64) *Spool {
 		maxBytes = DefaultLocalBytesMax
 	}
 	return &Spool{
-		root:     root,
-		maxBytes: maxBytes,
-		bufBytes: DefaultBufferBytes,
-		files:    make(map[spoolKey]*fileHandle),
-		written:  existingUnshippedBytes(root),
+		root:      root,
+		maxBytes:  maxBytes,
+		bufBytes:  DefaultBufferBytes,
+		files:     make(map[spoolKey]*fileHandle),
+		collected: make(map[spoolKey]bool),
+		written:   existingUnshippedBytes(root),
 	}
 }
 
@@ -198,6 +202,9 @@ func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkCollectedLocked(key); err != nil {
+		return 0, err
+	}
 	if s.written+int64(len(payload)) > s.maxBytes {
 		return 0, ErrSpoolFull
 	}
@@ -297,25 +304,37 @@ func (s *Spool) FilesSnapshot() []FileInfo {
 			return nil
 		}
 		name := d.Name()
-		if !strings.HasPrefix(name, spoolFilePrefix) ||
-			(!strings.HasSuffix(name, spoolPartialSuffix) && !strings.HasSuffix(name, spoolUploadSuffix) && !strings.HasSuffix(name, spoolCommittedSuffix)) {
+		if !strings.HasPrefix(name, spoolFilePrefix) {
 			return nil
 		}
-		// {prefix}{YYYY-MM-DD}{suffix}. The day sits between
-		// the fixed prefix and suffix.
-		day := strings.TrimPrefix(name, spoolFilePrefix)
-		day = strings.TrimSuffix(day, spoolPartialSuffix)
-		day = strings.TrimSuffix(day, spoolUploadSuffix)
-		day = strings.TrimSuffix(day, spoolCommittedSuffix)
-		if len(day) != 10 { // YYYY-MM-DD
+		suffix := ""
+		for _, candidate := range []string{spoolPartialSuffix, spoolUploadSuffix, spoolCommittedSuffix, archiveGzipSuffix + ".pending", archiveGzipSuffix} {
+			if strings.HasSuffix(name, candidate) {
+				suffix = candidate
+				break
+			}
+		}
+		if suffix == "" {
 			return nil
+		}
+		day := strings.TrimSuffix(strings.TrimPrefix(name, spoolFilePrefix), suffix)
+		if !region.ValidRuntimeLogDay(day) {
+			return nil
+		}
+		// Compressed history normally needs no publication. Include it only
+		// when a witness (even a damaged one) needs cleanup/error recovery.
+		if suffix == archiveGzipSuffix || suffix == archiveGzipSuffix+".pending" {
+			marked, markerErr := collectedMarker(strings.TrimSuffix(path, suffix))
+			if !marked && markerErr == nil {
+				return nil
+			}
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
 		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) != 4 {
+		if len(parts) != 4 || parts[1] != day[:4] || parts[2] != day[5:7] {
 			return nil
 		}
 		info, err := d.Info()
@@ -387,6 +406,9 @@ func (s *Spool) PrepareUpload(instance, day string) (string, error) {
 	key := spoolKey{instance: instance, day: day}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkCollectedLocked(key); err != nil {
+		return "", err
+	}
 
 	if fh, ok := s.files[key]; ok {
 		if err := fh.bw.Flush(); err != nil {

@@ -24719,3 +24719,59 @@ CREATE TRIGGER runtime_log_archive_retention_floor_guard BEFORE UPDATE OF expire
 --
 
 CREATE TRIGGER runtime_log_archive_retention_guard BEFORE INSERT OR UPDATE ON public.runtime_log_archives FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_retention();
+
+--
+-- Name: runtime_log_archive_collections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_log_archive_collections (
+    instance_id text NOT NULL,
+    archive_day date NOT NULL,
+    collected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_log_archive_collections_archive_day_check CHECK (((archive_day >= '0001-01-01'::date) AND (archive_day <= '9999-12-31'::date))),
+    CONSTRAINT runtime_log_archive_collections_collected_at_check CHECK (isfinite(collected_at))
+);
+
+--
+-- Name: enforce_runtime_log_archive_collection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_runtime_log_archive_collection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF (NEW.instance_id, NEW.archive_day, NEW.collected_at) IS DISTINCT FROM (OLD.instance_id, OLD.archive_day, OLD.collected_at) THEN
+            RAISE EXCEPTION 'runtime log archive collection receipt is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_collection_immutable';
+        END IF;
+    ELSIF NOT EXISTS (
+        SELECT 1 FROM runtime_log_archives r JOIN runtime_log_archive_bindings b ON b.instance_id = r.instance_id
+        WHERE r.instance_id = NEW.instance_id AND r.archive_day = NEW.archive_day AND r.archive_day < b.expired_before
+    ) THEN
+        RAISE EXCEPTION 'runtime log archive collection requires its retired reservation'
+            USING ERRCODE = '23514', CONSTRAINT = 'runtime_log_archive_collection_retired';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+--
+-- Name: runtime_log_archive_collections runtime_log_archive_collections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_collections
+    ADD CONSTRAINT runtime_log_archive_collections_pkey PRIMARY KEY (instance_id, archive_day);
+
+--
+-- Name: runtime_log_archive_collections runtime_log_archive_collection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_log_archive_collection_guard BEFORE INSERT OR UPDATE ON public.runtime_log_archive_collections FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_log_archive_collection();
+
+--
+-- Name: runtime_log_archive_collections runtime_log_archive_collections_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_log_archive_collections
+    ADD CONSTRAINT runtime_log_archive_collections_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.runtime_log_archive_bindings(instance_id) ON DELETE CASCADE;
