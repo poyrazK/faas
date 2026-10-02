@@ -101,7 +101,8 @@ class HotfixContracts(unittest.TestCase):
     def test_unrelated_override_is_never_removed(self):
         with tempfile.TemporaryDirectory() as tmp:
             drop = Path(tmp) / 'override.conf'; drop.write_text('unrelated')
-            with patch.object(host, 'DROP', drop), patch.object(host, 'command') as cmd:
+            with patch.object(host, 'DROP', drop), patch.object(host, 'command') as cmd, \
+                 patch.object(Path, 'resolve', return_value=Path('/opt/faas/releases/' + host.BASE)):
                 with self.assertRaises(AssertionError):
                     host.rollback()
                 self.assertEqual(drop.read_text(), 'unrelated')
