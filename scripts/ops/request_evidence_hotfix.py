@@ -9,7 +9,6 @@ import signal
 import subprocess
 import tarfile
 import tempfile
-import urllib.request
 
 import request_evidence_hotfix_host as host
 
@@ -85,8 +84,10 @@ def extract_gateway(archive, manifest_bytes, destination):
 
 
 def public_health():
-    with urllib.request.urlopen('https://api.gregale.dev/healthz', timeout=15) as r:
-        assert r.status == 200
+    status = run(['curl', '--fail', '--silent', '--show-error', '--max-time', '15',
+                  '--output', '/dev/null', '--write-out', '%{http_code}',
+                  'https://api.gregale.dev/healthz'])
+    assert status == '200'
 
 
 def deploy(remote, upload, public_gate, record):
