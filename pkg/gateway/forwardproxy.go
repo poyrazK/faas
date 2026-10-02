@@ -544,6 +544,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			return
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
+			recordForwardedHTTPResponse(r.Context(), int(init.GetStatus()), init.GetError() == "")
 			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())

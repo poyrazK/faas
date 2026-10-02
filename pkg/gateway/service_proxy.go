@@ -264,10 +264,14 @@ type ServiceProxyConfig struct {
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
-	Metrics     *Metrics
-	EndpointTTL time.Duration
-	Now         func() time.Time
-	Log         *slog.Logger
+	Metrics *Metrics
+	// RecordRequestTelemetry records app-handled internal service requests.
+	// Platform failures and requests rejected before the guest response are
+	// deliberately excluded. Nil disables the optional debugger signal.
+	RecordRequestTelemetry func(RequestTelemetryRow)
+	EndpointTTL            time.Duration
+	Now                    func() time.Time
+	Log                    *slog.Logger
 	// MintCallerAssertion attaches a verifiable statement of who called
 	// (ADR-206). nil attaches nothing.
 	MintCallerAssertion ServiceCallerMinter
@@ -295,26 +299,27 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
-	mintAssertion         ServiceCallerMinter
-	localNodeID           string
-	provider              ServiceEndpointProvider
-	resolve               ServiceProxyResolver
-	authorize             ServiceProxyAuthorizer
-	allowAlias            ServiceAliasAllowed
-	resolveCaller         ServiceProxyCallerResolver
-	resolveCallerIdentity ServiceProxyCallerIdentityResolver
-	resolveRelease        ServiceProxyReleaseResolver
-	devBridge             ServiceProxyDevBridge
-	forward               func(Target) http.Handler
-	rawForward            func(Target) http.Handler
-	wake                  ServiceProxyWaker
-	wakeDeployment        ServiceProxyDeploymentWaker
-	validateDeployment    ServiceProxyDeploymentValidator
-	resolveChaos          ServiceProxyChaosResolver
-	metrics               *Metrics
-	endpointTTL           time.Duration
-	now                   func() time.Time
-	log                   *slog.Logger
+	mintAssertion          ServiceCallerMinter
+	localNodeID            string
+	provider               ServiceEndpointProvider
+	resolve                ServiceProxyResolver
+	authorize              ServiceProxyAuthorizer
+	allowAlias             ServiceAliasAllowed
+	resolveCaller          ServiceProxyCallerResolver
+	resolveCallerIdentity  ServiceProxyCallerIdentityResolver
+	resolveRelease         ServiceProxyReleaseResolver
+	devBridge              ServiceProxyDevBridge
+	forward                func(Target) http.Handler
+	rawForward             func(Target) http.Handler
+	wake                   ServiceProxyWaker
+	wakeDeployment         ServiceProxyDeploymentWaker
+	validateDeployment     ServiceProxyDeploymentValidator
+	resolveChaos           ServiceProxyChaosResolver
+	metrics                *Metrics
+	recordRequestTelemetry func(RequestTelemetryRow)
+	endpointTTL            time.Duration
+	now                    func() time.Time
+	log                    *slog.Logger
 
 	breaker     *circuit.Group
 	retryPolicy RetryPolicy
@@ -394,32 +399,33 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
-		mintAssertion:         cfg.MintCallerAssertion,
-		localNodeID:           strings.TrimSpace(cfg.LocalNodeID),
-		provider:              cfg.Provider,
-		resolve:               cfg.Resolve,
-		authorize:             cfg.Authorize,
-		allowAlias:            cfg.AllowAlias,
-		resolveCaller:         cfg.ResolveCaller,
-		resolveCallerIdentity: cfg.ResolveCallerIdentity,
-		resolveRelease:        cfg.ResolveRelease,
-		devBridge:             cfg.DevBridge,
-		forward:               cfg.Forward,
-		rawForward:            cfg.RawForward,
-		wake:                  cfg.Wake,
-		wakeDeployment:        cfg.WakeDeployment,
-		validateDeployment:    cfg.ValidateDeployment,
-		resolveChaos:          cfg.ResolveChaos,
-		metrics:               cfg.Metrics,
-		endpointTTL:           ttl,
-		now:                   now,
-		log:                   log,
-		breaker:               breaker,
-		retryPolicy:           retryPolicy,
-		retryBudget:           retryBudget,
-		snapshots:             make(map[string]serviceProxySnapshot),
-		next:                  make(map[string]uint64),
-		nextSeen:              make(map[string]time.Time),
+		mintAssertion:          cfg.MintCallerAssertion,
+		localNodeID:            strings.TrimSpace(cfg.LocalNodeID),
+		provider:               cfg.Provider,
+		resolve:                cfg.Resolve,
+		authorize:              cfg.Authorize,
+		allowAlias:             cfg.AllowAlias,
+		resolveCaller:          cfg.ResolveCaller,
+		resolveCallerIdentity:  cfg.ResolveCallerIdentity,
+		resolveRelease:         cfg.ResolveRelease,
+		devBridge:              cfg.DevBridge,
+		forward:                cfg.Forward,
+		rawForward:             cfg.RawForward,
+		wake:                   cfg.Wake,
+		wakeDeployment:         cfg.WakeDeployment,
+		validateDeployment:     cfg.ValidateDeployment,
+		resolveChaos:           cfg.ResolveChaos,
+		metrics:                cfg.Metrics,
+		recordRequestTelemetry: cfg.RecordRequestTelemetry,
+		endpointTTL:            ttl,
+		now:                    now,
+		log:                    log,
+		breaker:                breaker,
+		retryPolicy:            retryPolicy,
+		retryBudget:            retryBudget,
+		snapshots:              make(map[string]serviceProxySnapshot),
+		next:                   make(map[string]uint64),
+		nextSeen:               make(map[string]time.Time),
 	}
 }
 
@@ -942,7 +948,7 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 		return
 	}
 	p.countForward(woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints)
+	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken)
 }
 
 // countForward records a call that reached the guest bridge. The warm/cold
@@ -1408,7 +1414,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1462,12 +1468,31 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
+		oteltrace.SpanFromContext(forwardReq.Context()).SetAttributes(
+			attribute.String("gregale.service.target_instance_id", endpoint.InstanceID),
+			attribute.String("gregale.service.target_deployment_id", endpoint.DeploymentID),
+		)
+		if target.ScenarioTestRunID != "" {
+			oteltrace.SpanFromContext(forwardReq.Context()).SetAttributes(attribute.String("gregale.scenario_test_run_id", target.ScenarioTestRunID))
+		}
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
+		responseStartedAt := p.now()
+		var appResponse forwardedHTTPResponseObservation
+		forwardReq = forwardReq.WithContext(withForwardedHTTPResponseObserver(forwardReq.Context(), func(status int, appHandled bool) {
+			appResponse = forwardedHTTPResponseObservation{Status: status, AppHandled: appHandled}
+		}))
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
-		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		func() {
+			defer func() {
+				if appResponse.AppHandled {
+					p.recordServiceRequestTelemetry(forwardReq, target, caller, endpoint, appResponse.Status, woken, responseStartedAt)
+				}
+			}()
+			p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		}()
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
 		}

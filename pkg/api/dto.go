@@ -10102,6 +10102,12 @@ type DebugTelemetryRequestItem struct {
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
 }
 
+// RequestTelemetryRouteServiceProxy is the bounded route label used for
+// app-handled requests forwarded through the internal service proxy. It keeps
+// those requests distinguishable from public deployment probes without
+// persisting the requested path.
+const RequestTelemetryRouteServiceProxy = "__service_proxy__"
+
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
 // platform-owned runtime runner. It contains no customer payload or error
 // text and is omitted when the runner did not emit evidence.

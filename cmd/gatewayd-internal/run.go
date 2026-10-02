@@ -3532,10 +3532,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
-			AllowAlias: guestServiceAliasAllowed,
+			Provider:               serviceEndpointProvider,
+			Resolve:                newServiceProxyResolver(pgStore),
+			Authorize:              newServiceProxyAuthorizer(pgStore),
+			RecordRequestTelemetry: handler.RecordServiceRequestTelemetry,
+			AllowAlias:             guestServiceAliasAllowed,
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},

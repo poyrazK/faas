@@ -5438,6 +5438,16 @@ func (h *Handler) WithRequestTelemetryRecorder(r *requestTelemetryRecorder) {
 	h.requestTelemetry = r
 }
 
+// RecordServiceRequestTelemetry lets the service proxy share the request
+// telemetry recorder without exposing the recorder implementation. The proxy
+// calls this only after the bridge confirms an app response.
+func (h *Handler) RecordServiceRequestTelemetry(row RequestTelemetryRow) {
+	if h == nil || h.requestTelemetry == nil {
+		return
+	}
+	h.requestTelemetry.RecordFromObserve(row)
+}
+
 // WithRequestIDJournalWriter installs the synchronous durable index writer.
 // For debugger-enabled plans, ServeHTTP calls it after app resolution and
 // fails closed before guest work if the write cannot be confirmed.

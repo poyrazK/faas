@@ -264,8 +264,11 @@ func (f *testServiceHotFakeClient) GetAppWakeTimeline(context.Context, string, a
 	return api.AppWakeTimelineResponse{Rows: f.wakes}, nil
 }
 
-func (f *testServiceHotFakeClient) ListAppDebugRequestsWithOptions(context.Context, string, api.DebugTelemetryListOptions) (api.DebugTelemetryListResponse, error) {
-	return api.DebugTelemetryListResponse{Requests: f.requests}, nil
+func (f *testServiceHotFakeClient) ListAppDebugRequestsAll(_ context.Context, _ string, opts api.DebugTelemetryListOptions) ([]api.DebugTelemetryRequestItem, error) {
+	if opts.Route != api.RequestTelemetryRouteServiceProxy {
+		return nil, fmt.Errorf("request evidence route = %q", opts.Route)
+	}
+	return f.requests, nil
 }
 
 func TestVerifyTestServiceHotRequiresHandledRequestWithoutNewWake(t *testing.T) {
@@ -273,27 +276,43 @@ func TestVerifyTestServiceHotRequiresHandledRequestWithoutNewWake(t *testing.T) 
 	client := &testServiceHotFakeClient{
 		wakes: []api.WakeTimelineJSONRow{{WakeID: "baseline"}},
 		requests: []api.DebugTelemetryRequestItem{
-			{ID: "new-request", RequestID: "public-request", InstanceID: "vm-1", Status: 202, ReceivedAt: cutoff.Add(time.Second).Format(time.RFC3339Nano)},
-			{ID: "late-smoke", RequestID: "smoke", InstanceID: "vm-1", ColdBoot: true, ReceivedAt: cutoff.Add(-time.Second).Format(time.RFC3339Nano)},
-			{ID: "baseline-request", InstanceID: "vm-1"},
+			{ID: "new-request", RequestID: "public-request", Route: api.RequestTelemetryRouteServiceProxy, InstanceID: "vm-1", Status: 202, TraceID: stringPointer("0123456789abcdef0123456789abcdef"), ReceivedAt: cutoff.Truncate(time.Minute).Format(time.RFC3339Nano)},
+			{ID: "late-smoke", RequestID: "smoke", Route: "GET /healthz", InstanceID: "vm-1", ColdBoot: true, Status: 200, ReceivedAt: cutoff.Add(time.Second).Format(time.RFC3339Nano)},
+			{ID: "baseline-request", Route: api.RequestTelemetryRouteServiceProxy, InstanceID: "vm-1", Status: 200},
 		},
 	}
 	wakes := map[string]bool{"baseline": true}
 	requests := map[string]bool{"baseline-request": true}
-	evidence, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff)
-	if err != nil || evidence.RequestID != "public-request" || evidence.InstanceID != "vm-1" || evidence.Status != 202 {
+	evidence, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests)
+	if err != nil || evidence.RequestID != "public-request" || evidence.InstanceID != "vm-1" || evidence.Status != 202 || evidence.TraceID != "0123456789abcdef0123456789abcdef" {
 		t.Fatalf("hot service evidence = (%+v, %v)", evidence, err)
 	}
 	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "unexpected-wake"}, {WakeID: "baseline"}}
-	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests); err == nil {
 		t.Fatal("new service wake satisfied warm profile")
 	}
 	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "baseline"}}
 	client.requests[0].ColdBoot = true
-	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests); err == nil {
 		t.Fatal("waking service request satisfied warm profile")
 	}
 }
+
+func TestTestRunPhaseStatusKeepsSuccessfulCleanupAfterScenarioFailure(t *testing.T) {
+	receipt := testRunReceipt{Error: "assertion failed", Status: "failed"}
+	if got := testRunPhaseStatus("assertions", receipt); got != "failed" {
+		t.Fatalf("assertion phase status = %q, want failed", got)
+	}
+	if got := testRunPhaseStatus("cleanup", receipt); got != "passed" {
+		t.Fatalf("cleanup phase status = %q, want passed", got)
+	}
+	receipt.addCleanupError("destroy worker failed")
+	if got := testRunPhaseStatus("cleanup", receipt); got != "failed" {
+		t.Fatalf("cleanup phase status with cleanup error = %q, want failed", got)
+	}
+}
+
+func stringPointer(value string) *string { return &value }
 
 func TestWaitForTestDeliveryRequiresWorkloadWakeBeforeInspection(t *testing.T) {
 	reads := 0
