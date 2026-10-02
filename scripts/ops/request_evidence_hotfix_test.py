@@ -11,9 +11,35 @@ from types import SimpleNamespace
 
 import request_evidence_hotfix as controller
 import request_evidence_hotfix_host as host
+import request_evidence_hotfix_github as github
+import zipfile
+from email.message import Message
+import urllib.error
 
 
 class HotfixContracts(unittest.TestCase):
+    def test_signed_storage_download_does_not_receive_the_github_token(self):
+        headers = Message()
+        headers['Location'] = 'https://storage.example.test/artifact?signature=public-test'
+        response = SimpleNamespace(read=lambda _: b'artifact')
+        with patch.dict('os.environ', {'GH_TOKEN': 'secret-test-token'}), \
+             patch.object(github.urllib.request, 'build_opener') as opener, \
+             patch.object(github.urllib.request, 'urlopen') as storage:
+            opener.return_value.open.side_effect = urllib.error.HTTPError('https://api.github.com', 302, 'redirect', headers, None)
+            storage.return_value.__enter__.return_value = response
+            self.assertEqual(github.artifact_bytes(123), b'artifact')
+            self.assertEqual(storage.call_args.args, (headers['Location'],))
+            self.assertEqual(storage.call_args.kwargs, {'timeout': 60})
+
+    def test_artifact_cannot_escape_its_owned_directory(self):
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, 'w') as archive:
+            archive.writestr('../outside.json', '{}')
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                github.extract_metadata(data.getvalue(), Path(tmp) / 'owned')
+            self.assertFalse((Path(tmp) / 'outside.json').exists())
+
     def test_inspection_never_opens_a_writable_file_or_changes_a_unit(self):
         state = {'gateway': {'sha256': host.OLD_HASH, 'pid': 123}}
         with patch.object(host, 'snapshot', return_value=state), patch.object(host, 'health'), \

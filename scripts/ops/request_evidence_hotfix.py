@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 
 import request_evidence_hotfix_host as host
+import request_evidence_hotfix_github as github
 
 REPO = 'poyrazK/faas'
 TARGETS = [
@@ -27,7 +28,7 @@ def run(args, **kwargs):
 
 
 def api(path):
-    return json.loads(run(['gh', 'api', 'repos/' + REPO + '/' + path]))
+    return github.api(path)
 
 
 def qualify():
@@ -44,8 +45,7 @@ def qualify():
         assert any(r['name'] == name and r['conclusion'] == 'success' for r in runs), name
     with tempfile.TemporaryDirectory(prefix='hotfix-gates-') as tmp:
         root = Path(tmp)
-        run(['gh', 'run', 'download', '36979712031', '--repo', REPO,
-             '--name', 'operation-policy-postgres-contract', '--dir', str(root / 'pg')])
+        github.download_artifact(36979712031, 'operation-policy-postgres-contract', root / 'pg')
         validate_postgres((root / 'pg/operation-policy-postgres-contract.log').read_text())
         cve = api('actions/runs/36981938659')
         assert cve['head_sha'] == host.SOURCE and cve['conclusion'] == 'success'
@@ -53,8 +53,7 @@ def qualify():
         required = {'Generate SBOM', 'Refresh Grype vulnerability database', 'Run grype on SBOM',
                     'Run govulncheck', 'Normalize scanner results', 'Diff + create issue'}
         assert required <= {s['name'] for j in jobs for s in j['steps'] if s['conclusion'] == 'success'}
-        run(['gh', 'run', 'download', '36981938659', '--repo', REPO,
-             '--name', 'cve-prev', '--dir', str(root / 'cve')])
+        github.download_artifact(36981938659, 'cve-prev', root / 'cve')
         for name in ['cve-prev.json', 'cve-today.json', 'cve-new.json']:
             matches = list((root / 'cve').rglob(name))
             assert len(matches) == 1 and json.loads(matches[0].read_text()) == []
@@ -153,10 +152,8 @@ def main():
         assert ref['type'] == 'commit' and ref['sha'] == host.SOURCE
         with tempfile.TemporaryDirectory(prefix='request-evidence-', dir=os.environ['RUNNER_TEMP']) as tmp:
             root = Path(tmp)
-            run(['gh', 'release', 'download', tag, '--repo', REPO, '--dir', str(root),
-                 '--pattern', 'release.tar.gz', '--pattern', 'release.cosign.bundle',
-                 '--pattern', 'release-manifest.json', '--pattern', 'SHA256SUMS',
-                 '--pattern', 'production-manifest.yaml', '--pattern', 'runtime-bases.env'])
+            github.download_release(tag, ['release.tar.gz', 'release.cosign.bundle',
+                'release-manifest.json', 'SHA256SUMS', 'production-manifest.yaml', 'runtime-bases.env'], root)
             sums = dict((line.split(maxsplit=1)[1].lstrip('*'), line.split(maxsplit=1)[0])
                         for line in (root / 'SHA256SUMS').read_text().splitlines())
             assert host.digest(root / 'release.tar.gz') == sums['release.tar.gz']
