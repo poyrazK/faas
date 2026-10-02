@@ -448,6 +448,16 @@ type AppEnvironmentSecretRefSuppression struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type AppEnvironmentWorkloadIntent struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Source        []byte
+	Runtime       []byte
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppError struct {
 	ID                      pgtype.UUID
 	AccountID               pgtype.UUID

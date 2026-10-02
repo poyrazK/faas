@@ -12,16 +12,21 @@ import (
 // committed variable rows, the snapshot freshness stamp, and pending work;
 // retries must not replace it with the current clock.
 type EnvironmentGitOpsRuntimeTarget struct {
-	AppID             string
-	Resource          string
-	Environment       string
-	RequiredAt        time.Time
-	StaleResidents    int64
-	StartingResidents int64
-	StaleSnapshots    int64
+	AppID                string
+	Resource             string
+	Environment          string
+	RequiredAt           time.Time
+	StaleResidents       int64
+	StartingResidents    int64
+	StaleSnapshots       int64
+	UnqualifiedWorkloads int64
 }
 
 func (t EnvironmentGitOpsRuntimeTarget) Ready() bool {
+	return t.Fresh() && t.UnqualifiedWorkloads == 0
+}
+
+func (t EnvironmentGitOpsRuntimeTarget) Fresh() bool {
 	return t.StaleResidents == 0 && t.StartingResidents == 0 && t.StaleSnapshots == 0
 }
 

@@ -19,6 +19,13 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 			continue
 		}
 		needed := len(m.environmentSecretSuppressionsLocked(appID, memory.source.EnvironmentSlug)) > 0
+		unqualified := int64(0)
+		for _, owner := range memory.owners {
+			if owner.Resource == resource && owner.Manager == memory.source.ID && gitOpsWorkloadField(owner.Path) {
+				needed = true
+				unqualified = 1
+			}
+		}
 		required := time.Unix(0, 0).UTC()
 		if at, _ := m.environmentRuntimeChangedAtLocked(appID, memory.source.EnvironmentSlug); at.After(required) {
 			required = at
@@ -69,6 +76,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 				}
 			}
 		}
+		target.UnqualifiedWorkloads = unqualified
 		targets = append(targets, target)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].AppID < targets[j].AppID })
@@ -140,7 +148,7 @@ func (m *MemStore) EnsureEnvironmentGitOpsRuntime(_ context.Context, lease Envir
 		}
 	}
 	for _, target := range m.gitOpsRuntimeTargetsLocked(memory) {
-		if !target.Ready() && !appsPending[target.AppID] {
+		if !target.Fresh() && !appsPending[target.AppID] {
 			m.insertGitOpsRuntimeEffectLocked(memory, lease, plan, target.AppID, target.RequiredAt)
 		}
 	}
@@ -212,9 +220,9 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 			}
 		}
 	}
-	progress := EnvironmentGitOpsRuntimeProgress{Ready: target.Ready()}
+	progress := EnvironmentGitOpsRuntimeProgress{Ready: target.Fresh()}
 	now := time.Now().UTC()
-	if target.Ready() {
+	if target.Fresh() {
 		effect.CompletedAt = &now
 	} else if lease.Source.Spec.Mode == "enforce" && target.StaleResidents > 0 && !effect.NextRequestAt.After(now) {
 		effect.RequestedAt, effect.NextRequestAt = &now, now.Add(api.EnvironmentGitOpsRuntimeRefreshRetry)

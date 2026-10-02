@@ -31,6 +31,7 @@ type Querier interface {
 	// as the current repository name; a zero ID preserves legacy name-only
 	// subject behavior.
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
+	AccountPendingDeletionEmail(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentGitOpsEffectParams) (int64, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
@@ -211,6 +212,7 @@ type Querier interface {
 	// statement so the handler can emit `key.deleted` audit with the
 	// dismissed scopes. list_secrets-shaped variant of DeleteAPIKey.
 	DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg DeleteAPIKeyReturningParams) (DeleteAPIKeyReturningRow, error)
+	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAppErrorRequestsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	// The retention purge also runs on app_error_requests
@@ -280,12 +282,16 @@ type Querier interface {
 	EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error
 	// The approved-intent transaction holds source/app/account before this row.
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
+	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)
 	EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error)
 	// Public controls check authority before source/quota checks, including a
 	// no-op delete. The storage trigger still checks authority at the write.
 	EnvironmentSecretReferenceWriteOwned(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceWriteOwnedParams) (bool, error)
+	EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
+	EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error)
+	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)
 	ExclusiveWorkAppScope(ctx context.Context, db DBTX, arg ExclusiveWorkAppScopeParams) (ExclusiveWorkAppScopeRow, error)
 	ExclusiveWorkClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ExclusiveWorkEnvironmentScope(ctx context.Context, db DBTX, arg ExclusiveWorkEnvironmentScopeParams) (string, error)
@@ -1200,6 +1206,7 @@ type Querier interface {
 	PutEnvironmentGitOpsSecretReference(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsSecretReferenceParams) error
 	PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsVariableParams) error
 	PutEnvironmentSecretReferenceSuppression(ctx context.Context, db DBTX, arg PutEnvironmentSecretReferenceSuppressionParams) error
+	PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
 	QueueClaimActiveCount(ctx context.Context, db DBTX, arg QueueClaimActiveCountParams) (int64, error)

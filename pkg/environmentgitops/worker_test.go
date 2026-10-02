@@ -84,6 +84,52 @@ func TestWorkerReportsDriftWithoutApplying(t *testing.T) {
 	}
 }
 
+func TestWorkerLeavesUnmanagedSourceOutsideQualification(t *testing.T) {
+	store, source, _, b, worker := setup(t, "enforce")
+	b.observation.State.Fields = append(b.observation.State.Fields, environmentsync.Field{
+		Resource: "workload/api", Path: "source", Value: json.RawMessage(`{"kind":"image","image":"registry.example/shop@sha256:` + strings.Repeat("c", 64) + `"}`)})
+	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked || lastRun(t, store, source).Status != "converged" {
+		t.Fatalf("unmanaged source prevented variable convergence: %v %v %+v", worked, err, lastRun(t, store, source))
+	}
+}
+
+func TestWorkerRequiresQualificationForOwnedSourceAndRuntime(t *testing.T) {
+	for _, field := range []string{"source", "runtime"} {
+		t.Run(field, func(t *testing.T) {
+			store, source, desired, b, worker := setup(t, "enforce")
+			w := desired.Definition.Workloads["api"]
+			if field == "source" {
+				w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("c", 64)}
+			} else {
+				w.Runtime = json.RawMessage(`{"port":8080}`)
+			}
+			desired.Definition.Workloads["api"] = w
+			var err error
+			desired, err = environmentsync.Compile(desired.Definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), state.ApproveEnvironmentRevision{
+				AccountID: source.AccountID, SourceID: source.ID, ExpectedGeneration: source.Generation,
+				CommitSHA: strings.Repeat("b", 40), Desired: desired, ApprovedBy: "owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.observation.State.Fields = desired.Fields
+			b.observation.Owners = nil
+			for _, current := range desired.Fields {
+				b.observation.Owners = append(b.observation.Owners, environmentsync.Ownership{Field: current, Manager: source.ID})
+			}
+			if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
+				t.Fatalf("worker: %v %v", worked, err)
+			}
+			if run := lastRun(t, store, source); run.Status != "partial" || run.ErrorCode != "environment_runtime_unacknowledged" {
+				t.Fatalf("intent equality qualified an owned %s: %+v", field, run)
+			}
+		})
+	}
+}
+
 func TestWorkerReobservesBeforePublishingAppliedRevision(t *testing.T) {
 	for _, effect := range []bool{false, true} {
 		t.Run(map[bool]string{false: "executor-no-effect", true: "converged"}[effect], func(t *testing.T) {

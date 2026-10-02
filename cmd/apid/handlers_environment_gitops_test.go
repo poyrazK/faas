@@ -144,6 +144,77 @@ func TestEnvironmentGitOpsHandlersApproveReviewedGitBytesAndAdopt(t *testing.T) 
 	}
 }
 
+func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *testing.T) {
+	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {
+		t.Fatal(err)
+	}
+	manifest := app.Manifest
+	manifest.Port = 8079
+	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 40)
+	image := "registry.example/shop@sha256:" + strings.Repeat("d", 64)
+	srv.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}}, resolvedSHA: sha,
+		archive: environmentGitOpsArchiveDefinition(t, "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkloads:\n  api:\n    app: shop-api\n    source:\n      kind: image\n      image: "+image+"\n    runtime:\n      port: 8080\n")}
+	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]string{"manifest_path": "environments/production.yaml", "mode": "enforce"}, srv.createEnvironmentGitSource)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("source: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPost, "preview", map[string]string{"commit_sha": sha}, srv.previewEnvironmentGitRevision)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	var reviewed struct {
+		DefinitionDigest string `json:"definition_digest"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPost, "approve", map[string]any{
+		"commit_sha": sha, "definition_digest": reviewed.DefinitionDigest, "expected_generation": 0}, srv.approveEnvironmentGitRevision)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("approval: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "adoption-preview", nil, srv.previewEnvironmentGitOpsAdoption)
+	var plan environmentsync.Plan
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &plan) != nil || !plan.CanApply() {
+		t.Fatalf("adoption preview: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPost, "adopt", map[string]string{"plan_hash": plan.Hash}, srv.adoptEnvironmentGitOps)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("adoption: %d %s", rec.Code, rec.Body.String())
+	}
+	source, err := store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := store.EnvironmentWorkloadIntent(t.Context(), account.ID, app.ID, source.EnvironmentID)
+	if err != nil || string(baseline.Runtime["port"]) != "8079" || baseline.Source != nil {
+		t.Fatalf("API adoption did not preserve existing intent: %+v %v", baseline, err)
+	}
+	if worked, err := gitOpsBackendWorker(srv, store).RunOnce(t.Context()); err != nil || !worked {
+		t.Fatalf("apid worker: %v %v", worked, err)
+	}
+	staged, err := store.EnvironmentWorkloadIntent(t.Context(), account.ID, app.ID, source.EnvironmentID)
+	if err != nil || staged.Source == nil || staged.Source.Image != image || string(staged.Runtime["port"]) != "8080" {
+		t.Fatalf("reviewed scoped intent missing: %+v %v", staged, err)
+	}
+	current, err := store.AppByID(t.Context(), app.ID)
+	if err != nil || current.Manifest.Port != 8079 {
+		t.Fatalf("API reconciliation changed shared app settings: %+v %v", current.Manifest, err)
+	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodGet, "status", nil, srv.getEnvironmentGitOps)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"partial"`) || !strings.Contains(rec.Body.String(), "environment_runtime_unacknowledged") {
+		t.Fatalf("API claimed an unprepared serving graph: %d %s", rec.Code, rec.Body.String())
+	}
+	source, err = store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
+	if err != nil || source.AppliedRevisionID != "" {
+		t.Fatalf("API published an unqualified revision: %+v %v", source, err)
+	}
+}
+
 func TestEnvironmentGitOpsHandlersRejectForgedIdentityAndSource(t *testing.T) {
 	srv, store, account, project, _ := newProjectLifecycleFixture(t)
 	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {

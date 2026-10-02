@@ -779,6 +779,7 @@ type MemStore struct {
 	envs                             map[envKey]AppEnv
 	appEnvironmentSecretRefs         map[environmentSecretRefKey]environmentSecretRef
 	appEnvironmentSecretSuppressions map[environmentSecretRefKey]time.Time
+	appEnvironmentWorkloadIntents    map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent
 	// trustedSigners is the in-memory mirror of app_trusted_signers
 	// (issue #472 / ADR-054). Populated by the admin CRUD handlers in
 	// cmd/apid/handlers_trusted_signers.go; not exposed to schedd.
@@ -3147,6 +3148,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 				}
 			}
 			m.deleteEnvironmentSecretRefsLocked("", environmentID)
+			m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3342,6 +3344,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
+	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
@@ -6503,6 +6506,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	delete(m.serviceRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
+	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	delete(m.apps, id)
 	return nil
 }
@@ -20833,6 +20837,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectGrants, bucketID)
 		}
 	}
+	for sourceID, memory := range m.environmentGitOps {
+		if memory.source.AccountID == id {
+			delete(m.environmentGitOps, sourceID)
+		}
+	}
 	for grantKey, grant := range m.objectAccessGrants {
 		if grant.AccountID == id {
 			delete(m.objectAccessGrants, grantKey)
@@ -20998,6 +21007,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
+			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
 		}

@@ -113,11 +113,17 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 			continue
 		}
 		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Type: app.Type, WorkloadClass: app.WorkloadClass, Variables: map[string]string{}}
+		row.Manifest = app.Manifest
+		if intent, exists := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{app.ID, source.EnvironmentID}]; exists {
+			clone := cloneWorkloadIntent(intent)
+			row.WorkloadIntent = &clone
+		}
 		row.SecretRefs = m.environmentSecretRefsLocked(app.ID, source.EnvironmentSlug)
 		row.SuppressedKeys = m.environmentSecretSuppressionsLocked(app.ID, source.EnvironmentSlug)
 		row.SuppressionCount = m.environmentSecretSuppressionCountLocked(app.ID)
 		for _, deployment := range m.deployments {
 			if deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == source.EnvironmentSlug && deployment.Status == DeployLive {
+				row.Sources = append(row.Sources, gitOpsSourceBaseline{ID: deployment.ID, Kind: deployment.Kind, Image: deployment.ImageDigest})
 				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID, SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...)})
 			}
 		}
@@ -236,6 +242,10 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 	if memory.owners == nil {
 		memory.owners = map[string]environmentsync.Ownership{}
 	}
+	for _, row := range changedWorkloadIntents(m.gitOpsSnapshotLocked(memory), plan, observed.State.ResourceIDs, true) {
+		row.AccountID = accountID
+		m.putWorkloadIntentLocked(row)
+	}
 	for _, change := range plan.Changes {
 		if change.Action != "adopt" {
 			continue
@@ -319,6 +329,7 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	if err != nil {
 		return nil, err
 	}
+	workloadRows := changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false)
 	// Decode and validate every operation before changing any in-memory rows.
 	configChanged := false
 	policies := map[string][]ProjectEnvironmentEdgeRule{}
@@ -356,6 +367,8 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 				routes[change.Resource] = contract
 			case strings.HasPrefix(change.Path, "queue_bindings/"):
 				// Validated on detached queue/consumer maps above.
+			case gitOpsWorkloadField(change.Path):
+				// Scoped intent is validated by the rechecked observation.
 			case strings.HasPrefix(change.Path, "secret_refs/"):
 				var ref string
 				if json.Unmarshal(change.After, &ref) != nil || !ValidSecretReference(ref) {
@@ -392,6 +405,10 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		}
 	}
 	now, source := time.Now().UTC(), memory.source
+	for _, row := range workloadRows {
+		row.AccountID = source.AccountID
+		m.putWorkloadIntentLocked(row)
+	}
 	steps := []EnvironmentGitOpsStep{}
 	if memory.owners == nil {
 		memory.owners = map[string]environmentsync.Ownership{}

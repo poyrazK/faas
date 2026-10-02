@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -181,6 +182,13 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 func (w *Worker) runtimeStatus(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (string, string) {
 	status := convergenceStatus(plan)
 	verifier, ok := w.Backend.(RuntimeVerifier)
+	if status == "converged" && !ok {
+		for _, change := range plan.Changes {
+			if change.Action != "retain_unmanaged" && (change.Path == "source" || strings.HasPrefix(change.Path, "runtime/")) {
+				return "partial", "environment_runtime_unacknowledged"
+			}
+		}
+	}
 	if status != "converged" || !ok {
 		return status, ""
 	}

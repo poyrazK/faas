@@ -18,6 +18,9 @@ import (
 var _ EnvironmentGitOpsIntentStore = (*PgStore)(nil)
 
 type gitOpsIntentApp struct {
+	Manifest         AppManifest                   `json:"manifest"`
+	WorkloadIntent   *EnvironmentWorkloadIntent    `json:"workload_intent"`
+	Sources          []gitOpsSourceBaseline        `json:"sources"`
 	SuppressedKeys   []string                      `json:"suppressed_keys"`
 	SuppressionCount int                           `json:"suppression_count"`
 	LiveDeployments  []gitOpsSecretBaseline        `json:"live_deployments"`
@@ -208,6 +211,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			continue
 		}
 		add(resource, "presence", true)
+		observeGitOpsWorkloadIntent(&out, snapshot, desired, resource, app)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
 		refs, baselineIDs, reason := observedGitOpsSecretReferences(app)
 		out.State.ResourceIDs[gitOpsSecretBaselineResource(resource)] = baselineIDs
@@ -277,7 +281,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 }
 
 func gitOpsScopedFieldSupported(path string) bool {
-	return path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/") || strings.HasPrefix(path, "queue_bindings/") || strings.HasPrefix(path, "secret_refs/")
+	return gitOpsWorkloadField(path) || path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/") || strings.HasPrefix(path, "queue_bindings/") || strings.HasPrefix(path, "secret_refs/")
 }
 
 func desiredEnvironmentRevision(revision EnvironmentDesiredRevision) (environmentsync.DesiredState, error) {
@@ -367,7 +371,7 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 	if _, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, mustPgUUID(source.AccountID)); err != nil {
 		return mapErr(err)
 	}
-	observed, _, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
+	observed, snapshot, err := readEnvironmentGitOpsIntent(ctx, tx, source, desired)
 	if err != nil {
 		return err
 	}
@@ -379,6 +383,12 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 		return ErrConflict
 	}
 	q := sqlc.New()
+	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, true) {
+		row.AccountID = accountID
+		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
+			return err
+		}
+	}
 	for _, change := range plan.Changes {
 		if change.Action != "adopt" {
 			continue
@@ -487,6 +497,12 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 		}
 	}
 	steps := []EnvironmentGitOpsStep{}
+	for _, row := range changedWorkloadIntents(snapshot, plan, observed.State.ResourceIDs, false) {
+		row.AccountID = lease.Source.AccountID
+		if _, err := putWorkloadIntentTx(ctx, tx, row); err != nil {
+			return nil, err
+		}
+	}
 	configChanged := false
 	for _, change := range gitOpsQueueRetireFirst(plan.Changes) {
 		if change.Action == "keep" || change.Action == "retain_unmanaged" || change.Action == "overridden" {
@@ -507,6 +523,8 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, desired.Definition, observed.State.ResourceIDs, change); err != nil {
 				return nil, mapErr(err)
 			}
+		} else if gitOpsWorkloadField(change.Path) {
+			// The complete scoped row was published in this transaction above.
 		} else if err := applyEnvironmentGitOpsScopedField(ctx, tx, lease.Source, observed.State.ResourceIDs[change.Resource], change); err != nil {
 			return nil, mapErr(err)
 		}

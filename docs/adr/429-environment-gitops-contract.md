@@ -66,9 +66,9 @@
 
 ## Remaining implementation sequence
 
-1. Persist source/runtime specifications against the original environment UUID,
-   logical workload and mapped app ID. Deployment preparation must read that
-   scoped specification, rather than update the shared `apps.manifest`. Adopted
+1. Connect deployment preparation to the persisted source/runtime specification
+   against the original environment UUID, logical workload and mapped app ID,
+   rather than update the shared `apps.manifest`. Adopted
    apps keep their IDs; creation must be idempotent under the current approved
    generation. Existing build owners and scheduler admission remain authoritative.
 2. Prepare the dependency graph using immutable source artifacts and durable
@@ -100,6 +100,33 @@ The test must also prove that neighboring environments and unmanaged settings
 retain their values, and that Git rollback does not discard accepted queue work.
 
 ## Implementation checkpoint
+
+Source/runtime intent now has a dedicated scoped record keyed by the original
+catalog environment UUID and mapped app ID. Observation binds inherited
+non-secret runtime settings and original live source identities to the reviewed
+plan. Image-source adoption requires unambiguous immutable provenance; other
+live source kinds require a reviewed scoped import. Adoption preserves the
+existing source and runtime values, including unset defaults. Reconciliation
+publishes only owned scoped fields and validates the merged lifecycle against
+the account plan and workload class. Shared app manifests and neighboring
+environments retain their values. PostgreSQL guards raw SQL changes as well as
+state-store writes, validates original tenant/project/environment identity,
+and requires a current issued lease or an exact active override for enforced
+owned changes. Source/runtime publication rolls back with later intent writes.
+Final account purge releases its Git sources and ownership before removing
+managed children, within the same deletion transaction. Active-account purges
+return without transferring authority; failed purges preserve the original
+definitions, ownership and leases. Project/environment cascades purge scoped
+records without allowing ordinary owned-row deletion.
+
+This record is preparation input, not a deployment qualification receipt. Any
+owned source/runtime field keeps the workload unqualified and prevents the
+applied revision from advancing. Variable/secret freshness remains a separate
+check; unqualified source/runtime intent alone does not request a variable
+refresh of the old deployment. Both the real apid backend and the store's final
+convergence fence preserve this distinction. The executor remains disabled
+until scoped workload preparation, qualification, graph activation and native
+serving acceptance are implemented and verified.
 
 The versioned definition, pure ownership planner, durable approval/lease/run
 store, and worker coordinator are implemented. PostgreSQL and memory adapters

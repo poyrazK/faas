@@ -5359,6 +5359,10 @@ SELECT jsonb_build_object(
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
+        'manifest',a.manifest,
+        'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest) ORDER BY d.id) FROM deployments d
+          WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
                 'enabled', b.enabled, 'max_concurrency', b.max_concurrency, 'retry_policy', b.retry_policy),
@@ -5724,7 +5728,10 @@ WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending
 
 -- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
-AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted;
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
+ UNION ALL
+ SELECT 1 FROM environment_managed_fields WHERE source_id=sqlc.arg(source_id)::uuid
+ AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted;
 
 -- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
@@ -6652,3 +6659,37 @@ JOIN project_environments source ON source.id=r.environment_id
 JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
 WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
  AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';
+
+-- name: EnvironmentWorkloadIntent :one
+SELECT w.* FROM app_environment_workload_intents w
+JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
+JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
+WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND w.environment_id=sqlc.arg(environment_id)::uuid;
+
+-- name: PutEnvironmentWorkloadIntent :one
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,updated_at=now()
+RETURNING *;
+
+-- name: EnvironmentWorkloadIntentLockSource :many
+SELECT id FROM environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
+
+-- name: EnvironmentWorkloadIntentContext :one
+SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+JOIN accounts c ON c.id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.id=sqlc.arg(environment_id)::uuid AND a.status<>'deleted'
+FOR UPDATE OF a,c;
+
+-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
+SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
+WHERE r.source_id=sqlc.arg(source_id)::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
+ WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')));
+
+-- name: DeleteAccountEnvironmentGitSources :exec
+DELETE FROM environment_git_sources s USING accounts a
+WHERE s.account_id=a.id AND a.id=sqlc.arg(account_id)::uuid AND a.status='deleted_pending';
+
+-- name: AccountPendingDeletionEmail :one
+SELECT coalesce(email::text,'')::text AS email FROM accounts WHERE id=sqlc.arg(account_id)::uuid AND status='deleted_pending' FOR UPDATE;

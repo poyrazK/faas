@@ -26043,6 +26043,13 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	if err := sqlc.New().ObjectBucketPruneTombstones(ctx, tx, mustPgUUID(id)); err != nil {
 		return fmt.Errorf("state: prune deleted object bucket metadata: %w", err)
 	}
+	// Release management authority inside this same pending-account purge.
+	// Otherwise the ordinary app/env guards correctly reject the child deletes.
+	// Source locks precede the account lock; any failed final purge rolls back
+	// the sources, ownership, definitions and issued controller leases together.
+	if err := sqlc.New().DeleteAccountEnvironmentGitSources(ctx, tx, mustPgUUID(id)); err != nil {
+		return fmt.Errorf("state: purge account environment Git sources: %w", err)
+	}
 
 	// Capture email at copy-time for the audit_log row (issue #755 /
 	// PR-6). The audit_log table is FK-free; the row outlives the
@@ -26056,13 +26063,9 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	// Empty email is a tolerated outcome for the anonymous test
 	// accounts that have no email column populated — the audit
 	// row still records kind=account.deleted + actor=grace-sweep.
-	var accountEmail string
-	err = tx.QueryRow(ctx,
-		`select email from accounts where id = $1 and status = 'deleted_pending'`,
-		id,
-	).Scan(&accountEmail)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("state: read email for %s: %w", id, err)
+	accountEmail, err := sqlc.New().AccountPendingDeletionEmail(ctx, tx, mustPgUUID(id))
+	if err != nil {
+		return fmt.Errorf("state: read pending deletion account: %w", mapErr(err))
 	}
 
 	// Sentinel + race guard: the conditional DELETE on the parent row is

@@ -2883,6 +2883,67 @@ $$;
 
 
 --
+-- Name: guard_environment_workload_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ row_value jsonb; prior jsonb; src environment_git_sources%ROWTYPE;
+ resource_name text; paths text[]; controller boolean;
+BEGIN
+ IF TG_OP='DELETE' THEN row_value:=to_jsonb(OLD); ELSE row_value:=to_jsonb(NEW); END IF;
+ -- Parent purges remove their original identity before cascading. Ordinary
+ -- scoped-row deletion still requires ownership authority below.
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM apps a JOIN accounts c ON c.id=a.account_id
+  JOIN project_environments e ON e.account_id=a.account_id AND e.project_id=a.project_id
+  WHERE a.id=OLD.app_id AND a.account_id=OLD.account_id AND e.id=OLD.environment_id) THEN
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.app_id IS DISTINCT FROM OLD.app_id OR NEW.environment_id IS DISTINCT FROM OLD.environment_id) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_workload_intent_identity',MESSAGE='scoped workload identity is immutable';
+ END IF;
+ IF TG_OP<>'DELETE' AND NOT EXISTS(SELECT 1 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+  WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id AND e.id=NEW.environment_id AND a.status<>'deleted') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_workload_intent_identity',MESSAGE='scoped workload requires its original project environment';
+ END IF;
+ SELECT s.* INTO src FROM environment_git_sources s WHERE s.account_id=(row_value->>'account_id')::uuid
+  AND s.environment_id=(row_value->>'environment_id')::uuid FOR UPDATE OF s;
+ -- ON CONFLICT fires the INSERT trigger before its UPDATE trigger. Compare
+ -- against the original scoped row so an unchanged owned field is not an edit.
+ IF TG_OP='INSERT' THEN
+  SELECT to_jsonb(w) INTO prior FROM app_environment_workload_intents w
+   WHERE w.app_id=NEW.app_id AND w.environment_id=NEW.environment_id FOR UPDATE OF w;
+  prior:=coalesce(prior,'{}');
+ ELSE prior:=to_jsonb(OLD); END IF;
+ IF TG_OP='DELETE' THEN row_value:=row_value||jsonb_build_object('source',NULL,'runtime','{}'::jsonb); END IF;
+ SELECT array_agg('runtime/'||k) INTO paths FROM (
+  SELECT key k FROM jsonb_each(coalesce(prior->'runtime','{}')) UNION SELECT key FROM jsonb_each(row_value->'runtime')
+ ) keys WHERE (prior->'runtime'->k) IS DISTINCT FROM (row_value->'runtime'->k);
+ IF coalesce(prior->'source','null'::jsonb) IS DISTINCT FROM coalesce(row_value->'source','null'::jsonb) THEN paths:=coalesce(paths,'{}')||ARRAY['source']; END IF;
+ IF coalesce(cardinality(paths),0)=0 THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ IF src.id IS NOT NULL THEN
+  SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=(row_value->>'app_id')::uuid;
+  controller:=EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id AND j.desired_generation=src.generation
+   AND j.claimed_generation=src.generation AND j.lease_until>clock_timestamp() AND j.lease_token<>''
+   AND j.lease_token=current_setting('gregale.gitops_lease',true) AND src.approved_revision_id IS NOT NULL AND NOT src.suspended);
+  IF src.mode='enforce' AND NOT controller AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id
+   AND f.environment_id=src.environment_id AND f.resource=resource_name AND f.field_path=ANY(paths)
+   AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=f.environment_id
+    AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_field_owned',MESSAGE='setting is managed by the environment Git source';
+  END IF;
+  UPDATE environment_git_sources SET intent_version=intent_version+1,updated_at=now() WHERE id=src.id;
+  IF src.generation>0 THEN INSERT INTO environment_gitops_jobs(source_id,desired_generation,next_attempt_at) VALUES(src.id,src.generation,now())
+   ON CONFLICT(source_id) DO UPDATE SET next_attempt_at=least(environment_gitops_jobs.next_attempt_at,excluded.next_attempt_at); END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+
+--
 -- Name: guard_held_queue_consumer_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5293,6 +5354,23 @@ CREATE TABLE public.app_environment_secret_refs (
     CONSTRAINT app_environment_secret_refs_key_check CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_refs_scope_check CHECK ((scope ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_environment_secret_refs_secret_name_check CHECK (((secret_name ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
+);
+
+
+--
+-- Name: app_environment_workload_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_environment_workload_intents (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    source jsonb,
+    runtime jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_environment_workload_intents_runtime_check CHECK ((jsonb_typeof(runtime) = 'object'::text)),
+    CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text)))
 );
 
 
@@ -13482,6 +13560,14 @@ ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
 
 ALTER TABLE ONLY public.app_environment_secret_refs
     ADD CONSTRAINT app_environment_secret_refs_pkey PRIMARY KEY (app_id, environment_id, key);
+
+
+--
+-- Name: app_environment_workload_intents app_environment_workload_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_workload_intents
+    ADD CONSTRAINT app_environment_workload_intents_pkey PRIMARY KEY (app_id, environment_id);
 
 
 --
@@ -22189,6 +22275,13 @@ CREATE TRIGGER environment_secret_reference_baseline BEFORE INSERT OR DELETE OR 
 
 
 --
+-- Name: app_environment_workload_intents environment_workload_intent_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_intent();
+
+
+--
 -- Name: events events_enqueue_fanout; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23311,6 +23404,30 @@ ALTER TABLE ONLY public.app_environment_secret_refs
 
 ALTER TABLE ONLY public.app_environment_secret_refs
     ADD CONSTRAINT app_environment_secret_refs_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_workload_intents app_environment_workload_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_workload_intents
+    ADD CONSTRAINT app_environment_workload_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_workload_intents app_environment_workload_intents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_workload_intents
+    ADD CONSTRAINT app_environment_workload_intents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_workload_intents app_environment_workload_intents_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_workload_intents
+    ADD CONSTRAINT app_environment_workload_intents_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

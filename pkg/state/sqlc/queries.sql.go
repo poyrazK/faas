@@ -238,6 +238,17 @@ func (q *Queries) AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, d
 	return account_id, err
 }
 
+const accountPendingDeletionEmail = `-- name: AccountPendingDeletionEmail :one
+SELECT coalesce(email::text,'')::text AS email FROM accounts WHERE id=$1::uuid AND status='deleted_pending' FOR UPDATE
+`
+
+func (q *Queries) AccountPendingDeletionEmail(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, accountPendingDeletionEmail, accountID)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
 const accountsByIDs = `-- name: AccountsByIDs :many
 select id, email, plan, status, coalesce(provider_customer_id, ''), coalesce(stripe_subscription_item, ''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required
 from accounts where id = any($1::uuid[])
@@ -2603,6 +2614,16 @@ func (q *Queries) DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg Delete
 	return i, err
 }
 
+const deleteAccountEnvironmentGitSources = `-- name: DeleteAccountEnvironmentGitSources :exec
+DELETE FROM environment_git_sources s USING accounts a
+WHERE s.account_id=a.id AND a.id=$1::uuid AND a.status='deleted_pending'
+`
+
+func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAccountEnvironmentGitSources, accountID)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -3469,6 +3490,37 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
+SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
+WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
+ WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')))
+`
+
+type EnvironmentGitOpsUnqualifiedWorkloadsRow struct {
+	AppID       pgtype.UUID
+	LogicalName string
+}
+
+func (q *Queries) EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error) {
+	rows, err := db.Query(ctx, environmentGitOpsUnqualifiedWorkloads, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentGitOpsUnqualifiedWorkloadsRow{}
+	for rows.Next() {
+		var i EnvironmentGitOpsUnqualifiedWorkloadsRow
+		if err := rows.Scan(&i.AppID, &i.LogicalName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const environmentGitSourceHealth = `-- name: EnvironmentGitSourceHealth :one
 SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE s.suspended)::bigint AS suspended,
@@ -3607,6 +3659,84 @@ func (q *Queries) EnvironmentSecretReferenceWriteOwned(ctx context.Context, db D
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
+SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at FROM app_environment_workload_intents w
+JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
+JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
+WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND w.environment_id=$3::uuid
+`
+
+type EnvironmentWorkloadIntentParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
+	row := db.QueryRow(ctx, environmentWorkloadIntent, arg.AccountID, arg.AppID, arg.EnvironmentID)
+	var i AppEnvironmentWorkloadIntent
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.EnvironmentID,
+		&i.Source,
+		&i.Runtime,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const environmentWorkloadIntentContext = `-- name: EnvironmentWorkloadIntentContext :one
+SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+JOIN accounts c ON c.id=a.account_id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.id=$3::uuid AND a.status<>'deleted'
+FOR UPDATE OF a,c
+`
+
+type EnvironmentWorkloadIntentContextParams struct {
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error) {
+	row := db.QueryRow(ctx, environmentWorkloadIntentContext, arg.AppID, arg.AccountID, arg.EnvironmentID)
+	var context []byte
+	err := row.Scan(&context)
+	return context, err
+}
+
+const environmentWorkloadIntentLockSource = `-- name: EnvironmentWorkloadIntentLockSource :many
+SELECT id FROM environment_git_sources WHERE account_id=$1::uuid AND environment_id=$2::uuid FOR UPDATE
+`
+
+type EnvironmentWorkloadIntentLockSourceParams struct {
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, environmentWorkloadIntentLockSource, arg.AccountID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -6810,7 +6940,10 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 
 const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
-AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
+ UNION ALL
+ SELECT 1 FROM environment_managed_fields WHERE source_id=$1::uuid
+ AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted
 `
 
 func (q *Queries) HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
@@ -17531,6 +17664,10 @@ SELECT jsonb_build_object(
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
+        'manifest',a.manifest,
+        'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
+        'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest) ORDER BY d.id) FROM deployments d
+          WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
                 'enabled', b.enabled, 'max_concurrency', b.max_concurrency, 'retry_policy', b.retry_policy),
@@ -18433,6 +18570,42 @@ func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, 
 		arg.Key,
 	)
 	return err
+}
+
+const putEnvironmentWorkloadIntent = `-- name: PutEnvironmentWorkloadIntent :one
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,updated_at=now()
+RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at
+`
+
+type PutEnvironmentWorkloadIntentParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Source        []byte
+	Runtime       []byte
+}
+
+func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
+	row := db.QueryRow(ctx, putEnvironmentWorkloadIntent,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.Source,
+		arg.Runtime,
+	)
+	var i AppEnvironmentWorkloadIntent
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.EnvironmentID,
+		&i.Source,
+		&i.Runtime,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows

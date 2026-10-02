@@ -21,10 +21,25 @@ func readGitOpsRuntime(ctx context.Context, tx sqlc.DBTX, source EnvironmentGitS
 		return nil, mapErr(err)
 	}
 	out := make([]EnvironmentGitOpsRuntimeTarget, 0, len(rows))
+	unqualified, err := sqlc.New().EnvironmentGitOpsUnqualifiedWorkloads(ctx, tx, mustPgUUID(source.ID))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	blocked := map[string]string{}
+	for _, row := range unqualified {
+		blocked[pgUUIDString(row.AppID)] = row.LogicalName
+	}
 	for _, row := range rows {
 		out = append(out, EnvironmentGitOpsRuntimeTarget{AppID: pgUUIDString(row.AppID), Resource: row.Resource,
 			Environment: row.EnvironmentSlug, RequiredAt: row.RequiredAt.Time, StaleResidents: row.StaleResidents,
 			StartingResidents: row.StartingResidents, StaleSnapshots: row.StaleSnapshots})
+		if _, exists := blocked[pgUUIDString(row.AppID)]; exists {
+			out[len(out)-1].UnqualifiedWorkloads = 1
+			delete(blocked, pgUUIDString(row.AppID))
+		}
+	}
+	for id, resource := range blocked {
+		out = append(out, EnvironmentGitOpsRuntimeTarget{AppID: id, Resource: resource, Environment: source.EnvironmentSlug, UnqualifiedWorkloads: 1})
 	}
 	return out, nil
 }
@@ -82,7 +97,7 @@ func (s *PgStore) EnsureEnvironmentGitOpsRuntime(ctx context.Context, lease Envi
 		appsPending[pgUUIDString(effect.AppID)] = true
 	}
 	for _, target := range targets {
-		if !target.Ready() && !appsPending[target.AppID] {
+		if !target.Fresh() && !appsPending[target.AppID] {
 			if err := insertGitOpsRuntimeEffect(ctx, tx, lease, plan, target.AppID, target.RequiredAt); err != nil {
 				return err
 			}
@@ -175,7 +190,7 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 			}
 		}
 	}
-	if target.Ready() {
+	if target.Fresh() {
 		count, err := q.CompleteEnvironmentGitOpsRuntime(ctx, tx, sqlc.CompleteEnvironmentGitOpsRuntimeParams{SourceID: effect.SourceID, EffectID: effect.ID})
 		if err != nil {
 			return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
@@ -191,7 +206,7 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 	if err := tx.Commit(ctx); err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 	}
-	return EnvironmentGitOpsRuntimeProgress{Ready: target.Ready()}, nil
+	return EnvironmentGitOpsRuntimeProgress{Ready: target.Fresh()}, nil
 }
 
 func requestGitOpsRuntimeTx(ctx context.Context, tx pgx.Tx, effect sqlc.EnvironmentGitopsRuntimeEffect) error {
