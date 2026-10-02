@@ -10422,6 +10422,42 @@ CREATE TABLE public.project_environment_clone_postgres_bindings (
 
 
 --
+-- Name: project_environment_clone_postgres_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshots (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    capture_point timestamp with time zone NOT NULL,
+    provider_snapshot_id text,
+    state text DEFAULT 'capturing'::text NOT NULL,
+    snapshot_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    cleanup_observed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_pos_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgre_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_s_provider_snapshot_id_check CHECK (((provider_snapshot_id IS NULL) OR ((provider_snapshot_id <> ''::text) AND (length(provider_snapshot_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_sn_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapsho_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check CHECK ((capture_point <= created_at)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check1 CHECK ((((provider_snapshot_id IS NULL) AND (snapshot_created_at IS NULL) AND (observed_at IS NULL)) OR ((provider_snapshot_id IS NOT NULL) AND (snapshot_created_at IS NOT NULL) AND (snapshot_created_at >= capture_point) AND (observed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check2 CHECK (((state <> 'retained'::text) OR (provider_snapshot_id IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check3 CHECK (((state = 'deleted'::text) = (cleanup_observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check4 CHECK (((state <> ALL (ARRAY['requested'::text, 'retained'::text])) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_state_check CHECK ((state = ANY (ARRAY['capturing'::text, 'requested'::text, 'retained'::text, 'deleting'::text, 'deleted'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_workloads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15115,6 +15151,14 @@ ALTER TABLE ONLY public.project_environment_clone_operations
 
 
 --
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_pos_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_snapshot_id);
+
+
+--
 -- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindin_target_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15128,6 +15172,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_pkey PRIMARY KEY (operation_id, source_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_pkey PRIMARY KEY (operation_id, source_database_id);
 
 
 --
@@ -19535,6 +19587,13 @@ CREATE INDEX project_environment_clone_object_uncopied_idx ON public.project_env
 --
 
 CREATE INDEX project_environment_clone_operations_status_idx ON public.project_environment_clone_operations USING btree (status, updated_at) WHERE (status <> ALL (ARRAY['ready'::text, 'failed'::text]));
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_source_hold; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_snapshot_source_hold ON public.project_environment_clone_postgres_snapshots USING btree (source_database_id) WHERE (state <> 'deleted'::text);
 
 
 --
@@ -25365,6 +25424,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snap_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snap_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --

@@ -7708,7 +7708,8 @@ SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDAT
 
 -- name: ReadManagedPostgresLifecycleDependants :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
-    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants;
+    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds;
 
 -- name: ClaimManagedPostgresLifecycleDelete :one
 UPDATE managed_postgres_databases SET state='deleting',lease_token=sqlc.arg(lease_token)::text,
@@ -7759,3 +7760,57 @@ WHERE id=sqlc.arg(database_id)::uuid AND state='deleting' AND lease_token=sqlc.a
 SELECT * FROM managed_postgres_databases WHERE state='ready' AND provider_resource_id IS NOT NULL
     AND (sqlc.arg(first_page)::boolean OR (updated_at,id)>(sqlc.arg(after_time)::timestamptz,sqlc.arg(after_id)::uuid))
 ORDER BY updated_at,id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadProjectEnvironmentClonePostgresSnapshot :one
+SELECT * FROM project_environment_clone_postgres_snapshots
+WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresSnapshot :one
+INSERT INTO project_environment_clone_postgres_snapshots(operation_id,source_database_id,source_version,backend_id,backend_fingerprint,
+    source_provider_resource_id,source_data_resource_id,capture_point)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(source_version)::text,sqlc.arg(backend_id)::text,
+    sqlc.arg(backend_fingerprint)::text,sqlc.arg(source_provider_resource_id)::text,sqlc.arg(source_data_resource_id)::text,sqlc.arg(capture_point)::timestamptz
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+    AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+    AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: RetainProjectEnvironmentClonePostgresSnapshot :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='retained',provider_snapshot_id=sqlc.arg(provider_snapshot_id)::text,
+    snapshot_created_at=sqlc.arg(snapshot_created_at)::timestamptz,observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
+    AND s.state IN ('requested','retained') AND (s.provider_snapshot_id IS NULL OR
+        (s.provider_snapshot_id=sqlc.arg(provider_snapshot_id)::text AND s.snapshot_created_at=sqlc.arg(snapshot_created_at)::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.*;
+
+-- name: BeginProjectEnvironmentClonePostgresSnapshotCleanup :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='deleting',updated_at=clock_timestamp()
+WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
+    AND s.state IN ('capturing','requested','retained','deleting') AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+            AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING s.*;
+
+-- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
+            AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING s.*;
+
+-- name: ClaimProjectEnvironmentClonePostgresSnapshotRequest :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='requested',request_started_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid AND s.state='capturing'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='capturing'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.*;
+
+-- name: RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity :one
+UPDATE project_environment_clone_postgres_snapshots s SET provider_snapshot_id=sqlc.arg(provider_snapshot_id)::text,
+    snapshot_created_at=sqlc.arg(snapshot_created_at)::timestamptz,observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=sqlc.arg(operation_id)::uuid AND s.source_database_id=sqlc.arg(source_database_id)::uuid AND s.state='deleting'
+    AND (s.provider_snapshot_id IS NULL OR (s.provider_snapshot_id=sqlc.arg(provider_snapshot_id)::text AND s.snapshot_created_at=sqlc.arg(snapshot_created_at)::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='compensating'
+        AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.*;

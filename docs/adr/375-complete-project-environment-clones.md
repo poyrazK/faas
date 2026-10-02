@@ -2999,3 +2999,41 @@ complete Neon adapter suite passed (3.803 s). The native API fixtures exercise
 identity and retention mismatches, missing evidence, lost acknowledgements,
 query/body contracts, read-only discovery and owned asynchronous cleanup. No
 live provider resources were mutated.
+
+### Leased PostgreSQL snapshot ownership (2026-10-02)
+
+Migrations `20261002040000000` and `20261002050000000` add a private checked
+snapshot ledger and a dispatch checkpoint. A leased capturing operation first
+reserves the source's frozen definition, hash and common data point, under the
+same database row lock used for lifecycle deletion. New intent requires the
+live logical source to retain that exact dataset and sufficient PITR history.
+A retained replay uses its original receipt after that finite history changes.
+The source has a lifecycle deletion hold from reservation until observed cleanup,
+including during an unknown provider creation outcome. Restrictive foreign keys
+also prevent cascaded removal of the uncleaned ownership ledger.
+
+The ledger commits `requested` before network IO. Only the worker that receives
+the first successful dispatch acknowledgement may invoke creation. Worker
+retries and takeovers discover the owned copy and retain its exact ID; they do
+not issue another creation POST or select a new point. An unknown dispatch with
+no observable copy remains unavailable and held. This includes a crash between
+dispatch commit and the HTTP call: absence does not resolve whether the call was
+submitted. A provider-supported authoritative resolution or an explicit operator
+recovery procedure is still required for that ambiguous case.
+
+Snapshot observations commit under the current token, revision and phase with a
+server-clock lease check at the actual write. Lease expiry while waiting on the
+source or receipt row cannot reserve, dispatch, retain or complete cleanup.
+
+These receipts alone do not establish asynchronous snapshot completion, a shared
+writer checkpoint, target restoration or full clone readiness. Worker capture
+and compensation dispatch still need to consume them. Public admission and
+provider/native acceptance remain closed.
+
+Verification: nine selected state contracts passed (462.212 s), including real
+PostgreSQL source lifecycle holds, recovery after takeover, frozen-source
+mismatches, schema registry drift and lease expiry while waiting on the source
+and receipt rows. The tests use original selected declarations and helpers
+through a temporary test-only overlay with all production code included. This
+is scoped evidence, not the complete state/API or repository suites. Independent
+SQLC regeneration matches, and whitespace checks pass.

@@ -687,6 +687,50 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const beginProjectEnvironmentClonePostgresSnapshotCleanup = `-- name: BeginProjectEnvironmentClonePostgresSnapshotCleanup :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='deleting',updated_at=clock_timestamp()
+WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid
+    AND s.state IN ('capturing','requested','retained','deleting') AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+            AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING s.operation_id, s.source_database_id, s.source_version, s.backend_id, s.backend_fingerprint, s.source_provider_resource_id, s.source_data_resource_id, s.capture_point, s.provider_snapshot_id, s.state, s.snapshot_created_at, s.observed_at, s.cleanup_observed_at, s.created_at, s.updated_at, s.request_started_at
+`
+
+type BeginProjectEnvironmentClonePostgresSnapshotCleanupParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, beginProjectEnvironmentClonePostgresSnapshotCleanup,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
+}
+
 const bindExclusiveWorkSubmission = `-- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
 VALUES($1::text::uuid,$2::bytea,$3::text::uuid)
@@ -1429,6 +1473,50 @@ func (q *Queries) ClaimProjectEnvironmentCloneInProject(ctx context.Context, db 
 	)
 	var i ClaimProjectEnvironmentCloneInProjectRow
 	err := row.Scan(&i.OperationID, &i.LeaseUntil, &i.AttemptCount)
+	return i, err
+}
+
+const claimProjectEnvironmentClonePostgresSnapshotRequest = `-- name: ClaimProjectEnvironmentClonePostgresSnapshotRequest :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='requested',request_started_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid AND s.state='capturing'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='capturing'
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.operation_id, s.source_database_id, s.source_version, s.backend_id, s.backend_fingerprint, s.source_provider_resource_id, s.source_data_resource_id, s.capture_point, s.provider_snapshot_id, s.state, s.snapshot_created_at, s.observed_at, s.cleanup_observed_at, s.created_at, s.updated_at, s.request_started_at
+`
+
+type ClaimProjectEnvironmentClonePostgresSnapshotRequestParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRequestParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, claimProjectEnvironmentClonePostgresSnapshotRequest,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
 	return i, err
 }
 
@@ -6493,6 +6581,51 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresBindingLedger(ctx context
 	return result.RowsAffected(), nil
 }
 
+const finishProjectEnvironmentClonePostgresSnapshotCleanup = `-- name: FinishProjectEnvironmentClonePostgresSnapshotCleanup :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid
+    AND s.state='deleting' AND (s.request_started_at IS NULL OR s.provider_snapshot_id IS NOT NULL)
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=s.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+            AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING s.operation_id, s.source_database_id, s.source_version, s.backend_id, s.backend_fingerprint, s.source_provider_resource_id, s.source_data_resource_id, s.capture_point, s.provider_snapshot_id, s.state, s.snapshot_created_at, s.observed_at, s.cleanup_observed_at, s.created_at, s.updated_at, s.request_started_at
+`
+
+type FinishProjectEnvironmentClonePostgresSnapshotCleanupParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) FinishProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, finishProjectEnvironmentClonePostgresSnapshotCleanup,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
+}
+
 const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
@@ -8429,6 +8562,64 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresSecret(ctx context.Contex
 		arg.ManagedCredentialRef,
 	)
 	return err
+}
+
+const insertProjectEnvironmentClonePostgresSnapshot = `-- name: InsertProjectEnvironmentClonePostgresSnapshot :one
+INSERT INTO project_environment_clone_postgres_snapshots(operation_id,source_database_id,source_version,backend_id,backend_fingerprint,
+    source_provider_resource_id,source_data_resource_id,capture_point)
+SELECT $1::uuid,$2::uuid,$3::text,$4::text,
+    $5::text,$6::text,$7::text,$8::timestamptz
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+    AND o.status='capturing' AND o.revision=$9::bigint AND o.lease_token::text=$10::text
+    AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, capture_point, provider_snapshot_id, state, snapshot_created_at, observed_at, cleanup_observed_at, created_at, updated_at, request_started_at
+`
+
+type InsertProjectEnvironmentClonePostgresSnapshotParams struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	CapturePoint             pgtype.Timestamptz
+	ExpectedRevision         int64
+	WorkerToken              string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresSnapshot,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.SourceVersion,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.SourceProviderResourceID,
+		arg.SourceDataResourceID,
+		arg.CapturePoint,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
 }
 
 const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
@@ -21118,18 +21309,20 @@ func (q *Queries) ReadManagedPostgresCloneRestoreProof(ctx context.Context, db D
 
 const readManagedPostgresLifecycleDependants = `-- name: ReadManagedPostgresLifecycleDependants :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted') AS has_bindings,
-    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants
+    EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state<>'deleted') AS has_restore_descendants,
+    EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots WHERE source_database_id=$1 AND state<>'deleted') AS has_clone_snapshot_holds
 `
 
 type ReadManagedPostgresLifecycleDependantsRow struct {
 	HasBindings           bool
 	HasRestoreDescendants bool
+	HasCloneSnapshotHolds bool
 }
 
 func (q *Queries) ReadManagedPostgresLifecycleDependants(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresLifecycleDependantsRow, error) {
 	row := db.QueryRow(ctx, readManagedPostgresLifecycleDependants, databaseID)
 	var i ReadManagedPostgresLifecycleDependantsRow
-	err := row.Scan(&i.HasBindings, &i.HasRestoreDescendants)
+	err := row.Scan(&i.HasBindings, &i.HasRestoreDescendants, &i.HasCloneSnapshotHolds)
 	return i, err
 }
 
@@ -22285,6 +22478,40 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresBindings(ctx context.Contex
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentClonePostgresSnapshot = `-- name: ReadProjectEnvironmentClonePostgresSnapshot :one
+SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, capture_point, provider_snapshot_id, state, snapshot_created_at, observed_at, cleanup_observed_at, created_at, updated_at, request_started_at FROM project_environment_clone_postgres_snapshots
+WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresSnapshotParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresSnapshot, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
 }
 
 const readProjectEnvironmentCloneProductionValueScope = `-- name: ReadProjectEnvironmentCloneProductionValueScope :one
@@ -23834,6 +24061,56 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordProjectEnvironmentClonePostgresSnapshotCleanupIdentity = `-- name: RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity :one
+UPDATE project_environment_clone_postgres_snapshots s SET provider_snapshot_id=$1::text,
+    snapshot_created_at=$2::timestamptz,observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=$3::uuid AND s.source_database_id=$4::uuid AND s.state='deleting'
+    AND (s.provider_snapshot_id IS NULL OR (s.provider_snapshot_id=$1::text AND s.snapshot_created_at=$2::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='compensating'
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.operation_id, s.source_database_id, s.source_version, s.backend_id, s.backend_fingerprint, s.source_provider_resource_id, s.source_data_resource_id, s.capture_point, s.provider_snapshot_id, s.state, s.snapshot_created_at, s.observed_at, s.cleanup_observed_at, s.created_at, s.updated_at, s.request_started_at
+`
+
+type RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentityParams struct {
+	ProviderSnapshotID string
+	SnapshotCreatedAt  pgtype.Timestamptz
+	OperationID        pgtype.UUID
+	SourceDatabaseID   pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresSnapshotCleanupIdentity,
+		arg.ProviderSnapshotID,
+		arg.SnapshotCreatedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
 }
 
 const recordRequestIDJournal = `-- name: RecordRequestIDJournal :one
@@ -25768,6 +26045,57 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const retainProjectEnvironmentClonePostgresSnapshot = `-- name: RetainProjectEnvironmentClonePostgresSnapshot :one
+UPDATE project_environment_clone_postgres_snapshots s SET state='retained',provider_snapshot_id=$1::text,
+    snapshot_created_at=$2::timestamptz,observed_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE s.operation_id=$3::uuid AND s.source_database_id=$4::uuid
+    AND s.state IN ('requested','retained') AND (s.provider_snapshot_id IS NULL OR
+        (s.provider_snapshot_id=$1::text AND s.snapshot_created_at=$2::timestamptz))
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=s.operation_id AND o.status='capturing'
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text
+        AND o.lease_until>clock_timestamp()) RETURNING s.operation_id, s.source_database_id, s.source_version, s.backend_id, s.backend_fingerprint, s.source_provider_resource_id, s.source_data_resource_id, s.capture_point, s.provider_snapshot_id, s.state, s.snapshot_created_at, s.observed_at, s.cleanup_observed_at, s.created_at, s.updated_at, s.request_started_at
+`
+
+type RetainProjectEnvironmentClonePostgresSnapshotParams struct {
+	ProviderSnapshotID string
+	SnapshotCreatedAt  pgtype.Timestamptz
+	OperationID        pgtype.UUID
+	SourceDatabaseID   pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        string
+}
+
+func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg RetainProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, retainProjectEnvironmentClonePostgresSnapshot,
+		arg.ProviderSnapshotID,
+		arg.SnapshotCreatedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
 }
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one

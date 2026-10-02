@@ -3741,6 +3741,25 @@ type ProjectEnvironmentClonePostgresBinding struct {
 	Preparation     []byte
 }
 
+type ProjectEnvironmentClonePostgresSnapshot struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	CapturePoint             pgtype.Timestamptz
+	ProviderSnapshotID       pgtype.Text
+	State                    string
+	SnapshotCreatedAt        pgtype.Timestamptz
+	ObservedAt               pgtype.Timestamptz
+	CleanupObservedAt        pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneWorkload struct {
 	OperationID        pgtype.UUID
 	AppID              pgtype.UUID
