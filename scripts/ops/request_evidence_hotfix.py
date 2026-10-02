@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 
@@ -130,6 +132,7 @@ def deploy(remote, upload, public_gate, record):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cosign', required=True)
+    parser.add_argument('--operation', choices=['inspect', 'apply'], default='inspect')
     args = parser.parse_args()
     def cancelled(signum, frame):
         raise RuntimeError('Component hotfix interrupted')
@@ -152,7 +155,8 @@ def main():
             root = Path(tmp)
             run(['gh', 'release', 'download', tag, '--repo', REPO, '--dir', str(root),
                  '--pattern', 'release.tar.gz', '--pattern', 'release.cosign.bundle',
-                 '--pattern', 'release-manifest.json', '--pattern', 'SHA256SUMS'])
+                 '--pattern', 'release-manifest.json', '--pattern', 'SHA256SUMS',
+                 '--pattern', 'production-manifest.yaml', '--pattern', 'runtime-bases.env'])
             sums = dict((line.split(maxsplit=1)[1].lstrip('*'), line.split(maxsplit=1)[0])
                         for line in (root / 'SHA256SUMS').read_text().splitlines())
             assert host.digest(root / 'release.tar.gz') == sums['release.tar.gz']
@@ -161,6 +165,14 @@ def main():
                  '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com', str(root / 'release.tar.gz')])
             gateway_hash = extract_gateway(root / 'release.tar.gz', (root / 'release-manifest.json').read_bytes(), root / 'gatewayd-internal')
             record('signed_bundle', {'sha256': sums['release.tar.gz'], 'gateway_sha256': gateway_hash, 'signature_verified': True})
+            run([sys.executable, str(Path(__file__).with_name('request_evidence_hotfix_images.py')), str(root), tag])
+            label = 'rc' + tag.rsplit('.', 1)[-1]
+            image_receipt = root / (label + '-image-manifest-verification.json')
+            record('image_manifests', json.loads(image_receipt.read_text()))
+            image_evidence = Path('request-evidence-image-evidence')
+            image_evidence.mkdir(exist_ok=True)
+            for path in root.glob(label + '-image-*.json'):
+                shutil.copy2(path, image_evidence / path.name)
             key = root / 'ssh-key'; key.write_text(os.environ['COMPUTE_SSH_KEY']); key.chmod(0o600)
             known = root / 'known-hosts'
             for target, expected in TARGETS:
@@ -178,10 +190,16 @@ def main():
                 return json.loads(run(['ssh', *options, 'root@' + target, 'python3 -'], input=script))
             def upload(target):
                 run(['scp', *options, str(root / 'gatewayd-internal'), 'root@' + target + ':' + str(host.ROOT / 'gatewayd-internal.incoming')])
-            record('before_activation', {'status': 'public_ingress_passed', 'gates': public_health()})
-            deploy(remote, upload, public_health, record)
-        receipt['status'] = 'applied'
-        record('complete', {'both_compute_gateways_verified': True, 'live_scenario_acceptance_pending': True})
+            if args.operation == 'inspect':
+                for target, _ in TARGETS:
+                    record(target, remote(target, 'inspect'))
+                record('public_ingress', {'status': 'public_ingress_passed', 'gates': public_health()})
+            else:
+                record('before_activation', {'status': 'public_ingress_passed', 'gates': public_health()})
+                deploy(remote, upload, public_health, record)
+        receipt['status'] = 'inspected' if args.operation == 'inspect' else 'applied'
+        record('complete', {'operation': args.operation, 'activation_performed': args.operation == 'apply',
+                            'live_scenario_acceptance_pending': True})
     except BaseException as error:
         receipt['status'] = 'failed'
         record('failure', {'error_type': type(error).__name__})

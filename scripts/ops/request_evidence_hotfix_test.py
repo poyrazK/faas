@@ -7,12 +7,25 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import request_evidence_hotfix as controller
 import request_evidence_hotfix_host as host
 
 
 class HotfixContracts(unittest.TestCase):
+    def test_inspection_never_opens_a_writable_file_or_changes_a_unit(self):
+        state = {'gateway': {'sha256': host.OLD_HASH, 'pid': 123}}
+        with patch.object(host, 'snapshot', return_value=state), patch.object(host, 'health'), \
+             patch.object(Path, 'read_bytes', return_value=b'DATABASE_URL=postgresql://example\x00'), \
+             patch.object(host.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='{}')) as query, \
+             patch('builtins.open', side_effect=AssertionError('write during inspection')), \
+             patch.object(host, 'command') as unit:
+            result = host.main({'source': host.SOURCE, 'base': host.BASE, 'action': 'inspect'})
+            self.assertEqual(result['status'], 'inspected')
+            self.assertIn('BEGIN READ ONLY;', query.call_args.kwargs['input'])
+            unit.assert_not_called()
+
     def test_green_postgres_summary_cannot_hide_a_skipped_subtest(self):
         log = ('=== RUN   TestExclusivePolicyRetirement\n'
                '=== RUN   TestExclusivePolicyRetirement/postgres\n'

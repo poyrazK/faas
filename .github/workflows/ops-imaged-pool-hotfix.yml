@@ -1,5 +1,5 @@
 name: ops-request-evidence-component-hotfix
-run-name: RC231 request evidence hotfix (${{ inputs.release_tag }})
+run-name: RC231 request evidence hotfix ${{ inputs.operation }} (${{ inputs.release_tag }})
 
 on:
   workflow_dispatch:
@@ -8,6 +8,14 @@ on:
         description: Signed tag of the qualified RC231 backport
         required: true
         type: string
+      operation:
+        description: Read-only inspection or component activation
+        required: true
+        type: choice
+        default: inspect
+        options:
+          - inspect
+          - apply
 
 concurrency:
   group: production-us-platform-rollout
@@ -45,11 +53,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           HOTFIX_TAG: ${{ inputs.release_tag }}
-        run: python3 scripts/ops/request_evidence_hotfix.py --cosign "$RUNNER_TEMP/request-evidence-cosign"
+          HOTFIX_OPERATION: ${{ inputs.operation }}
+        run: python3 scripts/ops/request_evidence_hotfix.py --cosign "$RUNNER_TEMP/request-evidence-cosign" --operation "$HOTFIX_OPERATION"
       - name: Preserve activation and rollback receipts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: request-evidence-component-hotfix-${{ github.run_id }}
-          path: request-evidence-hotfix-receipt.json
+          path: |
+            request-evidence-hotfix-receipt.json
+            request-evidence-image-evidence
           if-no-files-found: error

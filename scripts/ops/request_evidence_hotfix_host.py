@@ -143,6 +143,28 @@ def main(config):
     signal.signal(signal.SIGTERM, cancelled)
     signal.signal(signal.SIGINT, cancelled)
     assert config['source'] == SOURCE and config['base'] == BASE
+    if config['action'] == 'inspect':
+        state = snapshot()
+        health()
+        assert state['gateway']['sha256'] == OLD_HASH
+        pid = str(state['gateway']['pid'])
+        values = dict(x.split('=', 1) for x in Path('/proc/' + pid + '/environ').read_bytes().decode().split(chr(0)) if '=' in x)
+        sql = """BEGIN READ ONLY; SET LOCAL statement_timeout='10s';
+SELECT json_build_object('nodes',(SELECT json_agg(row_to_json(x)) FROM (
+ SELECT id,name,lifecycle,vpcpus,vcpu_budget,mem_mb,admission_ceiling_mb,last_heartbeat_at FROM compute_nodes ORDER BY name) x),
+ 'live_instances',(SELECT json_agg(row_to_json(x)) FROM (
+ SELECT i.id,a.slug,i.state,i.kind,i.mode,i.ram_mb,a.cpu_millicores,i.node_id,i.started_at,i.last_request_at
+ FROM instances i LEFT JOIN apps a ON a.id=i.app_id
+ WHERE i.state IN ('pending','waking','cold_booting','running','draining','snapshotting','migrating','warm')
+ ORDER BY i.node_id,a.slug,i.started_at) x)); ROLLBACK;"""
+        try:
+            result = subprocess.run(['runuser', '-u', 'faas', '--', 'psql', '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1',
+                                     '--dbname', values['DATABASE_URL']], input=sql, text=True,
+                                    capture_output=True, timeout=25)
+            capacity = json.loads(result.stdout) if result.returncode == 0 else {'query_exit': result.returncode}
+        except Exception as error:
+            capacity = {'error_type': type(error).__name__}
+        return {'status': 'inspected', 'snapshot': state, 'readonly_capacity': capacity}
     with open('/run/faas/request-evidence-hotfix.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         action = config['action']
