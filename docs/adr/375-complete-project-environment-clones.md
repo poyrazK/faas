@@ -2920,3 +2920,48 @@ failures. The API build used a temporary test-only overlay containing original
 selected declarations and helpers, with all production code included; initial
 attempts exceeded the shared host's available disk. This is scoped verification,
 not the complete API/repository suites or live provider/native KVM acceptance.
+
+### Frozen configuration capture dispatch and commit leases (2026-10-02)
+
+The coordinator now drives pending/capturing operations from their authenticated
+typed configuration root, workload snapshots, and frozen binding catalogue. It
+builds a deterministic roster containing the source revision, project config,
+and each workload's selected artifact, variables, secrets, workload settings,
+route policy, and edge policy. Reader ordering cannot change this roster.
+Existing capture progress must equal the canonical roster before replay.
+
+When the captured catalogue contains no PostgreSQL or bucket data, the worker
+advances through capturing into copying without inventing a data timestamp. A
+lost capturing acknowledgement leaves its committed roster and no target
+environment. The previous worker retains its acknowledged revision; a later
+lease recovers the frozen source rather than rereading later source edits.
+Captures with either dataset still return `data_checkpoint_unavailable` before
+advancing the capture phase, invoking providers, or materializing a target.
+
+PostgreSQL status advancement and final release-graph completion now recheck a
+claimed operation's live lease with `clock_timestamp()` at the actual write.
+This closes expiry during operation-row or target-flag lock waits. A rejected
+final completion rolls back the release graph and keeps the operation's status,
+revision, and target release identity unchanged. The never-claimed legacy path
+requires both zero attempts and no lease token. Legacy operations with no
+captured workloads retain their resource-only publication behavior; workload
+captures still authenticate their roster and hold the target flag lock through
+publication.
+
+These changes cover the currently implemented internal catalogue. They do not
+establish complete schema/resource coverage, a coordinated database/object
+checkpoint, compensation, or full public admission. Those requirements and
+provider/native acceptance remain outstanding.
+
+Verification: 12 selected API coordinator/capture contracts pass (8.534 s), and
+79 selected state clone/environment tests pass (25.023 s),
+including real PostgreSQL locks, publication rollback, feature-flag isolation,
+frozen configuration, qualification, promotion, and rollback. The publication
+lease test first reproduced a successful graph commit after lease expiry, then
+passed with the final write fence. The tests use original selected declarations
+and helpers through temporary test-only overlays, with all production code
+included. A full state test compilation exceeded the temporary build volume;
+the selected tests are scoped evidence, not the full package/repository suites.
+SQLC 1.31.1 output matches an independent regeneration. The final API run used a
+fresh PostgreSQL 16 cluster on a temporary RAM volume after the shared host disk
+filled during fixture creation; its fixtures ran the complete migration set.

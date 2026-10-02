@@ -27,6 +27,16 @@ import (
 type cloneCoordinatorFailureStore struct {
 	*state.PgStore
 	loseMaterializationAck bool
+	loseCaptureAck         bool
+}
+
+func (s *cloneCoordinatorFailureStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, accountID, projectID, operationID, expected, next string, revision int64, resources []state.ProjectEnvironmentCloneResource, code string) (state.ProjectEnvironmentCloneOperation, error) {
+	op, err := s.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, accountID, projectID, operationID, expected, next, revision, resources, code)
+	if err == nil && next == state.CloneOperationCapturing && s.loseCaptureAck {
+		s.loseCaptureAck = false
+		return state.ProjectEnvironmentCloneOperation{}, errors.New("capture acknowledgement lost")
+	}
+	return op, err
 }
 
 func (s *cloneCoordinatorFailureStore) MaterializeProjectEnvironmentCloneForLease(ctx context.Context, lease state.ProjectEnvironmentCloneLease, ids []string, count int, limits api.Limits) (state.ProjectEnvironment, error) {
@@ -452,7 +462,7 @@ func TestPGCloneMaterializationRetainsFlagEditsOnReplay(t *testing.T) {
 }
 
 func TestPGCloneCoordinatorWaitsForCoordinatedCaptureWithoutCreatingTarget(t *testing.T) {
-	f := newCloneCoordinatorFixture(t, false)
+	f := newCloneCoordinatorFixture(t, true)
 	ctx := t.Context()
 	op := f.lease.Operation
 	if err := f.store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, time.Hour); err != nil {

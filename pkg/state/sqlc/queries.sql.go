@@ -300,6 +300,8 @@ SET status = $1::text, revision = revision + 1,
     lease_until = CASE WHEN $1::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
 WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
   AND status = $7::text AND revision = $8::bigint
+  AND ((attempt_count = 0 AND lease_token IS NULL)
+    OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
 
 type AdvanceProjectEnvironmentCloneOperationStatusParams struct {
@@ -1683,6 +1685,8 @@ UPDATE project_environment_clone_operations
 SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid, updated_at = now(),
     lease_token = NULL, lease_until = NULL
 WHERE id = $2::uuid AND status = 'publishing' AND revision = $3::bigint
+  AND ((attempt_count = 0 AND lease_token IS NULL)
+    OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()))
 `
 
 type CompleteProjectEnvironmentClonePublicationParams struct {

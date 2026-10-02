@@ -504,6 +504,11 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 				t.Fatal("missing route policy fault injector")
 			}
 			mutationErr = policyMutation[0](ctx, apps[0].ID)
+		case "after_publication_lease_wait":
+			if len(policyMutation) != 1 {
+				t.Fatal("missing publication lease fault injector")
+			}
+			mutationErr = policyMutation[0](ctx, apps[0].ID)
 		default:
 			t.Fatalf("unknown publication fault: %s", fault)
 		}

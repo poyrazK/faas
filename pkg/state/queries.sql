@@ -5324,7 +5324,9 @@ WHERE w.operation_id = sqlc.arg(operation_id)::uuid ORDER BY d.id FOR UPDATE OF 
 UPDATE project_environment_clone_operations
 SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(release_id)::uuid, updated_at = now(),
     lease_token = NULL, lease_until = NULL
-WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint;
+WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint
+  AND ((attempt_count = 0 AND lease_token IS NULL)
+    OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
 -- name: LockProjectEnvironmentCloneTargetSidecarLayers :many
 SELECT l.sidecar_name FROM deployment_sidecar_layers l
@@ -5412,7 +5414,9 @@ SET status = sqlc.arg(next_status)::text, revision = revision + 1,
     lease_token = CASE WHEN sqlc.arg(next_status)::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_token END,
     lease_until = CASE WHEN sqlc.arg(next_status)::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
 WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
-  AND status = sqlc.arg(expected_status)::text AND revision = sqlc.arg(expected_revision)::bigint;
+  AND status = sqlc.arg(expected_status)::text AND revision = sqlc.arg(expected_revision)::bigint
+  AND ((attempt_count = 0 AND lease_token IS NULL)
+    OR (lease_token IS NOT NULL AND lease_until > clock_timestamp()));
 
 -- name: RenewProjectEnvironmentCloneWorkerLease :one
 UPDATE project_environment_clone_operations

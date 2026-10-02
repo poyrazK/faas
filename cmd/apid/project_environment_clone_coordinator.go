@@ -21,14 +21,15 @@ type projectEnvironmentCloneCoordinatorStore interface {
 	state.ProjectEnvironmentCloneWorkerLeaseStore
 	state.ProjectEnvironmentCloneOperationStore
 	state.ProjectEnvironmentCloneConfigurationCaptureStore
+	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentCloneWorkloadStore
 	state.ProjectEnvironmentCloneMaterializationStore
 	state.ProjectEnvironmentClonePublicationStore
 }
 
 // The durable queue survives missed notifications and apid restarts. Public
-// complete admission remains closed; pending/capturing operations wait for the
-// coordinated checkpoint implementation instead of inventing a timestamp.
+// complete admission remains closed. Data-bearing pending/capturing operations
+// wait for a coordinated checkpoint instead of inventing a timestamp.
 func (s *server) runProjectEnvironmentCloneCoordinator(ctx context.Context) {
 	store, ok := s.store.(projectEnvironmentCloneCoordinatorStore)
 	if !ok {
@@ -113,7 +114,10 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 	lease = renewed
 	switch lease.Operation.Status {
 	case state.CloneOperationPending, state.CloneOperationCapturing:
-		return lease, errCloneCheckpointUnavailable
+		lease, err = captureProjectEnvironmentClone(ctx, store, lease)
+		if err != nil {
+			return lease, err
+		}
 	case state.CloneOperationCompensating:
 		return lease, errCloneCompensationUnavailable
 	case state.CloneOperationCopying, state.CloneOperationPublishing:
