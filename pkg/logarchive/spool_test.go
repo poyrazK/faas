@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 )
 
@@ -77,6 +78,38 @@ func TestSpool_LayoutAndShape(t *testing.T) {
 	}
 	if got.Level != "warn" {
 		t.Errorf("level = %q, want warn", got.Level)
+	}
+}
+
+func TestSpool_WriteWithIdentityPersistsHistoricalSnapshot(t *testing.T) {
+	root := t.TempDir()
+	s := NewSpool(root, 1<<20)
+	ts := time.Date(2026, 9, 23, 10, 11, 12, 0, time.UTC)
+	identity := api.PlatformIdentity{
+		AppID: "app-1", DeploymentID: "dep-1", TenantID: "acct-1", InstanceID: "instance-a",
+		NodeID: "node-1", Region: "eu-fsn1", CommitSHA: "abc123", DeploymentTag: "stable",
+		DeploymentCreatedAt: "2026-09-22T08:00:00Z", ImageDigest: "sha256:deadbeef",
+	}
+	if _, err := s.WriteWithIdentity("instance-a", 7, "stdout", ts, "hello", "info", identity); err != nil {
+		t.Fatalf("WriteWithIdentity: %v", err)
+	}
+	if err := s.CloseAll(); err != nil {
+		t.Fatalf("CloseAll: %v", err)
+	}
+	files := s.FilesSnapshot()
+	if len(files) != 1 {
+		t.Fatalf("spool files = %d, want 1", len(files))
+	}
+	var got spoolLine
+	body, err := os.ReadFile(files[0].Path)
+	if err != nil {
+		t.Fatalf("read spool: %v", err)
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(body))), &got); err != nil {
+		t.Fatalf("decode spool line: %v", err)
+	}
+	if !got.IdentityCaptured || got.AppID != identity.AppID || got.DeploymentID != identity.DeploymentID || got.TenantID != identity.TenantID || got.Region != identity.Region || got.ImageDigest != identity.ImageDigest {
+		t.Fatalf("persisted identity = %+v", got)
 	}
 }
 

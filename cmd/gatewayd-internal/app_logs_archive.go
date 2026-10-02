@@ -463,14 +463,41 @@ func archiveObjectKey(instance, day string) string {
 // surface a degraded terminal.
 func renderArchiveLineWithIdentity(w http.ResponseWriter, flusher http.Flusher, appID, instance string, raw []byte, identity api.PlatformIdentity, ops *wire.OpsMetrics) bool {
 	var line struct {
-		Seq       int64     `json:"seq"`
-		Stream    string    `json:"stream"`
-		WrittenAt time.Time `json:"ts"`
-		Line      string    `json:"msg"`
-		Level     string    `json:"level"`
+		Seq                 int64     `json:"seq"`
+		Stream              string    `json:"stream"`
+		WrittenAt           time.Time `json:"ts"`
+		Line                string    `json:"msg"`
+		Level               string    `json:"level"`
+		IdentityCaptured    bool      `json:"identity_captured"`
+		RequestID           string    `json:"request_id"`
+		AppID               string    `json:"app_id"`
+		DeploymentID        string    `json:"deployment_id"`
+		TenantID            string    `json:"tenant_id"`
+		InstanceID          string    `json:"instance_id"`
+		NodeID              string    `json:"node_id"`
+		Region              string    `json:"region"`
+		CommitSHA           string    `json:"commit_sha"`
+		DeploymentTag       string    `json:"deployment_tag"`
+		DeploymentCreatedAt string    `json:"deployment_created_at"`
+		ImageDigest         string    `json:"image_digest"`
 	}
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return false
+	}
+	if line.IdentityCaptured {
+		identity = api.PlatformIdentity{
+			RequestID:           line.RequestID,
+			AppID:               line.AppID,
+			DeploymentID:        line.DeploymentID,
+			TenantID:            line.TenantID,
+			InstanceID:          line.InstanceID,
+			NodeID:              line.NodeID,
+			Region:              line.Region,
+			CommitSHA:           line.CommitSHA,
+			DeploymentTag:       line.DeploymentTag,
+			DeploymentCreatedAt: line.DeploymentCreatedAt,
+			ImageDigest:         line.ImageDigest,
+		}
 	}
 	payloadMap := map[string]any{
 		"seq":        line.Seq,
@@ -481,6 +508,17 @@ func renderArchiveLineWithIdentity(w http.ResponseWriter, flusher http.Flusher, 
 	}
 	if line.Level != "" {
 		payloadMap["level"] = line.Level
+	}
+	if identity.RequestID != "" {
+		payloadMap["request_id"] = identity.RequestID
+	}
+	if identity.AppID != "" {
+		payloadMap["app_id"] = identity.AppID
+	} else if !line.IdentityCaptured && appID != "" {
+		payloadMap["app_id"] = appID
+	}
+	if identity.TenantID != "" {
+		payloadMap["tenant_id"] = identity.TenantID
 	}
 	if identity.DeploymentID != "" {
 		payloadMap["deployment_id"] = identity.DeploymentID

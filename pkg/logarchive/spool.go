@@ -7,7 +7,8 @@
 //	{root}/{instanceID}/{YYYY}/{MM}/log-{YYYY-MM-DD}.jsonl.partial
 //
 // Each line is one JSON object with `{ts, stream, seq, msg, level}`
-// fields. The file is created lazily on first write for the
+// fields plus optional deployment-provenance fields on records written by the
+// compute-side identity-aware sink. The file is created lazily on first write for the
 // (instance, day) tuple; subsequent evictions on the same day
 // append to the same file. The .partial rename target is
 // .jsonl.gz (gzipping happens at flush time in the shipper,
@@ -41,6 +42,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DefaultBufferBytes is the bufio.Writer buffer size. 64 KiB
@@ -77,11 +80,23 @@ const (
 // evicted with so the archive replays the same order the ring
 // held.
 type spoolLine struct {
-	Seq       int64     `json:"seq"`
-	Stream    string    `json:"stream"`
-	WrittenAt time.Time `json:"ts"`
-	Line      string    `json:"msg"`
-	Level     string    `json:"level,omitempty"`
+	Seq                 int64     `json:"seq"`
+	Stream              string    `json:"stream"`
+	WrittenAt           time.Time `json:"ts"`
+	Line                string    `json:"msg"`
+	Level               string    `json:"level,omitempty"`
+	IdentityCaptured    bool      `json:"identity_captured,omitempty"`
+	RequestID           string    `json:"request_id,omitempty"`
+	AppID               string    `json:"app_id,omitempty"`
+	DeploymentID        string    `json:"deployment_id,omitempty"`
+	TenantID            string    `json:"tenant_id,omitempty"`
+	InstanceID          string    `json:"instance_id,omitempty"`
+	NodeID              string    `json:"node_id,omitempty"`
+	Region              string    `json:"region,omitempty"`
+	CommitSHA           string    `json:"commit_sha,omitempty"`
+	DeploymentTag       string    `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string    `json:"deployment_created_at,omitempty"`
+	ImageDigest         string    `json:"image_digest,omitempty"`
 }
 
 // spoolKey is the (instance, day) tuple the spool keys on. The
@@ -166,30 +181,54 @@ func existingUnshippedBytes(root string) int64 {
 // has already lost the line so dropping on the floor here is
 // safer than filling the disk (issue #562 risk #6).
 func (s *Spool) Write(instanceID string, seq int64, stream string, ts time.Time, line string) (int, error) {
-	return s.write(instanceID, seq, stream, ts, line, "")
+	return s.write(instanceID, seq, stream, ts, line, "", api.PlatformIdentity{}, false)
 }
 
 // WriteWithLevel persists an evicted line and its structured-log severity.
 // Write remains the compatibility wrapper for callers that only have the
 // legacy five scalar fields.
 func (s *Spool) WriteWithLevel(instanceID string, seq int64, stream string, ts time.Time, line, level string) (int, error) {
-	return s.write(instanceID, seq, stream, ts, line, level)
+	return s.write(instanceID, seq, stream, ts, line, level, api.PlatformIdentity{}, false)
 }
 
-func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time, line, level string) (int, error) {
+// WriteWithIdentity persists an evicted line with the scheduler-authoritative
+// identity snapshot that was available while the instance was running.
+// IdentityCaptured distinguishes a deliberately sparse snapshot from legacy
+// archive lines, so readers never replace historical omissions with today's
+// deployment metadata.
+func (s *Spool) WriteWithIdentity(instanceID string, seq int64, stream string, ts time.Time, line, level string, identity api.PlatformIdentity) (int, error) {
+	return s.write(instanceID, seq, stream, ts, line, level, identity, true)
+}
+
+func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time, line, level string, identity api.PlatformIdentity, identityCaptured bool) (int, error) {
 	if instanceID == "" || len(instanceID) > MaxInstanceIDLen {
 		return 0, fmt.Errorf("logarchive: invalid instance id (len %d)", len(instanceID))
 	}
 	if instanceID == "." || instanceID == ".." || strings.ContainsAny(instanceID, "/\\\x00") {
 		return 0, fmt.Errorf("logarchive: instance id contains path separator or NUL")
 	}
+	if identity.InstanceID == "" {
+		identity.InstanceID = instanceID
+	}
 	key := spoolKey{instance: instanceID, day: ts.UTC().Format("2006-01-02")}
 	payload, err := json.Marshal(spoolLine{
-		Seq:       seq,
-		Stream:    stream,
-		WrittenAt: ts.UTC(),
-		Line:      line,
-		Level:     level,
+		Seq:                 seq,
+		Stream:              stream,
+		WrittenAt:           ts.UTC(),
+		Line:                line,
+		Level:               level,
+		IdentityCaptured:    identityCaptured,
+		RequestID:           identity.RequestID,
+		AppID:               identity.AppID,
+		DeploymentID:        identity.DeploymentID,
+		TenantID:            identity.TenantID,
+		InstanceID:          identity.InstanceID,
+		NodeID:              identity.NodeID,
+		Region:              identity.Region,
+		CommitSHA:           identity.CommitSHA,
+		DeploymentTag:       identity.DeploymentTag,
+		DeploymentCreatedAt: identity.DeploymentCreatedAt,
+		ImageDigest:         identity.ImageDigest,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("logarchive: marshal line: %w", err)
