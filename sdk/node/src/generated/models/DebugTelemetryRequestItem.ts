@@ -21,7 +21,7 @@ export type DebugTelemetryRequestItem = {
   evidence_status?: 'request_id_only';
   deployment_id?: string;
   /**
-   * Route template (NOT expanded URL).
+   * Route template (NOT expanded URL), or __service_proxy__ for app-handled internal service calls.
    */
   route?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
