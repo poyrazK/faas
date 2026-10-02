@@ -3,7 +3,14 @@
 These alerts cover the qualification-gated PostgreSQL outbox relay. They do not
 establish customer production qualification. Delivery remains at least once.
 
-## Inspect the source and event
+## Symptom
+
+Commit alerts report overdue pending work, blocked events, an unhealthy source
+relay, stale or incomplete source observations, or an unavailable platform
+observation query. Unknown counts require recovery of observation access before
+backlog totals can be trusted.
+
+## Check
 
 ```sh
 gregale commit doctor <source-id>
@@ -25,7 +32,7 @@ that the relay previously observed a committed row, not that it remains blocked
 now. Retained acceptance and completion facts take precedence over snapshots.
 Wait timeout or interruption does not cancel work.
 
-## Alert actions
+## Recover
 
 - **FaasCommitBacklogOverdue:** a fresh known observation contains a pending row
   inserted more than fifteen minutes ago, sustained for five minutes. Check
