@@ -6,7 +6,7 @@ rather than waiting for VMs to consume physical memory.
 
 ## Inspect and enable
 
-Apply migrations through `20261002181905649_regional_service_capacity.sql` first.
+Apply migrations through `20261002212534134_service_capacity_projection_jit.sql` first.
 Protection defaults to disabled and migration replay preserves the setting.
 Inspect `gregalectl obs capacity --json` or the operator capacity API. Its
 `service_protection` object includes:
@@ -153,6 +153,27 @@ race checks (including Postgres scheduler cases), API capacity tests, migration
 policy checks, SQLC v1.31.1 drift and diff lint with golangci-lint v2.12.2 pass.
 Linux amd64 apid/schedd and metal-harness builds pass with normal optimization
 and stripped debug metadata. These results do not replace native execution.
+
+Internal Linux follow-up on 2026-10-02 (UTC): `gregale-internal-test-1` in
+`gregale-prod` ran Go 1.25.13 on Linux amd64 with private Postgres 16. The 151
+selected state/scheduler tests and subtests and 60 API/CLI tests and subtests pass
+under the race detector without skips. They include the ADR-459 forced-JIT
+regression, caller-setting restoration, enabled replay/down/up, concurrent
+regional admission and protected recovery. The first diagnostic run exposed
+Postgres JIT compilation in the projection; on a fixed fixture, the function
+setting reduced calls from 5.17–5.19 seconds to 6.7–8.5 ms with identical JSON
+hashes. This small shared-node diagnostic does not establish fleet throughput.
+
+VM substrate checks at commit `58f93a35c` pass on that node: cold boot, 100
+park/restore cycles and survival of one service replica after destroying its
+peer VM. Namespace and host leak checks pass. These three selected metal tests
+use nested KVM; they are Linux runtime evidence, and do not satisfy the dedicated
+native multi-host regional recovery/routing qualification or the full metal
+suite. The node is excluded from the serving fleet; protection remains opt-in.
+
+ADR-459 disables JIT only within the capacity input function. Other queries
+retain the caller's settings. Downgrade resets this function setting and can
+reintroduce compiler latency while preserving the admission guard.
 
 On an isolated native x86_64 Linux KVM fleet, measure admission throughput with
 protection enabled and disabled at representative workload counts. Record
