@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
+	"github.com/onebox-faas/faas/pkg/commitmanaged"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
@@ -48,7 +50,10 @@ func TestE2E_CommitProducerDeathReachesCompletedOperation(t *testing.T) {
 	runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "orders")
 }
 
-type commitHandoffOptions struct{ SourceRecovery bool }
+type commitHandoffOptions struct {
+	SourceRecovery, RelayFaults bool
+	RepairPoison                *func(context.Context, string) error
+}
 
 func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string, options ...commitHandoffOptions) state.ExclusiveOperation {
 	t.Helper()
@@ -135,6 +140,45 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	if err := h.RestartSchedd(); err != nil {
 		t.Fatal(err)
 	}
+	relayFaults := len(options) > 0 && options[0].RelayFaults
+	var releaseCheckpoint func()
+	holdCheckpoint := func() {
+		// Hold the acceptance checkpoint after durable platform admission.
+		guard, err := customer.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := guard.Exec(ctx, `SELECT pg_advisory_lock(7420366)`); err != nil {
+			guard.Release()
+			t.Fatal(err)
+		}
+		releaseCheckpoint = func() {
+			if guard != nil {
+				_, _ = guard.Exec(context.Background(), `SELECT pg_advisory_unlock(7420366)`)
+				guard.Release()
+				guard = nil
+			}
+		}
+		t.Cleanup(releaseCheckpoint)
+		if _, err := customer.Exec(ctx, `CREATE FUNCTION hold_commit_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL THEN
+ PERFORM set_config('lock_timeout','0',true); PERFORM pg_advisory_xact_lock(7420366); END IF;
+ RETURN NEW; END $$; CREATE TRIGGER hold_commit_checkpoint BEFORE UPDATE ON public.gregale_outbox FOR EACH ROW EXECUTE FUNCTION hold_commit_checkpoint()`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if relayFaults {
+		if options[0].RepairPoison != nil {
+			*options[0].RepairPoison = func(repairCtx context.Context, event string) error {
+				_, err := customer.Exec(repairCtx, `UPDATE public.gregale_outbox SET event_type='order.created' WHERE event_id=$1::uuid AND accepted_at IS NULL AND blocked_code IS NOT NULL`, event)
+				return err
+			}
+		}
+		// An invalid event must be blocked without starving the healthy one.
+		if _, err := customer.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload) VALUES($1::uuid,' ','{}')`, uuid.NewString()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var schema string
 	if err := customer.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
 		t.Fatal(err)
@@ -201,6 +245,9 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		t.Fatalf("paused source accepted before producer death: %v", err)
 	}
 	recoverSource := len(options) > 0 && options[0].SourceRecovery
+	if relayFaults && !recoverSource {
+		holdCheckpoint()
+	}
 	if recoverSource {
 		if _, err := customer.Exec(ctx, `ALTER ROLE relay PASSWORD 'rotated-producer-death-fixture'`); err != nil {
 			t.Fatal(err)
@@ -232,6 +279,9 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		if err != nil {
 			t.Fatal(err)
 		}
+		if relayFaults {
+			holdCheckpoint()
+		}
 		if err := store.SetCommitSourceConnection(ctx, src.AccountID, src.ID, rotated); err != nil {
 			t.Fatal(err)
 		}
@@ -251,6 +301,53 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	}
 	if receipt.OperationID == "" || receipt.InvocationID != "" {
 		t.Fatalf("Commit did not accept managed work: %+v", receipt)
+	}
+	if relayFaults {
+		var checkpointPID int
+		deadline = time.Now().Add(10 * time.Second)
+		for {
+			err := customer.QueryRow(ctx, `SELECT pid FROM pg_stat_activity WHERE application_name='gregale-commit' AND wait_event='advisory' AND query LIKE 'UPDATE public.gregale_outbox%' LIMIT 1`).Scan(&checkpointPID)
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("relay never reached the held checkpoint: %v", err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := h.KillSchedd(); err != nil {
+			t.Fatal(err)
+		}
+		// Abort the customer session while the lock is still held. PostgreSQL
+		// must not finish the checkpoint after discovering the killed client.
+		if _, err := customer.Exec(ctx, `SELECT pg_terminate_backend($1)`, checkpointPID); err != nil {
+			t.Fatal(err)
+		}
+		releaseCheckpoint()
+		if _, err := customer.Exec(ctx, `DROP TRIGGER hold_commit_checkpoint ON public.gregale_outbox; DROP FUNCTION hold_commit_checkpoint()`); err != nil {
+			t.Fatal(err)
+		}
+		var missingCheckpoint bool
+		if err := customer.QueryRow(ctx, `SELECT accepted_at IS NULL AND receipt_id IS NULL FROM public.gregale_outbox WHERE event_id=$1::uuid`, eventID).Scan(&missingCheckpoint); err != nil || !missingCheckpoint {
+			t.Fatalf("killed relay checkpoint survived: %v %v", missingCheckpoint, err)
+		}
+		// Advance only the fixture's expired lease, avoiding a minute-long
+		// sleep. Independent tests qualify natural expiry and stale fencing.
+		if _, err := customer.Exec(ctx, `UPDATE public.gregale_outbox SET lease_until=clock_timestamp()-interval '1 second' WHERE accepted_at IS NULL`); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PGSSLROOTCERT", cluster.CAPath)
+		peer := &commitmanaged.Manager{Store: store, Identities: []*age.X25519Identity{identity}, Policy: commitwork.NetworkPolicy{
+			Hosts: map[string]bool{"localhost": true}, Prefixes: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+		}}
+		peerCtx, cancelPeer := context.WithCancel(t.Context())
+		peerDone := make(chan error, 1)
+		go func() { peerDone <- peer.Run(peerCtx) }()
+		t.Cleanup(func() { cancelPeer(); <-peerDone })
+		if err := h.RestartSchedd(); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("terminated actual scheduler after durable acceptance before checkpoint; competing managed relays recover the expired lease with the original receipt")
 	}
 	completed := waitCommitOperationCompleted(t, h, store, key, src.AccountID, receipt.OperationID, 30*time.Second)
 	// Wait for the source checkpoint, then restart the real scheduler. A

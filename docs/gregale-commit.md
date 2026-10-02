@@ -165,6 +165,9 @@ gregale commit connection <source-id> --file /private/path/database-url
 gregale commit pause <source-id>
 gregale commit resume <source-id>
 gregale commit info <source-id>
+gregale commit doctor <source-id> --file /private/path/database-url
+gregale commit inspect <source-id> <event-id>
+gregale commit wait <source-id> <event-id> --until completed --timeout 2m
 gregale commit receipt <source-id> <event-id>
 ```
 
@@ -200,6 +203,38 @@ Source info includes the latest relay health, observation timestamp, pending and
 blocked counts, and oldest pending insertion time. Unavailable database scans
 report unknown counts rather than zero. Credential revision fences stale status
 writes. These are observations, not a claim that every source row is accepted.
+
+`doctor` combines the latest scheduler observation with optional local read-only
+TLS, schema, binding and relay-role permission checks. The credential file is
+never uploaded or printed. Local connectivity does not prove scheduler network
+access or production qualification. Failed or unknown checks return exit 1.
+
+`inspect` joins existing source, receipt, retained Operation and bounded blocked
+snapshot reads. A missing receipt leaves acceptance and the customer transaction
+outcome unknown; it never implies rollback. A blocked snapshot establishes only
+that the relay previously observed the committed row. Stale snapshots do not
+establish a current block. Durable acceptance/completion takes precedence.
+`wait` defaults to completion with a two-minute timeout; `--until accepted` stops
+at durable acceptance. Completion returns exit 0; a fresh block or terminal
+failure returns exit 1. Timeout/interruption preserves durable work and the last
+observed facts. No command claims or publishes an event as part of diagnosis.
+
+Rotation and transition from paused to enabled invalidate prior health and
+increment the observation fence. A pass started before either transition cannot
+overwrite newer source health or blocked snapshots. Source observations older
+than five minutes have unknown backlog totals.
+
+The scheduler also exposes shared-ledger aggregate gauges for enabled, unknown
+and failing sources, fresh known pending/blocked counts, oldest pending insertion
+timestamp and snapshot-query success. They have no customer identity labels.
+Use `max` across schedulers, because each reads the same durable source ledger.
+Known counts are partial if any sources are unknown. Paused/deleted sources are
+excluded; a failed ledger read does not retain old backlog gauges. The five
+Commit alert rules and [recovery runbook](runbooks/FaasCommit.md) cover old work,
+blocked events, unknown source observations, relay failures and unavailable
+platform observations. `make commit-alert-check` verifies firing and healthy
+suppression cases with promtool. Operator deployment and sustained production
+qualification are still required before customer promotion.
 
 `make test-commit` is the strict PostgreSQL/Linux process gate. It rejects missing
 configuration, macOS, disabled PostgreSQL tests, skipped required scenarios, and

@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -113,7 +114,8 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 		_, err = startCommitHTTPConsumer(consumerCtx, consumer.Config().ConnString(), consumer.Config().ConnConfig.Database, address, "healthy", "")
 		recovered <- err
 	}()
-	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders", commitHandoffOptions{SourceRecovery: true})
+	var repairPoison func(context.Context, string) error
+	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders", commitHandoffOptions{SourceRecovery: true, RelayFaults: true, RepairPoison: &repairPoison})
 	select {
 	case err := <-recovered:
 		if err != nil {
@@ -179,7 +181,43 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	if err := commitConsumerCounts(ctx, consumer, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("producer death, source outage, credential rotation, consumer rollback, lost HTTP response, scheduler restart and concurrent duplicates preserved one business effect; attempts=%d", completed.Attempts)
+	// The poison event did not stop the healthy event or its retries. Repair
+	// and replay it while the two managed relays still compete, then verify
+	// exactly one additional business effect for that distinct event.
+	sourceID := strings.TrimPrefix(delivered.Source, "gregale.commit.")
+	blockedBody, blockedCode := doReq(t, f.h, f.key, http.MethodGet, "/v1/commit-sources/"+sourceID+"/blocked-events", nil)
+	var blocked api.CommitBlockedEventsResponse
+	if err := json.Unmarshal(blockedBody, &blocked); err != nil || blockedCode != http.StatusOK || len(blocked.Items) != 1 {
+		t.Fatalf("poison event visibility: %d %s %v", blockedCode, blockedBody, err)
+	}
+	// The producer handoff owns this source database; repairs are explicitly
+	// authorized fixture operations, never relay-side payload mutations.
+	if repairPoison == nil {
+		t.Fatal("poison owner repair callback missing")
+	}
+	if err := repairPoison(ctx, blocked.Items[0].EventID); err != nil {
+		t.Fatal(err)
+	}
+	replayBody, replayCode := doReq(t, f.h, f.key, http.MethodPost, "/v1/commit-sources/"+sourceID+"/events/"+blocked.Items[0].EventID+"/replay", nil)
+	if replayCode != http.StatusAccepted {
+		t.Fatalf("poison replay: %d %s", replayCode, replayBody)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		receipt, err := f.store.CommitReceiptByEvent(ctx, completed.AccountID, sourceID, blocked.Items[0].EventID)
+		if err == nil {
+			waitCommitOperationCompleted(t, f.h, f.store, f.key, completed.AccountID, receipt.OperationID, 30*time.Second)
+			break
+		}
+		if !errors.Is(err, state.ErrNotFound) || time.Now().After(deadline) {
+			t.Fatalf("poison replay acceptance: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := commitConsumerCounts(ctx, consumer, 2, 2); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("producer death, relay death before checkpoint, competing relays, source outage, credential rotation, consumer crashes, concurrent duplicates and poison repair preserved one business effect per event; first event attempts=%d", completed.Attempts)
 }
 
 type commitHTTPConsumerProcess struct{ exit <-chan error }
