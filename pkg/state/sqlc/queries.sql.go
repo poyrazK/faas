@@ -9506,6 +9506,15 @@ func (q *Queries) IssueDeleteImpactAlertPolicy(ctx context.Context, db DBTX, app
 	return err
 }
 
+const issueDeleteOwnershipRules = `-- name: IssueDeleteOwnershipRules :exec
+DELETE FROM app_issue_ownership_rules WHERE app_id=$1
+`
+
+func (q *Queries) IssueDeleteOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueDeleteOwnershipRules, appID)
+	return err
+}
+
 const issueDeploymentScope = `-- name: IssueDeploymentScope :one
 SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = $1 AND d.app_id = $2 AND a.account_id = $3
@@ -9909,6 +9918,32 @@ func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsert
 	return err
 }
 
+const issueInsertOwnershipRule = `-- name: IssueInsertOwnershipRule :exec
+INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,assignee_account_id)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type IssueInsertOwnershipRuleParams struct {
+	AppID             pgtype.UUID
+	RuleOrder         int32
+	ExceptionType     pgtype.Text
+	SourceKind        pgtype.Text
+	RoutePrefix       pgtype.Text
+	AssigneeAccountID pgtype.UUID
+}
+
+func (q *Queries) IssueInsertOwnershipRule(ctx context.Context, db DBTX, arg IssueInsertOwnershipRuleParams) error {
+	_, err := db.Exec(ctx, issueInsertOwnershipRule,
+		arg.AppID,
+		arg.RuleOrder,
+		arg.ExceptionType,
+		arg.SourceKind,
+		arg.RoutePrefix,
+		arg.AssigneeAccountID,
+	)
+	return err
+}
+
 const issueInsertToken = `-- name: IssueInsertToken :one
 INSERT INTO issue_ingest_tokens(account_id,app_id,deployment_id,environment,name,token_hash,expires_at)
 VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id, account_id, app_id, deployment_id, environment, name, token_hash, expires_at, revoked_at, created_at
@@ -10273,6 +10308,47 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 	return items, nil
 }
 
+const issueListOwnershipRules = `-- name: IssueListOwnershipRules :many
+SELECT rule_order, exception_type, source_kind, route_prefix, assignee_account_id
+  FROM app_issue_ownership_rules
+ WHERE app_id=$1
+ ORDER BY rule_order
+`
+
+type IssueListOwnershipRulesRow struct {
+	RuleOrder         int32
+	ExceptionType     pgtype.Text
+	SourceKind        pgtype.Text
+	RoutePrefix       pgtype.Text
+	AssigneeAccountID pgtype.UUID
+}
+
+func (q *Queries) IssueListOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueListOwnershipRulesRow, error) {
+	rows, err := db.Query(ctx, issueListOwnershipRules, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueListOwnershipRulesRow{}
+	for rows.Next() {
+		var i IssueListOwnershipRulesRow
+		if err := rows.Scan(
+			&i.RuleOrder,
+			&i.ExceptionType,
+			&i.SourceKind,
+			&i.RoutePrefix,
+			&i.AssigneeAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueListReleases = `-- name: IssueListReleases :many
 SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM issue_releases WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($2,$3::uuid)) ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $4
 `
@@ -10539,6 +10615,41 @@ func (q *Queries) IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevoke
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const issueSetNewIssueAssignee = `-- name: IssueSetNewIssueAssignee :one
+UPDATE app_issues SET assignee_account_id=$1
+ WHERE id=$2 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+`
+
+type IssueSetNewIssueAssigneeParams struct {
+	AssigneeAccountID pgtype.UUID
+	ID                pgtype.UUID
+}
+
+func (q *Queries) IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg IssueSetNewIssueAssigneeParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueSetNewIssueAssignee, arg.AssigneeAccountID, arg.ID)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
 }
 
 const issueTokenStillValid = `-- name: IssueTokenStillValid :one

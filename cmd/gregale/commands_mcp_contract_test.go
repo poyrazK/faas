@@ -187,3 +187,55 @@ func TestMCPContractCLICheckRejectsReview(t *testing.T) {
 		t.Fatalf("review gate exit=%d: %s", code, output.String())
 	}
 }
+
+func TestMCPContractCLIStrictCatalog(t *testing.T) {
+	oldOut, oldJSON := osStdout, jsonOutput
+	var output bytes.Buffer
+	osStdout, jsonOutput = &output, true
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "reader.json"), filepath.Join(dir, "expanded-reader.json")}
+	for i, path := range paths {
+		tools := []mcphosting.Tool{{Name: "read", InputSchema: map[string]any{"type": "object"}}}
+		if i == 1 {
+			tools = append(tools, mcphosting.Tool{Name: "write", InputSchema: map[string]any{"type": "object"}})
+		}
+		contract, _ := mcphosting.NewContract(mcphosting.ProtocolVersion, tools)
+		data, err := mcphosting.MarshalContract(contract)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name           string
+		flags          []string
+		unchanged      bool
+		code           int
+		strict, review bool
+	}{
+		{"default check permits addition", []string{"--check"}, false, 0, false, false},
+		{"strict report preserves exit zero", []string{"--strict-catalog"}, false, 0, true, true},
+		{"strict check rejects addition", []string{"--strict-catalog", "--check"}, false, 1, true, true},
+		{"strict check permits unchanged", []string{"--strict-catalog", "--check"}, true, 0, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output.Reset()
+			after := paths[1]
+			if tc.unchanged {
+				after = paths[0]
+			}
+			args := append([]string{"diff", "--before", paths[0], "--after", after}, tc.flags...)
+			code := cmdMCP(args)
+			var diff mcphosting.ContractDiff
+			if err := json.Unmarshal(output.Bytes(), &diff); err != nil || code != tc.code || diff.StrictCatalog != tc.strict || diff.NeedsReview != tc.review || diff.Breaking || diff.Compatible == tc.review {
+				t.Fatalf("exit=%d receipt=%s err=%v", code, output.String(), err)
+			}
+			if !tc.unchanged && (len(diff.Changes) != 1 || diff.Changes[0].Tool != "write" || diff.Changes[0].Kind != "tool_added") {
+				t.Fatalf("changes=%+v", diff.Changes)
+			}
+		})
+	}
+}

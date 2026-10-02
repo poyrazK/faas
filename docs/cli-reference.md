@@ -267,6 +267,7 @@ Compare local tool contracts and report changes needing review
 | `--before <PATH>` | baseline MCP contract snapshot | required |
 | `--after <PATH>` | candidate MCP contract snapshot | required |
 | `--check` | fail on breaking changes or changes needing review |  |
+| `--strict-catalog` | require review when a caller gains visibility of a tool |  |
 
 Examples:
 
@@ -2856,6 +2857,8 @@ gregale issues list --app my-api --assignee me
 gregale issues list --app my-api --assignee unassigned
 gregale issues list --app my-api --sort impact
 gregale issues impact-alert --app my-api --min-customers 5
+gregale issues ownership-rules --app my-api
+gregale issues ownership-rules --app my-api --rules-file issue-routing.json
 gregale issues get ISSUE_ID --app my-api
 gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID
 ```
@@ -2887,6 +2890,10 @@ Ignore until a timestamp
 ### issues impact-alert
 
 Read or configure customer-impact alert threshold
+
+### issues ownership-rules
+
+Read or replace automatic assignment rules
 
 ### issues tokens
 

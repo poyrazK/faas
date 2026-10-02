@@ -46,6 +46,19 @@ func (c *Client) SetIssueImpactAlertPolicy(ctx context.Context, slug string, in 
 	err := c.do(ctx, http.MethodPut, issueAppPath(slug)+"/issue-impact-alert-policy", in, &out)
 	return out, err
 }
+
+func (c *Client) GetIssueOwnershipRules(ctx context.Context, slug string) (IssueOwnershipRules, error) {
+	var out IssueOwnershipRules
+	err := c.do(ctx, http.MethodGet, issueAppPath(slug)+"/issue-ownership-rules", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetIssueOwnershipRules(ctx context.Context, slug string, in IssueOwnershipRules) (IssueOwnershipRules, error) {
+	var out IssueOwnershipRules
+	err := c.do(ctx, http.MethodPut, issueAppPath(slug)+"/issue-ownership-rules", in, &out)
+	return out, err
+}
+
 func (c *Client) GetIssue(ctx context.Context, slug, id, since, cursor string) (IssueDetail, error) {
 	return c.GetIssuePage(ctx, slug, id, since, cursor, "", "")
 }

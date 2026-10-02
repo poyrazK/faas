@@ -302,6 +302,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/execution-artifact-grants/{id}":                                    "RevokeExecutionArtifactGrant",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                                "GetIssueImpactAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                                "SetIssueImpactAlertPolicy",
+	"GET /v1/apps/{slug}/issue-ownership-rules":                                    "GetIssueOwnershipRules",
+	"PUT /v1/apps/{slug}/issue-ownership-rules":                                    "SetIssueOwnershipRules",
 
 	"GET /v1/dev/bridges":                                                             "ListDevBridges",
 	"GET /v1/dev/bridges/{id}/activity":                                               "GetDevBridgeActivity",

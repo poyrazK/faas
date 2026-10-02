@@ -5067,6 +5067,19 @@ VALUES(sqlc.arg(app_id),sqlc.arg(minimum_customers),sqlc.arg(updated_at))
 ON CONFLICT(app_id) DO UPDATE SET minimum_customers=excluded.minimum_customers,updated_at=excluded.updated_at;
 -- name: IssueDeleteImpactAlertPolicy :exec
 DELETE FROM app_issue_impact_alert_policies WHERE app_id=sqlc.arg(app_id);
+-- name: IssueListOwnershipRules :many
+SELECT rule_order, exception_type, source_kind, route_prefix, assignee_account_id
+  FROM app_issue_ownership_rules
+ WHERE app_id=sqlc.arg(app_id)
+ ORDER BY rule_order;
+-- name: IssueDeleteOwnershipRules :exec
+DELETE FROM app_issue_ownership_rules WHERE app_id=sqlc.arg(app_id);
+-- name: IssueInsertOwnershipRule :exec
+INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,assignee_account_id)
+VALUES(sqlc.arg(app_id),sqlc.arg(rule_order),sqlc.narg(exception_type),sqlc.narg(source_kind),sqlc.narg(route_prefix),sqlc.arg(assignee_account_id));
+-- name: IssueSetNewIssueAssignee :one
+UPDATE app_issues SET assignee_account_id=sqlc.arg(assignee_account_id)
+ WHERE id=sqlc.arg(id) RETURNING *;
 -- name: IssueAttribution :many
 SELECT DISTINCT consumer_id,platform_tenant_id FROM request_telemetry
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)

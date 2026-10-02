@@ -530,6 +530,8 @@ export type { IssueImpactAlertPolicy } from './models/IssueImpactAlertPolicy.js'
 export type { IssueImpactSummary } from './models/IssueImpactSummary.js';
 export type { IssueIngestToken } from './models/IssueIngestToken.js';
 export type { IssueOccurrence } from './models/IssueOccurrence.js';
+export type { IssueOwnershipRule } from './models/IssueOwnershipRule.js';
+export type { IssueOwnershipRules } from './models/IssueOwnershipRules.js';
 export type { IssueRelease } from './models/IssueRelease.js';
 export type { JobArtifactDownloadResponse } from './models/JobArtifactDownloadResponse.js';
 export type { JobDeletedResponse } from './models/JobDeletedResponse.js';

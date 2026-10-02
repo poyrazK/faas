@@ -1,6 +1,7 @@
 """Exact-source signed component hotfix under the production-us CD concurrency lock."""
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -11,10 +12,15 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
+import urllib.request
+import zipfile
 
 import request_evidence_hotfix_host as host
 
 REPO = 'poyrazK/faas'
+API_ROOT = 'https://api.github.com/'
+API_VERSION = '2022-11-28'
 TARGETS = [
     ('fsn-2.gregale.dev', 'SHA256:0p1vgiWlG75HcPGAGJFTCTf2GudZsX2h3VJFrnrkc6k'),
     ('fsn-3.gregale.dev', 'SHA256:TvYJYcE8Hb6FYq6fTY9bHG+QyzzAHn4j9Qqm5vBILck'),
@@ -26,8 +32,62 @@ def run(args, timeout=600, **kwargs):
     return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=timeout, **kwargs)
 
 
+class GithubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep the workflow token on api.github.com, never on asset storage hosts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
+            redirected.remove_header('Authorization')
+            redirected.remove_header('X-github-api-version')
+        return redirected
+
+
+def github_open(path, accept='application/vnd.github+json'):
+    token = os.environ.get('GH_TOKEN')
+    assert token, 'GH_TOKEN is required for read-only GitHub API access'
+    url = path if path.startswith('https://') else urllib.parse.urljoin(API_ROOT, path)
+    request = urllib.request.Request(url, headers={
+        'Accept': accept,
+        'Authorization': 'Bearer ' + token,
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': 'gregale-request-evidence-hotfix',
+    })
+    opener = urllib.request.build_opener(GithubRedirectHandler())
+    return opener.open(request, timeout=120)
+
+
+def github_get(path, accept='application/vnd.github+json'):
+    with github_open(path, accept) as response:
+        return response.read()
+
+
+def github_download(path, destination, accept='application/octet-stream'):
+    with github_open(path, accept) as response, destination.open('wb') as output:
+        shutil.copyfileobj(response, output, length=1024 * 1024)
+
+
 def api(path):
-    return json.loads(run(['gh', 'api', 'repos/' + REPO + '/' + path]))
+    return json.loads(github_get('repos/' + REPO + '/' + path))
+
+
+def download_artifact(run_id, name, destination):
+    artifacts = api('actions/runs/' + str(run_id) + '/artifacts?per_page=100')['artifacts']
+    matches = [artifact for artifact in artifacts if artifact['name'] == name and not artifact['expired']]
+    assert len(matches) == 1, 'expected one unexpired artifact named ' + name
+    archive = github_get(matches[0]['archive_download_url'], 'application/vnd.github+json')
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        for member in bundle.infolist():
+            path = Path(member.filename)
+            assert not path.is_absolute() and '..' not in path.parts, 'unsafe artifact path'
+            bundle.extract(member, destination)
+
+
+def download_release_asset(release, name, destination):
+    matches = [asset for asset in release['assets'] if asset['name'] == name]
+    assert len(matches) == 1, 'expected one release asset named ' + name
+    github_download('repos/' + REPO + '/releases/assets/' + str(matches[0]['id']), destination)
 
 
 def qualify():
@@ -44,8 +104,7 @@ def qualify():
         assert any(r['name'] == name and r['conclusion'] == 'success' for r in runs), name
     with tempfile.TemporaryDirectory(prefix='hotfix-gates-') as tmp:
         root = Path(tmp)
-        run(['gh', 'run', 'download', '36979712031', '--repo', REPO,
-             '--name', 'operation-policy-postgres-contract', '--dir', str(root / 'pg')])
+        download_artifact(36979712031, 'operation-policy-postgres-contract', root / 'pg')
         validate_postgres((root / 'pg/operation-policy-postgres-contract.log').read_text())
         cve = api('actions/runs/36981938659')
         assert cve['head_sha'] == host.SOURCE and cve['conclusion'] == 'success'
@@ -53,8 +112,7 @@ def qualify():
         required = {'Generate SBOM', 'Refresh Grype vulnerability database', 'Run grype on SBOM',
                     'Run govulncheck', 'Normalize scanner results', 'Diff + create issue'}
         assert required <= {s['name'] for j in jobs for s in j['steps'] if s['conclusion'] == 'success'}
-        run(['gh', 'run', 'download', '36981938659', '--repo', REPO,
-             '--name', 'cve-prev', '--dir', str(root / 'cve')])
+        download_artifact(36981938659, 'cve-prev', root / 'cve')
         for name in ['cve-prev.json', 'cve-today.json', 'cve-new.json']:
             matches = list((root / 'cve').rglob(name))
             assert len(matches) == 1 and json.loads(matches[0].read_text()) == []
@@ -151,12 +209,12 @@ def main():
         qualify()
         ref = api('git/ref/tags/' + tag)['object']
         assert ref['type'] == 'commit' and ref['sha'] == host.SOURCE
+        release = api('releases/tags/' + urllib.parse.quote(tag, safe=''))
         with tempfile.TemporaryDirectory(prefix='request-evidence-', dir=os.environ['RUNNER_TEMP']) as tmp:
             root = Path(tmp)
-            run(['gh', 'release', 'download', tag, '--repo', REPO, '--dir', str(root),
-                 '--pattern', 'release.tar.gz', '--pattern', 'release.cosign.bundle',
-                 '--pattern', 'release-manifest.json', '--pattern', 'SHA256SUMS',
-                 '--pattern', 'production-manifest.yaml', '--pattern', 'runtime-bases.env'], timeout=1800)
+            for name in ['release.tar.gz', 'release.cosign.bundle', 'release-manifest.json',
+                         'SHA256SUMS', 'production-manifest.yaml', 'runtime-bases.env']:
+                download_release_asset(release, name, root / name)
             sums = dict((line.split(maxsplit=1)[1].lstrip('*'), line.split(maxsplit=1)[0])
                         for line in (root / 'SHA256SUMS').read_text().splitlines())
             assert host.digest(root / 'release.tar.gz') == sums['release.tar.gz']

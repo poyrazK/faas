@@ -155,6 +155,96 @@ func TestIssueEndToEndPostgres(t *testing.T) {
 	}
 }
 
+func TestIssueOwnershipRulesRouteNewIssuesAndPreserveManualAssignment(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	org, err := e.store.CreateOrg(t.Context(), state.Org{Slug: "issue-routing-" + uuid.NewString()[:8], Name: "Issue Routing", Plan: api.PlanHobby, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AddOrgMember(t.Context(), org.ID, e.acct.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	member, err := e.store.CreateAccount(t.Context(), "issue-routing-member-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(t.Context(), state.App{
+		AccountID: e.acct.ID, OrgID: org.ID, Slug: "issue-routing-app", Type: state.AppTypeApp,
+		Status: state.AppActive, RequireAuthn: e.acct.Plan.RequireAuthnDefault(), PublicAuthMode: e.acct.Plan.PublicAuthModeDefault(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug + "/issue-ownership-rules"
+	initial := issueDecode[api.IssueOwnershipRules](t, e.do(t, http.MethodGet, base, nil, nil), http.StatusOK)
+	if len(initial.Rules) != 0 {
+		t.Fatalf("default ownership rules = %+v", initial)
+	}
+	configured := api.IssueOwnershipRules{Rules: []api.IssueOwnershipRule{
+		{SourceKind: "exception", AssigneeAccountID: e.acct.ID},
+		{ExceptionType: "DateFormatError", RoutePrefix: "/exports", AssigneeAccountID: member.ID},
+	}}
+	configured = issueDecode[api.IssueOwnershipRules](t, e.do(t, http.MethodPut, base, configured, nil), http.StatusOK)
+	if len(configured.Rules) != 2 || configured.Rules[0].AssigneeAccountID != e.acct.ID {
+		t.Fatalf("saved rule order = %+v", configured)
+	}
+	foreign, err := e.store.CreateAccount(t.Context(), "issue-routing-stranger-"+uuid.NewString()+"@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := e.do(t, http.MethodPut, base, api.IssueOwnershipRules{Rules: []api.IssueOwnershipRule{{SourceKind: "worker", AssigneeAccountID: foreign.ID}}}, nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("foreign routing target status = %d: %s", w.Code, w.Body.String())
+	}
+
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DateFormatError", Message: "invalid date", SourceKind: "exception", Route: "/exports/42"}
+	created := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+	detailPath := "/v1/apps/" + app.Slug + "/issues/" + created.IssueID
+	detail := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, detailPath, nil, nil), http.StatusOK)
+	if detail.Issue.AssigneeAccountID != e.acct.ID {
+		t.Fatalf("first matching rule assignment = %q, want app owner %q", detail.Issue.AssigneeAccountID, e.acct.ID)
+	}
+	foundAutoAssignment := false
+	for _, activity := range detail.Activity {
+		if activity.Action == "assigned" && activity.Details["assignment_source"] == "ownership_rule" {
+			foundAutoAssignment = true
+			if activity.Details["assignee_account_id"] != e.acct.ID || activity.Details["source_kind"] != "exception" {
+				t.Fatalf("automatic assignment details = %+v", activity.Details)
+			}
+		}
+	}
+	if !foundAutoAssignment {
+		t.Fatal("automatic assignment activity is missing")
+	}
+	issueDecode[api.Issue](t, e.do(t, http.MethodPost, detailPath+"/actions", api.IssueActionRequest{Action: "assign", AssigneeAccountID: member.ID}, nil), http.StatusOK)
+	event.EventID = uuid.NewString()
+	event.OccurredAt = time.Now().UTC()
+	issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+	detail = issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, detailPath, nil, nil), http.StatusOK)
+	if detail.Issue.AssigneeAccountID != member.ID {
+		t.Fatalf("later event overrode manual assignment: %+v", detail.Issue)
+	}
+
+	// A route-only rule demonstrates path boundaries: /exports/45 matches,
+	// while /export-service does not.
+	routePolicy := api.IssueOwnershipRules{Rules: []api.IssueOwnershipRule{{RoutePrefix: "/exports", AssigneeAccountID: member.ID}}}
+	issueDecode[api.IssueOwnershipRules](t, e.do(t, http.MethodPut, base, routePolicy, nil), http.StatusOK)
+	for _, tc := range []struct {
+		typ, route, want string
+	}{{"OtherError", "/export-service", ""}, {"JSONError", "/exports/45", member.ID}} {
+		event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: tc.typ, Message: "failure", Route: tc.route}
+		created := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+		got := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues/"+created.IssueID, nil, nil), http.StatusOK).Issue
+		if got.AssigneeAccountID != tc.want {
+			t.Fatalf("route %q assigned %q, want %q", tc.route, got.AssigneeAccountID, tc.want)
+		}
+	}
+}
+
 func TestIssueConcurrentDuplicateCountsOnce(t *testing.T) {
 	e := setupPGHandler(t, api.PlanHobby)
 	app := seedPGApp(t, e, "issue-race")
