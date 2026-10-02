@@ -766,10 +766,12 @@ type Manager struct {
 	// that began with an older app config but has not yet published as live.
 	appCPUPolicyUpdates sync.Mutex
 	appCPUPolicies      map[string]appCPUPolicy
-	// jobBoots covers the artifact restore and VMM boot interval before a job
-	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
-	// late boot can publish a VM after its task was already cancelled.
-	jobBoots map[string]*jobBootFlight
+	// bootFlights covers lease/network setup and VMM boot/restore before an
+	// instance enters live. Destroy/Stop must cancel and join this interval.
+	bootFlights map[string]*instanceBootFlight
+	// teardowns joins duplicate stops and prevents a new boot from acquiring
+	// the same identity while the previous process/resources are being removed.
+	teardowns map[string]*instanceTeardownFlight
 	// pendingProcessExits closes the small hand-off race between
 	// JailerVMM reporting a child exit and Wake publishing the
 	// instance into live. A process can pass readiness and exit
@@ -1155,7 +1157,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		live:                 make(map[string]*Instance),
 		readinessLoopCancels: make(map[string]context.CancelFunc),
 		appCPUPolicies:       make(map[string]appCPUPolicy),
-		jobBoots:             make(map[string]*jobBootFlight),
+		bootFlights:          make(map[string]*instanceBootFlight),
 		pendingProcessExits:  make(map[string]int),
 		processGenerations:   make(map[string]uint64),
 		waking:               make(map[string]struct{}),
@@ -1768,6 +1770,11 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		return
 	}
 
+	flight, owner, err := m.beginLiveInstanceTeardown(context.WithoutCancel(lifecycle), instance, inst)
+	if err != nil || !owner {
+		return
+	}
+	defer m.finishInstanceTeardown(instance, flight, exitCode, false, false, nil)
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if ok {
@@ -3682,11 +3689,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
-	bootCtx, flight, err := m.beginJobBoot(ctx, req.Instance)
+	bootCtx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishJobBoot(req.Instance, flight)
+	defer m.finishInstanceBoot(req.Instance, flight)
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
 	}
@@ -3792,7 +3799,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		HealthcheckPath: "", // no readiness probe
 	}
 	m.mu.Lock()
-	if flight.cancelled || bootCtx.Err() != nil {
+	if flight.cancelled || bootCtx.Err() != nil || m.teardowns[req.Instance] != nil {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before publication: %w", req.Instance, context.Canceled)
 	}
@@ -3868,6 +3875,13 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	// Registered before all effect/cleanup defers, so stop joins the complete
+	// unwind and cannot acknowledge absence before resources are released.
+	defer m.finishInstanceBoot(req.Instance, flight)
 	if req.ExecutionOnly {
 		integrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(req.ExecutionOutboundIntegrationIDs)
 		if normalizeErr != nil {
@@ -4574,6 +4588,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 
 		m.mu.Lock()
+		if flight.cancelled || ctx.Err() != nil || m.teardowns[req.Instance] != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("wake %s: cancelled before publication: %w", req.Instance, context.Canceled)
+		}
 		currentPolicy, currentHasPolicy := m.appCPUPolicies[req.AppID]
 		if currentHasPolicy != hasPolicy || (hasPolicy && currentPolicy.revision != policy.revision) {
 			m.mu.Unlock()
@@ -5047,7 +5065,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 // Park snapshots a running instance then destroys it, freeing all resident RAM
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
-func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (info SnapshotInfo, err error) {
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
@@ -5057,6 +5075,14 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
+	flight, owner, err := m.beginLiveInstanceTeardown(ctx, instance, inst)
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	if !owner {
+		return SnapshotInfo{}, fmt.Errorf("park %s: another teardown already completed", instance)
+	}
+	defer func() { m.finishInstanceTeardown(instance, flight, 0, false, false, err) }()
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -5065,7 +5091,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
-	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
+	info, err = m.vmm.Snapshot(ctx, inst.Lease, spec)
 	// Release resources on both outcomes. A failed capture can leave a paused
 	// VM, which cannot exit on its own. DestroyWithExport waits for a builder
 	// to finish and must not delay cleanup of this failed app snapshot.
@@ -5305,7 +5331,21 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+	// A builder destroy owns export until cleanup completes. Interrupt its
+	// child immediately instead of joining the export owner's natural wait.
+	if builder, killed, code, interruptErr := m.interruptExportingBuilder(ctx, instance); builder {
+		return killed, code, interruptErr
+	}
+	flight, owner, err := m.beginInstanceTeardown(ctx, instance, "")
+	if err != nil {
+		return false, 0, err
+	}
+	if !owner {
+		return flight.killSignal, int32(flight.exitCode), flight.err
+	}
+	interruptOnly := false
+	defer func() { m.finishInstanceTeardown(instance, flight, int(exitCode), killSignalSent, interruptOnly, err) }()
+	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
 		return false, 0, err
 	}
 	m.cancelFrameworkReadyLoop(instance)
@@ -5314,6 +5354,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	// until cleanup finishes, and interrupt without starting another teardown.
 	if m.exportDirs[instance] != "" {
 		m.mu.Unlock()
+		interruptOnly = true
 		if interrupter, ok := m.vmm.(interface {
 			InterruptBuild(context.Context, string) (int32, error)
 		}); ok {
@@ -5363,8 +5404,32 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	return killSignalSent, exitCode, err
 }
 
-func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (exitCode int, err error) {
+	var flight *instanceTeardownFlight
+	for {
+		var owner bool
+		flight, owner, err = m.beginInstanceTeardown(ctx, instance, exportDir)
+		if err != nil {
+			return 0, err
+		}
+		if owner {
+			break
+		}
+		if flight.interruptOnly {
+			// Interrupting a builder does not remove its live row, export
+			// registration or resources. Destroy still owes that work.
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if flight.exportDir != exportDir {
+			return 0, fmt.Errorf("manager: instance %s teardown export target differs", instance)
+		}
+		return flight.exitCode, flight.err
+	}
+	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, err) }()
+	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
 		return 0, err
 	}
 	// Stop background liveness work before removing the live entry or

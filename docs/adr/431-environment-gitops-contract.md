@@ -1178,6 +1178,32 @@ scheduler/migration checks, and GitOps/issue-ownership CLI checks pass locally.
 Scheduler regression checks also cover caller/attempt expiry while admission
 is contended and bounded cleanup contention after confirmed destruction.
 
+Native stop ordering now spans app cold boots and snapshot restores as well as
+job boots. A stop cancels and joins the complete boot unwind before consulting
+the live map. The publication boundary rejects cancelled attempts, including a
+VMM returning success after cancellation. Duplicate stops join the current
+teardown and preserve its outcome; a replacement cannot use the same identity
+until that teardown finishes. Park and unexpected-exit fallback cleanup share
+this boundary. Builder interruption still reaches the child while its destroy
+owner waits for export, rather than waiting on that owner's completion.
+
+These barriers establish ordering, not a qualification receipt. Durable
+attempt-bound physical-retirement evidence and recovery are still required;
+terminal database state alone must not authorize a replacement. Native process
+exit uncertainty and best-effort resource cleanup also need explicit treatment
+before a successful stop can serve as that evidence. The qualification consumer,
+serving proofs and graph activation remain unwired, and the apid executor stays
+disabled until the full local and native gates pass.
+
+Focused lifecycle checks cover late cold-boot/restore success, cancellation
+before effects, cancellation during network setup, timeout recovery, duplicate
+stop outcomes, cleanup contention, export-target mismatch and builder
+interruption during an active destroy. The complete portable `fcvm` suite and
+`vmmdgrpc` suite pass. The initial broader run used a temporary path too long
+for Unix sockets; the `fcvm` rerun with a short path passes. Native `test-metal`
+and `leakcheck` remain unverified; the dedicated host's project is still
+suspended.
+
 ## Review and control workflow
 
 An environment can instead opt into reviewed merge approval at binding:
