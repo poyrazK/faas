@@ -66,6 +66,13 @@ excludes several resource classes and complete jail/network namespace incarnatio
 Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
 passed 31 selected top-level tests and three leak checks, including real mount
 failure/replacement guards and reopened guest bind provenance.
+Version-3 journaling adds jail-directory and named nsfs binding observations;
+live owners check replacements before cleanup and preserve prepared alias identity
+([ADR-401](adr/401-managed-postgres-resource-placement.md)). Veth provenance,
+complete resource incarnations and verified restart cleanup remain pending.
+Its nested-node [diagnostics](ops/evidence/20261002-managed-postgres-resource-placement/README.md)
+passed 41 selected top-level tests and three leak checks, including real nsfs
+replacement, prepared alias transfer and foreign jail-mount guards.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 

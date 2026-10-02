@@ -205,7 +205,7 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if (r.Version != 1 && r.Version != 2) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || !l.Plan.Valid() || l.MemoryMaxMiB <= 0 {
+	if (r.Version < 1 || r.Version > 3) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || !l.Plan.Valid() || l.MemoryMaxMiB <= 0 {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)
@@ -224,7 +224,7 @@ func (j *ResourceJournal) begin(l Lease) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r := resourceJournalRecord{Version: 2, Lease: l}
+	r := resourceJournalRecord{Version: 3, Lease: l}
 	if err := r.validate(); err != nil {
 		return err
 	}

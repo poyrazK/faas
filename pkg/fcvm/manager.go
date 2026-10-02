@@ -778,6 +778,9 @@ type Manager struct {
 	restartQuarantine    map[string]struct{}
 	restartInventoryDone bool
 	resourceJournal      *ResourceJournal
+	resourceNetworks     map[string]resourceAsset             // observed by this running owner only
+	namespaceProbe       func(string) (*resourceAsset, error) // tests inject kernel observations
+	namespaceContext     func() (*resourceMountIdentity, error)
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -6711,6 +6714,9 @@ func toNetnsPrivateNetworkFirewallRules(raw []api.PrivateNetworkFirewallRule) ([
 // exit non-zero on a fresh netns / brand-new veth; those failures are
 // expected and logged at Debug.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
+	if m.resourceJournal != nil {
+		return m.setupJournalNetwork(ctx, nc)
+	}
 	// A crashed vmmd/jailer can leave a regular namespace marker behind even
 	// after `ip netns del` reports an invalid peer. Clear that exact stale
 	// marker before reusing the allocator-derived name; a real mounted netns

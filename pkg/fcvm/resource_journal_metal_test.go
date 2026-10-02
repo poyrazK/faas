@@ -78,7 +78,20 @@ func TestMetalResourceJournalSurvivingGuest(t *testing.T) {
 		t.Fatalf("durable process checkpoint: %+v, %v", records, err)
 	}
 	binds := 0
+	jails, namespaces := 0, 0
 	for _, a := range records[0].Assets {
+		if a.Kind == "jail" {
+			jails++
+			if a.File == nil || a.Namespace == nil {
+				t.Fatalf("surviving jail lacks directory/context provenance: %+v", a)
+			}
+		}
+		if a.Kind == "netns" {
+			namespaces++
+			if a.File == nil || a.Mount == nil {
+				t.Fatalf("surviving namespace lacks binding provenance: %+v", a)
+			}
+		}
 		if a.Kind == "bind" {
 			binds++
 			if a.Target == nil || a.File == nil || a.Mount == nil || a.Mount.MountID == 0 {
@@ -88,6 +101,9 @@ func TestMetalResourceJournalSurvivingGuest(t *testing.T) {
 	}
 	if binds == 0 {
 		t.Fatal("surviving guest lacks image-bind checkpoints")
+	}
+	if jails != 2 || namespaces != 1 {
+		t.Fatalf("incomplete placement inventory: jails=%d namespaces=%d", jails, namespaces)
 	}
 	if err := fresh.WithResourceJournal(activeJournal); err != nil {
 		t.Fatal(err)

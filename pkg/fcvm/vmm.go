@@ -86,7 +86,8 @@ type JailerVMM struct {
 
 	mu              sync.Mutex
 	resourceJournal *ResourceJournal
-	proc            map[string]*exec.Cmd // instance -> running jailer process
+	ownedJails      map[string][]resourceAsset // live owner only; never reconstructed from storage
+	proc            map[string]*exec.Cmd       // instance -> running jailer process
 	clients         map[string]*http.Client
 	// cpuBoostTails owns the post-readiness quota-restoration timers. They live
 	// in vmmd rather than schedd so the wake RPC can return as soon as the app
@@ -3223,10 +3224,13 @@ func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
 	v.closeGuestVsockListeners(l.Instance)
 	v.preBoot.forget(l.Instance)
 	v.closeClient(l.Instance)
+	if err := v.checkOwnedJail(l.Instance); err != nil {
+		return err
+	}
 	if err := v.unmountBindMounts(l.Instance); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(v.chrootBase, v.fcName, l.Instance)); err != nil {
+	if err := v.removeOwnedJail(l.Instance); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
 	}
 	if err := v.sweepMaterialised(l.Instance); err != nil {
@@ -4508,6 +4512,9 @@ func copyTree(src, dst string, maxBytes int64) error {
 // --- helpers ---------------------------------------------------------------
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
+	if v.resourceJournal != nil {
+		return v.makeOwnedJail(instance)
+	}
 	root := v.chrootRoot(instance)
 	// Wipe any leftover state from a prior failed Boot/Restore — jailer's
 	// chroot-creation step (mknod /dev/net/tun, mkdir -p /dev/net, etc.)

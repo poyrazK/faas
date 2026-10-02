@@ -152,6 +152,10 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 	if entry == nil {
 		return nil
 	}
+	if err := p.m.checkOwnedNamespace(entry.config.Netns); err != nil {
+		p.discard(*entry)
+		return nil
+	}
 	lease, err := p.m.alloc.adoptNetwork(entry.lease.Instance, instance)
 	if err != nil {
 		p.discard(*entry)
@@ -167,6 +171,11 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 		return nil
 	}
 	entry.config.Instance, entry.config.Netns = instance, lease.Netns
+	if err := p.m.moveNamespaceObservation(oldNS, lease.Netns); err != nil {
+		p.discard(*entry)
+		p.m.log.Warn("prepared namespace identity changed on claim", "instance", instance, "err", err)
+		return nil
+	}
 	return entry
 }
 
@@ -263,13 +272,19 @@ func (p *preparedNetworkPool) fill() {
 func (p *preparedNetworkPool) teardown(nc netns.Config) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.ctx), preparedNetworkTimeout)
 	defer cancel()
+	if err := p.m.checkOwnedNamespace(nc.Netns); err != nil {
+		p.m.log.Error("prepared network identity uncertain", "netns", nc.Netns, "err", err)
+		return false
+	}
 	for _, argv := range nc.TeardownCommands() {
 		if err := p.m.run.Run(ctx, argv); err != nil {
 			p.m.log.Debug("prepared network teardown", "netns", nc.Netns, "err", err)
 		}
 	}
-	removeStaleNetnsMarker(nc.Netns)
-	return p.removed(nc)
+	if p.m.resourceJournal == nil {
+		removeStaleNetnsMarker(nc.Netns)
+	}
+	return p.removed(nc) && p.m.retireOwnedNamespace(nc) == nil
 }
 
 func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
@@ -300,6 +315,11 @@ func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEn
 }
 
 func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry) (bool, error) {
+	if prepared != nil {
+		if err := m.checkpointPreparedNamespace(nc); err != nil {
+			return false, err
+		}
+	}
 	if prepared != nil && preparedNetworkConfigMatches(prepared.config, nc) {
 		return true, nil
 	}

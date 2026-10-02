@@ -105,6 +105,7 @@ func TestResourceJournalBootOrderingAndConfirmedRetirement(t *testing.T) {
 			if err := m.WithResourceJournal(j); err != nil {
 				t.Fatal(err)
 			}
+			installNamespaceFixture(m)
 			var err error
 			if job {
 				_, err = m.BootJob(t.Context(), JobBootRequest{Instance: idLive, Plan: api.PlanPro, MemSizeMiB: 512, KernelKey: "kernel", BaseKey: "base", ImageRef: "job.ext4", AccountID: "account", RunID: "run", TaskTimeoutSec: 30, LeaseToken: "fixture-token", Env: map[string]string{"PRIVATE_FIXTURE": "fixture-env-value"}, Command: []string{"/bin/true"}, VcpuCount: 1})
@@ -153,6 +154,7 @@ func TestResourceJournalWriteFailureRejectsBoot(t *testing.T) {
 	if err := m.WithResourceJournal(j); err != nil {
 		t.Fatal(err)
 	}
+	installNamespaceFixture(m)
 	if _, err := m.Wake(t.Context(), wakeReq(idLive, nil)); !errors.Is(err, injected) {
 		t.Fatalf("boot result: %v", err)
 	}

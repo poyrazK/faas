@@ -120,6 +120,9 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) e
 		removeWorkloadCgroups(filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance)), retained.workloadNames)
 	}
 	if !lease.Networkless {
+		if err := m.checkOwnedNamespace(nc.Netns); err != nil {
+			return fmt.Errorf("cleanup %s: %w", lease.Instance, err)
+		}
 		for _, argv := range nc.TeardownCommands() {
 			if err := m.run.Run(ctx, argv); err != nil {
 				// Partial setup and repeated deletion legitimately fail. Check
@@ -129,6 +132,9 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) e
 		}
 		if err := networkRemoved(nc); err != nil {
 			return fmt.Errorf("cleanup %s: %w", lease.Instance, err)
+		}
+		if err := m.retireOwnedNamespace(nc); err != nil {
+			return err
 		}
 	}
 	return nil

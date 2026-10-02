@@ -546,6 +546,16 @@ Version-1 records remain conservative observations, and older binaries reject
 version 2. This does not authorize replacement-daemon cleanup or adoption.
 Child TUN, loop/parent mounts, jail-local links/copies, snapshot publication and
 complete jail/network namespace incarnations are not covered by this asset list.
+
+Version-3 records add the instance/inner jail directories and named nsfs binding
+observations ([ADR-401](adr/401-managed-postgres-resource-placement.md)). Intents
+precede mkdir/namespace creation; checkpoints precede staging and policy setup.
+The running owner refuses changed directory or namespace bindings, checks for
+remaining jail mounts, and retains failed retirement for retry. Prepared alias
+transfer preserves the namespace inode and captures its new mount ID before
+policy retarget or guest launch. Veth identities, crash-safe prepared handoff,
+complete resource incarnations and verified restart cleanup remain pending.
+These observations do not grant a replacement daemon lifecycle ownership.
 The final nested-node [asset diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
 passed 31 selected top-level tests and three leak checks. Native lifecycle and
 filesystem power-loss qualification remain pending.

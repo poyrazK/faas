@@ -103,6 +103,27 @@ func (r resourceJournalRecord) validateAssets() error {
 			if (a.Mount == nil) != (a.File == nil) {
 				return errors.New("partial bind checkpoint")
 			}
+		case "jail", "netns":
+			if r.Version < 3 || a.Target != nil || a.Source != "" || a.SourceFile != nil || a.ReadOnly || a.OriginalMode != 0 {
+				return errors.New("invalid placement resource asset")
+			}
+			if a.Namespace != nil && a.Namespace.MountID != 0 {
+				return errors.New("invalid placement namespace context")
+			}
+			if a.Kind == "jail" && a.Mount != nil {
+				return errors.New("invalid jail mount checkpoint")
+			}
+			if a.Kind == "jail" && filepath.Base(a.Path) != r.Lease.Instance && (filepath.Base(a.Path) != "root" || filepath.Base(filepath.Dir(a.Path)) != r.Lease.Instance) {
+				return errors.New("jail path does not match lease identity")
+			}
+			if a.Kind == "netns" {
+				if l := r.Lease; l.Networkless || a.Path != filepath.Join("/run/netns", l.Netns) || a.Namespace == nil {
+					return errors.New("invalid network namespace intent")
+				}
+				if (a.Mount == nil) != (a.File == nil) || (a.Mount != nil && (a.Mount.MountID == 0 || a.Mount.BootID != a.Namespace.BootID || a.Mount.Namespace != a.Namespace.Namespace)) {
+					return errors.New("partial network namespace checkpoint")
+				}
+			}
 		default:
 			return errors.New("unknown resource asset kind")
 		}
@@ -148,7 +169,12 @@ func (j *ResourceJournal) addAsset(instance string, a resourceAsset) error {
 	if !ok {
 		return errors.New("resource asset requires committed lease intent")
 	}
-	r.Version = 2
+	if r.Version < 2 {
+		r.Version = 2
+	}
+	if a.Kind == "jail" || a.Kind == "netns" {
+		r.Version = 3
+	}
 	r.Assets = append(cloneResourceAssets(r.Assets), a)
 	if err := r.validate(); err != nil {
 		return err
