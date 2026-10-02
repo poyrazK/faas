@@ -1,11 +1,13 @@
 -- name: MaintenanceIdentity :one
 SELECT current_database()::text AS database_name, current_user::text AS role_name,
- d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_database,
+ d.oid AS database_oid, d.datdba AS owner_oid,
+ pg_has_role(current_user,d.datdba,'USAGE') AS owns_database,
  d.datallowconn AS allows_connections,
  NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(d.datacl, acldefault('d',d.datdba))) a
    WHERE a.privilege_type='CONNECT' AND a.grantee<>d.datdba) AS private_connections,
  NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolcanlogin AND r.rolname<>current_user
-   AND NOT r.rolsuper AND pg_has_role(r.oid,d.datdba,'MEMBER')) AS private_role,
+   AND NOT r.rolsuper AND (pg_has_role(r.oid,d.datdba,'MEMBER') OR
+     (current_setting('server_version_num')::integer<160000 AND r.rolcreaterole))) AS private_role,
  NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datid=d.oid AND a.usename IS DISTINCT FROM current_user) AS private_sessions
 FROM pg_database d WHERE d.datname=current_database();
 

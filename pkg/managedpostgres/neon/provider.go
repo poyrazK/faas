@@ -35,6 +35,7 @@ type projectSettings struct {
 
 type project struct {
 	ID                      string           `json:"id"`
+	OrganizationID          string           `json:"org_id"`
 	Name                    string           `json:"name"`
 	RegionID                string           `json:"region_id"`
 	PostgresMajor           int              `json:"pg_version"`
@@ -61,10 +62,13 @@ type branch struct {
 
 type endpoint struct {
 	ID                   string  `json:"id"`
+	ProjectID            string  `json:"project_id"`
+	RegionID             string  `json:"region_id"`
 	BranchID             string  `json:"branch_id"`
 	Host                 string  `json:"host"`
 	Type                 string  `json:"type"`
 	CurrentState         string  `json:"current_state"`
+	Disabled             *bool   `json:"disabled"`
 	MinimumCU            float64 `json:"autoscaling_limit_min_cu"`
 	MaximumCU            float64 `json:"autoscaling_limit_max_cu"`
 	SuspendTimeoutSecond int64   `json:"suspend_timeout_seconds"`
@@ -486,7 +490,7 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.DefaultEndpointSettings = endpointSettingsForSpec(spec)
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
-	request.Project.Branch.RoleName = "gregale_owner"
+	request.Project.Branch.RoleName = maintenanceSourceRole
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
 }

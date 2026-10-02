@@ -30,6 +30,13 @@ type GregaleCheckpointInstallation struct {
 	Version   int32
 }
 
+type PgAuthMember struct {
+	Roleid      pgtype.Uint32
+	Member      pgtype.Uint32
+	Grantor     pgtype.Uint32
+	AdminOption pgtype.Bool
+}
+
 type PgClass struct {
 	Relnamespace pgtype.Uint32
 	Relowner     pgtype.Uint32
@@ -59,10 +66,14 @@ type PgProc struct {
 }
 
 type PgRole struct {
-	Oid         pgtype.Uint32
-	Rolname     pgtype.Text
-	Rolcanlogin pgtype.Bool
-	Rolsuper    pgtype.Bool
+	Oid            pgtype.Uint32
+	Rolname        pgtype.Text
+	Rolcanlogin    pgtype.Bool
+	Rolsuper       pgtype.Bool
+	Rolcreatedb    pgtype.Bool
+	Rolcreaterole  pgtype.Bool
+	Rolreplication pgtype.Bool
+	Rolbypassrls   pgtype.Bool
 }
 
 type PgStatActivity struct {

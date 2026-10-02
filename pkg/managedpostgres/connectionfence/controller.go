@@ -50,6 +50,9 @@ type Observation struct {
 
 type Config struct {
 	MaintenanceDatabase, MaintenanceRole string
+	// A provider bootstrap supplies these independently authenticated OIDs.
+	// Zero is reserved for callers that already own a private maintenance DB.
+	MaintenanceDatabaseOID, MaintenanceOwnerOID uint32
 }
 
 type Controller struct {
@@ -60,7 +63,8 @@ type Controller struct {
 // The caller owns the pool, source placement attestation and durable clone
 // reservation. Errors never expose SQL/connection/provider credential text.
 func New(ctx context.Context, pool *pgxpool.Pool, config Config) (*Controller, error) {
-	if pool == nil || !validDatabaseName(config.MaintenanceDatabase) || config.MaintenanceRole == "" {
+	if pool == nil || !validDatabaseName(config.MaintenanceDatabase) || config.MaintenanceRole == "" ||
+		(config.MaintenanceDatabaseOID == 0) != (config.MaintenanceOwnerOID == 0) {
 		return nil, managedpostgres.ErrInvalid
 	}
 	c := &Controller{pool: pool, config: config}
@@ -79,6 +83,8 @@ func (c *Controller) checkMaintenance(ctx context.Context, db sqlc.DBTX) error {
 		return classifyError(err)
 	}
 	if row.DatabaseName != c.config.MaintenanceDatabase || row.RoleName != c.config.MaintenanceRole ||
+		c.config.MaintenanceDatabaseOID != 0 && (!row.DatabaseOid.Valid || row.DatabaseOid.Uint32 != c.config.MaintenanceDatabaseOID) ||
+		c.config.MaintenanceOwnerOID != 0 && (!row.OwnerOid.Valid || row.OwnerOid.Uint32 != c.config.MaintenanceOwnerOID) ||
 		!row.OwnsDatabase || !row.AllowsConnections.Valid || !row.AllowsConnections.Bool ||
 		!row.PrivateConnections || !row.PrivateRole || !row.PrivateSessions {
 		return managedpostgres.ErrUnsupported

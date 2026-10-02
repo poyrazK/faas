@@ -31,7 +31,9 @@ sql:
 
   # Customer cluster maintenance SQL is separate from control-plane state.
   - engine: "postgresql"
-    queries: "pkg/managedpostgres/connectionfence/queries.sql"
+    queries:
+      - "pkg/managedpostgres/connectionfence/queries.sql"
+      - "pkg/managedpostgres/connectionfence/bootstrap.sql"
     schema: "pkg/managedpostgres/connectionfence/schema.sql"
     gen:
       go:

@@ -3,7 +3,8 @@
 -- Read-only PostgreSQL catalogue declarations for SQLC's offline analyser.
 -- The installer never creates or writes these relations.
 CREATE TABLE pg_database (oid oid, datname name, datdba oid, datallowconn boolean, datacl aclitem[]);
-CREATE TABLE pg_roles (oid oid, rolname name, rolcanlogin boolean, rolsuper boolean);
+CREATE TABLE pg_roles (oid oid, rolname name, rolcanlogin boolean, rolsuper boolean, rolcreatedb boolean, rolcreaterole boolean, rolreplication boolean, rolbypassrls boolean);
+CREATE TABLE pg_auth_members (roleid oid, member oid, grantor oid, admin_option boolean);
 CREATE TABLE pg_namespace (oid oid, nspname name, nspowner oid, nspacl aclitem[]);
 CREATE TABLE pg_class (relnamespace oid, relowner oid, relacl aclitem[]);
 CREATE TABLE pg_proc (pronamespace oid, proowner oid, prosecdef boolean, proacl aclitem[]);

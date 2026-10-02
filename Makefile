@@ -1016,7 +1016,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
 	  cp pkg/state/queries.sql "$$tmp/pkg/state/"; \
-	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
+	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
 	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
