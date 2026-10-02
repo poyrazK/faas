@@ -271,7 +271,7 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	bucket, upload, _, provider, ok := s.loadMultipartUpload(w, r, acct)
+	bucket, upload, _, _, ok := s.loadMultipartUpload(w, r, acct)
 	if !ok {
 		return
 	}
@@ -283,11 +283,7 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, err)
 		return
 	}
-	if _, err := objectstorageactivity.Begin(r.Context(), s.store, bucket, state.ObjectBucketMutationNativeGrant); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	out, err := provider.PresignMultipartPart(r.Context(), bucket.PhysicalName, part)
+	out, err := s.mintObjectPartGrant(r.Context(), bucket, upload, part)
 	if err != nil {
 		bucketProblem(w, err)
 		return
@@ -315,7 +311,7 @@ func prepareObjectMultipartPartSign(w http.ResponseWriter, r *http.Request, uplo
 	if !decodeBucketRequest(w, r, &req) {
 		return objectstorage.MultipartPartRequest{}, false
 	}
-	if req.ExpiresIn < 0 || req.ExpiresIn > 900 {
+	if req.ExpiresIn < 0 || req.ExpiresIn > api.MaxObjectSignedURLExpiresSeconds {
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return objectstorage.MultipartPartRequest{}, false
 	}

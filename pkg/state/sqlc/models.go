@@ -3063,6 +3063,26 @@ type ObjectStorageS3Credential struct {
 	RotationStampedAt pgtype.Timestamptz
 }
 
+type ObjectStorageUploadGrant struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TokenHash          string
+	Kind               string
+	ObjectKey          string
+	SizeBytes          int64
+	Headers            []byte
+	UploadID           pgtype.UUID
+	ProviderUploadID   pgtype.Text
+	PartNumber         int32
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+}
+
 type ObjectStorageUsageHead struct {
 	AccountID   pgtype.UUID
 	BackendID   string

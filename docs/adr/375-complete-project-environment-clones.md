@@ -3120,3 +3120,73 @@ production build was attempted and exhausted the shared disk; scoped test
 builds then compiled the changed production paths successfully. No live
 provider resources were mutated. Full repository, native KVM and live provider
 acceptance remain outstanding.
+
+
+### Brokered upload URLs participate in source fencing (2026-10-02)
+
+New API PUT and multipart-part signed URLs now authorize requests through the
+configured Gregale S3 endpoint. They no longer expose provider-native write
+URLs. A private operational grant records only a random token's SHA-256 hash,
+the exact account/app/bucket placement, object key, declared byte count,
+portable metadata/tag headers and, for a part, its upload/part/provider ID.
+Tokens use 256 bits of randomness and are returned only in the upload URL.
+The API response keeps its existing URL/method/headers/expiry shape. Download
+URLs remain provider-native read capabilities. Public SigV4 S3 requests retain
+their existing authentication and routing.
+
+Grant issuance authenticates the ready bucket placement and shares the source
+row lock with writer admission/fencing. It rejects an active fence. Expiry is
+chosen by the database clock (default 300 seconds, maximum 900 seconds), and
+part expiry is capped by the active upload's expiry. Each redemption rechecks
+the current placement and session, exact method/path/size/metadata, and rejects
+mixed authentication, additional operation parameters and duplicate tokens.
+No grant can authorize GET, DELETE, CopyObject or a different multipart part.
+The gateway then uses its normal bounded upload/part proxy. The provider URL
+stays private, and durable writer admission occurs before actual provider IO,
+including when the customer's URL was issued before the fence was acquired.
+
+A brokered grant itself does not count as a native writer: it cannot modify
+provider storage outside Gregale. An already admitted provider request has an
+independent writer receipt. Expiry and bounded background pruning remove only
+request-admission grants; they cannot remove or drain active/unknown writes.
+Known legacy native-grant receipts are preserved and still require actual
+provider revocation/drain evidence. Native URLs issued before writer tracking,
+external provider credentials, PostgreSQL writers and a coordinated application
+checkpoint remain unresolved. This change does not open full clone admission,
+select a capture timestamp or publish a stage.
+
+Deployment order for this protocol is migration and S3 gateway first, then API
+URL issuance. Older gateways cannot redeem the new broker grants. API and
+gateway registries must share the configured public endpoint and immutable
+backend placements. Clients must send the returned upload headers, as required
+by the existing signed-request contract. Multipart upload creation/completion
+still use their provider lifecycle, and staging snapshot/retention work still
+requires independent provider evidence.
+
+Verification: the complete S3 gateway suite passed (3.679 s). Sixteen selected
+state contracts passed (15.960 s), including actual PostgreSQL expiry/pruning,
+source fencing, multipart binding/expiry and blocked lifecycle tests. Twenty-four
+selected API contracts passed (1.395 s), including API-to-gateway PUT and part
+uploads, blocking replay of earlier URLs after fencing, exact capability
+substitution rejection and existing accounting/recovery/lifecycle regressions.
+State and API runs used original selected test declarations and helpers via
+temporary outside-repository test-only overlays with all production files
+included; the verbose runs contained no skips. Independent SQLC regeneration
+matched the generated files. No live provider resources were mutated. Complete
+repository, deployed protocol, native KVM and live provider acceptance remain
+outstanding.
+
+
+The writer inventory also found the public policy-controlled
+`POST /uploads/{route}` path. It now reserves the same durable source writer
+before creating a new idempotency intent and invoking `ObjectWriter`. A fence
+rejection creates no pending upload intent, so the same idempotency key can be
+retried after checkpoint capture. Early local exits can release their receipt
+only with concrete non-dispatch evidence from the current request. Once the
+provider has been called, error/cancellation/panic cannot clear the receipt.
+Observed success records a bounded completion even if the caller disconnects.
+The upload route uses a local wrapper over the shared state primitives because
+importing the objectstorageactivity wrapper would create a package cycle.
+Eleven targeted upload-route contracts passed (0.826 s), including
+active/unknown writer coverage and retry after fence rejection. The complete object-storage provider
+suite has not been rerun in this increment.

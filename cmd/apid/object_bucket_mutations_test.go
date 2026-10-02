@@ -30,7 +30,7 @@ func mutationAPIFixture(t *testing.T) (testEnv, *fakeObjectProvider, state.Objec
 	return e, provider, bucket, path + "/" + b.ID
 }
 
-func TestObjectBucketMutationAPINativeGrantAndFence(t *testing.T) {
+func TestObjectBucketMutationAPIUploadGrantAndFence(t *testing.T) {
 	e, provider, b, path := mutationAPIFixture(t)
 	request := map[string]any{"method": "PUT", "key": "file", "size_bytes": 10}
 	if response := e.do(t, "POST", path+"/signed-url", request, nil); response.Code != 200 {
@@ -38,8 +38,8 @@ func TestObjectBucketMutationAPINativeGrantAndFence(t *testing.T) {
 	}
 	token := uuid.NewString()
 	fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-	if err != nil || fence.Requests != 0 || fence.NativeGrants != 1 {
-		t.Fatalf("signed URL was not outstanding: %+v %v", fence, err)
+	if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
+		t.Fatalf("broker URL unexpectedly created an outstanding native grant: %+v %v", fence, err)
 	}
 	calls := len(provider.accessed)
 	for _, test := range []struct {
@@ -59,14 +59,14 @@ func TestObjectBucketMutationAPINativeGrantAndFence(t *testing.T) {
 		t.Fatalf("fence blocked read: %d %s", response.Code, response.Body.String())
 	}
 	fence, err = e.store.ReadObjectBucketWriteFence(context.Background(), b, token)
-	if err != nil || fence.NativeGrants != 1 || fence.Requests != 0 {
+	if err != nil || fence.NativeGrants != 0 || fence.Requests != 0 {
 		t.Fatalf("failed writes or read changed grant count: %+v %v", fence, err)
 	}
 }
 
-func TestObjectBucketMutationAPIMultipartGrantsSurviveUnknownSigningOutcome(t *testing.T) {
+func TestObjectUploadGrantAPIMultipartSigningDoesNotContactProvider(t *testing.T) {
 	for _, failed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "issued", true: "lost"}[failed], func(t *testing.T) {
+		t.Run(map[bool]string{false: "provider-available", true: "provider-unavailable"}[failed], func(t *testing.T) {
 			e, provider, b, path := mutationAPIFixture(t)
 			base := path + "/multipart-uploads"
 			response := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "multipart", SizeBytes: 10}, nil)
@@ -79,16 +79,13 @@ func TestObjectBucketMutationAPIMultipartGrantsSurviveUnknownSigningOutcome(t *t
 			}
 			response = e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
 			want := 200
-			if failed {
-				want = 503
-			}
 			if response.Code != want {
 				t.Fatalf("sign = %d %s", response.Code, response.Body.String())
 			}
 			token := uuid.NewString()
 			fence, err := e.store.AcquireObjectBucketWriteFence(context.Background(), b, token)
-			if err != nil || fence.Requests != 0 || fence.NativeGrants != 1 {
-				t.Fatalf("signing response incorrectly drained native upload capability: %+v %v", fence, err)
+			if err != nil || fence.Requests != 0 || fence.NativeGrants != 0 {
+				t.Fatalf("broker signing unexpectedly created a native upload capability: %+v %v", fence, err)
 			}
 			calls := len(provider.accessed)
 			response = e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)

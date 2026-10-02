@@ -178,6 +178,7 @@ type MemStore struct {
 	objectBuckets             map[string]ObjectBucket
 	objectMutations           map[string]ObjectBucketMutation
 	objectWriteFences         map[string]ObjectBucketWriteFence
+	objectUploadGrants        map[string]ObjectUploadGrant
 	objectUsage               map[string]ObjectBucketUsage
 	objectGrants              map[string]map[string]int64
 	objectReports             []api.ObjectStorageUsageReport

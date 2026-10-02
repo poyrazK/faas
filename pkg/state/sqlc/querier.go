@@ -1215,6 +1215,10 @@ type Querier interface {
 	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error
 	ObjectStorageProviderRequestIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestIncrementParams) error
 	ObjectStorageProviderRequestMetrics(ctx context.Context, db DBTX, arg ObjectStorageProviderRequestMetricsParams) ([]ObjectStorageProviderRequestMetricsRow, error)
+	ObjectUploadGrantClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	ObjectUploadGrantInsert(ctx context.Context, db DBTX, arg ObjectUploadGrantInsertParams) (ObjectStorageUploadGrant, error)
+	ObjectUploadGrantPrune(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
+	ObjectUploadGrantResolve(ctx context.Context, db DBTX, tokenHash string) (ObjectStorageUploadGrant, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
 	ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

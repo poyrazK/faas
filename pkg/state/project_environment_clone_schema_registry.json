@@ -407,6 +407,8 @@
     "columns": ["access_key_id", "account_id", "bucket_id", "created_at", "id", "kid", "label", "last_used_at", "managed_app_id", "managed_prefix", "managed_scope", "permission", "revoked_at", "rotation_parent_id", "rotation_stamped_at", "rotation_wake_id", "secret_sealed", "status"]},
   {"table": "object_storage_usage_heads", "kind": "operational",
     "columns": ["account_id", "backend_id", "observed_at", "period_start"]},
+  {"table": "object_storage_upload_grants", "kind": "operational",
+    "columns": ["account_id", "app_id", "backend_fingerprint", "backend_id", "bucket_id", "created_at", "expires_at", "headers", "id", "kind", "object_key", "part_number", "physical_name", "provider_upload_id", "size_bytes", "token_hash", "upload_id"]},
   {"table": "object_storage_usage_reports", "kind": "operational",
     "columns": ["account_id", "backend_fingerprint", "backend_id", "cost_millicents", "egress_bytes", "observed_at", "period_start", "request_count", "source", "stored_byte_hours"]},
   {"table": "object_upload_completions", "kind": "operational",

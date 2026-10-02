@@ -20101,6 +20101,146 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 	return items, nil
 }
 
+const objectUploadGrantClock = `-- name: ObjectUploadGrantClock :one
+SELECT clock_timestamp()::timestamptz AS at
+`
+
+func (q *Queries) ObjectUploadGrantClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, objectUploadGrantClock)
+	var at pgtype.Timestamptz
+	err := row.Scan(&at)
+	return at, err
+}
+
+const objectUploadGrantInsert = `-- name: ObjectUploadGrantInsert :one
+WITH receipt_clock AS (SELECT clock_timestamp() AS at)
+INSERT INTO object_storage_upload_grants
+(id,bucket_id,account_id,app_id,token_hash,kind,object_key,size_bytes,headers,upload_id,provider_upload_id,part_number,backend_id,backend_fingerprint,physical_name,created_at,expires_at)
+SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,
+ $10,$11,$12,$13,$14,$15,
+ receipt_clock.at,LEAST(receipt_clock.at+$16::int*interval '1 second',$17::timestamptz)
+FROM receipt_clock RETURNING id, bucket_id, account_id, app_id, token_hash, kind, object_key, size_bytes, headers, upload_id, provider_upload_id, part_number, backend_id, backend_fingerprint, physical_name, created_at, expires_at
+`
+
+type ObjectUploadGrantInsertParams struct {
+	ID                 pgtype.UUID
+	BucketID           pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TokenHash          string
+	Kind               string
+	ObjectKey          string
+	SizeBytes          int64
+	Headers            []byte
+	UploadID           pgtype.UUID
+	ProviderUploadID   pgtype.Text
+	PartNumber         int32
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	TtlSeconds         int32
+	ExpiryCap          pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectUploadGrantInsert(ctx context.Context, db DBTX, arg ObjectUploadGrantInsertParams) (ObjectStorageUploadGrant, error) {
+	row := db.QueryRow(ctx, objectUploadGrantInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TokenHash,
+		arg.Kind,
+		arg.ObjectKey,
+		arg.SizeBytes,
+		arg.Headers,
+		arg.UploadID,
+		arg.ProviderUploadID,
+		arg.PartNumber,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.PhysicalName,
+		arg.TtlSeconds,
+		arg.ExpiryCap,
+	)
+	var i ObjectStorageUploadGrant
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.TokenHash,
+		&i.Kind,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.Headers,
+		&i.UploadID,
+		&i.ProviderUploadID,
+		&i.PartNumber,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const objectUploadGrantPrune = `-- name: ObjectUploadGrantPrune :execrows
+WITH expired AS (
+ SELECT id FROM object_storage_upload_grants WHERE expires_at<=clock_timestamp()
+ ORDER BY expires_at,id FOR UPDATE SKIP LOCKED LIMIT $1::int
+)
+DELETE FROM object_storage_upload_grants g USING expired WHERE g.id=expired.id
+`
+
+func (q *Queries) ObjectUploadGrantPrune(ctx context.Context, db DBTX, batchLimit int32) (int64, error) {
+	result, err := db.Exec(ctx, objectUploadGrantPrune, batchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectUploadGrantResolve = `-- name: ObjectUploadGrantResolve :one
+SELECT g.id, g.bucket_id, g.account_id, g.app_id, g.token_hash, g.kind, g.object_key, g.size_bytes, g.headers, g.upload_id, g.provider_upload_id, g.part_number, g.backend_id, g.backend_fingerprint, g.physical_name, g.created_at, g.expires_at FROM object_storage_upload_grants g
+JOIN object_buckets b ON b.id=g.bucket_id AND b.account_id=g.account_id AND b.app_id=g.app_id
+ AND b.backend_id=g.backend_id AND b.backend_fingerprint=g.backend_fingerprint AND b.physical_name=g.physical_name
+WHERE g.token_hash=$1 AND g.expires_at>clock_timestamp() AND b.state='ready'
+ AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+  SELECT 1 FROM project_environment_clone_operations o WHERE o.id=b.environment_clone_operation_id
+   AND o.account_id=b.account_id AND o.target_environment=b.scope AND o.status='ready'))
+ AND (g.kind='put' OR EXISTS (
+  SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=g.upload_id AND u.bucket_id=b.id AND u.app_id=b.app_id AND u.account_id=b.account_id
+   AND u.object_key=g.object_key AND u.provider_upload_id=g.provider_upload_id AND u.state='active' AND u.expires_at>clock_timestamp()
+   AND u.part_count>0 AND g.part_number<=u.part_count
+   AND g.size_bytes=CASE WHEN g.part_number=u.part_count THEN u.size_bytes-u.part_size_bytes*(u.part_count-1) ELSE u.part_size_bytes END))
+`
+
+func (q *Queries) ObjectUploadGrantResolve(ctx context.Context, db DBTX, tokenHash string) (ObjectStorageUploadGrant, error) {
+	row := db.QueryRow(ctx, objectUploadGrantResolve, tokenHash)
+	var i ObjectStorageUploadGrant
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.TokenHash,
+		&i.Kind,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.Headers,
+		&i.UploadID,
+		&i.ProviderUploadID,
+		&i.PartNumber,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `

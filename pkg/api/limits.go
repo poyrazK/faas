@@ -145,6 +145,13 @@ const (
 	MaxMultipartParts                         = 10000
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
+
+	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
+	DefaultObjectSignedURLExpiresSeconds = 300
+	MaxObjectSignedURLExpiresSeconds     = 900
+	ObjectUploadGrantMaxHeaderBytes      = 16 << 10
+	ObjectUploadGrantPruneBatch          = 1000
+
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.

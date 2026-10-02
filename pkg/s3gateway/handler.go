@@ -230,6 +230,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
 		return
 	}
+	if r.URL.Query().Has(UploadGrantQueryParameter) {
+		h.serveUploadGrant(w, r, requestID)
+		return
+	}
 	var parsed sigV4Request
 	var presigned bool
 	var err error

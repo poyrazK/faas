@@ -622,9 +622,7 @@ func (s *server) signAuthorizedBucketObject(w http.ResponseWriter, r *http.Reque
 
 func (s *server) presignBucketObject(ctx context.Context, b state.ObjectBucket, provider objectstorage.Provider, req objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
 	if req.Method == http.MethodPut {
-		if _, err := objectstorageactivity.Begin(ctx, s.store, b, state.ObjectBucketMutationNativeGrant); err != nil {
-			return objectstorage.SignedRequest{}, err
-		}
+		return s.mintObjectPutGrant(ctx, b, req)
 	}
 	return provider.Presign(ctx, b.PhysicalName, req)
 }

@@ -205,6 +205,15 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
 		return
 	}
+	h.proxyMultipartPart(w, r, req, upload, int32(part64))
+}
+
+func (h *Handler) proxyMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, part int32) {
+	key := upload.Key
+	if r.ContentLength < 1 || r.ContentLength > min(h.registry.MaxUploadBytes, api.MaxObjectSinglePutBytes) {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return
+	}
 	if !h.admit(w, r, req, key, 0, false) {
 		return
 	}
@@ -217,7 +226,7 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	signed, err := req.provider.PresignMultipartPart(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartPartRequest{
-		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: int32(part64), SizeBytes: r.ContentLength, ExpiresIn: 60,
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: r.ContentLength, ExpiresIn: 60,
 	})
 	if err != nil {
 		h.providerError(w, r, req, err, key)

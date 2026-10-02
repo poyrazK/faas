@@ -186,6 +186,16 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	guard, err := h.admitTrackedObjectWrite(r.Context(), bucket)
+	if err != nil {
+		uploadProblem(w, http.StatusServiceUnavailable, "upload destination writes are temporarily unavailable")
+		return
+	}
+	defer func() {
+		if err := guard.finishUnsent(r.Context()); err != nil {
+			h.log.Warn("unsent upload writer receipt completion failed")
+		}
+	}()
 	completion := state.ObjectUploadCompletion{ID: uuid.NewString(), RouteID: route.ID, AccountID: app.AccountID, AppID: app.ID, BucketID: bucket.ID, SubjectID: subject, Key: objectKey, Bytes: r.ContentLength, ContentType: contentType, RequestID: r.Header.Get("X-Request-ID"), IdempotencyKey: idempotencyKey, RequestFingerprint: requestFingerprint, Status: "pending", CreatedAt: h.now()}
 	if idempotencyKey != "" {
 		intent, intentErr := h.routes.CreateObjectUploadIntent(r.Context(), completion)
@@ -202,7 +212,7 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		completion = intent
 	}
-	result, err := writer.WriteObject(r.Context(), bucket.PhysicalName, objectKey, io.LimitReader(r.Body, route.MaxBytes+1), r.ContentLength, ObjectMetadata{ContentType: contentType})
+	result, err := guard.write(r.Context(), writer, objectKey, io.LimitReader(r.Body, route.MaxBytes+1), r.ContentLength, ObjectMetadata{ContentType: contentType})
 	completion.ETag = result.ETag
 	if err != nil {
 		completion.Status = "failed"

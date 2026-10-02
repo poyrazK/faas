@@ -9325,6 +9325,41 @@ CREATE TABLE public.object_storage_s3_credentials (
 
 
 --
+-- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_upload_grants (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    token_hash text NOT NULL,
+    kind text NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    headers jsonb NOT NULL,
+    upload_id uuid,
+    provider_upload_id text,
+    part_number integer DEFAULT 0 NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_upload_grants_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:15:00'::interval)))),
+    CONSTRAINT object_storage_upload_grants_check1 CHECK ((((kind = 'put'::text) AND (upload_id IS NULL) AND (provider_upload_id IS NULL) AND (part_number = 0)) OR ((kind = 'multipart_part'::text) AND (upload_id IS NOT NULL) AND (provider_upload_id IS NOT NULL) AND (provider_upload_id <> ''::text) AND ((part_number >= 1) AND (part_number <= 10000)) AND (size_bytes > 0)))),
+    CONSTRAINT object_storage_upload_grants_headers_check CHECK ((jsonb_typeof(headers) = 'object'::text)),
+    CONSTRAINT object_storage_upload_grants_kind_check CHECK ((kind = ANY (ARRAY['put'::text, 'multipart_part'::text]))),
+    CONSTRAINT object_storage_upload_grants_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
+    CONSTRAINT object_storage_upload_grants_physical_name_check CHECK ((physical_name <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_upload_grants_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: object_storage_usage_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14627,6 +14662,22 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 
 --
+-- Name: object_storage_upload_grants object_storage_upload_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: object_storage_usage_heads object_storage_usage_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19282,6 +19333,13 @@ CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.
 --
 
 CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.object_storage_s3_credentials USING btree (rotation_parent_id) WHERE ((rotation_parent_id IS NOT NULL) AND (status = 'active'::text));
+
+
+--
+-- Name: object_storage_upload_grants_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_upload_grants USING btree (expires_at, id);
 
 
 --
@@ -24875,6 +24933,38 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_rotation_parent_id_fkey FOREIGN KEY (rotation_parent_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
 
 
 --
