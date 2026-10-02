@@ -2374,6 +2374,17 @@ message CreateAdmittedRuntimeRequest {
     CreateColdBootRequest cold_boot = 2;
     CreateFromSnapshotRequest restore = 3;
   }
+  // Complete approved producer blobs. The boot payload hash covers this set.
+  // These are source identities, not snapshot or guest-overlay approval.
+  repeated RuntimeArtifactSource artifact_sources = 4;
+}
+
+message RuntimeArtifactSource {
+  string kind = 1;
+  string workload_name = 2;
+  string storage_key = 3;
+  string digest = 4;
+  int64 bytes = 5;
 }
 
 // Native boot receipt, not image, log-delivery or live-egress convergence proof.

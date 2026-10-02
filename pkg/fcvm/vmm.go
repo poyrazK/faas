@@ -140,7 +140,8 @@ type JailerVMM struct {
 	// each instance so Kill/DestroyWithExport can Remove them on teardown.
 	// Without this, the tmp files (in /tmp) outlive the chroot and leak
 	// across thousands of wakes on a busy box.
-	materialisedTmp map[string][]string
+	materialisedTmp        map[string][]string
+	verifiedRuntimeSources *runtimeSourceCache
 	// bindMounts tracks image bind mounts used when a source and the jail
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
@@ -3177,7 +3178,8 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // Kill stops the jailer process (if any) and removes the chroot. Idempotent.
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
-func (v *JailerVMM) Kill(_ context.Context, l Lease) error {
+func (v *JailerVMM) Kill(_ context.Context, l Lease) (err error) {
+	defer func() { err = errors.Join(err, v.releaseRuntimeSources(l.Instance)) }()
 	v.cancelStartupCPUBoostTail(l.Instance)
 	v.closeGuestVsockListeners(l.Instance)
 	v.mu.Lock()

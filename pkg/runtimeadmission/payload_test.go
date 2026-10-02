@@ -13,6 +13,7 @@ func payloadFixture() *vmmdpb.CreateAdmittedRuntimeRequest {
 
 func TestBootPayloadHashCoversAllDeliveredInputs(t *testing.T) {
 	base := payloadFixture()
+	base.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{artifactSourceFixture()[0].ToProto()}
 	want, err := HashBootPayload(base)
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,11 @@ func TestBootPayloadHashCoversAllDeliveredInputs(t *testing.T) {
 		{"network", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetRestore().App.EgressPorts = []uint32{6379} }},
 		{"snapshot", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetRestore().Snapshot.VmstateStorageKey = "other" }},
 		{"paused", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetRestore().KeepPaused = true }},
+		{"artifact kind", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources[0].Kind = "full-rootfs" }},
+		{"artifact workload", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources[0].WorkloadName = "other" }},
+		{"artifact key", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources[0].StorageKey = "other" }},
+		{"artifact digest", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources[0].Digest = "other" }},
+		{"artifact size", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources[0].Bytes++ }},
 		{"variant", func(r *vmmdpb.CreateAdmittedRuntimeRequest) {
 			r.Boot = &vmmdpb.CreateAdmittedRuntimeRequest_ColdBoot{ColdBoot: &vmmdpb.CreateColdBootRequest{Instance: "instance"}}
 		}},
@@ -58,9 +64,11 @@ func TestBootPayloadRejectsUnknownControlsRecursively(t *testing.T) {
 		{"secret", func(r *vmmdpb.CreateAdmittedRuntimeRequest) proto.Message { return r.GetRestore().App.SealedEnv[0] }},
 		{"sidecar", func(r *vmmdpb.CreateAdmittedRuntimeRequest) proto.Message { return r.GetRestore().App.Sidecars[0] }},
 		{"snapshot", func(r *vmmdpb.CreateAdmittedRuntimeRequest) proto.Message { return r.GetRestore().Snapshot }},
+		{"artifact source", func(r *vmmdpb.CreateAdmittedRuntimeRequest) proto.Message { return r.ArtifactSources[0] }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := payloadFixture()
+			r.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{artifactSourceFixture()[0].ToProto()}
 			test.target(r).ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
 			if _, err := HashBootPayload(r); err == nil {
 				t.Fatal("unrecognized control hashed and ignored")

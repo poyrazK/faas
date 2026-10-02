@@ -3180,6 +3180,8 @@ type WakeRequest struct {
 	Instance string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
+	// Complete approved source identities; only WakeAdmitted accepts them.
+	ArtifactSources []runtimeadmission.ArtifactSource `json:"artifact_sources,omitempty"`
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -3856,6 +3858,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if req.admission == nil && len(req.ArtifactSources) != 0 {
+		return nil, runtimeadmission.ErrInvalid
+	}
 	// Admitted wakes hold the same gate in their wrapper through native
 	// receipt publication. Reacquiring it could deadlock behind a writer.
 	if req.admission == nil {
@@ -4682,7 +4687,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
+	// A frozen writable snapshot is not the original approved producer blob.
+	// Until snapshot lineage is bound, verified-source requests use cold boot.
+	if len(req.ArtifactSources) == 0 && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
@@ -4834,7 +4841,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		AppTask:            req.AppTaskOnly,
 	}
 	coldBootStartedAt := time.Now()
-	coldBootErr := m.vmm.BootColdBoot(ctx, lease, spec)
+	coldBootErr := m.bootColdBootWithSources(ctx, lease, spec, req.ArtifactSources)
 	if timings != nil {
 		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
 	}

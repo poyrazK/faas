@@ -169,6 +169,10 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	// Explicit bound identity is authoritative; correlation metadata cannot
 	// change the deployment behind the boot digest.
 	wr.DeploymentID = b.DeploymentID
+	wr.ArtifactSources, err = runtimeadmission.ArtifactSourcesFromProto(req.ArtifactSources)
+	if err != nil || fcvm.CheckWakeArtifactSources(wr) != nil {
+		return empty, 0, "", runtimeadmission.ErrInvalid
+	}
 	nativeHash, err := fcvm.NativeWakeInputHash(wr)
 	if err != nil {
 		return empty, 0, "", err

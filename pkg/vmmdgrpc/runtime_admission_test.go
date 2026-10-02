@@ -123,6 +123,10 @@ func TestCreateAdmittedRuntimeMalformedNeverReachesBackend(t *testing.T) {
 		{"port overflow", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetColdBoot().App.EgressPorts = []uint32{70000} }, true, codes.InvalidArgument},
 		{"forbidden port", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetColdBoot().App.EgressPorts = []uint32{25} }, true, codes.InvalidArgument},
 		{"builder", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.GetColdBoot().Build = &vmmdpb.BuildSpec{} }, true, codes.InvalidArgument},
+		{"incomplete source set", func(r *vmmdpb.CreateAdmittedRuntimeRequest) {
+			r.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{{Kind: "app-layer", StorageKey: "layer", Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 10}}
+		}, true, codes.InvalidArgument},
+		{"nil source", func(r *vmmdpb.CreateAdmittedRuntimeRequest) { r.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{nil} }, false, codes.InvalidArgument},
 		{"unknown nested control", func(r *vmmdpb.CreateAdmittedRuntimeRequest) {
 			r.GetColdBoot().App.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
 		}, false, codes.InvalidArgument},
@@ -138,6 +142,32 @@ func TestCreateAdmittedRuntimeMalformedNeverReachesBackend(t *testing.T) {
 				t.Fatalf("resp=%v err=%v nativeCalls=%d", resp, err, len(v.requests))
 			}
 		})
+	}
+}
+
+func TestCreateAdmittedRuntimeDeliversExactOwnedSourceInputs(t *testing.T) {
+	s, v, req := admittedRPCFixture(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	req.ArtifactSources = []*vmmdpb.RuntimeArtifactSource{{Kind: "base-image", StorageKey: "base", Digest: digest, Bytes: 10}, {Kind: "app-layer", StorageKey: "layer", Digest: digest, Bytes: 20}}
+	rehashAdmittedRequest(t, req)
+	resp, err := s.CreateAdmittedRuntime(admittedRPCContext(t), req)
+	if err != nil || resp == nil || len(v.requests) != 1 {
+		t.Fatalf("native transport err=%v", err)
+	}
+	native := v.requests[0]
+	if len(native.Request.ArtifactSources) != 2 || native.Request.ArtifactSources[1].Bytes != 20 {
+		t.Fatal("native projection lost approved bytes")
+	}
+	hash, err := fcvm.NativeWakeInputHash(native.Request)
+	if err != nil || hash != native.NativeInputHash {
+		t.Fatal("native digest omitted source inputs")
+	}
+	req.ArtifactSources[1].Bytes++
+	if native.Request.ArtifactSources[1].Bytes != 20 {
+		t.Fatal("native source set aliases the wire request")
+	}
+	if _, err := s.CreateAdmittedRuntime(admittedRPCContext(t), req); status.Code(err) != codes.InvalidArgument || len(v.requests) != 1 {
+		t.Fatal("changed source retained its boot grant")
 	}
 }
 

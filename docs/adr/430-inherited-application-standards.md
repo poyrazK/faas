@@ -437,6 +437,41 @@ accidental alternate writers; the trusted imaged/database writer boundary is
 not a cryptographic database attestation. Parent erasure cascades delete the
 retained evidence.
 
+## Protected native source staging
+
+Private scheduler boot requests now deliver the captured base, main and sidecar
+producer blob identities inside the complete hashed boot envelope. vmmd checks
+that the set contains exactly one source for every drive, with distinct canonical
+storage keys and bounded complete-blob sizes. A runtime-default base without
+producer evidence is not exempted. Empty legacy envelopes gain no image evidence.
+The existing immutable protocol-1 grants and receipts retain their interpretation.
+
+The native manager requires an explicit verified-source backend before allocating
+a lease. JailerVMM reads each complete source through Storage.Get, hashes the same
+bounded stream copied into a private native-owned file, and checks digest and byte
+count before kernel staging or Firecracker launch. LocalPath and LocalFileLinker
+shortcuts cannot borrow a mutable backend inode. Cancellation closes and joins a
+blocked reader; failed or partial preparation releases earlier source references.
+Concurrent consumers share the sealed read-only base inode. Each writable main
+drive still receives its own copy or CoW clone before runtime-file injection;
+the two-drive guest overlay and read-only sidecar contract remain unchanged.
+
+Source verification is not snapshot approval. A request carrying these identities
+currently uses verified cold boot even when a snapshot cache entry exists. A
+paused restore refuses before allocation, because its frozen writable drive has
+no bound source-to-snapshot lineage yet. Restoring that capability with verified
+snapshot artifacts and promoting the exact retained lease remain full-feature
+requirements; the cold-boot restriction is an interim implementation boundary.
+
+No source receipt is echoed as image consumption or observed adoption. The native
+input digest includes the delivered source identities but is not a digest of the
+final injected drives or Firecracker's consumed bytes. Whole guest-overlay scans,
+default-base and source-build publisher approval, snapshot lineage, durable
+consumer acknowledgments, restart recovery for retained sealed-source files, and
+dedicated Linux ext4/KVM/leakcheck acceptance remain release gates. Public standard
+activation remains disabled. Portable stream and adapter tests establish only the
+boundaries described here.
+
 ## Acceptance checklist
 
 - [x] PostgreSQL and MemStore versioning, tenancy, immutable hashes and parity.

@@ -305,3 +305,16 @@ These are registry-source records. Historical reads can return revoked or expire
 evidence and therefore do not authorize runtime admission. Converted rootfs bytes,
 source-build approval, per-workload scan evidence, live immutable-subject refresh
 and native proof consumption remain acceptance work before standard activation.
+
+Private managed boot requests now carry captured producer digest and complete
+byte count for the base, application layer and sidecars. vmmd verifies each
+complete storage stream into a protected source before staging the VM, while
+sharing the read-only base and preserving a private writable application drive.
+Mutable local storage paths cannot replace a verified source afterward.
+
+This source check currently requires verified cold boot; paused snapshot restores
+remain unavailable until snapshot lineage is bound. Source staging does not
+approve the final guest overlay, acknowledge physical consumption, or advance an
+application's observed standard version. Snapshot restoration and promotion,
+retained-source restart cleanup, and native acceptance remain necessary before
+public activation.

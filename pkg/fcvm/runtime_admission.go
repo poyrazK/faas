@@ -114,6 +114,9 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 	if err != nil || hash != request.NativeInputHash || req.Instance != binding.InstanceID || req.AppID != binding.AppID || req.DeploymentID != binding.DeploymentID || req.AccountID != binding.AccountID || req.ExecutionOnly || req.AppTaskOnly || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.KeepPaused && req.Snapshot == nil {
 		return nil, runtimeadmission.Receipt{}, runtimeadmission.ErrInvalid
 	}
+	if err := m.checkAdmittedArtifactSources(req); err != nil {
+		return nil, runtimeadmission.Receipt{}, err
+	}
 	flightCtx, cancel := context.WithDeadline(ctx, time.Unix(0, binding.ExpiresAtUnixNano))
 	defer cancel()
 	flight := &runtimeAdmissionFlight{ctx: flightCtx, cancel: cancel, done: make(chan struct{})}
