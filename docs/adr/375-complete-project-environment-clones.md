@@ -3956,3 +3956,81 @@ refuses rows with deletion intent or observation. Full repository, live-provider
 independent SQL/data import, successful capture disposal, object/common-point
 consistency, full configuration coverage, promotion/rollback and native acceptance
 remain open. This increment does not enable complete stage cloning.
+
+### PostgreSQL shared-catalogue copy inventory (2026-10-03)
+
+Database materialization now has a private SQLC reader for cluster-wide metadata
+on an independently authenticated capture connection. A single database archive
+does not cover these resources: PostgreSQL documents
+[`pg_dump`](https://www.postgresql.org/docs/current/app-pgdump.html) as a
+per-database export and directs global objects to a separate cluster export.
+The new inventory is input to that copy plan; it is not an export/import or
+checkpoint-completeness receipt.
+
+All database catalogue entries are read, including templates, provider/system
+databases, closed databases and copied private maintenance resources. The reader
+records ownership, ACLs, encoding, collation/locale/version, connection admission,
+connection limits and tablespace identity. It also reads roles and their flags,
+role memberships including grantor and ADMIN/INHERIT/SET authority, tablespace
+ownership/ACL/options, prepared transactions, and all database/role/role-in-database
+settings from
+[`pg_db_role_setting`](https://www.postgresql.org/docs/16/catalog-pg-db-role-setting.html).
+The subsequent plan must explicitly classify every entry, including provider and
+maintenance resources; none is filtered out merely because it is not a usual app
+database. Prepared transactions cannot be recreated by a database dump and must
+remain a named qualification blocker unless a qualified strategy handles them.
+Physical tablespace paths require target-specific mapping.
+
+The inventory reflects the capture's actual catalogues, including temporary
+writer-barrier admission changes. Copy planning must recover original admission
+from the authenticated fence receipt when deriving logical target configuration;
+it cannot treat temporary closure as the customer's intended connection policy.
+
+The reader checks frozen SQL database/role names and OIDs and the expected server
+major. It rejects a changed session role or an already active caller transaction.
+Every read uses one read-only repeatable-read transaction and transaction-local
+`pg_catalog` search path, which cannot be hijacked by application objects or
+persistently change the source's settings. Borrowed session state is restored on
+commit or rollback. Catalogue references are checked against the complete role,
+database and tablespace inventory. OIDs are source replacement detectors and
+must never be reused as target physical identities. Provider branch/endpoint and
+snapshot-point authentication remain separate caller obligations; SQL OIDs alone
+cannot establish the correct fork or common data point.
+
+Role/database configuration can contain customer secrets. The private payload
+uses a domain-separated HMAC-SHA256 fingerprint with an operation-scoped key;
+ordinary JSON and formatted output expose counts and the fingerprint only.
+The explicit payload export must go through authenticated encryption with the
+operation's scope before persistence. Recovery requires authenticated decryption,
+the original fingerprint/key and SQL identity pins; it validates the payload
+shape and recovers it without rereading today's source. Passwords and password
+hashes are not read. New target credential generation and explicit role/binding
+substitutions are still required, rather than silently omitting login roles.
+
+Version-dependent catalogue fields are read through JSON probes. Membership
+INHERIT/SET authority follows the actual per-grant fields on PostgreSQL 16+
+([catalogue definition](https://www.postgresql.org/docs/16/catalog-pg-auth-members.html));
+older membership catalogues lack those fields
+([PostgreSQL 14 definition](https://www.postgresql.org/docs/14/catalog-pg-auth-members.html)),
+so the reader records member-role INHERIT and permitted SET behavior. Locale
+fields likewise tolerate supported older catalogue layouts. This does not
+qualify the still-open PostgreSQL 14/15 private-maintenance bootstrap or any
+unrun version's complete copy path.
+
+Verification: three contracts pass against the private PostgreSQL 16 server
+(1.002 s, no skips), using fresh databases and unprivileged login roles. They
+exercise a database with connections disabled, database ACL/limits/locale,
+cluster-role and closed-database settings, membership authority, stable keyed
+fingerprints and config drift, secret/password redaction, malicious search paths,
+wrong identity/major pins, caller transactions and cancellation. Private payload
+recovery succeeds after the source connection closes and rejects changed config,
+identity, key, fingerprint, version, unknown fields and trailing JSON. Real
+catalogue reads caught and fixed the database encoding column name and the JSON
+representation of PostgreSQL OIDs; numeric OID casts now decode without losing
+identity. Vet and whitespace checks pass. Independent SQLC regeneration matches
+all three packages byte-for-byte (thirteen files), preserving the prior generated
+state and connection-fence packages. All owned test roles/databases were removed
+and the bootstrap remains unmigrated. Provider IO, other PostgreSQL versions,
+per-database schema/data/background inventory, sealed durable capture integration,
+export/import, final dataset verification, full repository and native acceptance
+remain unverified. Complete clone admission remains closed.

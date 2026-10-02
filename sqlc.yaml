@@ -29,6 +29,20 @@ sql:
         rename:
           id: "ID"
 
+  # Complete copy planning reads customer-cluster metadata independently of the
+  # control plane. These offline catalogue declarations are never installed.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/copyinventory/queries.sql"
+    schema: "pkg/managedpostgres/copyinventory/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/copyinventory/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Customer cluster maintenance SQL is separate from control-plane state.
   - engine: "postgresql"
     queries:
