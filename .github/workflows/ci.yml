@@ -231,6 +231,9 @@ jobs:
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
 
+      - name: signed component hotfix controller contracts
+        run: python3 -m unittest discover -s scripts/ops -p 'request_evidence_hotfix_test.py' -v
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just

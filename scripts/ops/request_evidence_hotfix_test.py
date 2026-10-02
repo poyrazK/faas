@@ -2,7 +2,10 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -16,6 +19,110 @@ import request_evidence_hotfix_host as host
 
 
 class HotfixContracts(unittest.TestCase):
+    def test_real_ssh_failure_retains_safe_diagnostics_without_process_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh = Path(tmp) / 'ssh'
+            ssh.write_text('#!' + sys.executable + '\n'
+                           'import sys\n'
+                           'print("private stdout must not enter the receipt")\n'
+                           'print("ssh: connect to host fsn-2.gregale.dev port 22: Connection refused", file=sys.stderr)\n'
+                           'print("private stderr must not enter the receipt", file=sys.stderr)\n'
+                           'sys.exit(255)\n')
+            ssh.chmod(0o700)
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                controller.run([str(ssh), '-i', 'private-key-path', 'root@fsn-2.gregale.dev',
+                                'private remote command'], input='private stdin')
+        details = controller.failure_details(raised.exception)
+        self.assertEqual(details, {'error_type': 'CalledProcessError', 'command': 'ssh',
+                                  'returncode': 255, 'target': 'fsn-2.gregale.dev',
+                                  'diagnostic': 'connection_refused'})
+        self.assertNotIn('private', json.dumps(details))
+
+    def test_ssh_diagnostics_classify_common_failures_without_echoing_banners(self):
+        cases = [
+            ('Permission denied (publickey).', 'authentication_failed'),
+            ('Connection timed out', 'connection_timed_out'),
+            ('Could not resolve hostname secret-name', 'name_resolution_failed'),
+            ('Host key verification failed.', 'host_key_verification_failed'),
+            ('WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!', 'host_key_verification_failed'),
+            ('No route to host', 'network_unreachable'),
+            ('Connection reset by peer', 'connection_closed'),
+            ('Load key "secret-path": invalid format', 'key_load_failed'),
+            ('exec request failed on channel 0', 'remote_command_rejected'),
+            ('arbitrary secret banner\x1b[31m', 'ssh_failed'),
+        ]
+        for stderr, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic, stderr=stderr):
+                error = subprocess.CalledProcessError(255, ['ssh', 'root@fsn-2.gregale.dev'],
+                                                      stderr=stderr.encode())
+                details = controller.failure_details(error)
+                self.assertEqual(details['diagnostic'], diagnostic)
+                self.assertNotIn('secret', json.dumps(details))
+                self.assertNotIn('\x1b', json.dumps(details))
+
+    def test_real_process_timeout_retains_limit_and_never_echoes_output(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as raised:
+            controller.run([sys.executable, '-c',
+                            'import time; print("secret", flush=True); time.sleep(5)'], timeout=0.1)
+        details = controller.failure_details(raised.exception)
+        self.assertEqual(details['diagnostic'], 'process_timeout')
+        self.assertEqual(details['timeout_seconds'], 0.1)
+        self.assertNotIn('secret', json.dumps(details))
+        self.assertNotIn('time.sleep', json.dumps(details))
+
+    def test_remote_exit_is_not_misclassified_as_ssh_authentication_failure(self):
+        error = subprocess.CalledProcessError(1, ['ssh', 'root@fsn-2.gregale.dev'],
+                                              stderr='Traceback: Permission denied reading a remote file')
+        details = controller.failure_details(error)
+        self.assertEqual(details['diagnostic'], 'remote_command_failed')
+        self.assertEqual(details['returncode'], 1)
+
+    def test_failed_inspection_records_and_prints_only_safe_process_details(self):
+        error = subprocess.CalledProcessError(255, ['ssh', 'root@fsn-2.gregale.dev'],
+                                              output='secret output', stderr='Permission denied (publickey). secret')
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt = Path(tmp) / 'receipt.json'
+            stderr = io.StringIO()
+            with patch.object(controller, 'RECEIPT', receipt), \
+                 patch.object(controller, 'qualify', side_effect=error), \
+                 patch.dict(os.environ, {'HOTFIX_TAG': 'v0.1.18-rc.232', 'COMPUTE_SSH_KEY': 'unused'}), \
+                 patch.object(sys, 'argv', ['inspector', '--cosign', 'unused']), \
+                 patch.object(sys, 'stderr', stderr), \
+                 patch.object(controller.signal, 'signal'), \
+                 patch.object(controller, 'deploy') as deploy:
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    controller.main()
+            self.assertIs(raised.exception, error)
+            deploy.assert_not_called()
+            value = json.loads(receipt.read_text())
+        self.assertEqual(value['status'], 'failed')
+        failure = value['events'][-1]['result']
+        self.assertEqual(failure['returncode'], 255)
+        self.assertEqual(failure['target'], 'fsn-2.gregale.dev')
+        self.assertEqual(failure['diagnostic'], 'authentication_failed')
+        self.assertEqual(json.loads(stderr.getvalue()), {'failure': failure})
+        self.assertNotIn('secret', json.dumps(value) + stderr.getvalue())
+
+    def test_rollback_failure_retains_diagnostic_without_masking_original_failure(self):
+        original = RuntimeError('ingress failed')
+        events = []
+        rollback_error = subprocess.CalledProcessError(255, ['ssh', 'root@fsn-2.gregale.dev'],
+                                                       stderr='Connection timed out; secret')
+        def remote(target, action):
+            if action == 'rollback':
+                raise rollback_error
+            return {'status': action}
+        def gate():
+            raise original
+        with self.assertRaises(RuntimeError) as raised:
+            controller.deploy(remote, lambda _: None, gate, lambda target, value: events.append((target, value)))
+        self.assertIs(raised.exception, original)
+        failures = next(value for target, value in events if target == 'rollback_failures')
+        self.assertEqual(failures[0]['target'], 'fsn-2.gregale.dev')
+        self.assertEqual(failures[0]['returncode'], 255)
+        self.assertEqual(failures[0]['diagnostic'], 'connection_timed_out')
+        self.assertNotIn('secret', json.dumps(failures))
+
     def test_github_api_helper_does_not_depend_on_gh_cli(self):
         with patch.object(controller, 'github_get', return_value=b'{"workflow_runs":[]}') as get:
             self.assertEqual(controller.api('actions/runs?per_page=100'), {'workflow_runs': []})

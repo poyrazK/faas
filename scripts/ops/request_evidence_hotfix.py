@@ -32,6 +32,52 @@ def run(args, timeout=600, **kwargs):
     return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=timeout, **kwargs)
 
 
+def failure_details(error):
+    """Retain process facts and known SSH diagnostics, never raw process data."""
+    details = {'error_type': type(error).__name__}
+    if not isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        return details
+    args = error.cmd if isinstance(error.cmd, (list, tuple)) else []
+    command = Path(args[0]).name if args else ''
+    details['command'] = command if command in {'ssh', 'scp', 'ssh-keyscan', 'ssh-keygen', 'curl'} else 'subprocess'
+    for target, _ in TARGETS:
+        if any(arg == 'root@' + target or str(arg).startswith('root@' + target + ':') for arg in args):
+            details['target'] = target
+            break
+    if isinstance(error, subprocess.TimeoutExpired):
+        details.update(timeout_seconds=error.timeout, diagnostic='process_timeout')
+        return details
+    details['returncode'] = error.returncode
+    if command not in {'ssh', 'scp', 'ssh-keyscan'}:
+        return details
+    if command == 'ssh' and error.returncode != 255:
+        details['diagnostic'] = 'remote_command_failed'
+        return details
+    stderr = error.stderr or ''
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode('utf-8', errors='replace')
+    # Bound classification work and use static labels rather than echoing an SSH
+    # banner, remote traceback, credentials, argv, stdin or captured stdout.
+    stderr = stderr[:8192].casefold()
+    diagnostics = [
+        (('host key verification failed', 'remote host identification has changed'), 'host_key_verification_failed'),
+        (('permission denied', 'too many authentication failures'), 'authentication_failed'),
+        (('connection refused',), 'connection_refused'),
+        (('connection timed out', 'operation timed out'), 'connection_timed_out'),
+        (('could not resolve hostname',), 'name_resolution_failed'),
+        (('network is unreachable', 'no route to host'), 'network_unreachable'),
+        (('connection closed', 'connection reset', 'broken pipe'), 'connection_closed'),
+        (('load key ', 'error loading key'), 'key_load_failed'),
+        (('exec request failed', 'subsystem request failed'), 'remote_command_rejected'),
+    ]
+    details['diagnostic'] = 'ssh_failed' if error.returncode == 255 else 'remote_command_failed'
+    for needles, diagnostic in diagnostics:
+        if any(needle in stderr for needle in needles):
+            details['diagnostic'] = diagnostic
+            break
+    return details
+
+
 class GithubRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Keep the workflow token on api.github.com, never on asset storage hosts."""
 
@@ -181,7 +227,7 @@ def deploy(remote, upload, public_gate, record):
             try:
                 record(target, remote(target, 'rollback'))
             except BaseException as error:
-                failures.append({'target': target, 'error_type': type(error).__name__})
+                failures.append({**failure_details(error), 'target': target})
         if failures:
             record('rollback_failures', failures)
         raise
@@ -260,7 +306,9 @@ def main():
                             'live_scenario_acceptance_pending': True})
     except BaseException as error:
         receipt['status'] = 'failed'
-        record('failure', {'error_type': type(error).__name__})
+        failure = failure_details(error)
+        record('failure', failure)
+        print(json.dumps({'failure': failure}), file=sys.stderr)
         raise
     print(json.dumps(receipt, indent=2))
 
