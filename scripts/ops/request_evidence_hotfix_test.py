@@ -77,6 +77,12 @@ class HotfixContracts(unittest.TestCase):
         self.assertEqual(details['diagnostic'], 'remote_command_failed')
         self.assertEqual(details['returncode'], 1)
 
+    def test_failed_keyscan_does_not_claim_a_remote_command_was_run(self):
+        error = subprocess.CalledProcessError(1, ['ssh-keyscan', 'fsn-2.gregale.dev'], stderr='')
+        details = controller.failure_details(error)
+        self.assertEqual(details['diagnostic'], 'host_key_scan_failed')
+        self.assertEqual(details['returncode'], 1)
+
     def test_failed_inspection_records_and_prints_only_safe_process_details(self):
         error = subprocess.CalledProcessError(255, ['ssh', 'root@fsn-2.gregale.dev'],
                                               output='secret output', stderr='Permission denied (publickey). secret')

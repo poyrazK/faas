@@ -70,7 +70,11 @@ def failure_details(error):
         (('load key ', 'error loading key'), 'key_load_failed'),
         (('exec request failed', 'subsystem request failed'), 'remote_command_rejected'),
     ]
-    details['diagnostic'] = 'ssh_failed' if error.returncode == 255 else 'remote_command_failed'
+    details['diagnostic'] = 'ssh_failed' if error.returncode == 255 else {
+        'ssh': 'remote_command_failed',
+        'scp': 'ssh_transfer_failed',
+        'ssh-keyscan': 'host_key_scan_failed',
+    }[command]
     for needles, diagnostic in diagnostics:
         if any(needle in stderr for needle in needles):
             details['diagnostic'] = diagnostic
