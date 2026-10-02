@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"os"
 	"testing"
 )
 
@@ -35,5 +36,15 @@ func TestLedgerRecoveryOptions(t *testing.T) {
 				t.Fatalf("mode=%q, want %q", options.Recovery, tc.recovery)
 			}
 		})
+	}
+}
+
+func TestMigrationHelpDoesNotOpenDatabase(t *testing.T) {
+	previous := os.Args
+	os.Args = []string{"migrate", "-help"}
+	defer func() { os.Args = previous }()
+	t.Setenv("DATABASE_URL", "invalid database configuration")
+	if err := run(); err != nil {
+		t.Fatalf("help must succeed before reading database configuration: %v", err)
 	}
 }

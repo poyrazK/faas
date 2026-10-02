@@ -42,6 +42,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -59,6 +61,9 @@ func main() {
 func run() error {
 	options, err := parseMigrationOptions(os.Args[1:], os.Stderr)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
