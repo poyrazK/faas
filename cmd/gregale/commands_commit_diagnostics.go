@@ -164,12 +164,14 @@ func inspectCommitEvent(ctx context.Context, client commitReadClient, sourceID, 
 	receipt, err := client.GetCommitReceipt(ctx, sourceID, event)
 	if err == nil {
 		out.Receipt, out.Acceptance = &receipt, "accepted"
+		out.Observation = "Durable Gregale acceptance; the execution status and customer transaction outcome have not been established."
 		workID := receipt.OperationID
 		if workID == "" {
 			workID = receipt.InvocationID
 		}
 		operation, err := client.GetCommitOperation(ctx, workID)
 		if err != nil {
+			out.Action = "Retry the execution-status read; durable acceptance has been observed."
 			return out, err
 		}
 		out.Operation, out.Execution = &operation, operation.State
@@ -235,10 +237,13 @@ func cmdCommitInspect(verb string, args []string) int {
 	defer stop()
 	if verb == "inspect" {
 		out, err := inspectCommitEvent(ctx, client, positional[0], positional[1], time.Now().UTC())
+		if code := jsonOut(writeJSON(out)); code != 0 {
+			return code
+		}
 		if err != nil {
 			return printErr("Cannot inspect Commit event", err)
 		}
-		return jsonOut(writeJSON(out))
+		return 0
 	}
 	out, err := waitCommitEvent(ctx, client, positional[0], positional[1], *until, *interval)
 	if code := jsonOut(writeJSON(out)); code != 0 {
@@ -254,10 +259,16 @@ func cmdCommitInspect(verb string, args []string) int {
 }
 
 func waitCommitEvent(ctx context.Context, client commitReadClient, source, event, until string, interval time.Duration) (commitEventInspection, error) {
-	var last commitEventInspection
+	last := commitEventInspection{EventID: event, DatabaseCommit: "unknown", Acceptance: "unknown", Execution: "unknown", Observation: "No durable observations have been read."}
 	for {
 		out, err := inspectCommitEvent(ctx, client, source, event, time.Now().UTC())
 		if err != nil {
+			if out.Receipt != nil {
+				if until == "accepted" {
+					return out, nil
+				}
+				return out, err
+			}
 			return last, err
 		}
 		last = out

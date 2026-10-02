@@ -55,14 +55,14 @@ func TestCommitInspectionPreservesUnknownAndRetainedFacts(t *testing.T) {
 		{"unrelated 404 is an error", commitInspectionClient{source: source, receiptErr: &APIError{Problem: api.Problem{Status: 404, Code: "route_not_found"}}}, "", "", "", true},
 		{"retained completion wins", commitInspectionClient{source: source, receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operation: api.CommitOperationResponse{State: "completed"}, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: now}}}}, "accepted", "completed", "unknown", false},
 		{"stale block is historical", commitInspectionClient{source: source, receiptErr: missing, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: stale}}}}, "unknown", "unknown", "observed", false},
-		{"accepted status read fails", commitInspectionClient{source: source, operationErr: errors.New("store unavailable")}, "", "", "", true},
+		{"accepted status read fails", commitInspectionClient{source: source, receipt: api.CommitReceiptResponse{OperationID: uuid.NewString()}, operationErr: errors.New("store unavailable")}, "accepted", "unknown", "unknown", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := inspectCommitEvent(t.Context(), &tc.client, source.ID, event, now)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error=%v", err)
 			}
-			if !tc.wantErr && (out.Acceptance != tc.acceptance || out.Execution != tc.execution || out.DatabaseCommit != tc.commit) {
+			if tc.acceptance != "" && (out.Acceptance != tc.acceptance || out.Execution != tc.execution || out.DatabaseCommit != tc.commit) {
 				t.Fatalf("facts=%+v", out)
 			}
 		})
@@ -95,6 +95,20 @@ func TestCommitWaitTimeoutAndTerminalStates(t *testing.T) {
 	out, err = waitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
 	if err != nil || out.Acceptance != "accepted" {
 		t.Fatalf("accepted wait=%+v err=%v", out, err)
+	}
+	client.operationErr = errors.New("execution status unavailable")
+	out, err = waitCommitEvent(t.Context(), client, "source", "event", "accepted", time.Hour)
+	if err != nil || out.Acceptance != "accepted" || out.Execution != "unknown" || out.Receipt == nil {
+		t.Fatalf("execution read failure hid accepted work: %+v err=%v", out, err)
+	}
+	out, err = waitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
+	if err == nil || out.Acceptance != "accepted" || out.Execution != "unknown" || out.Receipt == nil {
+		t.Fatalf("failed completion read lost acceptance or claimed completion: %+v err=%v", out, err)
+	}
+	client.receiptErr = &APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable, Code: "capacity"}}
+	out, err = waitCommitEvent(t.Context(), client, "source", "event", "completed", time.Hour)
+	if err == nil || out.EventID != "event" || out.Acceptance != "unknown" || out.Execution != "unknown" || out.DatabaseCommit != "unknown" {
+		t.Fatalf("initial read failure did not preserve unknown facts: %+v err=%v", out, err)
 	}
 }
 
