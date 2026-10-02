@@ -24,7 +24,12 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !ok || !admissionOK || !publishOK || visit == nil || claimed.LeaseUntil == nil || claimed.ReservedInstanceID == "" {
 		return state.ErrInvalidArgument
 	}
-	release := e.lockApp(claimed.AppID)
+	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
+	defer deadlineCancel()
+	release, err := e.lockQualificationApp(ctx, claimed.AppID)
+	if err != nil {
+		return err
+	}
 	locked := true
 	defer func() {
 		if locked {
@@ -34,8 +39,6 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err := e.validateQualificationOwner(ctx, qualifier, claimed); err != nil {
 		return err
 	}
-	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
-	defer deadlineCancel()
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	done := make(chan struct{})
@@ -93,7 +96,13 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 			}
 		}
 		if !locked {
-			cleanupRelease := e.lockApp(claimed.AppID)
+			cleanupRelease, err := e.lockQualificationApp(cleanupCtx, claimed.AppID)
+			if err != nil {
+				// Destruction alone is not durable retirement. Keep the row
+				// and ledger charge until recovery can complete that write.
+				result = errors.Join(result, fmt.Errorf("qualification retirement app lock: %w", err))
+				return
+			}
 			defer cleanupRelease()
 		}
 		if err := e.retireQualificationInstance(cleanupCtx, ins); err != nil {
@@ -173,6 +182,31 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 		return err
 	}
 	return e.validateQualificationOwner(ctx, qualifier, claimed)
+}
+
+// Contention must respect the execution/cleanup deadline without leaving a
+// waiter goroutine that could acquire the mutex after its caller has returned.
+func (e *Engine) lockQualificationApp(ctx context.Context, appID string) (func(), error) {
+	mu := e.appMutex(appID)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, context.Cause(ctx))
+		}
+		if mu.TryLock() {
+			if err := ctx.Err(); err != nil {
+				mu.Unlock()
+				return nil, errors.Join(err, context.Cause(ctx))
+			}
+			return mu.Unlock, nil
+		}
+		timer := time.NewTimer(api.EnvironmentGitOpsQualificationRuntimeCheckInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.Join(ctx.Err(), context.Cause(ctx))
+		case <-timer.C:
+		}
+	}
 }
 
 // This helper runs only after confirmed destruction (or before any VM RPC).

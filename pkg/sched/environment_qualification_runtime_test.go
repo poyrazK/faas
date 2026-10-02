@@ -256,6 +256,83 @@ func TestEngineEnvironmentQualificationRuntimeLeaseDeadlineCancelsBlockedBoot(t 
 	}
 }
 
+func TestEngineEnvironmentQualificationRuntimeBoundsAdmissionLockWait(t *testing.T) {
+	for _, deadline := range []string{"caller", "attempt"} {
+		t.Run(deadline, func(t *testing.T) {
+			duration := time.Minute
+			if deadline == "attempt" {
+				duration = time.Second
+			}
+			store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, duration)
+			vmm := &fakeVMM{}
+			e := newEngine(t, store, vmm, nil, "test-fc")
+			release := e.lockApp(request.AppID)
+			defer release()
+			ctx := t.Context()
+			if deadline == "caller" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				defer cancel()
+			}
+			result := make(chan error, 1)
+			go func() {
+				result <- e.WithEnvironmentWorkloadQualificationRuntime(ctx, request, func(context.Context, state.Instance) error { return errors.New("unexpected visitor") })
+			}()
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("contended admission: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("admission wait ignored its deadline")
+			}
+			if _, err := store.InstanceByID(t.Context(), request.ReservedInstanceID); !errors.Is(err, state.ErrNotFound) || e.ledger.ResidentRAM() != 0 || vmm.coldBoots != 0 {
+				t.Fatalf("expired admission had effects: %v ram=%d boots=%d", err, e.ledger.ResidentRAM(), vmm.coldBoots)
+			}
+		})
+	}
+}
+
+func TestEngineEnvironmentQualificationRuntimeBoundsRetirementLockWait(t *testing.T) {
+	store, _, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Second)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, nil, "test-fc")
+	locked := make(chan func(), 1)
+	result := make(chan error, 1)
+	go func() {
+		result <- e.WithEnvironmentWorkloadQualificationRuntime(t.Context(), request, func(context.Context, state.Instance) error {
+			locked <- e.lockApp(request.AppID)
+			return nil
+		})
+	}()
+	select {
+	case release := <-locked:
+		defer release()
+	case <-time.After(5 * time.Second):
+		t.Fatal("visitor never acquired serving app lock")
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("contended retirement: %v", err)
+		}
+	case <-time.After(2*DestroyTimeout + 5*time.Second):
+		t.Fatal("retirement lock wait ignored its cleanup deadline")
+	}
+	ins, err := store.InstanceByID(t.Context(), request.ReservedInstanceID)
+	if err != nil || ins.State != string(state.StateRunning) || ins.TerminalAt != nil || e.ledger.ResidentRAM() != 512+api.PerVMOverheadMB {
+		t.Fatalf("uncommitted retirement released reservation: %+v %v ram=%d", ins, err, e.ledger.ResidentRAM())
+	}
+	if _, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "recovery", time.Minute); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("expired attempt replaced unretired reservation: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if vmm.destroys != 1 || vmm.lastDestroyContextErr != nil {
+		t.Fatalf("physical retirement did not precede lock wait: destroys=%d ctx=%v", vmm.destroys, vmm.lastDestroyContextErr)
+	}
+}
+
 func TestEngineEnvironmentQualificationRuntimeRevokesBlockedBoot(t *testing.T) {
 	store, source, request := qualificationExecutionFixture(t, api.ExecutionModeRequest, time.Minute)
 	vmm := &fakeVMM{bootStarted: make(chan struct{}, 1), bootRelease: make(chan struct{})}

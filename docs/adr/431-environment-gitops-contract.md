@@ -1148,6 +1148,10 @@ bounded destroy context. Only confirmed destruction (including already absent)
 permits retirement and capacity release. An uncertain destroy keeps the active
 row, persisted CPU reservation and ledger charge for recovery. Reinvoking the
 same window cannot replay a boot on an existing/retired reservation.
+Admission and retirement app-lock waits respect their execution and cleanup
+deadlines. If physical destruction succeeds but the retirement lock cannot be
+acquired, the active row and capacity charge remain until recovery completes
+the durable retirement; an expired attempt cannot replace that reservation.
 
 This primitive is not wired to the durable qualification notification consumer.
 Its visitor does not yet implement release commands, native smoke/snapshot
@@ -1168,6 +1172,11 @@ The combined environment-sync, PostgreSQL integration, scheduler, state and
 migration checks pass. The competing intent-claim check also passes ten repeated
 runs. The configured native acceptance host remains unavailable because its
 Google Cloud consumer project is suspended; this is not native VM evidence.
+Main through `d071df66e` is integrated. Its merged migrations replay, SQLC
+comparison, SDK coverage, API/state checks, focused PostgreSQL runtime and
+scheduler/migration checks, and GitOps/issue-ownership CLI checks pass locally.
+Scheduler regression checks also cover caller/attempt expiry while admission
+is contended and bounded cleanup contention after confirmed destruction.
 
 ## Review and control workflow
 
