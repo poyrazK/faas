@@ -31,6 +31,12 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 			{"operations", "policy", "audit-not-a-verb"},
 			{"jobs", "registry", "audit-not-a-verb"},
 			{"realtime", "auth", "audit-not-a-verb"},
+			{"secrets", "refs", "audit-not-a-verb"},
+			{"secrets", "refs", "list", "--app", "shop-api"},
+			{"secrets", "refs", "list", "--app", "shop-api", "--environment", "production", "unexpected"},
+			{"secrets", "refs", "set", "--app", "shop-api", "--environment", "production", "URL=plaintext"},
+			{"secrets", "refs", "set", "--app", "shop-api", "--environment", "production", "URL=secret:DATABASE", "unexpected"},
+			{"secrets", "refs", "unset", "--app", "shop-api", "--environment", "production", "URL", "unexpected"},
 		} {
 			label := strings.Join(args, " ")
 			if useEnv {

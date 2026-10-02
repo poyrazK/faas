@@ -17,7 +17,7 @@ func secretReferenceCLIFlags() []cliFlag {
 
 func cmdSecretReferences(args []string) int {
 	if len(args) == 0 || (args[0] != "list" && args[0] != "set" && args[0] != "unset") {
-		_, _ = fmt.Fprintln(osStderr, "usage: gregale secrets refs <list|set|unset> --app <slug> --environment <name> [KEY=secret:NAME|KEY]")
+		printCommandValidation(osStderr, "usage: gregale secrets refs <list|set|unset> --app <slug> --environment <name> [KEY=secret:NAME|KEY]\n")
 		return 1
 	}
 	operation := args[0]
@@ -28,14 +28,17 @@ func cmdSecretReferences(args []string) int {
 		return 1
 	}
 	if operation == "list" && fs.NArg() != 0 || operation != "list" && fs.NArg() != 1 {
-		return printErr("Invalid reference", fmt.Errorf("unexpected positional arguments: list takes none; set and unset take one destination key"))
+		printCommandValidation(osStderr, "unexpected positional arguments: list takes none; set and unset take one destination key\n")
+		return 1
 	}
 	if *app == "" || !api.ValidProjectEnvironmentSlug(*environment) || api.ValidateScope(*environment) != nil {
-		return printErr("Select an app and environment", fmt.Errorf("--app and --environment are required"))
+		printCommandValidation(osStderr, "--app and a valid registered --environment are required\n")
+		return 1
 	}
 	key, reference, err := secretReferenceArguments(operation, fs.Args())
 	if err != nil {
-		return printErr("Invalid reference", err)
+		printCommandValidation(osStderr, "%v\n", err)
+		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
