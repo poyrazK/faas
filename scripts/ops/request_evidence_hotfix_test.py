@@ -152,7 +152,8 @@ class HotfixContracts(unittest.TestCase):
         open_asset.assert_called_once_with('repos/example/assets/1', 'application/octet-stream')
 
     def test_inspection_never_opens_a_writable_file_or_changes_a_unit(self):
-        state = {'gateway': {'sha256': host.OLD_HASH, 'pid': 123}}
+        state = {'gateway': {'sha256': host.OLD_HASH, 'pid': 123,
+                             'exe': '/opt/faas/releases/' + host.BASE + '/bin/gatewayd-internal'}}
         with patch.object(host, 'snapshot', return_value=state), patch.object(host, 'health'), \
              patch.object(Path, 'read_bytes', return_value=b'DATABASE_URL=postgresql://example\x00'), \
              patch.object(host.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='{}')) as query, \
@@ -161,7 +162,58 @@ class HotfixContracts(unittest.TestCase):
             result = host.main({'source': host.SOURCE, 'base': host.BASE, 'action': 'inspect'})
             self.assertEqual(result['status'], 'inspected')
             self.assertIn('BEGIN READ ONLY;', query.call_args.kwargs['input'])
+        unit.assert_not_called()
+
+    def test_inspection_accepts_exact_signed_active_hotfix_without_writes(self):
+        gateway_hash = '10f40bdc3fee686eec5e6c0d9b2ce9c57fd5c8d3a5abc584b6c58da109289445'
+        state = {'gateway': {'sha256': gateway_hash, 'pid': 123, 'exe': str(host.BINARY)}}
+        with tempfile.TemporaryDirectory() as tmp:
+            drop = Path(tmp) / 'override.conf'
+            drop.write_text(host.CONTENT)
+            with patch.object(host, 'DROP', drop), patch.object(host, 'snapshot', return_value=state), \
+                 patch.object(host, 'health'), \
+                 patch.object(Path, 'read_bytes', return_value=b'DATABASE_URL=postgresql://example\x00'), \
+                 patch.object(host.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout='{}')) as query, \
+                 patch('builtins.open', side_effect=AssertionError('write during inspection')), \
+                 patch.object(host, 'write_atomic', side_effect=AssertionError('write during inspection')), \
+                 patch.object(controller.signal, 'signal'), \
+                 patch.object(host, 'command') as unit:
+                result = host.main({'source': host.SOURCE, 'base': host.BASE, 'action': 'inspect',
+                                    'gateway_sha256': gateway_hash})
+            self.assertEqual(result['status'], 'inspected')
+            self.assertEqual(result['snapshot'], state)
+            self.assertIn('BEGIN READ ONLY;', query.call_args.kwargs['input'])
             unit.assert_not_called()
+
+    def test_inspection_refuses_unqualified_binary_or_override_before_query(self):
+        gateway_hash = '10f40bdc3fee686eec5e6c0d9b2ce9c57fd5c8d3a5abc584b6c58da109289445'
+        base_exe = '/opt/faas/releases/' + host.BASE + '/bin/gatewayd-internal'
+        cases = [
+            (None, 'wrong', base_exe),
+            (None, host.OLD_HASH, str(host.BINARY)),
+            (host.CONTENT, 'wrong', str(host.BINARY)),
+            (host.CONTENT, gateway_hash, base_exe),
+            ('unrelated override', gateway_hash, str(host.BINARY)),
+        ]
+        for content, sha, exe in cases:
+            with self.subTest(content=content, sha=sha, exe=exe), tempfile.TemporaryDirectory() as tmp:
+                drop = Path(tmp) / 'override.conf'
+                if content is not None:
+                    drop.write_text(content)
+                state = {'gateway': {'sha256': sha, 'pid': 123, 'exe': exe}}
+                with patch.object(host, 'DROP', drop), patch.object(host, 'snapshot', return_value=state), \
+                     patch.object(host, 'health'), patch.object(Path, 'read_bytes') as read_env, \
+                     patch.object(host.subprocess, 'run') as query, \
+                     patch.object(host, 'write_atomic', side_effect=AssertionError('unexpected write')), \
+                     patch.object(controller.signal, 'signal'), patch.object(host, 'command') as unit:
+                    with self.assertRaises(AssertionError):
+                        host.main({'source': host.SOURCE, 'base': host.BASE, 'action': 'inspect',
+                                   'gateway_sha256': gateway_hash})
+                    read_env.assert_not_called()
+                    query.assert_not_called()
+                    unit.assert_not_called()
+                if content is not None:
+                    self.assertEqual(drop.read_text(), content)
 
     def test_green_postgres_summary_cannot_hide_a_skipped_subtest(self):
         log = ('=== RUN   TestExclusivePolicyRetirement\n'

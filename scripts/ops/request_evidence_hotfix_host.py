@@ -146,7 +146,13 @@ def main(config):
     if config['action'] == 'inspect':
         state = snapshot()
         health()
-        assert state['gateway']['sha256'] == OLD_HASH
+        if DROP.exists():
+            require_owned_dropin()
+            assert state['gateway']['sha256'] == config['gateway_sha256']
+            assert state['gateway']['exe'] == str(BINARY)
+        else:
+            assert state['gateway']['sha256'] == OLD_HASH
+            assert state['gateway']['exe'] == '/opt/faas/releases/' + BASE + '/bin/gatewayd-internal'
         pid = str(state['gateway']['pid'])
         values = dict(x.split('=', 1) for x in Path('/proc/' + pid + '/environ').read_bytes().decode().split(chr(0)) if '=' in x)
         sql = """BEGIN READ ONLY; SET LOCAL statement_timeout='10s';
