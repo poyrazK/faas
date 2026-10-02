@@ -90,8 +90,77 @@ conservatively as breaking even where JSON Schema would still permit that key.
 Without `--check`, a successful comparison exits zero and prints its findings.
 With `--check`, breaking changes **or** changes needing review exit one; unchanged
 contracts and informational changes exit zero. Invalid snapshots fail either mode.
+Newly visible tools are informational by default. Add `--strict-catalog` to mark
+each addition as `needs_review`, so `--strict-catalog --check` rejects catalog
+expansion. The receipt includes `strict_catalog: true` when enabled. This applies
+even when the baseline catalog is empty; removals remain breaking. Descriptions
+and other informational changes retain their existing severity.
 This is an explicit local CI check; it does not switch traffic, enforce platform
 promotion policy or invoke tools.
+
+### CI checks for each caller
+
+Capture and review one baseline per permission set. Keep reader and writer tokens
+separate, and use the same issuer, audience, endpoint scopes and tool scopes for
+each role's future captures. For example:
+
+```sh
+gregale mcp lock --url https://baseline.example.com/mcp --token-env MCP_READER_TOKEN --out contracts/reader.lock.json
+gregale mcp lock --url https://baseline.example.com/mcp --token-env MCP_WRITER_TOKEN --out contracts/writer.lock.json
+```
+
+The reusable [catalog workflow](../.github/workflows/mcp-catalog-check.yml) builds
+Gregale at a reviewed full commit SHA, checks out the caller repository's baseline
+and runs only `mcp lock` and `mcp diff --check`. Strict catalog comparison defaults
+to enabled. It saves the baseline, candidate and JSON receipts for seven days,
+including when comparison fails. It does not execute code from the caller's
+repository or invoke tools. The candidate endpoint must already be running.
+
+Replace `REVIEWED_GREGALE_SHA` below with a full commit SHA containing this workflow
+and `--strict-catalog`. Pin both the workflow and `gregale-ref` to that SHA:
+
+```yaml
+name: MCP caller catalogs
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  catalog:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: reader
+            token_secret: MCP_READER_TOKEN
+          - role: writer
+            token_secret: MCP_WRITER_TOKEN
+    uses: poyrazK/faas/.github/workflows/mcp-catalog-check.yml@REVIEWED_GREGALE_SHA
+    with:
+      gregale-ref: REVIEWED_GREGALE_SHA
+      endpoint-url: https://candidate.example.com/mcp
+      baseline: contracts/${{ matrix.role }}.lock.json
+      receipt-name: mcp-catalog-${{ matrix.role }}
+    secrets:
+      endpoint-token: ${{ secrets[matrix.token_secret] }}
+```
+
+By default the baseline comes from the PR's base commit, or the caller commit for
+other events. `baseline-ref` can pin another full commit SHA. Baselines must be
+regular files inside that checkout. Review intentional additions before updating
+a baseline; the default PR base prevents a candidate capture from replacing the
+baseline used by that check. Set `legacy: true` with a separately captured 2025-11-25 baseline when that
+protocol is part of the release contract. Omit `endpoint-token` for public servers.
+Use explicit named secrets on trusted workflow runs; never pass production tokens
+to an unreviewed Gregale pin or an untrusted candidate endpoint.
+
+The repository's portable fixture compares the official SDK against
+[reader](../testdata/mcp-catalog/reader.lock.json) and
+[writer](../testdata/mcp-catalog/writer.lock.json) baselines. It verifies both
+protocols, deterministic captures, unexpected reader catalog expansion, unchanged
+writer visibility and writer tool removal, with zero tool calls. Catalog checks
+detect changes in visibility and structure; they do not prove execution denial or
+object-level authorization. Per-tool execution guards are tested separately;
+object ownership remains the application's responsibility.
 
 ## External OAuth
 

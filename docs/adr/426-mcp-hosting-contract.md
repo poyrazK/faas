@@ -70,6 +70,15 @@ These commands extend the diagnostic profile without changing deployment ownersh
 or creating automatic traffic-promotion gates. Compare catalogs captured with the
 same permissions; tool behavior and arbitrary schema compatibility remain unproven.
 
+`--strict-catalog` optionally requires review for newly visible tools, including
+expansion of an empty catalog. The default comparison keeps additions informational;
+strict receipts identify the enabled policy. Per-caller baselines and the reusable
+catalog workflow combine nonexecuting discovery with this local gate. The workflow
+pins the CLI source, reads the reviewed baseline commit, receives one role's client
+token explicitly and retains comparison evidence. This adds a user-controlled CI
+check without changing platform promotion ownership. Reader/writer fixtures cover
+modern and legacy catalogs, expansion/removal and zero tool execution.
+
 ## Application-owned tool authorization
 
 The Node starter accepts an optional `auth.tool_scopes` map alongside endpoint

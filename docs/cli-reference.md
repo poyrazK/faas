@@ -266,6 +266,7 @@ Compare local tool contracts and report changes needing review
 | `--before <PATH>` | baseline MCP contract snapshot | required |
 | `--after <PATH>` | candidate MCP contract snapshot | required |
 | `--check` | fail on breaking changes or changes needing review |  |
+| `--strict-catalog` | require review when a caller gains visibility of a tool |  |
 
 Examples:
 

@@ -11,6 +11,10 @@ on:
       - 'pkg/productcap/**'
       - 'cmd/gregale/**'
       - '.github/workflows/mcp-contract.yml'
+      - '.github/workflows/mcp-catalog-check.yml'
+      - 'scripts/ci/mcp-catalog-contract.mjs'
+      - 'scripts/ci/mcp-catalog-check.sh'
+      - 'testdata/mcp-catalog/**'
   workflow_dispatch:
 
 permissions:
@@ -39,6 +43,11 @@ jobs:
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
           npm test
+      - name: Gate reader and writer catalogs without executing tools
+        shell: bash
+        run: |
+          cp scripts/ci/mcp-catalog-contract.mjs "$RUNNER_TEMP/mcp-starter/mcp-catalog-contract.mjs"
+          node "$RUNNER_TEMP/mcp-starter/mcp-catalog-contract.mjs" "$RUNNER_TEMP/gregale" "$GITHUB_WORKSPACE/testdata/mcp-catalog" "$GITHUB_WORKSPACE/scripts/ci/mcp-catalog-check.sh"
       - name: Exercise the official SDK through the CLI
         shell: bash
         run: |
@@ -46,7 +55,7 @@ jobs:
           PORT=18808 node server.js > "$RUNNER_TEMP/mcp-server.log" 2>&1 &
           mcp_server_pid=$!
           trap 'kill "$mcp_server_pid" || true' EXIT
-          for mcp_attempt in {1..40}; do
+          for _ in {1..40}; do
             if curl -fsS http://127.0.0.1:18808/healthz > /dev/null; then break; fi
             sleep 0.25
           done

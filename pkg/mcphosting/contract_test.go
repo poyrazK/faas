@@ -129,6 +129,49 @@ func TestMCPContractToolAndOutputChanges(t *testing.T) {
 	}
 }
 
+func TestMCPContractStrictCatalog(t *testing.T) {
+	tool := contractTool(t, `{"type":"object"}`, false)
+	added := tool
+	added.Name = "new_sensitive_tool"
+	metadata := tool
+	metadata.Description = "Updated description"
+	narrowed := contractTool(t, `{"type":"object","required":["id"]}`, false)
+	for _, tc := range []struct {
+		name          string
+		before, after []Tool
+		strict        bool
+		severity      string
+	}{
+		{"default additions stay informational", []Tool{tool}, []Tool{tool, added}, false, "informational"},
+		{"new visibility needs review", []Tool{tool}, []Tool{tool, added}, true, "needs_review"},
+		{"empty catalog gains visibility", []Tool{}, []Tool{added}, true, "needs_review"},
+		{"unchanged strict catalog", []Tool{tool}, []Tool{tool}, true, ""},
+		{"metadata stays informational", []Tool{tool}, []Tool{metadata}, true, "informational"},
+		{"removal stays breaking", []Tool{tool}, []Tool{}, true, "breaking"},
+		{"narrowed input stays breaking", []Tool{tool}, []Tool{narrowed}, true, "breaking"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, _ := NewContract(ProtocolVersion, tc.before)
+			after, _ := NewContract(ProtocolVersion, tc.after)
+			diff, err := CompareContractsWithOptions(before, after, ContractDiffOptions{StrictCatalog: tc.strict})
+			if err != nil || diff.StrictCatalog != tc.strict || diff.Breaking != (tc.severity == "breaking") || diff.NeedsReview != (tc.severity == "needs_review") || diff.Compatible != (tc.severity == "" || tc.severity == "informational") {
+				t.Fatalf("diff=%+v err=%v", diff, err)
+			}
+			if tc.severity == "" {
+				if len(diff.Changes) != 0 {
+					t.Fatalf("unchanged catalog=%+v", diff)
+				}
+			} else if len(diff.Changes) != 1 || diff.Changes[0].Severity != tc.severity {
+				t.Fatalf("changes=%+v", diff)
+			}
+			data, _ := json.Marshal(diff)
+			if bytes.Contains(data, []byte(`"strict_catalog"`)) != tc.strict {
+				t.Fatalf("receipt policy=%s", data)
+			}
+		})
+	}
+}
+
 func TestMCPContractCanonicalSnapshotPreservesNumbers(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
