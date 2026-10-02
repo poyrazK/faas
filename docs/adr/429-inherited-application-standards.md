@@ -322,7 +322,7 @@ boot or advance observed adoption. Native grant storage now freshly rechecks its
 approval leases. vmmd must verify
 the actual consumed base, app and sidecar bytes and return the bound consumer
 acknowledgment before those release gates can pass. That integration remains
-pending; native captures still include compatibility scan metadata.
+pending.
 
 New durable admission captures additionally retain that scoped producer identity
 under the runtime owner/control/artifact fences and nonwaiting shared-base key
@@ -335,10 +335,20 @@ to a capture without producers. Immutable captures expose a separate canonical
 producer-set hash that matches the fresh input read and survives evidence
 renewal. Reads copy the identities and never backfill historical captures.
 
-The complete native capture still conservatively binds the compatibility scan
-report. Renewal can therefore require a new native capture even though its
-producer-set hash is unchanged. Removing that compatibility binding remains a
-separate change, with historical captures preserved and a safe native handoff.
+New native captures omit the compatibility scan status and report hash only
+when the complete scoped private producer identity is present. Current approval
+records and leases remain separate from this stable identity. Historical
+captures retain their original bytes, hashes and storage clocks. Comparing a
+validated producer projection allows these older captures to hand off without
+rewriting history; artifacts without private lineage still bind both mirrors.
+Native comparison keeps account plans strict and retains every owner, control,
+producer, complete-byte, membership, node and egress input. The scheduler applies
+the same mirror exclusion to its earlier reads. Managed resident lifecycle
+writes additionally require current private approval, so a failed or expired
+scan cannot gain authority through the stable comparison. Initial publication
+and promotion independently recheck fresh approval; exact committed receipt
+recovery does not issue a new grant or renew an old clock.
+
 Producer metadata alone neither authenticates current publisher
 approval nor proves actual file consumption. Runtime-default bases without an
 explicit producer binding remain unapproved, and source-build publisher

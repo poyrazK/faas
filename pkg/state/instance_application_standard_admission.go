@@ -76,11 +76,18 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 		return ErrApplicationStandardRuntimeStale
 	}
 	delete(artifact, "sidecars") // checked by the durable guard; resolved separately by schedd
+	if capture.ArtifactInputHash != "" {
+		delete(artifact, "scan_status")
+		delete(artifact, "scan_result_hash")
+	}
 	actual["artifact"], err = json.Marshal(artifact)
 	if err != nil {
 		return err
 	}
 	expected := standardRuntimeCallerInputs(app, account, deployment)
+	if capture.ArtifactInputHash != "" {
+		removeStandardApprovalMirrors(expected["artifact"].(map[string]any))
+	}
 	for field, value := range expected {
 		raw, err := json.Marshal(value)
 		if err != nil {
@@ -124,19 +131,7 @@ func unmanagedStandardResidentPlanChange(ctx context.Context, store InstanceAppl
 // after a plan change. Current eligibility and capacity checks still apply;
 // every ownership, control, artifact and enrollment input remains immutable.
 func standardRuntimeInputsMatch(captured, current []byte) (bool, error) {
-	inputs := make([]map[string]any, 2)
-	for i, raw := range [][]byte{captured, current} {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		if err := decoder.Decode(&inputs[i]); err != nil {
-			return false, err
-		}
-	}
-	if unmanagedStandardRuntimeInputs(inputs[0]) && unmanagedStandardRuntimeInputs(inputs[1]) {
-		delete(inputs[0], "account_plan")
-		delete(inputs[1], "account_plan")
-	}
-	return reflect.DeepEqual(inputs[0], inputs[1]), nil
+	return compareStandardRuntimeInputs(captured, current, true)
 }
 
 func unmanagedStandardRuntimeInputs(input map[string]any) bool {

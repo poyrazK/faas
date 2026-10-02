@@ -574,7 +574,7 @@ $$;
 CREATE FUNCTION public.application_standard_instance_runtime_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE current_input jsonb; captured_input jsonb;
+DECLARE current_input jsonb; captured_input jsonb; artifact_deadline timestamptz;
 BEGIN
  IF TG_OP='UPDATE' AND OLD.kind='wake' AND OLD.app_id IS NOT NULL AND
    (NEW.app_id IS DISTINCT FROM OLD.app_id OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id OR NEW.kind IS DISTINCT FROM OLD.kind) THEN
@@ -615,6 +615,12 @@ BEGIN
     USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
    END IF;
   END IF;
+  IF (current_input->'adoptions'<>'[]'::jsonb OR current_input->'materialized_fields'<>'[]'::jsonb) AND current_input ? 'runtime_artifacts' THEN
+   artifact_deadline:=application_standard_native_artifact_deadline(current_input,clock_timestamp());
+   IF artifact_deadline IS NULL OR artifact_deadline<=clock_timestamp() THEN
+    RAISE EXCEPTION 'managed runtime artifact approval expired' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+   END IF;
+  END IF;
  END IF;
  RETURN NEW;
 END;
@@ -637,7 +643,7 @@ BEGIN
  END IF;
  SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_application_standard_admissions.instance_id=i.id FOR SHARE NOWAIT;
  input:=application_standard_native_runtime_snapshot(i.app_id,i.deployment_id) || jsonb_build_object('instance_ram_mb',i.ram_mb,'instance_mode',i.mode);
- IF c.instance_id IS NULL OR c.node_id IS DISTINCT FROM i.node_id OR c.input_snapshot IS DISTINCT FROM input
+ IF c.instance_id IS NULL OR c.node_id IS DISTINCT FROM i.node_id OR NOT application_standard_native_inputs_match(c.input_snapshot,input)
    OR (input->>'desired_revision')::bigint<=0 OR input->>'effective_hash'=''
    OR input->'desired_revision' IS DISTINCT FROM input->'persisted_revision'
    OR (input->'adoptions'='[]'::jsonb AND input->'materialized_fields'='[]'::jsonb) THEN
@@ -903,6 +909,19 @@ $$;
 
 
 --
+-- Name: application_standard_native_inputs_match(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_inputs_match(captured jsonb, current_input jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT CASE WHEN jsonb_typeof(captured)='object' AND jsonb_typeof(current_input)='object'
+ THEN coalesce(application_standard_stable_runtime_input(captured)=application_standard_stable_runtime_input(current_input),false)
+ ELSE false END;
+$$;
+
+
+--
 -- Name: application_standard_native_promotion_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -996,7 +1015,7 @@ BEGIN
  IF TG_OP='INSERT' OR OLD.state IN ('waking','cold_booting') OR OLD.application_standard_boot_token IS DISTINCT FROM NEW.application_standard_boot_token
   OR OLD.application_standard_promotion_token IS DISTINCT FROM NEW.application_standard_promotion_token THEN
   input:=application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
-  IF c.input_snapshot IS DISTINCT FROM input THEN
+  IF NOT application_standard_native_inputs_match(c.input_snapshot,input) THEN
    RAISE EXCEPTION 'native publication inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
   END IF;
   artifact_deadline:=application_standard_native_artifact_deadline(input,clock_timestamp());
@@ -1231,14 +1250,18 @@ $$;
 --
 
 CREATE FUNCTION public.application_standard_runtime_inputs_match(captured jsonb, current_input jsonb) RETURNS boolean
-    LANGUAGE sql IMMUTABLE
+    LANGUAGE plpgsql IMMUTABLE
     AS $$
- SELECT coalesce(jsonb_typeof(captured)='object' AND jsonb_typeof(current_input)='object' AND
-   CASE WHEN captured->'adoptions'='[]'::jsonb AND captured->'materialized_fields'='[]'::jsonb
-     AND current_input->'adoptions'='[]'::jsonb AND current_input->'materialized_fields'='[]'::jsonb
-     AND captured ? 'account_plan' AND current_input ? 'account_plan'
-   THEN captured-'account_plan'=current_input-'account_plan'
-   ELSE captured=current_input END,false);
+BEGIN
+ IF jsonb_typeof(captured) IS DISTINCT FROM 'object' OR jsonb_typeof(current_input) IS DISTINCT FROM 'object' THEN RETURN false; END IF;
+ captured:=application_standard_stable_runtime_input(captured); current_input:=application_standard_stable_runtime_input(current_input);
+ IF captured->'adoptions'='[]'::jsonb AND captured->'materialized_fields'='[]'::jsonb
+  AND current_input->'adoptions'='[]'::jsonb AND current_input->'materialized_fields'='[]'::jsonb
+  AND captured ? 'account_plan' AND current_input ? 'account_plan' THEN
+  captured:=captured-'account_plan'; current_input:=current_input-'account_plan';
+ END IF;
+ RETURN captured=current_input;
+END;
 $$;
 
 
@@ -1712,7 +1735,7 @@ BEGIN
   END IF;
  END IF;
  IF artifact_id IS NOT NULL THEN producers:=application_standard_runtime_producers(a,d); END IF;
- RETURN jsonb_build_object(
+ RETURN application_standard_stable_runtime_input(jsonb_build_object(
   'app_id',a.id::text,'org_id',a.org_id::text,'project_id',coalesce(a.project_id::text,''),'account_id',a.account_id::text,
   'account_plan',acct.plan,'account_egress_allowlist_extra',acct.egress_allowlist_extra,
   'desired_revision',e.desired_revision,'persisted_revision',e.persisted_revision,'effective_hash',e.effective_hash,
@@ -1736,7 +1759,7 @@ BEGIN
     'sidecars',coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name',r.sidecar_name,
       'storage_key',r.storage_key,'bytes',r.bytes,'content_digest',r.content_digest) ORDER BY r.sidecar_name)
       FROM deployment_sidecar_layers r WHERE r.deployment_id=d.id),'[]'::jsonb)) END)
-  || CASE WHEN producers IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runtime_artifacts',producers) END;
+  || CASE WHEN producers IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runtime_artifacts',producers) END);
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
@@ -1816,6 +1839,34 @@ BEGIN
     END IF;
     RAISE EXCEPTION 'application standard manages this control'
         USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+END;
+$$;
+
+
+--
+-- Name: application_standard_stable_runtime_input(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_stable_runtime_input(input jsonb) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE identity jsonb;
+BEGIN
+ IF NOT input ? 'runtime_artifacts' THEN RETURN input; END IF;
+ identity:=input->'runtime_artifacts';
+ IF jsonb_typeof(input->'artifact') IS DISTINCT FROM 'object' OR jsonb_typeof(identity) IS DISTINCT FROM 'object'
+  OR jsonb_typeof(identity->'artifacts') IS DISTINCT FROM 'array' THEN
+  RAISE EXCEPTION 'runtime producer projection invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF (identity->>'format'='gregale.runtime-artifact-input.v1' AND identity->>'account_id'=input->>'account_id'
+  AND identity->>'org_id'=input->>'org_id' AND identity->>'app_id'=input->>'app_id'
+  AND identity->>'deployment_id'=input->'artifact'->>'id' AND identity->>'scope'=input->'artifact'->>'scope'
+  AND jsonb_array_length(identity->'artifacts')>0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime producer projection owner changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ -- Producer membership, complete bytes and every control stay in the input.
+ -- Private native artifact leases remain independently mandatory at admission.
+ RETURN input #- '{artifact,scan_status}' #- '{artifact,scan_result_hash}';
 END;
 $$;
 

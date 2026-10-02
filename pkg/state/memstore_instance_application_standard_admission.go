@@ -92,6 +92,7 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 		}
 		if identity != nil {
 			input["runtime_artifacts"] = identity
+			removeStandardApprovalMirrors(input["artifact"].(map[string]any))
 		}
 	}
 	return json.Marshal(input)
@@ -137,10 +138,18 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 		return nil
 	}
 	if !bytes.Equal(capture.inputs, input) {
-		matches, err := standardRuntimeInputsMatch(capture.inputs, input)
+		matches, err := standardNativeRuntimeInputsMatch(capture.inputs, input)
 		old := m.instances[ins.ID]
-		if err != nil || !matches || old.State == string(StateWaking) || old.State == string(StateColdBooting) {
+		if err == nil && !matches && old.State != string(StateWaking) && old.State != string(StateColdBooting) {
+			matches, err = standardRuntimeInputsMatch(capture.inputs, input)
+		}
+		if err != nil || !matches {
 			return ErrApplicationStandardRuntimeStale
+		}
+	}
+	if capture.Managed && capture.ArtifactInputHash != "" {
+		if _, err := m.standardNativeArtifactDeadlineLocked(capture); err != nil {
+			return err
 		}
 	}
 	if capture.Managed && (ins.State == string(StateRunning) || ins.State == string(StateWarm) || ins.State == string(StateMigrating)) {

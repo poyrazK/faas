@@ -1,7 +1,6 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -80,7 +79,8 @@ func (m *MemStore) lockNativeBootInputsLocked(id, expectedState string) (Instanc
 	if err != nil {
 		return Instance{}, InstanceApplicationStandardAdmission{}, err
 	}
-	if !bytes.Equal(input, capture.inputs) || m.computeNodeRuntimeIncarnations[ins.NodeID] == "" {
+	matches, err := standardNativeRuntimeInputsMatch(capture.inputs, input)
+	if err != nil || !matches || m.computeNodeRuntimeIncarnations[ins.NodeID] == "" {
 		return Instance{}, InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
 	return ins, capture, nil

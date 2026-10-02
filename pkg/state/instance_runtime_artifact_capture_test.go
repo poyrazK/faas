@@ -64,8 +64,18 @@ func runtimeArtifactCaptureRenewal(t *testing.T, s runtimeArtifactCaptureTestSto
 		t.Fatal(err)
 	}
 	_, after := createRuntimeArtifactCapture(t, s, app, dep)
-	if before.ArtifactInputHash != after.ArtifactInputHash || !reflect.DeepEqual(before.RuntimeArtifacts, after.RuntimeArtifacts) || before.NativeInputHash == after.NativeInputHash {
-		t.Fatal("producer identity changed on renewal or compatibility scan binding disappeared")
+	if before.ArtifactInputHash != after.ArtifactInputHash || before.InputHash != after.InputHash || !reflect.DeepEqual(before.RuntimeArtifacts, after.RuntimeArtifacts) || before.NativeInputHash != after.NativeInputHash {
+		t.Fatal("renewable approval changed stable admission identity")
+	}
+	var snapshot struct{ Artifact map[string]json.RawMessage }
+	if err := json.Unmarshal(after.inputs, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := snapshot.Artifact["scan_status"]; found {
+		t.Fatal("private producer capture retained a renewable status mirror")
+	}
+	if _, found := snapshot.Artifact["scan_result_hash"]; found {
+		t.Fatal("private producer capture retained a renewable report mirror")
 	}
 	after.RuntimeArtifacts[0].StorageKey = "returned-mutation"
 	again, err := s.GetInstanceApplicationStandardAdmission(t.Context(), after.InstanceID)
