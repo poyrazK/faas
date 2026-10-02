@@ -17,6 +17,7 @@ CREATE TABLE app_issue_ownership_rules (
 -- +goose StatementEnd
 
 -- +goose Down
+-- +goose StatementBegin
 -- Ownership decisions already written to issue history are durable. Keep
 -- configured rules across rollback and recreate the table if the feature is
 -- restored, following the issue-history rollback policy.
