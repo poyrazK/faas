@@ -28,9 +28,9 @@ func httpResponseError(response *http.Response) error {
 	if len(retry) <= 128 {
 		if seconds, err := strconv.ParseInt(retry, 10, 64); err == nil && seconds >= 0 {
 			problem.RetryAfterSeconds = &seconds
-			problem.WithHeader("Retry-After", retry)
+			problem = *problem.WithHeader("Retry-After", retry)
 		} else if _, err := http.ParseTime(retry); err == nil {
-			problem.WithHeader("Retry-After", retry)
+			problem = *problem.WithHeader("Retry-After", retry)
 		}
 	}
 	return &api.APIError{Problem: problem}
