@@ -111,7 +111,7 @@ func cmdWorkflowsRun(args []string) int {
 	}
 
 	if !json.Valid([]byte(*inputStr)) {
-		fmt.Fprintln(os.Stderr, "error: --input must be valid JSON")
+		printCommandValidation(os.Stderr, "error: --input must be valid JSON\n")
 		return 1
 	}
 
@@ -142,7 +142,7 @@ func cmdWorkflowsStatus(args []string) int {
 	}
 	runID := args[0]
 	if !workflowUUIDPattern.MatchString(runID) {
-		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
 		return 1
 	}
 
@@ -188,7 +188,7 @@ func cmdWorkflowsSteps(args []string) int {
 	}
 	runID := args[0]
 	if !workflowUUIDPattern.MatchString(runID) {
-		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
 		return 1
 	}
 
@@ -217,11 +217,11 @@ func cmdWorkflowsAttempts(args []string) int {
 	}
 	runID, stepName := args[0], args[1]
 	if !workflowUUIDPattern.MatchString(runID) {
-		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
 		return 1
 	}
 	if stepName == "" {
-		fmt.Fprintln(os.Stderr, "error: step name is required")
+		printCommandValidation(os.Stderr, "error: step name is required\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -246,7 +246,7 @@ func cmdWorkflowsCancel(args []string) int {
 	}
 	runID := args[0]
 	if !workflowUUIDPattern.MatchString(runID) {
-		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
 		return 1
 	}
 
@@ -289,12 +289,12 @@ func cmdWorkflowsEvents(args []string) int {
 	eventName := posArgs[1]
 
 	if !workflowUUIDPattern.MatchString(runID) {
-		fmt.Fprintf(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
+		printCommandValidation(os.Stderr, "error: invalid run ID %q (expected UUID)\n", runID)
 		return 1
 	}
 
 	if !json.Valid([]byte(*payloadStr)) {
-		fmt.Fprintln(os.Stderr, "error: --payload must be valid JSON")
+		printCommandValidation(os.Stderr, "error: --payload must be valid JSON\n")
 		return 1
 	}
 

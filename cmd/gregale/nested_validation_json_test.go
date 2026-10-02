@@ -31,6 +31,23 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 			{"operations", "policy", "audit-not-a-verb"},
 			{"jobs", "registry", "audit-not-a-verb"},
 			{"realtime", "auth", "audit-not-a-verb"},
+			{"debug", "running", "--limit", "0", "audit-app"},
+			{"debug", "requests", "list", "--limit", "0", "audit-app"},
+			{"debug", "requests", "list", "--status", "99", "audit-app"},
+			{"debug", "requests", "list", "--cold-boot", "invalid", "audit-app"},
+			{"debug", "requests", "list", "--min-latency-ms", "-1", "audit-app"},
+			{"debug", "requests", "watch", "--limit", "0", "audit-app"},
+			{"debug", "requests", "watch", "--status", "99", "audit-app"},
+			{"debug", "requests", "watch", "--cold-boot", "invalid", "audit-app"},
+			{"debug", "requests", "inspect", "--latest", "--status", "99", "audit-app"},
+			{"workflows", "run", "audit-workflow", "--app", "audit-app", "--input", "{"},
+			{"workflows", "status", "not-a-uuid"},
+			{"workflows", "steps", "not-a-uuid"},
+			{"workflows", "attempts", "not-a-uuid", "step"},
+			{"workflows", "attempts", "00000000-0000-4000-8000-000000000001", ""},
+			{"workflows", "cancel", "not-a-uuid"},
+			{"workflows", "events", "send", "not-a-uuid", "event"},
+			{"workflows", "events", "send", "00000000-0000-4000-8000-000000000001", "event", "--payload", "{"},
 		} {
 			label := strings.Join(args, " ")
 			if useEnv {
