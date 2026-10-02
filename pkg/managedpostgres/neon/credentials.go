@@ -236,9 +236,13 @@ func (p *Provider) credentialMaterial(ctx context.Context, projectID, branchID, 
 }
 
 func (p *Provider) connectionURI(ctx context.Context, projectID, branchID, roleName string, pooled bool, response *connectionURIResponse) error {
+	return p.connectionURIForDatabase(ctx, projectID, branchID, p.databaseName, roleName, pooled, response)
+}
+
+func (p *Provider) connectionURIForDatabase(ctx context.Context, projectID, branchID, databaseName, roleName string, pooled bool, response *connectionURIResponse) error {
 	query := url.Values{
 		"branch_id":     {branchID},
-		"database_name": {p.databaseName},
+		"database_name": {databaseName},
 		"role_name":     {roleName},
 		"pooled":        {strconv.FormatBool(pooled)},
 	}

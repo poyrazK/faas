@@ -91,21 +91,32 @@ func (p *Provider) maintenanceConnectionConfig(ctx context.Context, identity con
 	if p == nil {
 		return nil, managedpostgres.ErrUnavailable
 	}
+	return p.maintenanceConnectionConfigForDatabase(ctx, identity, p.databaseName, 0)
+}
+
+func (p *Provider) maintenanceConnectionConfigForDatabase(ctx context.Context, identity connectionfence.Identity, databaseName string, expectedMajor int) (*maintenanceConnection, error) {
+	if p == nil {
+		return nil, managedpostgres.ErrUnavailable
+	}
 	token, tokenErr := uuid.Parse(identity.OwnerToken)
 	source, err := parseResourceRef(identity.SourceResourceID)
-	if tokenErr != nil || token == uuid.Nil || token.String() != identity.OwnerToken || err != nil || source.branchID == "" {
+	if tokenErr != nil || token == uuid.Nil || token.String() != identity.OwnerToken || err != nil || source.branchID == "" ||
+		(databaseName != p.databaseName && databaseName != connectionfence.MaintenanceDatabase) || expectedMajor != 0 && expectedMajor < 16 {
 		return nil, managedpostgres.ErrInvalid
 	}
 	before, err := p.maintenanceEndpoint(ctx, source)
 	if err != nil {
 		return nil, err
 	}
+	if expectedMajor != 0 && before.PostgresMajor != expectedMajor {
+		return nil, managedpostgres.ErrConflict
+	}
 	var response connectionURIResponse
-	if err := p.connectionURI(ctx, source.projectID, source.branchID, maintenanceSourceRole, false, &response); err != nil {
+	if err := p.connectionURIForDatabase(ctx, source.projectID, source.branchID, databaseName, maintenanceSourceRole, false, &response); err != nil {
 		return nil, err
 	}
 	material, err := parseConnectionURI(response.URI)
-	if err != nil || material.username != maintenanceSourceRole || material.database != p.databaseName ||
+	if err != nil || material.username != maintenanceSourceRole || material.database != databaseName ||
 		material.host != before.Host || material.port != 5432 {
 		return nil, managedpostgres.ErrConflict
 	}

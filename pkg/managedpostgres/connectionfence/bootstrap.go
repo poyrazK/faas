@@ -48,6 +48,32 @@ func NewBootstrap(conn *pgx.Conn, config BootstrapConfig) (*Bootstrap, error) {
 	return &Bootstrap{conn: conn, config: config}, nil
 }
 
+// AuthenticateReadyMaintenance recovers the installed owner through its private
+// database, including while the source database rejects connections. It only
+// observes a ready receipt: it cannot reserve, create, activate or retire an
+// owner. The caller owns this dedicated connection and exact provider placement.
+func AuthenticateReadyMaintenance(ctx context.Context, conn *pgx.Conn, config BootstrapConfig, receipt Maintenance) (Maintenance, error) {
+	if conn == nil || !validDatabaseName(config.SourceDatabase) || config.SourceDatabase == MaintenanceDatabase ||
+		!validDatabaseName(config.SourceRole) || config.SourcePostgresMajor != 0 && config.SourcePostgresMajor < 16 ||
+		!validMaintenance(receipt, true) || receipt.State != "ready" {
+		return Maintenance{}, managedpostgres.ErrInvalid
+	}
+	q := sqlc.New()
+	row, err := q.MaintenanceBootstrapIdentity(ctx, conn)
+	if err != nil {
+		return Maintenance{}, classifyError(err)
+	}
+	if row.DatabaseName != MaintenanceDatabase || row.RoleName != config.SourceRole || row.SessionRole != row.RoleName ||
+		!row.PrivateRole || row.ServerVersion < 160000 ||
+		config.SourcePostgresMajor != 0 && int(row.ServerVersion/10000) != config.SourcePostgresMajor {
+		return Maintenance{}, managedpostgres.ErrUnsupported
+	}
+	if err := q.InstallMaintenanceBootstrapFunction(ctx, conn); err != nil {
+		return Maintenance{}, classifyError(err)
+	}
+	return (&Bootstrap{conn: conn, config: config}).action(ctx, receipt, "check")
+}
+
 // Reserve atomically creates the private NOLOGIN owner and records ownership.
 // Repeating it can recover a lost acknowledgement, but cannot adopt a role
 // created by a different administrator or a database merely sharing its name.

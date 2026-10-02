@@ -26,7 +26,7 @@ BEGIN
  IF token IS NULL OR token='00000000-0000-0000-0000-000000000000' OR source IS NULL OR source='' OR
    action IS NULL OR action NOT IN ('reserve','check','activate','retire') OR
    expected_owner IS NULL OR expected_database IS NULL OR current_user<>session_user OR
-   current_database()='gregale_checkpoint' THEN
+   (current_database()='gregale_checkpoint' AND action<>'check') THEN
   RAISE EXCEPTION 'invalid maintenance bootstrap' USING ERRCODE='22023';
  END IF;
  IF current_setting('server_version_num')::integer<160000 THEN
@@ -77,6 +77,9 @@ BEGIN
   RAISE EXCEPTION 'maintenance owner identity changed' USING ERRCODE='55000';
  END IF;
  SELECT * INTO db FROM pg_database WHERE datname='gregale_checkpoint';
+ IF current_database()='gregale_checkpoint' AND phase<>'ready' THEN
+  RAISE EXCEPTION 'maintenance database is not ready' USING ERRCODE='55000';
+ END IF;
  IF FOUND THEN
   IF db.datdba<>owner.oid OR (expected_database<>0 AND db.oid<>expected_database) OR
     (phase IN ('ready','retired') AND (marker->>'database_oid')::oid IS DISTINCT FROM db.oid) OR

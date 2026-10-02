@@ -3502,3 +3502,72 @@ production files and selected original tests/helpers through an external AST
 overlay and use the opt-in private migrated PostgreSQL harness. Independent
 SQLC regeneration and `git diff --check` pass. Full state/API/repository suites,
 live-provider and native acceptance remain unverified.
+
+### Leased maintenance recovery and PostgreSQL abandonment wiring (2026-10-02)
+
+The worker now consumes the maintenance registry through a provider-neutral
+reconciliation service. Every bootstrap phase renews the clone lease, reserves
+or recovers the original private owner, authenticates its frozen plan and
+persists dispatch intent before SQL IO. Idempotent SQL bootstrap recovery uses
+the same source advisory lock and ownership receipt after an unknown reply.
+Acknowledgements are recorded under fresh lease authority before another phase
+starts. Ready receipts are independently observed and then reread under the
+control-plane source lock; readiness still provides no data checkpoint.
+
+The service resolves the captured backend fingerprint, region and spec. Neon
+checks that the frozen lifecycle resource and exact dataset belong to the same
+project, and to the same branch when the lifecycle resource names a branch. A
+project-only lifecycle identity never substitutes a new default dataset. The
+captured PostgreSQL major must agree with independently rechecked endpoint
+placement and the SQL server. These checks also apply during compensation.
+Owned recovery continues when new database provisioning is disabled.
+
+A ready owner can now be authenticated through `gregale_checkpoint` after
+source connections are closed. The private SQL owner marker, creator grant
+provenance, source identity, actor/session identity, database/owner OIDs and ACL
+are rechecked. The temporary bootstrap function permits only ready observation
+from this database; reservation, activation and retirement remain source-only
+operations. The Neon adapter requests the exact branch's private maintenance
+database URI, retaining verified TLS and minimal startup parameters. Its
+connection fence controller checks the persisted OIDs and private installation.
+No complete writer-coverage capability is advertised by this recovery seam.
+
+Coordinator compensation now persists PostgreSQL source abandonment intent
+before maintenance recovery and remote IO. It finishes an already owned
+bootstrap when needed, authenticates the ready maintenance owner, and records
+the operation-specific remote barrier tombstone. The maintenance nonce and
+barrier operation UUID remain separate. A subsequent independent provider read
+must return that exact remote terminal record before the source hold is
+released. Missing rows, substituted identities, cancelled calls and unknown
+responses retain recovery authority. After a lost committed release reply, a
+replacement worker recovers the stored terminal receipt without dispatching
+another abandonment. Object barrier and native snapshot cleanup follow; complete
+compensation and publication still require their remaining resource proofs.
+
+Data-bearing capture still waits before provider dispatch. Still required are
+qualified closure and complete database/background/external writer coverage,
+application drainage, the common retained database/object checkpoint, successful
+capture release, asynchronous snapshot/restorability proofs, cloned auxiliary
+resource handling, activated maintenance retirement, older PostgreSQL versions,
+complete configuration strategies, secret substitution, promotion and rollback,
+and provider/native acceptance. No live provider resource was changed.
+
+Verification: all 15 connection-fence contracts passed against real isolated
+PostgreSQL 16 resources (28.036 s, no skips). The two ready-maintenance contracts
+passed again after adding portable version pins and actual session-role
+substitution (2.168 s). The managed PostgreSQL and Neon packages reported 106
+passing top-level unit/memory/mock contracts; 16 opt-in PostgreSQL store contracts
+and one live Neon lifecycle contract were skipped because their test environments
+were not configured for that run. All 14 selected original coordinator contracts
+passed (13.398 s, no skips), including maintenance phase recovery, lost replies,
+worker handoff, independent terminal proof and existing capture/snapshot/object
+regressions. The two new worker contracts passed again after the final phase
+guards (3.952 s). Coordinator runs retain all 441 production files and selected
+original test declarations/helpers through an external test-only AST overlay.
+Their provider observations are metadata fixtures; SQL recovery is separately
+verified by the real PostgreSQL contracts. SQLC regeneration, `go vet` for the
+three managed PostgreSQL packages and `git diff --check` pass. Local disk
+exhaustion interrupted an intermediate final check; the existing test server
+recovered, unused verified test templates were removed, and the final worker
+rerun passed. Full repository, live-provider and native acceptance remain
+unverified.
