@@ -5801,6 +5801,24 @@ WHERE id = sqlc.arg(id)::uuid AND status = 'running';
 UPDATE compute_nodes SET vmmd_incarnation=sqlc.arg(incarnation)::uuid,
 vmmd_admission_protocol=sqlc.arg(protocol_version)::smallint WHERE id=sqlc.arg(node_id)::uuid;
 
+-- name: LockApplicationStandardSnapshotCapture :one
+SELECT application_standard_lock_snapshot_capture(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
+
+-- name: GetApplicationStandardSnapshotCapture :one
+SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
+WHERE token=sqlc.arg(token)::uuid AND account_id=sqlc.arg(account_id)::uuid
+ AND app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: InsertApplicationStandardSnapshotCapture :exec
+INSERT INTO application_standard_snapshot_captures(token,instance_id,app_id,deployment_id,account_id,node_id,parent_token,memory_key,expected_state,grant_data,input_snapshot)
+VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,
+ sqlc.arg(account_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(parent_token)::uuid,sqlc.arg(memory_key)::text,
+ sqlc.arg(expected_state)::text,sqlc.arg(grant_data)::jsonb,sqlc.arg(input_snapshot)::jsonb);
+
+-- name: RecordApplicationStandardSnapshotCapture :execrows
+UPDATE application_standard_snapshot_captures SET acknowledgment=sqlc.arg(acknowledgment)::jsonb,received_at=clock_timestamp()
+WHERE token=sqlc.arg(token)::uuid AND acknowledgment IS NULL;
+
 -- name: LockInstanceApplicationStandardBoot :one
 SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
 

@@ -548,8 +548,32 @@ consumer convergence or restore authority. The parent boot grant can expire
 without erasing its historical facts. Native namespace preflight protects
 already published captures from retry overwrite and cleanup; it is not a
 distributed capture claim. A fenced durable capture grant/catalog, current
-review and a separately versioned measured restore/promotion protocol remain
-required. Capture facts are not yet persisted in ordinary snapshot rows or
+review and a separately versioned measured restore/promotion protocol are
+independent of these byte facts.
+
+The private `application_standard_snapshot_captures` catalog now saves a fresh
+version-1 grant before accepting a version-1 acknowledgment. The grant binds
+the exact retained protocol-2 boot, source start time, scope, node incarnation,
+Firecracker version, capture mode, callback intent and coupled UUID namespace.
+Issue and first publication lock current ownership, inherited inputs and
+producer/scan/publisher approvals; the grant expires at the earlier of the
+runtime admission TTL and the artifact approval deadline, including while the
+source is already running. PostgreSQL raw writes enforce the same scope,
+canonical scalar shapes, chronology and immutable history as the store APIs.
+Numeric JSONB equality cannot substitute decimal or string spellings for
+typed protocol integers. A refused write publishes no acknowledgment.
+
+The catalog retains its own parent and byte facts after instance, boot and
+source-node cleanup. Reads and exact acknowledgment retries recover committed
+history without issuing new authority; expired namespaces cannot be renewed.
+Application/deployment/account erasure removes the owned catalog. MemStore
+owns all nested parent drive slices, with PostgreSQL parity tests for retries,
+stale intent, native process restart, renewed approval and raw-write refusal.
+These tests simulate native measurements and do not replace KVM acceptance.
+
+Grant consumption in vmmd, its typed private RPC acknowledgment, scheduler
+publication and imaged association remain required. Existing capture facts
+are not yet persisted in ordinary snapshot rows or
 sent through `snapshot_written`; source-bearing managed wakes still use
 verified cold boot. Dedicated native capture correctness, pause cost and
 leakcheck evidence remain pending, and public activation stays disabled.

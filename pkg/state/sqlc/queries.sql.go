@@ -5792,6 +5792,45 @@ func (q *Queries) GetApplicationStandardReviewPlan(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const getApplicationStandardSnapshotCapture = `-- name: GetApplicationStandardSnapshotCapture :one
+SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
+WHERE token=$1::uuid AND account_id=$2::uuid
+ AND app_id=$3::uuid AND deployment_id=$4::uuid
+`
+
+type GetApplicationStandardSnapshotCaptureParams struct {
+	Token        pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type GetApplicationStandardSnapshotCaptureRow struct {
+	ExpectedState  string
+	GrantData      []byte
+	Acknowledgment []byte
+	CreatedAt      pgtype.Timestamptz
+	ReceivedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg GetApplicationStandardSnapshotCaptureParams) (GetApplicationStandardSnapshotCaptureRow, error) {
+	row := db.QueryRow(ctx, getApplicationStandardSnapshotCapture,
+		arg.Token,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+	)
+	var i GetApplicationStandardSnapshotCaptureRow
+	err := row.Scan(
+		&i.ExpectedState,
+		&i.GrantData,
+		&i.Acknowledgment,
+		&i.CreatedAt,
+		&i.ReceivedAt,
+	)
+	return i, err
+}
+
 const getApplicationStandardVersion = `-- name: GetApplicationStandardVersion :one
 SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
        v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
@@ -7363,6 +7402,44 @@ func (q *Queries) InsertApplicationStandardReviewPlan(ctx context.Context, db DB
 		arg.Blockers,
 		arg.CreatedAt,
 		arg.ExpiresAt,
+	)
+	return err
+}
+
+const insertApplicationStandardSnapshotCapture = `-- name: InsertApplicationStandardSnapshotCapture :exec
+INSERT INTO application_standard_snapshot_captures(token,instance_id,app_id,deployment_id,account_id,node_id,parent_token,memory_key,expected_state,grant_data,input_snapshot)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::uuid,$6::uuid,$7::uuid,$8::text,
+ $9::text,$10::jsonb,$11::jsonb)
+`
+
+type InsertApplicationStandardSnapshotCaptureParams struct {
+	Token         pgtype.UUID
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AccountID     pgtype.UUID
+	NodeID        pgtype.UUID
+	ParentToken   pgtype.UUID
+	MemoryKey     string
+	ExpectedState string
+	GrantData     []byte
+	InputSnapshot []byte
+}
+
+func (q *Queries) InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardSnapshotCapture,
+		arg.Token,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.AccountID,
+		arg.NodeID,
+		arg.ParentToken,
+		arg.MemoryKey,
+		arg.ExpectedState,
+		arg.GrantData,
+		arg.InputSnapshot,
 	)
 	return err
 }
@@ -14501,6 +14578,22 @@ func (q *Queries) LockApplicationStandardSignerRows(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const lockApplicationStandardSnapshotCapture = `-- name: LockApplicationStandardSnapshotCapture :one
+SELECT application_standard_lock_snapshot_capture($1::uuid,$2::text)::jsonb AS inputs
+`
+
+type LockApplicationStandardSnapshotCaptureParams struct {
+	InstanceID    pgtype.UUID
+	ExpectedState string
+}
+
+func (q *Queries) LockApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg LockApplicationStandardSnapshotCaptureParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardSnapshotCapture, arg.InstanceID, arg.ExpectedState)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const lockApplicationStandardWorkerOperation = `-- name: LockApplicationStandardWorkerOperation :one
 SELECT id FROM application_standard_operations
 WHERE id = $1::uuid AND org_id = $2::uuid
@@ -19135,6 +19228,24 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		arg.InstanceID,
 		arg.WorkloadName,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordApplicationStandardSnapshotCapture = `-- name: RecordApplicationStandardSnapshotCapture :execrows
+UPDATE application_standard_snapshot_captures SET acknowledgment=$1::jsonb,received_at=clock_timestamp()
+WHERE token=$2::uuid AND acknowledgment IS NULL
+`
+
+type RecordApplicationStandardSnapshotCaptureParams struct {
+	Acknowledgment []byte
+	Token          pgtype.UUID
+}
+
+func (q *Queries) RecordApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg RecordApplicationStandardSnapshotCaptureParams) (int64, error) {
+	result, err := db.Exec(ctx, recordApplicationStandardSnapshotCapture, arg.Acknowledgment, arg.Token)
 	if err != nil {
 		return 0, err
 	}

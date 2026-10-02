@@ -56,7 +56,8 @@ const (
 	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
-	ApplicationStandardSnapshotMaxArtifactBytes int64 = 16 << 30
+	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
+	ApplicationStandardSnapshotMaxFCVersionBytes       = 128
 )
 
 // Private artifact scans are fresh evidence about one retained producer.

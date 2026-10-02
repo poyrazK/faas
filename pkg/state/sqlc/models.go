@@ -1004,6 +1004,23 @@ type ApplicationStandardReviewPlan struct {
 	ExpiresAt      pgtype.Timestamptz
 }
 
+type ApplicationStandardSnapshotCapture struct {
+	Token          pgtype.UUID
+	InstanceID     pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	AccountID      pgtype.UUID
+	NodeID         pgtype.UUID
+	ParentToken    pgtype.UUID
+	MemoryKey      string
+	ExpectedState  string
+	GrantData      []byte
+	InputSnapshot  []byte
+	Acknowledgment []byte
+	CreatedAt      pgtype.Timestamptz
+	ReceivedAt     pgtype.Timestamptz
+}
+
 type ApplicationStandardVersion struct {
 	OrgID          pgtype.UUID
 	StandardID     pgtype.UUID

@@ -151,6 +151,7 @@ type MemStore struct {
 	baseImageScanCurrent                       map[string]string
 	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
 	instanceApplicationStandardBoots           map[string]instanceStandardBoot
+	applicationStandardSnapshotCaptures        map[string]ApplicationStandardSnapshotCaptureRecord
 	instanceApplicationStandardBootTokens      map[string]string
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
@@ -6490,6 +6491,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	delete(m.appDeletionClaims, id)
 
+	m.deleteAppStandardSnapshotCapturesLocked(id)
 	for key, proof := range m.deploymentRegistryRootfs {
 		if sameStandardUUID(proof.Input.AppID, id) {
 			delete(m.deploymentRegistryRootfs, key)

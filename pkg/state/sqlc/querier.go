@@ -345,6 +345,7 @@ type Querier interface {
 	GetApplicationStandardLogDestination(ctx context.Context, db DBTX, arg GetApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error)
 	GetApplicationStandardPublisher(ctx context.Context, db DBTX, arg GetApplicationStandardPublisherParams) (ApplicationStandardPublisher, error)
 	GetApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg GetApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
+	GetApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg GetApplicationStandardSnapshotCaptureParams) (GetApplicationStandardSnapshotCaptureRow, error)
 	GetApplicationStandardVersion(ctx context.Context, db DBTX, arg GetApplicationStandardVersionParams) (GetApplicationStandardVersionRow, error)
 	GetBaseImageProducerByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageProducer, error)
 	GetBaseImageScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageScan, error)
@@ -474,6 +475,7 @@ type Querier interface {
 	InsertApplicationStandardOperationAudit(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationAuditParams) error
 	InsertApplicationStandardOperationTarget(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationTargetParams) error
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
+	InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
 	InsertBaseImageProducer(ctx context.Context, db DBTX, arg InsertBaseImageProducerParams) (BaseImageProducer, error)
 	InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBaseImageScanParams) (BaseImageScan, error)
@@ -984,6 +986,7 @@ type Querier interface {
 	LockApplicationStandardOrg(ctx context.Context, db DBTX, arg LockApplicationStandardOrgParams) (pgtype.UUID, error)
 	LockApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg LockApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
 	LockApplicationStandardSignerRows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppTrustedSigner, error)
+	LockApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg LockApplicationStandardSnapshotCaptureParams) ([]byte, error)
 	LockApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg LockApplicationStandardWorkerOperationParams) (pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
@@ -1265,6 +1268,7 @@ type Querier interface {
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
+	RecordApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg RecordApplicationStandardSnapshotCaptureParams) (int64, error)
 	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)
 	RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error)
 	// ---------------------------------------------------------------------------
