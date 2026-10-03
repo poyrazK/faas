@@ -1143,17 +1143,3 @@ func (s *PgStore) SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTa
 	}
 	return result, nil
 }
-
-func prefixedAppTaskColumns(alias string) string {
-	return alias + `.id, ` + alias + `.account_id, ` + alias + `.app_id, ` + alias + `.deployment_id, ` + alias + `.kind,
-       ` + alias + `.command, ` + alias + `.command_shell, ` + alias + `.deployment_scope, ` + alias + `.artifact_key, ` + alias + `.image_digest,
-       ` + alias + `.status, ` + alias + `.timeout_seconds, ` + alias + `.max_output_bytes,
-       ` + alias + `.retry_max, ` + alias + `.retry_backoff_seconds, ` + alias + `.attempt_count, ` + alias + `.retry_at,
-       ` + alias + `.lease_token, ` + alias + `.lease_owner, ` + alias + `.lease_expires_at, ` + alias + `.cancel_requested_at,
-       ` + alias + `.stdout_tail, ` + alias + `.stderr_tail, ` + alias + `.output_truncated, ` + alias + `.exit_code,
-       ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
-       ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for,
-       ` + alias + `.failure_rules, ` + alias + `.occurrence_id, ` + alias + `.start_deadline_at,
-       ` + alias + `.work_decision, ` + alias + `.outcome_code,
-       ` + alias + `.exclusive_operation_id, ` + alias + `.exclusive_generation, ` + alias + `.binding_verification`
-}

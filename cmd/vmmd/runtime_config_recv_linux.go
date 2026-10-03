@@ -400,10 +400,6 @@ func validRuntimeSecretRevision(revision string) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
-func runtimeSecretErrorKind(err error) string {
-	return "refresh_failed"
-}
-
 func loadRuntimeSecrets(ctx context.Context, store runtimeSecretsStore, mgr *fcvm.Manager, deploymentID, appID, accountID string) (runtimeConfigResponse, error) {
 	return loadRuntimeSecretsIfChanged(ctx, store, mgr, deploymentID, appID, accountID, "")
 }
