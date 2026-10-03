@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	inventorysql "github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory/sqlc"
 )
 
@@ -18,12 +19,22 @@ func (p *Provider) WithSnapshotCopyReaderSQL(ctx context.Context, d managedpostg
 // The connector argument is private to qualification tests. Production always
 // uses the minimal verify-full configuration with the exact readonly endpoint.
 func (p *Provider) withSnapshotCopyReaderSQL(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyReaderRequest, read managedpostgres.SnapshotCopyReaderSQLRead, connect func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error)) error {
+	return p.borrowSnapshotCopyReaderSQL(ctx, d, r, nil, read, connect)
+}
+
+func (p *Provider) borrowSnapshotCopyReaderSQL(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyReaderRequest, selected *copyinventory.DatabaseExport, read managedpostgres.SnapshotCopyReaderSQLRead, connect func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error)) error {
 	if read == nil || connect == nil {
 		return managedpostgres.ErrInvalid
 	}
 	config, err := p.snapshotCopyReaderConnectionConfig(ctx, d, r)
 	if err != nil {
 		return err
+	}
+	if selected != nil {
+		// The URI authenticates credentials and placement through the fixed
+		// maintenance database. Select the retained SQL name literally rather
+		// than interpreting it as URL path/query/options or a new endpoint.
+		config.Database = selected.Database.Name
 	}
 	expected := config.Copy()
 	conn, err := connect(ctx, config)
@@ -44,8 +55,15 @@ func (p *Provider) withSnapshotCopyReaderSQL(ctx context.Context, d managedpostg
 	if err != nil {
 		return err
 	}
-	if _, err := p.snapshotCopyReaderConnectionPlacement(ctx, d, r); err != nil {
+	if selected != nil && (identity.DatabaseName != selected.Database.Name || identity.DatabaseOID != selected.Database.OID || identity.RoleOID != selected.AuthenticatedReaderRoleOID) {
+		return managedpostgres.ErrConflict
+	}
+	before, err := p.snapshotCopyReaderConnectionPlacement(ctx, d, r)
+	if err != nil {
 		return err
+	}
+	if before.Host != expected.Host {
+		return managedpostgres.ErrConflict
 	}
 	if err := read(ctx, conn, identity); err != nil {
 		return err
@@ -57,8 +75,14 @@ func (p *Provider) withSnapshotCopyReaderSQL(ctx context.Context, d managedpostg
 	if observed != identity {
 		return managedpostgres.ErrConflict
 	}
-	_, err = p.snapshotCopyReaderConnectionPlacement(ctx, d, r)
-	return err
+	after, err := p.snapshotCopyReaderConnectionPlacement(ctx, d, r)
+	if err != nil {
+		return err
+	}
+	if after.Host != expected.Host {
+		return managedpostgres.ErrConflict
+	}
+	return nil
 }
 
 func authenticateSnapshotCopyReaderSQL(ctx context.Context, conn *pgx.Conn, expected *pgx.ConnConfig, major int) (managedpostgres.SnapshotCopyReaderSQLIdentity, error) {

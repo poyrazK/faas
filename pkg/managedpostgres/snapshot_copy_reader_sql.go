@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 )
 
 // SQL identity is observed on an independently authenticated owned reader. OIDs
@@ -26,6 +27,10 @@ type SnapshotCopyReaderSQLProvider interface {
 // Connection configuration is neither returned nor persisted by this seam.
 // No data-copy or readiness proof is made.
 func (s *Service) WithSnapshotCopyReaderSQL(ctx context.Context, d RestoreSourceDefinition, r SnapshotCopyReaderRequest, read SnapshotCopyReaderSQLRead) error {
+	return s.withSnapshotCopyReaderSQL(ctx, d, r, nil, read)
+}
+
+func (s *Service) withSnapshotCopyReaderSQL(ctx context.Context, d RestoreSourceDefinition, r SnapshotCopyReaderRequest, selected *copyinventory.DatabaseExport, read SnapshotCopyReaderSQLRead) error {
 	if read == nil || r.Validate() != nil || r.ExpectedEndpointID == "" ||
 		r.Capture.Snapshot.SourceResourceID != d.DataResourceID || r.ExpectedEndpointID == d.ProviderResourceID {
 		return ErrInvalid
@@ -34,22 +39,40 @@ func (s *Service) WithSnapshotCopyReaderSQL(ctx context.Context, d RestoreSource
 	if err != nil {
 		return err
 	}
-	p, ok := b.Provider.(SnapshotCopyReaderSQLProvider)
-	if !ok {
-		return ErrUnsupported
+	var invoke func(context.Context, SnapshotCopyReaderSQLRead) error
+	if selected == nil {
+		p, ok := b.Provider.(SnapshotCopyReaderSQLProvider)
+		if !ok {
+			return ErrUnsupported
+		}
+		invoke = func(ctx context.Context, read SnapshotCopyReaderSQLRead) error {
+			return p.WithSnapshotCopyReaderSQL(ctx, d, r, read)
+		}
+	} else {
+		p, ok := b.Provider.(SnapshotCopyReaderDatabaseSQLProvider)
+		if !ok {
+			return ErrUnsupported
+		}
+		invoke = func(ctx context.Context, read SnapshotCopyReaderSQLRead) error {
+			return p.WithSnapshotCopyReaderDatabaseSQL(ctx, d, SnapshotCopyReaderDatabaseSQLRequest{Reader: r, Database: *selected}, read)
+		}
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
 	called := false
 	var callbackErr error
-	err = p.WithSnapshotCopyReaderSQL(providerCtx, d, r, func(_ context.Context, conn *pgx.Conn, identity SnapshotCopyReaderSQLIdentity) error {
+	err = invoke(providerCtx, func(_ context.Context, conn *pgx.Conn, identity SnapshotCopyReaderSQLIdentity) error {
 		if called {
 			callbackErr = ErrConflict
 			return callbackErr
 		}
 		called = true
+		validDatabase := validOpaqueID(identity.DatabaseName)
+		if selected != nil {
+			validDatabase = identity.DatabaseName == selected.Database.Name && identity.DatabaseOID == selected.Database.OID && identity.RoleOID == selected.AuthenticatedReaderRoleOID
+		}
 		if conn == nil || identity.PostgresMajor != d.Spec.PostgresMajor ||
-			!validOpaqueID(identity.DatabaseName) || !validOpaqueID(identity.RoleName) || identity.DatabaseOID == 0 || identity.RoleOID == 0 {
+			!validDatabase || !validOpaqueID(identity.RoleName) || identity.DatabaseOID == 0 || identity.RoleOID == 0 {
 			callbackErr = ErrConflict
 			return callbackErr
 		}

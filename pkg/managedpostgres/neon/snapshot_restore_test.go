@@ -51,7 +51,7 @@ func (f *snapshotRestoreFixture) serveHTTP(w http.ResponseWriter, r *http.Reques
 	const root = "/api/v2/projects/project-source"
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == root:
-		value := project{ID: "project-source", OrganizationID: "org-gregale-12345678", RegionID: "aws-eu-central-1", PostgresMajor: 17}
+		value := project{ID: "project-source", OrganizationID: "org-gregale-12345678", RegionID: "aws-eu-central-1", PostgresMajor: f.definition.Spec.PostgresMajor}
 		switch f.fault {
 		case "project":
 			value.ID = "project-other"

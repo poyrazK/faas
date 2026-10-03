@@ -4559,3 +4559,41 @@ completion remain required. Source writer closure/common-point capture,
 object/configuration coverage, production-preserving promotion/rollback and
 native/provider acceptance remain part of the complete objective. No public
 clone readiness or production stage promotion is claimed.
+
+### Private selected-database reader SQL (2026-10-03)
+
+Owned reader SQL can now borrow a selected catalogue database with its original
+OID and reader-role OID. The private request comes from a retained immutable
+export requirement. Before provider IO it checks original source/backend,
+snapshot/capture identity and all capture times against the frozen definition
+and durably pinned reader. Missing or substituted database/role identity,
+invalid callback authority, a changed backend or unsupported provider rejects
+the borrow. Existing-reader reads remain independent of creation/account rollout
+and retain the provider deadline. A closed captured database still returns an
+explicit unsupported requirement until admission projection is qualified.
+
+Neon obtains credentials through the fixed maintenance database on the exact
+direct readonly endpoint, then selects the retained database name literally in
+pgx configuration. SQL names containing spaces, slashes, URI punctuation,
+Unicode or a newline cannot become URL query/options or change the endpoint.
+Connection establishment retains minimal verify-full trust and platform-owned
+readonly/search-path startup settings. Before and after the synchronous callback,
+SQL checks PostgreSQL major, name/OID, current/session role, original reader-role
+OID, read-only mode and idle transaction state. Provider placement is rechecked
+around the borrow, including comparison with the originally connected endpoint
+host. Successful, rejected and partially established connections close under a
+bounded cleanup context. Neither this request nor its callback proves imported
+data or complete stage readiness.
+
+Verification: six normal service contracts pass with no skips (0.574 s), including
+three new selection contracts and the original SQL callback contracts. Six normal
+Neon contracts pass against local PostgreSQL 16 with no skips (0.982 s), including
+three new contracts. They check placement before connection, literal name
+selection, exact OIDs, post-read read-write/transaction/host drift, callback
+failures, credential redaction and connection closure. HTTP/provider metadata is
+mocked and the successful SQL connection uses an isolated Unix socket; remote
+Neon SQL placement/trust acceptance is not claimed. The test administrator's
+read-only setup was corrected before successful fixture creation. Normal
+managedpostgres/Neon builds and vet pass. Closed-database
+projection, provider privileges across every database/global, private-resource
+classification and PostgreSQL 14/15 network export remain unqualified.
