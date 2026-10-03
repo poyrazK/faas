@@ -61,6 +61,8 @@ type Provider struct {
 	maxRestoreWindow       int64
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
+	now                    func() time.Time
+	cooldown               requestCooldown
 }
 
 // New constructs the production Neon driver from a provider-neutral backend
@@ -176,6 +178,7 @@ func newProvider(logicalRegion, organizationID, apiKey string, baseURL *url.URL,
 		maxRestoreWindow:       parsed.maxRestoreWindow,
 		credentialPollInterval: defaultCredentialPollInterval,
 		roles:                  &sqlCredentialRoles{},
+		now:                    time.Now,
 	}
 }
 
