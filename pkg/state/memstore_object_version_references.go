@@ -23,28 +23,44 @@ func (m *MemStore) RecordObjectVersions(_ context.Context, account, bucket strin
 }
 
 func (m *MemStore) recordObjectVersionsLocked(bucket string, items []ObjectVersionIdentity) []ObjectVersionIdentity {
+	out := make([]ObjectVersionIdentity, 0, len(items))
+	for _, v := range items {
+		v = m.prepareObjectVersionLocked(bucket, v)
+		m.commitObjectVersionLocked(bucket, v)
+		v.ID = publicPreparedVersionID(v)
+		out = append(out, v)
+	}
+	return out
+}
+
+// Prepare without mutating maps so publication failure can leave the owning
+// journal, references and accounting unchanged under the same MemStore lock.
+func (m *MemStore) prepareObjectVersionLocked(bucket string, v ObjectVersionIdentity) ObjectVersionIdentity {
+	if old, exists := m.objectVersionReferences[versionReferenceIdentity(bucket, v)]; exists {
+		v.ID = old.ID
+	} else {
+		v.ID = uuid.NewString()
+	}
+	return v
+}
+
+func publicPreparedVersionID(v ObjectVersionIdentity) string {
+	if v.ProviderVersionID == "null" {
+		return "null"
+	}
+	return v.ID
+}
+
+func (m *MemStore) commitObjectVersionLocked(bucket string, v ObjectVersionIdentity) {
 	if m.objectVersionReferences == nil {
 		m.objectVersionReferences = map[string]ObjectVersionIdentity{}
 		m.objectVersionReferenceIDs = map[string]string{}
 		m.objectVersionObservations = map[string]bool{}
 	}
-	out := make([]ObjectVersionIdentity, 0, len(items))
-	for _, v := range items {
-		identity := versionReferenceIdentity(bucket, v)
-		old, exists := m.objectVersionReferences[identity]
-		v.ID = old.ID
-		if !exists {
-			v.ID = uuid.NewString()
-		}
-		m.objectVersionReferences[identity] = v
-		m.objectVersionReferenceIDs[v.ID] = identity
-		m.objectVersionObservations[bucket] = m.objectVersionObservations[bucket] || v.ProviderVersionID != "null" || v.DeleteMarker
-		if v.ProviderVersionID == "null" {
-			v.ID = "null"
-		}
-		out = append(out, v)
-	}
-	return out
+	identity := versionReferenceIdentity(bucket, v)
+	m.objectVersionReferences[identity] = v
+	m.objectVersionReferenceIDs[v.ID] = identity
+	m.objectVersionObservations[bucket] = m.objectVersionObservations[bucket] || v.ProviderVersionID != "null" || v.DeleteMarker
 }
 
 func (m *MemStore) ResolveObjectVersion(_ context.Context, account, bucket, key, id string) (string, error) {

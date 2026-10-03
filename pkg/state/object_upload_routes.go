@@ -55,6 +55,9 @@ type ObjectUploadCompletion struct {
 	RecoveryRetryAt          time.Time
 	RecoveryCursor           string `json:"-"`
 	RecoveryVersionsObserved bool   `json:"-"`
+	VersionID                string `json:"-"`
+	// ProviderVersionID is transient completion input, never a public payload.
+	ProviderVersionID string `json:"-"`
 }
 
 type ObjectUploadRouteStore interface {

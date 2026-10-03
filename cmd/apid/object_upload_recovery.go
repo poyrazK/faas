@@ -61,6 +61,7 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 	if err == nil {
 		c.Status = "completed"
 		c.ETag = result.ETag
+		c.ProviderVersionID = result.ProviderVersionID
 		c.ErrorCode = ""
 		_, err = st.FinishTrackedObjectUploadRecovery(finishCtx, c)
 		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {

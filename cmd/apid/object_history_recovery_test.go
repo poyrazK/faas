@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -139,6 +142,7 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				if err != nil || ack.Status != "completed" || !ack.RecoveryVersionsObserved {
 					t.Fatal("acknowledged native version did not latch accounting guard", ack, err)
 				}
+				assertRecoveredObjectEvent(t, f.st, f.bucket, newID, ack.VersionID)
 				if mode != "overwritten" {
 					if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("key")}); err == nil {
 						t.Fatal("unadmitted delete marker escaped")
@@ -180,6 +184,15 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 					if want == "completed" && c.ETag != `"old"` {
 						t.Fatal("new object falsely proved old receipt", c)
 					}
+					if want == "completed" {
+						if native, resolveErr := restarted.ResolveObjectVersion(ctx, f.account.ID, f.bucket.ID, "key", c.VersionID); resolveErr != nil || native != "v-old" {
+							t.Fatal("recovered selector lost exact proof", native, resolveErr)
+						}
+						assertRecoveredObjectEvent(t, restarted, f.bucket, id, c.VersionID)
+					} else if pendingEvent, claimErr := restarted.ClaimDuePublishedEvent(ctx, time.Now().Add(time.Second)); !errors.Is(claimErr, state.ErrNotFound) {
+						t.Fatal("uncertain history published creation", pendingEvent, claimErr)
+					}
+
 				}
 				object.mu.Lock()
 				writes, lists, requests := object.writes, object.lists, object.writes+object.lists+object.heads
@@ -218,5 +231,33 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				pollGatewayOperationReceipt(t, f, "key", id, map[bool]string{true: "pending", false: "completed"}[mode == "absent"], operation, 200)
 			})
 		}
+	}
+}
+
+func assertRecoveredObjectEvent(t *testing.T, st *state.PgStore, b state.ObjectBucket, id, version string) {
+	t.Helper()
+	work, err := st.ClaimDuePublishedEvent(t.Context(), time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope events.Envelope
+	if err = json.Unmarshal(work.Payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err = envelope.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	var data api.ObjectStorageEvent
+	if err = json.Unmarshal(envelope.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.ID != "write:"+id || envelope.Source != api.ObjectEventSource || envelope.Type != api.ObjectEventCreated || data.VersionID != version || !state.ValidObjectVersionID(version) || data.BucketID != b.ID || data.ReceiptID != id {
+		t.Fatal(envelope, data)
+	}
+	if strings.Contains(string(work.Payload), "v-old") || strings.Contains(string(work.Payload), "v-new") {
+		t.Fatal("native proof exposed", string(work.Payload))
+	}
+	if err = st.FinishPublishedEvent(t.Context(), work.ID, work.ClaimToken, nil); err != nil {
+		t.Fatal(err)
 	}
 }

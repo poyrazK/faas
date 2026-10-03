@@ -26,10 +26,12 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	}
 	c.Status = "completed"
 	c.ETag = result.ETag
+	c.ProviderVersionID = result.ProviderVersionID
 	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
 	if err != nil {
 		c.Status = "failed"
 		c.ETag = ""
+		c.ProviderVersionID = ""
 		c.ErrorCode = "provider_write_rejected"
 	}
 	done, finishErr := h.finishTrackedUpload(r.Context(), st, c)

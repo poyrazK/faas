@@ -258,6 +258,10 @@ func (s *PgStore) FinishObjectDeletion(ctx context.Context, result ObjectDeletio
 		if out.State == "failed" && j.ReservedBytes > 0 {
 			e = sqlc.New().ObjectUsageGrantIncrement(ctx, tx, sqlc.ObjectUsageGrantIncrementParams{BucketID: mustPgUUID(j.BucketID), GrantedBytes: -j.ReservedBytes, GrantedKeys: -1})
 		}
+		if e == nil && out.State == "completed" {
+			typ, data := deletionEvent(out)
+			e = publishObjectEventTx(ctx, tx, out.AccountID, "delete:"+out.ID, typ, data, now)
+		}
 		return out, mapErr(e)
 	})
 }

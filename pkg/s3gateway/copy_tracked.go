@@ -92,13 +92,15 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	c.Status, c.ETag = "completed", result.ETag
+	c.ProviderVersionID = result.ProviderVersionID
 	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
-	if _, err = h.finishGatewayPut(r.Context(), st, c); err != nil {
+	done, err := h.finishGatewayPut(r.Context(), st, c)
+	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
-	if !h.publicVersionHeader(w, r, req, c.Key, result.ProviderVersionID, false) {
-		return
+	if done.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", done.VersionID)
 	}
 	if sourceID != "" {
 		w.Header().Set("X-Amz-Copy-Source-Version-Id", sourceID)

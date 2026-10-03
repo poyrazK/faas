@@ -48,6 +48,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 		m.objectWriteAdmissions = map[string]objectWriteAdmission{}
 	}
 	m.objectWriteAdmissions[c.ID] = objectWriteAdmission{BucketID: c.BucketID, KeyHash: objectKeyHash(c.Key), Route: true, NativeVersion: m.objectUsage[c.BucketID].InventoryScope == ObjectInventoryAllVersions, NativeBytes: nativeGrantBytes(m.objectUsage[c.BucketID].InventoryScope == ObjectInventoryAllVersions, c.Bytes)}
+	c.VersionID, c.ProviderVersionID = "", ""
 	c.ETag = ""
 	c.ErrorCode = ""
 	c.RecoveryToken = ""
@@ -86,16 +87,29 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	if !ok || !w.Route || w.BucketID != old.BucketID {
 		return old, ErrConflict
 	}
-	w.Settled = true
-	m.objectWriteAdmissions[old.ID] = w
+	var version ObjectVersionIdentity
+	if c.Status == "completed" && c.ProviderVersionID != "" {
+		version = m.prepareObjectVersionLocked(old.BucketID, ObjectVersionIdentity{Key: old.Key, ProviderVersionID: c.ProviderVersionID})
+		old.VersionID = publicPreparedVersionID(version)
+	}
 	old.RecoveryCursor = ""
-	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved
+	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null"
 	old.ETag = c.ETag
 	old.Status = c.Status
 	old.ErrorCode = c.ErrorCode
 	old.WritePhase = ObjectUploadSettled
 	old.RecoveryToken = ""
 	old.RecoveryLeaseUntil = time.Time{}
+	if old.Status == "completed" {
+		if err := m.publishObjectEventLocked(old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(old), m.clock()); err != nil {
+			return old, err
+		}
+	}
+	if version.ProviderVersionID != "" {
+		m.commitObjectVersionLocked(old.BucketID, version)
+	}
+	w.Settled = true
+	m.objectWriteAdmissions[old.ID] = w
 	m.objectUploadCompletions[old.ID] = old
 	return old, nil
 }

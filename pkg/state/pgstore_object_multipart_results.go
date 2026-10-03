@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -82,6 +83,9 @@ func (s *PgStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectM
 	}
 	out, err := objectMultipartFromSQL(row)
 	if err != nil {
+		return ObjectMultipartUpload{}, err
+	}
+	if err = publishObjectEventTx(ctx, tx, out.AccountID, "multipart:"+out.ID, api.ObjectEventCreated, multipartCompletionEvent(out), out.UpdatedAt); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
 	return out, tx.Commit(ctx)

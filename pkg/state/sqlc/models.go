@@ -2983,6 +2983,7 @@ type ObjectUploadCompletion struct {
 	SourceEtag               string
 	RecoveryCursor           string
 	RecoveryVersionsObserved bool
+	VersionID                string
 }
 
 type ObjectUploadRoute struct {

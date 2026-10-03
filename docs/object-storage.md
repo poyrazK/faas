@@ -1440,3 +1440,54 @@ For bulk deletion, the response header identifies the batch. Per-entry
 receipt IDs are UUIDv5 values using that UUID as namespace and `bulk-entry:N`
 as name, where N is the zero-based entry position. Retry the unchanged batch
 with the signed batch ID; the identity binds each position to its key/selector.
+
+## Object mutation events
+
+Confirmed tracked PUT, CopyObject, upload route and multipart completion emit
+`object.created` from the reserved `gregale.storage` source. Deletions emit
+`object.removed`; an ordinary versioned DELETE that creates a marker instead
+emits `object.delete_marker.created`. Lifecycle expiration uses `cause: lifecycle`.
+A completion describes that receipt's mutation, even if the key is overwritten
+before delivery. Its `version_id`, when present, is an owned public selector.
+Native provider identities and placement never appear in the event.
+
+Declare an `event_triggers` subscription in the target application's deployment
+manifest, as described in [internal event subscriptions](event-driven.md#internal-event-subscriptions):
+
+```yaml
+event_triggers:
+  - source: gregale.storage
+    type: object.*
+    filter: '{"data":{"bucket_id":"YOUR_BUCKET_UUID","key":{"$prefix":"images/","$suffix":".jpg"}}}'
+```
+
+Subscriptions follow the existing account-scoped deployment authorization.
+Filters select events within that account; they are not a separate bucket
+permission boundary. This JSON filter requires both a prefix and suffix:
+
+```json
+{
+  "data": {
+    "bucket_id": "YOUR_BUCKET_UUID",
+    "key": {"$prefix": "images/", "$suffix": ".jpg"}
+  }
+}
+```
+
+Matching functions receive the canonical CloudEvent as an async POST to `/`.
+The event's `id` and the `x-gregale-event-id` header are stable on recovery.
+The data contains `receipt_id`, `bucket_id`, `app_id`, `key`, `operation`, `cause`
+and optional `version_id`/`delete_marker`; creation also includes `etag` and
+`size_bytes`, including zero-byte objects. A removal acknowledgment does not
+refund quota; verified complete inventory remains authoritative.
+
+Publication and journal completion are atomic. Pending/uncertain or rejected
+writes, multipart parts, aborts and direct URL settlement do not emit success
+events. The durable router snapshots subscriptions at acceptance and retries
+with stable invocation IDs after interruption. Delivery remains at least once;
+use the event identity to make external effects idempotent. Distinct mutations
+have no delivery-order guarantee. Failure/replay inspection uses the existing
+event delivery and fanout surfaces. Historical completions are not replayed.
+
+The S3 `?notification` configuration API, S3 `Records` envelope, queue targets and
+notifications for direct URL or provider-external writes remain unsupported.

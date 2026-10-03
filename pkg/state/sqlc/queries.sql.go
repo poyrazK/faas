@@ -12173,7 +12173,7 @@ func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDel
 const objectGatewayUploadInsert = `-- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
  (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,recovery_retry_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id
 `
 
 type ObjectGatewayUploadInsertParams struct {
@@ -12235,6 +12235,7 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
@@ -13704,6 +13705,23 @@ func (q *Queries) ObjectMultipartTransfersPending(ctx context.Context, db DBTX, 
 	return pending, err
 }
 
+const objectMutationEventAppend = `-- name: ObjectMutationEventAppend :exec
+INSERT INTO events (actor, kind, subject, data, at)
+VALUES ('objectstorage', 'event.published', $1::uuid,
+        $2::jsonb, $3::timestamptz)
+`
+
+type ObjectMutationEventAppendParams struct {
+	AccountID pgtype.UUID
+	Payload   []byte
+	At        pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error {
+	_, err := db.Exec(ctx, objectMutationEventAppend, arg.AccountID, arg.Payload, arg.At)
+	return err
+}
+
 const objectRouteWriteSettle = `-- name: ObjectRouteWriteSettle :execrows
 UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt
 `
@@ -14737,7 +14755,7 @@ func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg Obj
 
 const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
 UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id
 `
 
 type ObjectTrackedUploadClaimParams struct {
@@ -14775,13 +14793,14 @@ func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg Obj
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
 UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at=now()+make_interval(secs=>$4::int)
- WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id
 `
 
 type ObjectTrackedUploadDispatchParams struct {
@@ -14825,12 +14844,13 @@ func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg 
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
  AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
 `
 
@@ -14869,6 +14889,7 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 			&i.SourceEtag,
 			&i.RecoveryCursor,
 			&i.RecoveryVersionsObserved,
+			&i.VersionID,
 		); err != nil {
 			return nil, err
 		}
@@ -14882,8 +14903,9 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 
 const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
 UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
- recovery_versions_observed=recovery_versions_observed OR $5::boolean
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed
+	version_id=$5::text,
+ recovery_versions_observed=recovery_versions_observed OR $6::boolean
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id
 `
 
 type ObjectTrackedUploadFinishParams struct {
@@ -14891,6 +14913,7 @@ type ObjectTrackedUploadFinishParams struct {
 	Status                   string
 	Etag                     string
 	ErrorCode                string
+	VersionID                string
 	RecoveryVersionsObserved bool
 }
 
@@ -14900,6 +14923,7 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		arg.Status,
 		arg.Etag,
 		arg.ErrorCode,
+		arg.VersionID,
 		arg.RecoveryVersionsObserved,
 	)
 	var i ObjectUploadCompletion
@@ -14929,12 +14953,13 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
 type ObjectTrackedUploadGetParams struct {
@@ -14972,6 +14997,7 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
@@ -14979,7 +15005,7 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
 INSERT INTO object_upload_completions
  (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,recovery_retry_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id
 `
 
 type ObjectTrackedUploadInsertParams struct {
@@ -15041,12 +15067,13 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
 `
 
 type ObjectTrackedUploadReplayParams struct {
@@ -15092,6 +15119,7 @@ func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg Ob
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
@@ -15122,7 +15150,7 @@ func (q *Queries) ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
 `
 
 type ObjectUploadReceiptGetParams struct {
@@ -15168,6 +15196,7 @@ func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg Objec
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
@@ -15876,7 +15905,7 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 }
 
 const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
 `
 
 type ObjectWriteReceiptGetParams struct {
@@ -15920,12 +15949,13 @@ func (q *Queries) ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg Object
 		&i.SourceEtag,
 		&i.RecoveryCursor,
 		&i.RecoveryVersionsObserved,
+		&i.VersionID,
 	)
 	return i, err
 }
 
 const objectWriteReceiptsList = `-- name: ObjectWriteReceiptsList :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND status=$4::text
  AND (created_at,id) < (coalesce($5::timestamptz,'infinity'::timestamptz),coalesce($6::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $7::int
@@ -15984,6 +16014,7 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 			&i.SourceEtag,
 			&i.RecoveryCursor,
 			&i.RecoveryVersionsObserved,
+			&i.VersionID,
 		); err != nil {
 			return nil, err
 		}
@@ -15996,7 +16027,7 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectWriteReceiptsListAll = `-- name: ObjectWriteReceiptsListAll :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND (created_at,id) < (coalesce($4::timestamptz,'infinity'::timestamptz),coalesce($5::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $6::int
 `
@@ -16052,6 +16083,7 @@ func (q *Queries) ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg O
 			&i.SourceEtag,
 			&i.RecoveryCursor,
 			&i.RecoveryVersionsObserved,
+			&i.VersionID,
 		); err != nil {
 			return nil, err
 		}

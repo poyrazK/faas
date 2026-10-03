@@ -13,7 +13,7 @@ import (
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
 func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) ObjectUploadCompletion {
-	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved}
+	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved, VersionID: r.VersionID}
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if !validTrackedObjectUpload(c) {
@@ -96,8 +96,25 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 	if n != 1 {
 		return old, ErrConflict
 	}
-	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved})
-	return objectTrackedUploadFromSQL(r), mapErr(err)
+	var version string
+	if c.Status == "completed" && c.ProviderVersionID != "" {
+		refs, e := recordObjectVersionsTx(ctx, tx, old.BucketID, []ObjectVersionIdentity{{Key: old.Key, ProviderVersionID: c.ProviderVersionID}})
+		if e != nil {
+			return old, e
+		}
+		version = refs[0].ID
+	}
+	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved || c.ProviderVersionID != "" && c.ProviderVersionID != "null", VersionID: version})
+	if err != nil {
+		return old, mapErr(err)
+	}
+	out := objectTrackedUploadFromSQL(r)
+	if out.Status == "completed" {
+		if err = publishObjectEventTx(ctx, tx, old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(out), time.Now()); err != nil {
+			return old, err
+		}
+	}
+	return out, nil
 }
 func (s *PgStore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return s.finishTrackedObjectUpload(ctx, c, false)

@@ -70,9 +70,9 @@ func validTrackedUploadIdentity(c ObjectUploadCompletion) bool {
 }
 func validTrackedUploadFinish(c ObjectUploadCompletion) bool {
 	if c.Status == "completed" {
-		return validObjectUploadETag(c.ETag) && c.ErrorCode == ""
+		return validObjectUploadETag(c.ETag) && c.ErrorCode == "" && (c.ProviderVersionID == "" || validVersionReferences([]ObjectVersionIdentity{{Key: c.Key, ProviderVersionID: c.ProviderVersionID}}))
 	}
-	if c.Status != "failed" || c.ETag != "" {
+	if c.Status != "failed" || c.ETag != "" || c.ProviderVersionID != "" {
 		return false
 	}
 	switch c.ErrorCode {

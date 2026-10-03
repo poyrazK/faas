@@ -5,7 +5,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -130,22 +129,23 @@ func (m *MemStore) FinishObjectDeletion(_ context.Context, result ObjectDeletion
 	if !validDeletionLease(j, result.Token, m.clock()) {
 		return cloneDeletion(j), ErrConflict
 	}
+	var version ObjectVersionIdentity
 	if result.ProviderVersionID != "" {
-		if immutableDeletion(j) {
-			result.VersionID = j.Selector
-		} else if result.ProviderVersionID == "null" {
-			result.VersionID = "null"
-		} else {
-			result.VersionID = uuid.NewString()
-		}
+		version = m.prepareObjectVersionLocked(j.BucketID, ObjectVersionIdentity{Key: j.Key, ProviderVersionID: result.ProviderVersionID, DeleteMarker: result.DeleteMarker})
+		result.VersionID = publicPreparedVersionID(version)
 	}
 	out, err := finishDeletion(j, result, m.clock())
 	if err != nil {
 		return cloneDeletion(j), err
 	}
-	if result.ProviderVersionID != "" {
-		refs := m.recordObjectVersionsLocked(j.BucketID, []ObjectVersionIdentity{{Key: j.Key, ProviderVersionID: result.ProviderVersionID, DeleteMarker: result.DeleteMarker}})
-		out.VersionID = refs[0].ID
+	if out.State == "completed" {
+		typ, data := deletionEvent(out)
+		if err = m.publishObjectEventLocked(out.AccountID, "delete:"+out.ID, typ, data, out.UpdatedAt); err != nil {
+			return cloneDeletion(j), err
+		}
+	}
+	if version.ProviderVersionID != "" {
+		m.commitObjectVersionLocked(j.BucketID, version)
 	}
 	if out.State == "failed" && j.ReservedBytes > 0 {
 		u := m.objectUsage[j.BucketID]

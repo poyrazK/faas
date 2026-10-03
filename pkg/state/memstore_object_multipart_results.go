@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ ObjectMultipartCompletionStore = (*MemStore)(nil)
@@ -31,15 +33,22 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	if !ok || !owned || b.AccountID != u.AccountID || b.State != "ready" || !validMultipartResultOwner(old, u) || !old.CompletionDispatched {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
+	var version ObjectVersionIdentity
 	if result.ProviderVersionID != "" {
-		refs := m.recordObjectVersionsLocked(u.BucketID, []ObjectVersionIdentity{{Key: u.Key, ProviderVersionID: result.ProviderVersionID}})
-		old.CompletionVersionID = refs[0].ID
+		version = m.prepareObjectVersionLocked(u.BucketID, ObjectVersionIdentity{Key: u.Key, ProviderVersionID: result.ProviderVersionID})
+		old.CompletionVersionID = publicPreparedVersionID(version)
 	}
 	old.CompletionETag, old.CompletionRecoveryCursor = result.ETag, ""
 	old.CompletionVersionsObserved = old.CompletionVersionsObserved || result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"
 	old.State, old.LeaseToken, old.LeaseUntil = ObjectMultipartCompleted, "", time.Time{}
 	old.AttemptCount, old.LastErrorCode = 0, ""
 	old.UpdatedAt, old.RetryAt = m.clock().UTC(), m.clock().UTC()
+	if err := m.publishObjectEventLocked(old.AccountID, "multipart:"+old.ID, api.ObjectEventCreated, multipartCompletionEvent(old), old.UpdatedAt); err != nil {
+		return ObjectMultipartUpload{}, err
+	}
+	if version.ProviderVersionID != "" {
+		m.commitObjectVersionLocked(old.BucketID, version)
+	}
 	m.objectMultipartUploads[u.ID] = old
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
 	return old, nil

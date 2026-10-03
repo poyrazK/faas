@@ -75,6 +75,7 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 	}
 	c.Status = "completed"
 	version := response.Header.Get("X-Amz-Version-Id")
+	c.ProviderVersionID = version
 	c.RecoveryVersionsObserved = version != "" && version != "null"
 	done, err := h.finishGatewayPut(r.Context(), st, c)
 	if err != nil {
@@ -82,8 +83,8 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	w.Header().Set("ETag", done.ETag)
-	if !h.publicVersionHeader(w, r, req, c.Key, version, false) {
-		return
+	if done.VersionID != "" {
+		w.Header().Set("X-Amz-Version-Id", done.VersionID)
 	}
 	w.WriteHeader(http.StatusOK)
 }

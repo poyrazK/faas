@@ -5245,11 +5245,17 @@ UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at
 
 -- name: ObjectTrackedUploadFinish :one
 UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+	version_id=sqlc.arg(version_id)::text,
  recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean
  WHERE id=$1 RETURNING *;
 
 -- name: ObjectRouteWriteSettle :execrows
 UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt;
+
+-- name: ObjectMutationEventAppend :exec
+INSERT INTO events (actor, kind, subject, data, at)
+VALUES ('objectstorage', 'event.published', sqlc.arg(account_id)::uuid,
+        sqlc.arg(payload)::jsonb, sqlc.arg(at)::timestamptz);
 
 -- name: ObjectTrackedUploadDue :many
 SELECT * FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
