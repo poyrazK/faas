@@ -99,6 +99,7 @@ func ApplyLayerWithOverlayWhiteouts(dst string, tr *tar.Reader) error {
 type layerApplyOptions struct {
 	resolver               Resolver
 	preserveWhiteouts      bool
+	opaqueRoot             *bool
 	skipRuntimeMountpoints bool
 }
 
@@ -150,6 +151,9 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 				if opts.preserveWhiteouts {
 					if err := applyOverlayOpaque(filepath.Dir(target)); err != nil {
 						return fmt.Errorf("rootfs: opaque whiteout %s: %w", filepath.Dir(target), err)
+					}
+					if opts.opaqueRoot != nil && filepath.Clean(filepath.Dir(target)) == filepath.Clean(dst) {
+						*opts.opaqueRoot = true
 					}
 				} else {
 					// Opaque dir: drop everything currently under its parent.
@@ -214,9 +218,17 @@ func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
 // /tmp, so retaining image-owned entries at those paths is both unnecessary
 // and unsafe when one of them is mounted in the staging namespace.
 func applyLayerGzForApp(dst string, r io.Reader) error {
+	return applyLayerGzForBuild(dst, r, false, nil)
+}
+
+// A sidecar consumes all OCI layers and is an independent read-only root.
+// Main app layers retain deletions against the shared base. Both exclude the
+// pseudo-filesystem content that guest-init owns.
+func applyLayerGzForBuild(dst string, r io.Reader, independentRoot bool, opaqueRoot *bool) error {
 	return applyLayerGz(dst, r, layerApplyOptions{
-		preserveWhiteouts:      true,
+		preserveWhiteouts:      !independentRoot,
 		skipRuntimeMountpoints: true,
+		opaqueRoot:             opaqueRoot,
 	})
 }
 

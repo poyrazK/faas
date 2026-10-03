@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,7 +50,7 @@ func applyOverlayOpaque(dir string) error {
 	if err := clearDir(dir); err != nil {
 		return fmt.Errorf("clear directory: %w", err)
 	}
-	if err := overlaySetxattr(dir, "trusted.overlay.opaque", []byte("y"), 0); err != nil {
+	if err := overlaySetxattr(dir, overlaymetadata.RootOpaqueXattr, []byte("y"), 0); err != nil {
 		return fmt.Errorf("set guest overlay opaque xattr: %w", err)
 	}
 	return nil

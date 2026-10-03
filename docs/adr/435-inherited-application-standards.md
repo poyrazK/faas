@@ -1032,3 +1032,47 @@ imaged, bounded bootable parent copying, composed-runtime approval, restore or
 promotion authority, consumer adoption acknowledgments, or restart recovery of
 the in-memory parent-mount registry. Those gates and public activation remain
 pending.
+
+## Main and sidecar filesystem composition
+
+The optimized main artifact retains overlay whiteouts because its application
+layers can delete content from the shared base. A sidecar receives every OCI
+layer and runs from its own read-only root; its builder instead materializes
+deletions and opaque directories without device nodes or trusted overlay
+attributes. Both paths finish verified layer consumption before publication.
+Packaging uses a fresh wrapper directory and preserves every customer path,
+including a file, directory or symlink named `/upper` and a customer-owned
+`.faas-app-upper-source` directory.
+
+Successful root-level OCI opacity is recorded during conversion and written
+onto the wrapped application root. It cannot be inferred from a failed xattr
+write. Linux OverlayFS always treats its root as merged; the root inode
+construction in the [configured Linux v6.1.134 implementation](https://raw.githubusercontent.com/gregkh/linux/v6.1.134/fs/overlayfs/super.c)
+does not exclude the lower root when the upper root is opaque. The guest
+therefore selects a verified empty lower directory for an opaque application
+root. Its shared read-only boot base and private read/write main drive remain
+distinct. Ordinary application roots keep the shared base as their lower.
+
+`pkg/overlaymetadata` defines the supported trusted attribute namespace and
+lower selection used by the guest and the guarded scanner-view fixture. Only
+an absent attribute or the supported one-byte `y` (opaque) and `x` (whiteout
+hint) values are accepted. Permission, unsupported-filesystem, malformed-value
+and root-replacement failures refuse composition. The native reader opens a
+directory without following the final symlink and reads the attribute through
+that descriptor. Empty lower preparation refuses a symlink, non-directory or
+nonempty path and checks directory identity around its bounded entry read.
+
+The read-only scanner view uses application-upper plus base for ordinary
+roots, or a single application-upper lower for opaque roots. It remains an
+OverlayFS view so residual whiteout devices are interpreted rather than
+scanned as application files. The native acceptance fixture now covers both
+root modes, customer path preservation and an independently mounted read-only
+sidecar; it verifies its private namespace against its live parent.
+
+Portable packaging, sidecar conversion and metadata tests do not execute the
+Linux kernel or prove that mkfs preserves the attributes. The guarded native
+fixture must still run from the reviewed commit on the designated host. Native
+conversion for unprivileged imaged, actual composed-runtime materialization,
+Grype execution, current durable approval, consumed-byte boot/restore/promotion
+authority and consumer rollout adoption remain pending. Public activation
+remains disabled.

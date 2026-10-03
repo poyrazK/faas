@@ -92,7 +92,8 @@ func (b *Builder) WithSigner(s Signer) *Builder {
 
 // BuildInput is one app-layer build.
 type BuildInput struct {
-	// Layers are the above-base OCI layers, bottom-to-top, gzip-compressed.
+	// Layers are the above-base OCI layers for main, or all OCI layers for
+	// an independent sidecar, bottom-to-top and gzip-compressed.
 	Layers []io.Reader
 	// Manifest is the /etc/faas/app.json contract to inject.
 	Manifest api.AppManifest
@@ -240,17 +241,15 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
+	opaqueRoot := false
 	for i, layer := range in.Layers {
-		// The app artifact becomes overlayfs' upper directory after
-		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
-		// deletion can hide a path supplied by the shared base drive. The
-		// shared base owns guest pseudo-filesystems, so filter image entries
-		// below /dev, /proc, /sys, and /tmp before they can become mounted
-		// staging paths.
-		if err := applyLayerGzForApp(staging, layer); err != nil {
+		// The main workload overlays the shared base; a sidecar consumes all
+		// OCI layers as an independent root. Preserve whiteouts only for main.
+		if err := applyLayerGzForBuild(staging, layer, in.WorkloadManifest != nil, &opaqueRoot); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 	}
+
 	// A customer image must not be able to smuggle the full-rootfs marker
 	// into the optimized two-drive artifact and make guest-init bypass the
 	// shared base. Only BuildFullRootfs writes the marker after all layers
@@ -387,7 +386,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	// carry the assembled app tree under /upper; Linux cannot see drive1's
 	// files until guest-init mounts it, so a root-level app.json would be
 	// invisible after the overlay is assembled.
-	if err := stageAppUpper(staging); err != nil {
+	if err := stageAppUpper(staging, opaqueRoot); err != nil {
 		return BuildResult{}, err
 	}
 
@@ -416,34 +415,31 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 // consumed by guest-init's overlay assembly. It preserves a customer image's
 // own top-level "upper" path by treating it as normal app content at
 // /upper/upper inside the artifact.
-func stageAppUpper(staging string) error {
-	upper := filepath.Join(staging, "upper")
-	legacyUpper := filepath.Join(staging, ".faas-app-upper-source")
-	if _, err := os.Lstat(upper); err == nil {
-		if err := os.Rename(upper, legacyUpper); err != nil {
-			return fmt.Errorf("rootfs: preserve app upper path: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("rootfs: inspect app upper path: %w", err)
-	}
-	if err := os.Mkdir(upper, 0o755); err != nil {
-		return fmt.Errorf("rootfs: create app upper path: %w", err)
-	}
+func stageAppUpper(staging string, opaqueRoot bool) error {
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("rootfs: read app staging: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.Name() == "upper" {
-			continue
-		}
-		src := filepath.Join(staging, entry.Name())
-		dst := filepath.Join(upper, entry.Name())
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("rootfs: move %s into app upper: %w", entry.Name(), err)
+	upper, err := os.MkdirTemp(staging, ".faas-upper-wrapper-")
+	if err != nil {
+		return fmt.Errorf("rootfs: create app upper wrapper: %w", err)
+	}
+	if err := os.Chmod(upper, 0o755); err != nil {
+		return fmt.Errorf("rootfs: set app upper wrapper mode: %w", err)
+	}
+	if opaqueRoot {
+		// Set metadata while the wrapper is empty; clearing it later would
+		// discard the application content we are about to move.
+		if err := applyOverlayOpaque(upper); err != nil {
+			return fmt.Errorf("rootfs: preserve root opacity: %w", err)
 		}
 	}
-	return nil
+	for _, entry := range entries {
+		if err := os.Rename(filepath.Join(staging, entry.Name()), filepath.Join(upper, entry.Name())); err != nil {
+			return fmt.Errorf("rootfs: move app entry into upper: %w", err)
+		}
+	}
+	return os.Rename(upper, filepath.Join(staging, "upper"))
 }
 
 // ensureWorkloadMountpoints creates the mount targets needed by a sidecar

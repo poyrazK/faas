@@ -6,11 +6,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -51,6 +53,84 @@ func TestApplyLayerWithOverlayWhiteoutsCreatesUpperMarker(t *testing.T) {
 	}
 	if info, err := os.Lstat(victim); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("replacement is not a regular file: %v", err)
+	}
+}
+
+func TestBuilderRootOpacityRequiresSuccessfulGuestMetadata(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		t.Run(map[bool]string{false: "supported", true: "denied"}[denied], func(t *testing.T) {
+			old := overlaySetxattr
+			t.Cleanup(func() { overlaySetxattr = old })
+			var calls []string
+			overlaySetxattr = func(path, name string, value []byte, flags int) error {
+				if name != overlaymetadata.RootOpaqueXattr || string(value) != "y" || flags != 0 {
+					t.Fatal("changed guest metadata namespace")
+				}
+				calls = append(calls, path)
+				if denied {
+					return syscall.EPERM
+				}
+				return nil
+			}
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "old"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			opaque := false
+			err := applyLayerGzForBuild(root, gzLayer(t, []entry{{name: ".wh..wh..opq"}}), false, &opaque)
+			if denied {
+				if !errors.Is(err, syscall.EPERM) || opaque {
+					t.Fatal("unsupported opacity acquired authority", err)
+				}
+				return
+			}
+			if err != nil || !opaque {
+				t.Fatal("root opacity was not recorded", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "old")); !os.IsNotExist(err) {
+				t.Fatal("root opacity retained old content", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "new"), []byte("new layer"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := stageAppUpper(root, opaque); err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 2 || calls[0] != root || filepath.Dir(calls[1]) != root {
+				t.Fatal("wrapper lost trusted root opacity", calls)
+			}
+			if data, err := os.ReadFile(filepath.Join(root, "upper", "new")); err != nil || string(data) != "new layer" {
+				t.Fatal("wrapper cleared replacement content", err)
+			}
+		})
+	}
+}
+
+func TestSidecarLayerWhiteoutsDoNotRequireNativeOverlayPrivileges(t *testing.T) {
+	oldMknod, oldSetxattr := overlayMknod, overlaySetxattr
+	t.Cleanup(func() { overlayMknod, overlaySetxattr = oldMknod, oldSetxattr })
+	overlayMknod = func(string, uint32, int) error { t.Fatal("sidecar requested a device node"); return syscall.EPERM }
+	overlaySetxattr = func(string, string, []byte, int) error {
+		t.Fatal("sidecar requested trusted overlay metadata")
+		return syscall.EPERM
+	}
+	root := t.TempDir()
+	opaque := false
+	for _, layer := range []io.Reader{
+		gzLayer(t, []entry{{name: "removed", body: "first layer"}, {name: "opaque/lower", body: "first layer"}}),
+		gzLayer(t, []entry{{name: ".wh.removed"}, {name: "opaque/.wh..wh..opq"}, {name: "opaque/current", body: "replacement"}}),
+		gzLayer(t, []entry{{name: ".wh..wh..opq"}, {name: "current", body: "final layer"}}),
+	} {
+		if err := applyLayerGzForBuild(root, layer, true, &opaque); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if opaque {
+		t.Fatal("independent sidecar acquired shared-base opacity")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "current" {
+		t.Fatal("sidecar did not materialize root deletion", entries, err)
 	}
 }
 
