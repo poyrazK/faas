@@ -4141,3 +4141,62 @@ ZIPs and streamed artifact hashes are retained under
 `outputs/traffic-ci-20261003/` in the checkout's parent. Fresh complete CI is
 pending. All six release requirements remain unchecked, including native
 KVM/network/firewall/leak and deployed/staging acceptance.
+
+### Fifth CI result and bounded policy-repair retry — 2026-10-04
+
+Run [37152450045](https://github.com/poyrazK/faas/actions/runs/37152450045)
+finished with failure on `63d1a2ff1fab4082147dd87e86baf3f02f5df1f0`.
+All 25 jobs became terminal: 23 passed. Lint reached its unchanged eight-minute
+timeout; E2E shard 3 failed because runtime request-policy acknowledgement did
+not converge within its unchanged ten-second bound. The same production Go
+source passed lint in the preceding run. The complete failed run and its passing
+portions remain preliminary.
+
+The corrected full state inventory and coverage gate passed. Every one of the
+2,420 roots is accounted for exactly once: 2,418 passes and two existing skips
+(`TestPg_Jobs_JobTaskClaimBatch` and `TestPg_LiveDeployments_PicksUpIndex`).
+Those skips are not accepted traffic fixture results. All eight source, command,
+inventory and binary receipts match the frozen source; their exact merged
+atomic profile matches the aggregate artifact. The original 70% exact state
+gate and ship-blocking package floors passed. Inventory stderr remains fully
+preserved in separate files.
+
+The traffic job passed with 11,620 accepted unit results and 1,521 guarded
+results in 432.459 s. All fourteen PostgreSQL commands passed in 201.677 s:
+425 named results, 72 beneath the required fixture roots, all 40 required
+package/test pairs and zero skips. The 12,571-file source freeze, final source
+receipt, Go 1.25.13 Linux amd64 runtime, PostgreSQL durability and isolation,
+and both compiled binary hashes were verified. This is software/compilation
+evidence only. The three other E2E shards, load, migrations, SDKs, other database
+and unit jobs, contracts and boot checks passed.
+
+The failed gateway log repeatedly reports `placement changed during hydration`
+on its two-second control-plane repair polls. Placement reconciliation can win
+the generation fence on aligned polls, preventing the policy watermark from
+advancing. A deterministic regression uses the production backend and forces
+periodic reconciliation to finish during the older policy-repair read. Against
+the old production source it fails with two placement reads and cursor 7 instead
+of 8, reproducing the rejected read without a timer race.
+
+Policy repair now discards that fenced read and retries once within the same
+existing five-second poll context. Each placement read retains its one-second
+bound and all original generation, ownership and readiness fences. A second
+collision or a source failure leaves the watermark unchanged; cancellation
+prevents another read. The deployment-weight refresh follows a successful fresh
+placement read. No product limit, test deadline, assertion or race flag changes.
+
+Pinned Go 1.25.13 Darwin arm64 race checks reproduce the baseline refusal and
+pass the corrected control-plane repair regressions. They cover the real
+periodic-refresh collision, persistent collisions, source failure, cancellation,
+unchanged deadline and cursor ownership. These focused runs do not qualify the
+complete configured path. Fresh full CI is pending, including the original E2E
+acknowledgement assertion and lint timeout.
+
+All original ZIPs, streamed binary hashes, source freezes, full failed job logs,
+coverage verdict and baseline/corrected regression receipts are retained under
+`outputs/traffic-ci-20261003/` in the checkout's parent. A storage preflight
+briefly refused artifact acquisition before starting the next download; it was
+resumed after free space recovered, with no cache or source cleanup. All six
+release requirements remain unchecked. Native KVM/network/firewall/leak and
+deployed/staging acceptance still require their own evidence; no acceptance
+host is available.
