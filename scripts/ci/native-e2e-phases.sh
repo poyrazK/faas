@@ -48,7 +48,7 @@ native_e2e_phase_files() {
     # Source -> builderd -> builder microVM -> OCI image. The most expensive
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
-    build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go ;;
+    build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go regional_build_export_native_metal_test.go ;;
     # Deploy paths: image, source tarball, healthcheck, port override, secrets.
     deploy) printf '%s\n' \
       deploy_healthcheck_metal_test.go \
@@ -77,10 +77,10 @@ native_e2e_phase_files() {
     # Spec §11 ship-blocking fences. Small, and must never be skipped quietly.
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.
-    twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
+    twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go compute_region_native_metal_test.go ;;
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
-    jobs) printf '%s\n' jobs_metal_test.go ;;
+    jobs) printf '%s\n' jobs_metal_test.go regional_jobs_native_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
 }

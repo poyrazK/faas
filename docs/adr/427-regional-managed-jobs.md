@@ -93,6 +93,18 @@ every `instances.job_id` placement against `jobs.compute_region`, run the
 affected `test-metal` suite and `leakcheck`, and retain fleet evidence before
 promoting this capability. That qualification remains pending.
 
+`make native-regional-acceptance` includes the regional Jobs drill alongside
+app placement and source-export handoff. All workers must pass native-host,
+KVM, distinct-identity, designated-fleet and service checks before workloads
+or faults. The Jobs drill verifies retained terminal instance placement, a
+failed worker attempt followed by an in-region retry, queued work with an
+unchanged retry budget during a one-minute whole-region outage, and successful
+resumption on a regional peer. The foreign vmmd's boot counter and systemd
+invocation must remain unchanged. Pre/post worker leak checks and cleanup are
+required. The dedicated gate refuses skipped or missing drills; implementation
+and portable harness checks do not constitute native qualification. See
+`docs/ops/native-regional-acceptance.md` for inventory and fixture inputs.
+
 Independent regional control planes, artifact/data boundaries, geographic
 ingress, and a global identity with multiple regional targets remain further
 work in the end-to-end multi-region goal.

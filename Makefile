@@ -558,6 +558,10 @@ native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native spl
 native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
 	@bash scripts/ci/run-native-m9-acceptance.sh
 
+.PHONY: native-regional-acceptance
+native-regional-acceptance: ## Run opt-in app/build/Jobs drills on a dedicated native three-worker regional fleet
+	@bash scripts/ci/run-native-regional-acceptance.sh
+
 .PHONY: metal-lima-m5
 metal-lima-m5: ## Run the M5 §14 deploy-to-park cold-boot acceptance on Lima (subtest 1 only)
 	@limactl list -q 2>/dev/null | grep -qx faas-metal || limactl start deploy/lima/faas-metal.yaml --tty=false

@@ -5797,3 +5797,6 @@ WHERE c.instance_id=sqlc.arg(instance_id)::text AND c.archive_day=sqlc.arg(archi
 
 -- name: GetJobExecutionInstance :one
 SELECT id, job_id, node_id, kind, state, ram_mb FROM instances WHERE id = $1;
+
+-- name: ListJobExecutionInstances :many
+SELECT id, job_id, node_id, kind, state, ram_mb FROM instances WHERE job_id = $1 ORDER BY id;

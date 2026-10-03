@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -49,47 +49,15 @@ func TestNativeComputeRegionAcceptance(t *testing.T) {
 	store := state.NewPgStore(pool)
 	client := api.NewClient(required("FAAS_REGION_API_URL"), required("FAAS_REGION_API_TOKEN"))
 	image := required("FAAS_REGION_IMAGE")
-	nodes := make([]state.ComputeNode, 3)
-	ssh := make(map[string]string)
-	for i, suffix := range []string{"A", "PEER", "B"} {
-		nodes[i], err = store.ComputeNodeByName(ctx, required("FAAS_REGION_NODE_"+suffix))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !state.ComputeNodePlacementEligible(nodes[i]) || nodes[i].VPCPUs <= 0 {
-			t.Fatal("each designated worker must be eligible with physical CPU capacity")
-		}
-		target := required("FAAS_REGION_SSH_" + suffix)
-		if strings.HasPrefix(target, "-") || strings.ContainsAny(target, " \t\r\n;`$\\\"'") {
-			t.Fatal("invalid SSH target")
-		}
-		ssh[nodes[i].ID] = target
-		output, err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, "uname", "-sm").CombinedOutput()
-		if err != nil || strings.TrimSpace(string(output)) != "Linux x86_64" {
-			t.Fatalf("worker %s must be native Linux x86_64: %v", nodes[i].Name, err)
-		}
-		if err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, "sudo", "test", "-c", "/dev/kvm").Run(); err != nil {
-			t.Fatalf("worker %s has no KVM: %v", nodes[i].Name, err)
-		}
+	if !regexp.MustCompile(`@sha256:[a-f0-9]{64}$`).MatchString(image) {
+		t.Fatal("FAAS_REGION_IMAGE must be digest-pinned")
 	}
-	if len(ssh) != 3 || nodes[0].Region == nil || nodes[1].Region == nil || nodes[2].Region == nil ||
-		*nodes[0].Region != *nodes[1].Region || *nodes[0].Region == *nodes[2].Region {
-		t.Fatal("need two distinct workers in one region and a third worker in a different region")
+	nodes, targets := regionalAcceptanceWorkers(t, ctx, store, required)
+	ssh := make(map[string]string)
+	for i, node := range nodes {
+		ssh[node.ID] = targets[i]
 	}
 	regionID := *nodes[0].Region
-	all, err := store.ListAllComputeNodes(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	regionalNodes := 0
-	for _, n := range all {
-		if state.ComputeRegionAllowsNode(regionID, n) {
-			regionalNodes++
-		}
-	}
-	if regionalNodes != 2 {
-		t.Fatal("selected acceptance region must contain exactly the two designated workers")
-	}
 	region, err := store.ComputeRegionByID(ctx, regionID)
 	if err != nil || !region.AcceptingNewApps {
 		t.Fatalf("selected region must accept new apps: %v", err)
@@ -107,7 +75,7 @@ func TestNativeComputeRegionAcceptance(t *testing.T) {
 	})
 	stopped := map[string]bool{}
 	service := func(ctx context.Context, nodeID, action string) error {
-		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh[nodeID], "sudo", "systemctl", action, "faas-vmmd").Run()
+		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", ssh[nodeID], "sudo", "-n", "systemctl", action, "faas-vmmd").Run()
 	}
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

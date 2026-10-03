@@ -60,7 +60,7 @@ func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
 		t.Fatal("FAAS_REGION_SOURCE_TARBALL must name a nonempty regular archive")
 	}
-	nodes, targets := regionalBuildAcceptanceWorkers(t, ctx, store, required)
+	nodes, targets := regionalAcceptanceWorkers(t, ctx, store, required)
 	regionID := *nodes[0].Region
 	registry, err := store.ComputeRegionByID(ctx, regionID)
 	if err != nil || !registry.AcceptingNewApps {
@@ -78,7 +78,7 @@ func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 		}
 	})
 	service := func(ctx context.Context, index int, action, unit string) error {
-		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targets[index], "sudo", "systemctl", action, unit).Run()
+		return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targets[index], "sudo", "-n", "systemctl", action, unit).Run()
 	}
 	for i := range nodes[:2] {
 		for _, unit := range []string{"faas-builderd", "faas-imaged", "faas-vmmd"} {
@@ -204,56 +204,6 @@ func waitRegionalSourceHTTP(t *testing.T, ctx context.Context, url string) {
 		}
 	}
 	t.Fatal("regional source app could not cold-boot on its peer after producer loss")
-}
-
-func regionalBuildAcceptanceWorkers(t *testing.T, ctx context.Context, store *state.PgStore, required func(string) string) ([]state.ComputeNode, []string) {
-	t.Helper()
-	nodes := make([]state.ComputeNode, 3)
-	targets := make([]string, 3)
-	machines := make(map[string]bool)
-	for i, suffix := range []string{"A", "PEER", "B"} {
-		var err error
-		nodes[i], err = store.ComputeNodeByName(ctx, required("FAAS_REGION_NODE_"+suffix))
-		if err != nil || !state.ComputeNodePlacementEligible(nodes[i]) || nodes[i].VPCPUs <= 0 {
-			t.Fatalf("worker must be eligible with physical CPU capacity: %v", err)
-		}
-		targets[i] = required("FAAS_REGION_SSH_" + suffix)
-		if strings.HasPrefix(targets[i], "-") || strings.ContainsAny(targets[i], " \t\r\n;\x60$\\\"'") {
-			t.Fatal("invalid SSH target")
-		}
-		output, err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targets[i], "uname", "-sm").CombinedOutput()
-		if err != nil || strings.TrimSpace(string(output)) != "Linux x86_64" {
-			t.Fatalf("worker must be native Linux x86_64: %v", err)
-		}
-		if err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targets[i], "sudo", "test", "-c", "/dev/kvm").Run(); err != nil {
-			t.Fatalf("worker has no KVM: %v", err)
-		}
-		machine, err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", targets[i], "cat", "/etc/machine-id").Output()
-		identity := strings.TrimSpace(string(machine))
-		if err != nil || identity == "" || machines[identity] {
-			t.Fatal("each worker must run on a distinct native host")
-		}
-		machines[identity] = true
-	}
-	if nodes[0].ID == nodes[1].ID || nodes[0].ID == nodes[2].ID || nodes[1].ID == nodes[2].ID ||
-		nodes[0].Region == nil || nodes[1].Region == nil || nodes[2].Region == nil ||
-		*nodes[0].Region != *nodes[1].Region || *nodes[0].Region == *nodes[2].Region {
-		t.Fatal("need two distinct regional workers and a third in another region")
-	}
-	all, err := store.ListAllComputeNodes(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := 0
-	for _, node := range all {
-		if state.ComputeRegionAllowsNode(*nodes[0].Region, node) {
-			count++
-		}
-	}
-	if count != 2 {
-		t.Fatal("selected acceptance region must contain exactly the designated two workers")
-	}
-	return nodes, targets
 }
 
 func waitRegionalBuildExport(t *testing.T, ctx context.Context, store *state.PgStore, pool *pgxpool.Pool, id string, producer state.ComputeNode) state.Deployment {
