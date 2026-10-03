@@ -54,10 +54,10 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 		return artifact, err
 	}
 	if problem := scanSourceTarballSecrets(archivePath, limits); problem != nil {
-		return artifact, fmt.Errorf("Git build source validation rejected the archive")
+		return artifact, fmt.Errorf("git build source validation rejected the archive")
 	}
 	if problem := scanForStatefulShapeWithDockerfileAtRoot(archivePath, request.Source.Kind == "dockerfile" || request.Source.Dockerfile != "", request.Source.Directory, request.Source.Dockerfile); problem != nil {
-		return artifact, fmt.Errorf("Git build source violates supported workload shape")
+		return artifact, fmt.Errorf("git build source violates supported workload shape")
 	}
 	file, err := openSpoolFile(archivePath)
 	if err != nil {
@@ -86,7 +86,7 @@ func verifyEnvironmentGitBuildArchive(archivePath string, maxBytes int64, lease 
 	defer func() { _ = file.Close() }()
 	desired, err := environmentgitops.ReadGitBuildDefinition(file, lease.Source.Spec.ManifestPath, maxBytes, []api.EnvironmentWorkloadSource{source})
 	if err != nil || desired.Digest != lease.Revision.Digest {
-		return fmt.Errorf("Git build archive does not match the approved environment definition")
+		return fmt.Errorf("git build archive does not match the approved environment definition")
 	}
 	return nil
 }
