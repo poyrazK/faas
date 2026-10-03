@@ -113,6 +113,9 @@ const (
 	// PostgresCopyReaderMaxOperations bounds a private reader's retained
 	// provider operation chain. Oversize chains cannot retire ownership.
 	PostgresCopyReaderMaxOperations = 128
+	// Temporary reader ownership has its own structural account ceiling;
+	// reservations also retain the native capture's database quota charge.
+	PostgresCopyReadersPerAccountMax = 64
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

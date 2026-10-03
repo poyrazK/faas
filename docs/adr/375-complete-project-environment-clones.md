@@ -4214,3 +4214,75 @@ closed-database admission-policy projection, final dataset proof and the wider
 configuration/object/promotion implementation remain required. No reader
 provider methods or connection helper are installed into the public clone path;
 complete clone admission remains closed.
+
+
+### Durable temporary reader ownership (2026-10-03)
+
+`project_environment_clone_postgres_copy_readers` now retains a reader owner
+before dispatch, bound to scope derived from the locked frozen snapshot and
+adopted native capture. Its owner and capture catalogue identities are unique;
+ordinary metadata contains no SQL credentials or inventory plaintext. The
+schema registry classifies it as operational state. Reservation requires fresh
+capture lease authority, uses the existing account quota lock order and counts
+all unretired readers. The caller's allowance cannot exceed the structural
+64-reader account ceiling in `pkg/api/limits.go`. This is not a plan entitlement
+or compute billing promise; the native capture also keeps its existing database
+quota charge until qualified disposal.
+
+Creation and deletion have separate durable dispatch claims. Only the worker
+that first commits each claim receives dispatch authority. Committed reply loss,
+worker handoff and unknown provider outcomes recover the original owner and
+first dispatch times without another POST/DELETE. Independent discovery pins
+endpoint ID and creation time; subsequent observations cannot replace them.
+Availability can change with fresh endpoint metadata and grants no SQL session,
+writer release, data-copy completion or resource target/readiness authority.
+State rechecks account/project/revision/status/token and lease expiry after
+locks, including unchanged receipt locks. Provider observation times must fit
+the committed request and the control-plane clock.
+
+Compensation first records reader cleanup intent. An undispatched reservation
+can retire locally. A dispatched unknown identity cannot retire by absence or
+release the native capture needed for discovery. Discovery during cleanup can
+pin the original endpoint while keeping availability false. Known cleanup
+retains the exact endpoint/time and bounded operation IDs, requires a separately
+recorded proof before terminal retirement, and preserves retired receipts for
+replay. Endpoint operation IDs require a committed DELETE dispatch. Native
+capture deletion fallback IDs must exactly match the retained native cleanup
+chain; the reader's trusted provider observation still needs terminal native
+deletion plus exact endpoint absence. State alone does not verify remote
+operations or infer endpoint absence from branch deletion.
+
+Native cleanup may begin after a known reader enters deletion, allowing its
+lost DELETE reply to recover through capture deletion. The adopted capture's
+catalogue retirement and database quota release remain blocked until every
+reader retires. This avoids treating an idle/missing branch or DELETE reply as
+compute disposal. Unknown creation still retains discovery input and quota;
+qualified retirement of a never-observed endpoint remains required before the
+complete clone workflow can guarantee all uncertain-outcome cleanup cases.
+
+Verification: thirty-two focused state contracts pass against private
+PostgreSQL 16 (139.810 s, no skips), including six new reader contracts and the
+existing snapshot/copy-target/inventory/registry contracts. One additional
+account-quota contract passes (4.265 s), racing distinct source reservations
+against one ceiling. New contracts exercise concurrent owner reservation,
+first dispatch and worker handoff, unknown outcomes, immutable scope/endpoint
+pins, changing availability without readiness, stale authority, lease expiry
+after a receipt lock, local retirement, stored operation proof requirements,
+retained native-chain fallback, capture quota holds and replay after native
+catalogue retirement. Provider observations in these state fixtures are
+synthetic; they do not qualify actual remote compute or SQL placement.
+
+State vet and normal builds of state/apid pass. Independent SQLC regeneration
+matches all thirteen generated files across state/inventory/connection-fence.
+The new empty table round-trips Down/Up in the task-owned schema database;
+PostgreSQL rejects downgrade with retained ownership, including retired rows.
+The focused test overlay retains all 532 state production files and replaces
+only test files. An unused import and a quota-fixture workload identity collision
+were fixed before successful verification. No provider mutation or public
+admission ran.
+
+The provider and durable state protocols are ready for private worker wiring;
+no production reader dispatch or SQL connection callback is installed yet.
+Compute metering, unknown-creation retirement, qualified SQL/OID/session access,
+export/import and the wider complete configuration/object/promotion workflow
+remain open. Complete clone admission remains closed.

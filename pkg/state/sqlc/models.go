@@ -3801,6 +3801,29 @@ type ProjectEnvironmentClonePostgresBinding struct {
 	Preparation     []byte
 }
 
+type ProjectEnvironmentClonePostgresCopyReader struct {
+	OperationID         pgtype.UUID
+	SourceDatabaseID    pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	CaptureDatabaseID   pgtype.UUID
+	Scope               []byte
+	OwnerID             pgtype.UUID
+	State               string
+	RequestStartedAt    pgtype.Timestamptz
+	EndpointID          pgtype.Text
+	EndpointCreatedAt   pgtype.Timestamptz
+	Available           bool
+	ObservedAt          pgtype.Timestamptz
+	CleanupRequestedAt  pgtype.Timestamptz
+	CleanupDispatchedAt pgtype.Timestamptz
+	DeleteOperationIds  []byte
+	CaptureOperationIds []byte
+	RetiredAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresCopyTarget struct {
 	OperationID        pgtype.UUID
 	SourceDatabaseID   pgtype.UUID

@@ -10530,6 +10530,57 @@ CREATE TABLE public.project_environment_clone_postgres_bindings (
 
 
 --
+-- Name: project_environment_clone_postgres_copy_readers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_readers (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    owner_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    endpoint_id text,
+    endpoint_created_at timestamp with time zone,
+    available boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone,
+    cleanup_requested_at timestamp with time zone,
+    cleanup_dispatched_at timestamp with time zone,
+    delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    capture_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__capture_operation_ids_check CHECK ((jsonb_typeof(capture_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres__cleanup_dispatched_at_check CHECK (isfinite(cleanup_dispatched_at)),
+    CONSTRAINT project_environment_clone_postgres_c_cleanup_requested_at_check CHECK (isfinite(cleanup_requested_at)),
+    CONSTRAINT project_environment_clone_postgres_c_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres_co_endpoint_created_at_check CHECK (isfinite(endpoint_created_at)),
+    CONSTRAINT project_environment_clone_postgres_cop_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_endpoint_id_check CHECK (((endpoint_id IS NULL) OR ((length(endpoint_id) >= 1) AND (length(endpoint_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_retired_at_check CHECK (isfinite(retired_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check CHECK (((capture_database_id <> source_database_id) AND (owner_id <> capture_database_id) AND (owner_id <> source_database_id) AND (owner_id <> operation_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check1 CHECK ((((endpoint_id IS NULL) = (endpoint_created_at IS NULL)) AND ((endpoint_id IS NULL) = (observed_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check3 CHECK (((endpoint_created_at IS NULL) OR ((request_started_at IS NOT NULL) AND (endpoint_created_at >= request_started_at) AND (observed_at >= endpoint_created_at)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check4 CHECK (((cleanup_requested_at IS NULL) OR (cleanup_requested_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check5 CHECK (((cleanup_dispatched_at IS NULL) OR ((cleanup_requested_at IS NOT NULL) AND (cleanup_dispatched_at >= cleanup_requested_at) AND (endpoint_id IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check6 CHECK (((retired_at IS NULL) OR (retired_at >= cleanup_requested_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check7 CHECK (((NOT available) OR (state = 'observed'::text))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check9 CHECK (((state = ANY (ARRAY['deleting'::text, 'retired'::text])) OR ((cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'observed'::text, 'deleting'::text, 'retired'::text])))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15485,6 +15536,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 
 --
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_capture_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_capture_database_id_key UNIQUE (capture_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19987,6 +20062,13 @@ CREATE INDEX project_environment_clone_postgres_copy_capture_holds ON public.pro
 --
 
 CREATE INDEX project_environment_clone_postgres_fork_account_quota ON public.project_environment_clone_postgres_snapshot_restores USING btree (account_id) WHERE ((state <> 'deleted'::text) AND (adopted_database_id IS NULL));
+
+
+--
+-- Name: project_environment_clone_postgres_readers_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_readers_account_holds ON public.project_environment_clone_postgres_copy_readers USING btree (account_id) WHERE (state <> 'retired'::text);
 
 
 --
@@ -25913,6 +25995,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
 
 
 --
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_po_operation_id_source_database_fkey3; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey3 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25937,11 +26027,35 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 
 --
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_co_capture_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_co_capture_database_id_fkey1 FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_cop_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
     ADD CONSTRAINT project_environment_clone_postgres_cop_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --
