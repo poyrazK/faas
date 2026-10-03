@@ -1,4 +1,4 @@
-// adr: 493 — no generic VM acknowledgement releases a qualification attempt.
+// adr: 521 — no generic VM acknowledgement releases a qualification attempt.
 package sched
 
 import (

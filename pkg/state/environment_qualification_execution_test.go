@@ -1,4 +1,4 @@
-// adr: 493 — retirement evidence does not rewrite a prior terminal outcome.
+// adr: 521 — retirement evidence does not rewrite a prior terminal outcome.
 package state
 
 import (

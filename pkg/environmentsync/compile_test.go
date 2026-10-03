@@ -17,7 +17,7 @@ func definition() api.EnvironmentDefinition {
 	}
 }
 
-// adr: 493 — existing queue identities retain the catalog name contract.
+// adr: 521 — existing queue identities retain the catalog name contract.
 func TestCompileQueueNamesUseCatalogContract(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

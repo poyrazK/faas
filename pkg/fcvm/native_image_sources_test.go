@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 493 — image access remains owned across daemon death and shared inode aliases.
+// adr: 521 — image access remains owned across daemon death and shared inode aliases.
 package fcvm
 
 import (

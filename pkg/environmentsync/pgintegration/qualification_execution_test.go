@@ -1,4 +1,4 @@
-// adr: 493 — qualification capacity follows physical attempt retirement.
+// adr: 521 — qualification capacity follows physical attempt retirement.
 package pgintegration_test
 
 import (

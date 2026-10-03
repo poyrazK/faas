@@ -1,4 +1,4 @@
-// adr: 493 — runtime evidence must reflect the actual sealed serving inputs.
+// adr: 521 — runtime evidence must reflect the actual sealed serving inputs.
 // adr: 462 — migration credentials are restricted to persisted release tasks.
 package state
 

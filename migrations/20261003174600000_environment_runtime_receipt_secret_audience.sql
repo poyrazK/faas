@@ -1,5 +1,5 @@
 -- filename: 20261003174600000_environment_runtime_receipt_secret_audience.sql
--- ADR-493, ADR-462: serving receipts attest only credentials eligible for serving delivery.
+-- ADR-521, ADR-462: serving receipts attest only credentials eligible for serving delivery.
 -- +goose Up
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION environment_runtime_inputs_fresh(target_app uuid,target_scope text,boundary timestamptz,

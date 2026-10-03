@@ -1,4 +1,4 @@
-// adr: 493 — reviewed queue adoption preserves existing catalog identities.
+// adr: 521 — reviewed queue adoption preserves existing catalog identities.
 package pgintegration_test
 
 import (
