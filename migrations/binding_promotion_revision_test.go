@@ -38,7 +38,7 @@ func TestBindingPromotionRevisionTriggersWatchExistingColumns(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(tables) != 22 {
+	if len(tables) != 23 {
 		t.Fatalf("revision triggers=%d: %v", len(tables), tables)
 	}
 	for _, table := range tables {
@@ -110,6 +110,17 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	processGenerations, err := os.ReadFile("20261003113828429_runtime_secret_process_generations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, processGenerationsDown, ok := strings.Cut(string(processGenerations), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing runtime secret process generations rollback")
+	}
+	if _, err := pool.Exec(ctx, processGenerationsDown); err != nil {
+		t.Fatal(err)
+	}
 	adoptionUp, adoptionDown, ok := strings.Cut(string(adoption), "-- +goose Down")
 	if !ok {
 		t.Fatal("missing adoption rollback")
@@ -149,6 +160,13 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, adoptionUp); err != nil {
+		t.Fatal(err)
+	}
+	processGenerationsUp, _, ok := strings.Cut(string(processGenerations), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing runtime secret process generations migration")
+	}
+	if _, err := pool.Exec(ctx, processGenerationsUp); err != nil {
 		t.Fatal(err)
 	}
 }
