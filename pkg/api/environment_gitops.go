@@ -178,16 +178,16 @@ func (p EnvironmentGitOpsPlan) HasDrift() bool {
 func (s EnvironmentGitSourceSpec) Validate() error {
 	parts := strings.Split(s.Repository, "/")
 	if s.RepositoryID <= 0 || s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n") {
-		return fmt.Errorf("Git source requires a verified repository and installation identity")
+		return fmt.Errorf("git source requires a verified repository and installation identity")
 	}
 	if !validEnvironmentGitRef(s.Ref) || s.ApprovalPolicy == "protected_branch" && !strings.HasPrefix(s.Ref, "refs/heads/") {
-		return fmt.Errorf("Git source requires a valid ref")
+		return fmt.Errorf("git source requires a valid ref")
 	}
 	if s.ManifestPath == "" || path.IsAbs(s.ManifestPath) || path.Clean(s.ManifestPath) != s.ManifestPath || s.ManifestPath == "." || strings.HasPrefix(s.ManifestPath, "../") || s.ManifestPath == ".." || strings.ContainsAny(s.ManifestPath, "\\\x00") {
 		return fmt.Errorf("manifest_path must be a normalized file path within the Git tree")
 	}
 	if s.Mode != "report" && s.Mode != "enforce" || s.ApprovalPolicy != "manual" && s.ApprovalPolicy != "protected_branch" {
-		return fmt.Errorf("Git source needs report/enforce mode and manual/protected_branch approval_policy")
+		return fmt.Errorf("git source needs report/enforce mode and manual/protected_branch approval_policy")
 	}
 	return nil
 }

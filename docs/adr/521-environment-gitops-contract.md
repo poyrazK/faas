@@ -1864,8 +1864,42 @@ retry does not mint another receipt. Unbound requests and uncertain physical
 publication remain charged. A pre-create tombstone excludes delayed delivery
 but supplies no physical proof, and cannot retire a foreign parent.
 
-The attempt-aware RPC, native exclusion evidence for unbound requests, complete
-producer and namespace recovery proof, durable qualification consumer and graph
+Native exclusion evidence for unbound requests, complete producer and namespace
+recovery proof, durable qualification consumer and graph
 activation remain required. These methods do not remove the recovered-helper
 ownership fence or enable qualification dispatch. Dedicated native x86_64 Linux
 KVM lifecycle and leak acceptance remain outstanding.
+
+## Attempt-aware native RPC transport
+
+The dedicated create and retire RPCs now carry a versioned, typed execution
+frame, including the original host, attempt, artifact and private cleanup
+capability. The wire adapter preserves every field and UUID spelling. Missing,
+unknown or unsupported capability fields fail closed. Host placement and
+single-valued wake/app/deployment/instance/node correlation must agree before
+the native owner sees a request. Boot carries the existing complete AppSpec
+payload and checks the exact artifact key and guest memory reservation.
+
+Schedd's typed client and router now implement the additive qualification
+surface. Cleanup resolves the recorded node after app ownership changes and
+returns evidence only when the reply echoes the complete original frame.
+Incomplete exit/resource proof, generic absence, a substituted artifact or
+cleanup capability, and an older node cannot release the scheduler reservation.
+Secret-alias capability loss cannot invoke the generic Destroy helper on this
+path. Native errors have fixed diagnostic text and a stable unconfirmed code;
+private cleanup values never enter that text.
+
+The production Manager still has no configured qualification identity and the
+durable consumer is not enabled. These RPCs supply transport, not smoke,
+snapshot, serving convergence or activation evidence. Native exclusion and
+complete recovery proof remain prerequisites to enablement. Portable bufconn
+checks cover the complete runtime/cleanup round trip, older-node refusal,
+substituted responses, malformed capability and correlation rejection, private
+error redaction, secret-alias loss, and routing to the original host. They do
+not establish supported native KVM acceptance.
+
+CI now runs the existing memory/PostgreSQL GitOps parity suite in its database
+shard. Cross-package coverage instruments the real state adapters exercised by
+that suite; the exact pkg/state 70% floor is retained. Previously the external
+suite ran in the lightweight shard, where its PostgreSQL cases could skip and
+its adapter calls did not contribute to the state profile.

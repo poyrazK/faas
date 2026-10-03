@@ -10,21 +10,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-func realIntentStore(t *testing.T) *state.PgStore {
-	t.Helper()
-	pool := pgtest.OpenMigrated(t)
-	if err := db.MigrateUp(t.Context(), pool); err != nil {
-		t.Fatal(err)
-	}
-	return state.NewPgStore(pool)
-}
 
 type intentTestStore interface {
 	gitOpsTestStore

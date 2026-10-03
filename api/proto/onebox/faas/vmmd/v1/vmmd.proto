@@ -26,6 +26,12 @@ service Vmmd {
   // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
   rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
 
+  // ADR-521: these methods carry one immutable private qualification attempt.
+  // Generic boot/destroy never substitutes for either operation. Host journal
+  // ownership must be configured before creation or retirement is available.
+  rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
+  rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
+
   // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
   // command, environment, and timeout, so they use a dedicated flat wire
   // shape instead of AppSpec and never enter the snapshot/readiness path.
@@ -953,6 +959,76 @@ message CreateFromSnapshotRequest {
   // resuming guest execution. The scheduler later resumes this VM in place
   // when it promotes the warm reservation to serving capacity.
   bool keep_paused = 8;
+}
+
+// Cleanup authority is private to schedd/vmmd. Preserve every field exactly,
+// including the original placement after source deletion or supersession.
+// contract_version=1 is the only supported immutable frame profile.
+message EnvironmentQualificationExecution {
+  uint32 contract_version = 1;
+  string instance_id = 2;
+  string request_id = 3;
+  string graph_id = 4;
+  string app_id = 5;
+  string deployment_id = 6;
+  string node_id = 7;
+  string wake_id = 8;
+  string source_id = 9;
+  string environment_id = 10;
+  string revision_id = 11;
+  string resource = 12;
+  string scope = 13;
+  string plan_hash = 14;
+  int64 generation = 15;
+  int64 intent_version = 16;
+  int64 attempt = 17;
+  int32 ram_mb = 18;
+  EnvironmentQualificationArtifact artifact = 19;
+  string cleanup_token = 20;
+}
+
+message EnvironmentQualificationArtifact {
+  string rootfs_path = 1;
+  string rootfs_key = 2;
+  int64 rootfs_bytes = 3;
+  string image_digest = 4;
+  string build_id = 5;
+  string kind = 6;
+  string commit_sha = 7;
+}
+
+message CreateEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+  AppSpec app = 2;
+  string plan = 3;
+  string account_id = 4;
+}
+
+// Boot acknowledges only the runtime of this attempt; it grants no readiness,
+// smoke, snapshot or graph activation authority.
+message CreateEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  WakeResponse wake = 2;
+}
+
+message RetireEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+// The host may emit this only after the original physical generation proves
+// process exit and complete resource removal. Absence is not a receipt.
+message EnvironmentQualificationRetirement {
+  string kind = 1;
+  string receipt_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  bool processes_exited = 5;
+  bool resources_removed = 6;
+}
+
+message RetireEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationRetirement retirement = 2;
 }
 
 message CreateColdBootRequest {

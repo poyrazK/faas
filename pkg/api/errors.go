@@ -636,7 +636,10 @@ const (
 	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
 	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
 	CodeConflict                       = "conflict"
-	CodeNoLiveDeployment               = "no_live_deployment"
+	// ADR-521: the original private VM attempt cannot yet acknowledge its
+	// ownership or complete physical retirement. Keep its reservation charged.
+	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
+	CodeNoLiveDeployment                    = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -1917,7 +1920,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,

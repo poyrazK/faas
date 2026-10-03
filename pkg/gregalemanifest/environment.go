@@ -3,6 +3,7 @@ package gregalemanifest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -26,7 +27,7 @@ func ParseEnvironment(raw []byte) (api.EnvironmentDefinition, error) {
 		return out, fmt.Errorf("parse environment definition: %w", err)
 	}
 	var extra yaml.Node
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return out, fmt.Errorf("environment definition must contain one document")
 	}
 	if len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {

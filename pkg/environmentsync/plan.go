@@ -167,7 +167,7 @@ func validCommitSHA(value string) bool {
 		return false
 	}
 	for _, char := range value {
-		if !(char >= 'a' && char <= 'f' || char >= '0' && char <= '9') {
+		if (char < 'a' || char > 'f') && (char < '0' || char > '9') {
 			return false
 		}
 	}

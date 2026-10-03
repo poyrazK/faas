@@ -45,7 +45,7 @@ func validEnvironmentGitOpsTarget(positional []string) bool {
 }
 
 func cmdEnvironmentGitOpsRead(action string, args []string) int {
-	if !validEnvironmentGitOpsTarget(args) {
+	if len(args) != 2 || !validEnvironmentGitOpsTarget(args) {
 		PrintUsage(os.Stderr, environmentGitOpsUsage, "projects environments")
 		return 1
 	}
@@ -108,12 +108,12 @@ func cmdEnvironmentGitOpsReview(args []string) int {
 	return environmentGitOpsOutput(review, err)
 }
 
-func readEnvironmentGitOpsReceipt(path string, out any) error {
+func readEnvironmentGitOpsReceipt(path string, out any) (result error) {
 	file, err := openCustomerFile(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { result = errors.Join(result, file.Close()) }()
 	raw, err := io.ReadAll(io.LimitReader(file, api.EnvironmentGitOpsMaxDefinitionBytes*2+1))
 	if err != nil || len(raw) > api.EnvironmentGitOpsMaxDefinitionBytes*2 {
 		return errors.New("could not read a bounded GitOps review receipt")
