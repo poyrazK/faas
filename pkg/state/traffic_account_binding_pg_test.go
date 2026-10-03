@@ -10,9 +10,80 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPgTrafficAppBindingRetriesRuntimeUpdateBeforeIntent(t *testing.T) {
+	for _, cancelWaiting := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh snapshot", true: "cancel and release"}[cancelWaiting], func(t *testing.T) {
+			store, pool, account, app := trafficHostPGFixture(t)
+			blocker, err := pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = blocker.Rollback(context.WithoutCancel(t.Context())) }()
+			if _, err := blocker.Exec(t.Context(), `UPDATE apps SET ram_mb=ram_mb WHERE id=$1`, app.ID); err != nil {
+				t.Fatal(err)
+			}
+			var pid int32
+			if err := blocker.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			type result struct {
+				tx  pgx.Tx
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				tx, err := store.beginAccountAppTrafficMutation(ctx, account.ID, app.ID)
+				done <- result{tx, err}
+			}()
+			for {
+				var waiting bool
+				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if cancelWaiting {
+				cancel()
+			}
+			if err := blocker.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got := <-done
+			if cancelWaiting {
+				if got.tx != nil || !errors.Is(got.err, context.Canceled) {
+					t.Fatalf("canceled binding: tx=%v err=%v", got.tx, got.err)
+				}
+			} else {
+				if got.err != nil || got.tx == nil {
+					t.Fatalf("fresh binding after concurrent runtime update: %v", got.err)
+				}
+				if err := got.tx.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A new mutation must be able to acquire every released session lock.
+			retryCtx, retryCancel := context.WithTimeout(t.Context(), time.Second)
+			defer retryCancel()
+			recovered, err := store.beginAccountAppTrafficMutation(retryCtx, account.ID, app.ID)
+			if err != nil {
+				t.Fatalf("binding locks leaked: %v", err)
+			}
+			if err := recovered.Rollback(retryCtx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func pgTrafficAccountIntent(t *testing.T, pool *pgxpool.Pool) string {
 	t.Helper()

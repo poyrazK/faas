@@ -2033,6 +2033,9 @@ func (b *PGBackend) EvictInstanceForRoutingIdentity(appID, instanceID, wakeID, n
 
 // EvictRoutedTarget is used by a forward already bound to one routing lifetime.
 func (b *PGBackend) EvictRoutedTarget(target Target) {
+	if target.routingWakeID != "" {
+		target.WakeID = target.routingWakeID
+	}
 	b.evictTargetLifetime(target, true, true)
 }
 

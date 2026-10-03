@@ -132,7 +132,7 @@ func TestDeploymentSmokeCandidatePostgresSourcesHistoryTimeoutRecovery(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = tx.Rollback(context.Background()) }()
+			defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 			if _, err := tx.Exec(ctx, lock.statement); err != nil {
 				t.Fatal(err)
 			}

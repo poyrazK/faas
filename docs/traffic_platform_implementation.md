@@ -3969,3 +3969,45 @@ under `/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-ci-20261003/`.
 All six release requirements remain unchecked. Linux compilation is not native
 execution. Dedicated KVM, networking/firewall/leak evidence, deployed fleet/load/
 recovery, customer release and staging qualification remain open.
+
+### First CI result and corrective work
+
+Run [37137462190](https://github.com/poyrazK/faas/actions/runs/37137462190)
+finished with failure on source `2283a652bccda2de7a448674a94754389ee2d5d1`.
+The additive job completed all fourteen unit packages successfully, then ran all
+fourteen PostgreSQL package commands. The new current-candidate PostgreSQL smoke
+fixture passed, but the readiness lifetime fixture compared nanoseconds against
+PostgreSQL's microsecond timestamp storage. The complete run is failed evidence,
+not acceptance. Full job logs, the traffic artifact, terminal status and hashes
+are preserved under the CI output directory above.
+
+Corrections retain existing assertions and product limits: the timestamp fixture
+uses representable precision; rollback inherits its test context; the concurrency
+problem points to the registered plans page; app binding retries serialization
+before any intent write with all prior locks released; and warm forwarding keeps
+its routing wake identity after consuming first-byte telemetry. Edge-rule fixtures
+now seed an owned eligible serving deployment, and the named gateway fixture
+publishes its serving node before process registration. Malformed managed callers
+are denied before attempting durable security verification. Conformance cases
+cover durable PostgreSQL egress-circuit revisions and MemStore's explicit
+unsupported boundary.
+
+A pinned Go 1.25.13 race profile reproduced the policy-analysis time failures and
+identified repeated compaction of large raw JSON strings. Simple string schemas
+now have their exact HTML/Unicode escape allowance measured without repeatedly
+encoding their bytes. Escaped or structured schemas retain the regular JSON
+encoder. Regression cases compare both canonical and compiled measurements to
+the encoder, and the earlier aggregate-refusal/recovery assertions remain intact.
+An earlier Go 1.27 diagnostic run is retained separately and excluded.
+
+The full state suite exceeded its existing 20-minute test budget. CI now compiles
+one race/atomic-coverage binary, inventories every test/example/fuzz root, and
+executes two disjoint exhaustive groups with the same count and deadline. It
+requires every root terminal and merges matching coverage block inventories
+before applying the unchanged coverage floors. Logs, commands, source freeze,
+binary hash and profiles are retained even on failure. Lint uses two workers
+with the unchanged eight-minute deadline. The traffic PostgreSQL scope retains
+all earlier requirements and adds the actual app-binding retry/cancellation
+fixture: 40 package/test pairs, 38 distinct names. Fresh corrected CI completion
+remains pending. All six release requirements remain unchecked; native KVM,
+networking/firewall/leak, deployed and staging evidence remains unavailable.

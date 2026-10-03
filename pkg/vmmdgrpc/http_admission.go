@@ -48,7 +48,7 @@ func admitHTTPForward[Req, Resp any](s *Server, stream grpc.BidiStreamingServer[
 			if errors.As(err, &capacity) {
 				p = p.WithLimit(int64(capacity.Limit), int64(capacity.Observed))
 			}
-			p.DocsURL = "https://gregale.dev/docs/limits#concurrency"
+			p.DocsURL = "https://gregale.dev/docs/plans#what-each-limit-means"
 			err = grpcerr.ToStatus(p)
 		case errors.Is(err, fcvm.ErrHTTPForwardNotLive):
 			err = status.Error(codes.NotFound, "instance is unavailable for HTTP forwarding")

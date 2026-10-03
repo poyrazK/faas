@@ -72,7 +72,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		if err != nil {
 			return err
 		}
-		compiledRule := rule
+		compiledRule, schemaAllowance := compactMemTrafficRuleSchema(rule)
 		if environment != "" {
 			// Preserve the selector identity while reserving the same maximum
 			// hostname/escape allowance as the SQL compiler projection.
@@ -88,7 +88,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		}
 		group.Rows++
 		group.Canonical += canonical + 16
-		group.Compiled += int64(len(compiled)) + 2
+		group.Compiled += int64(len(compiled)) + schemaAllowance + 2
 		groups[key] = group
 		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.RevisionHosts) + len(view.Domains))
 	}

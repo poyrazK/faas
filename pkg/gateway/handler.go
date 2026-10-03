@@ -619,6 +619,9 @@ type PublicAuthUnsealer interface {
 // last_request_at touches (spec §4.1) and to stamp x-faas-instance on
 // the request before proxying.
 type Target struct {
+	// WakeID can be consumed by first-byte telemetry. Preserve the selected
+	// routing lifetime separately so warm transport failures evict that VM.
+	routingWakeID string
 	// AppID is authoritative admission/cache identity. Lifecycle telemetry
 	// must not depend on an optional request header, especially for cron and
 	// other synthetic invocations.

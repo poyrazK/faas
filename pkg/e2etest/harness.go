@@ -1013,6 +1013,13 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	// test-only override scoped to gatewayd-internal.
 	for _, entry := range extraEnv {
 		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_GATEWAY_NODE_NAME="); ok {
+			// The process captures its registration baseline at boot. Publish
+			// the named serving node first, as fleet bootstrap does in production.
+			result, err := h.Pool.Exec(t.Context(), `UPDATE compute_nodes
+			 SET role='compute-node', gateway_target_url=$2 WHERE name=$1`, nodeName, "tcp://"+addr)
+			if err != nil || result.RowsAffected() != 1 {
+				t.Fatalf("e2etest: register named gateway %q before boot: rows=%d err=%v", nodeName, result.RowsAffected(), err)
+			}
 			env = append(env, "FAAS_NODE_NAME="+nodeName)
 		}
 	}

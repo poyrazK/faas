@@ -47,7 +47,8 @@ func TestInstanceReadinessForTargetsPostgresLifetimeOrdering(t *testing.T) {
 
 func verifyTargetReadinessLifetimes(t *testing.T, store targetReadinessTestStore) {
 	t.Helper()
-	at := time.Now().UTC().Add(-time.Minute)
+	// PostgreSQL persists timestamptz values at microsecond precision.
+	at := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
 	current := ReadinessTarget{AppID: "app", InstanceID: "instance", WakeID: "wake", NodeID: "node"}
 	appendEvent := func(target ReadinessTarget, kind, source, status string, offset time.Duration) {
 		t.Helper()

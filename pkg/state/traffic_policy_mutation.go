@@ -221,6 +221,7 @@ func validateMemEdgeRuleTrafficProjection(rule EdgeRule) error {
 }
 
 func memEdgeRuleTrafficProjectionSize(rule EdgeRule) (int64, error) {
+	rule, schemaAllowance := compactMemTrafficRuleSchema(rule)
 	// ReadPublicHostEdgeRules emits JSON null for absent manifest keys, but
 	// empty arrays/objects for the non-null match fields.
 	var manifest any
@@ -242,5 +243,6 @@ func memEdgeRuleTrafficProjectionSize(rule EdgeRule) (int64, error) {
 		"Kind": rule.Kind, "Action": rule.Action, "CorsPresetID": rule.CorsPresetID,
 		"ValidateMode": mode, "CreatedAt": rule.CreatedAt, "UpdatedAt": rule.UpdatedAt, "ManifestKey": manifest,
 	}}
-	return memTrafficProjectionSize("edge_rule", projection)
+	size, err := memTrafficProjectionSize("edge_rule", projection)
+	return size + schemaAllowance, err
 }

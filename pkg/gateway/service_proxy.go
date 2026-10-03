@@ -537,6 +537,15 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	if p.policy != nil && p.trafficRevocations != nil {
+		// Durable policy and security stores use UUID app identities. Reject
+		// malformed callers before requesting a security epoch for them.
+		if _, err := uuid.Parse(caller); err != nil {
+			p.metrics.IncServiceCall(ServiceCallDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity is unknown")
+			return
+		}
+	}
 	if validateManagedDeadlineCaller(dispatchWriter, r, caller) {
 		return
 	}

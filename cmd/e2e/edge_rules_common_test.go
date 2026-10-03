@@ -233,6 +233,18 @@ func problemCode(body []byte) string {
 // :2261 before any non-route edge rule fires.
 func seedRouteSubstitute(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	accountID, appID, host, appSlug string) string {
+	t.Helper()
+	// Public routing pins an eligible deployment before evaluating non-route
+	// rules. This APID/Gatewayd fixture has no builder or VM, so seed the
+	// serving roster while retaining the existing no-capacity fallthrough.
+	_, err := pool.Exec(ctx, `INSERT INTO deployments(app_id, status, kind, image_digest, scope, traffic_percent)
+	 SELECT id, 'live', 'image', 'sha256:edge-rule-fixture', $2, 100 FROM apps
+	 WHERE id=$1::uuid AND NOT EXISTS (
+	   SELECT 1 FROM deployments WHERE app_id=$1::uuid AND scope=$2
+	     AND status='live' AND deleted_at IS NULL AND traffic_percent>0)`, appID, state.DefaultEnvScope)
+	if err != nil {
+		t.Fatalf("seed edge-rule serving deployment: %v", err)
+	}
 	return seedEdgeRuleDirect(t, ctx, pool, accountID, appID, host,
 		state.EdgeRuleKindRoute,
 		map[string]any{

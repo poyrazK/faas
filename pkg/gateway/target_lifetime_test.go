@@ -2,9 +2,33 @@
 package gateway
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestTargetLifetimeWarmForwardFailurePreservesRoutingWake(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	old := Target{AppID: "app", InstanceID: "instance", NodeID: "node", WakeID: "old", DeploymentID: "deployment"}
+	b.RecordTarget(old.AppID, old)
+	h := &Handler{}
+	_, forwarded := h.armWakeFirstByte(httptest.NewRequest(http.MethodGet, "http://app.example/", nil), old.AppID, old, "")
+	if forwarded.WakeID != "" {
+		t.Fatal("warm request reused first-byte telemetry")
+	}
+	b.EvictRoutedTarget(forwarded)
+	b.RecordTarget(old.AppID, old)
+	if b.Pick(old.AppID).OK || b.CapacityCount(old.AppID) != 0 {
+		t.Fatal("warm transport failure did not quarantine the selected wake")
+	}
+	fresh := old
+	fresh.WakeID = "replacement"
+	b.RecordTarget(fresh.AppID, fresh)
+	if got := b.Pick(fresh.AppID); !got.OK || got.Target.WakeID != fresh.WakeID {
+		t.Fatalf("old warm forward quarantined replacement: %+v", got)
+	}
+}
 
 func TestTargetLifetimeFreshWakeBypassesOldQuarantine(t *testing.T) {
 	b := NewPGBackend(nil, nil, nil)

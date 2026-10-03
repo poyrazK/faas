@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -37,6 +40,25 @@ func (tx *appTrafficBindingTx) Commit(ctx context.Context) error {
 }
 
 func (s *PgStore) beginAccountAppTrafficMutation(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	for {
+		tx, err := s.tryBeginAccountAppTrafficMutation(ctx, account, appID)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure && pgErr.Code != pgerrcode.LockNotAvailable {
+			return tx, err
+		}
+		// Runtime writers can update the app after the policy snapshot starts.
+		// Retry before any intent write, with the transaction and locks released.
+		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *PgStore) tryBeginAccountAppTrafficMutation(ctx context.Context, account, appID string) (pgx.Tx, error) {
 	tx, err := s.beginTrafficBinding(ctx, account, nil, appID)
 	if err != nil {
 		return nil, appTrafficBindingError(err)

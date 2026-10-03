@@ -186,7 +186,7 @@ jobs:
           # a cold hosted-runner cache. Keep the linter deadline above the
           # observed cold-cache runtime so timing is not reported as a lint
           # failure while the job-level timeout remains bounded.
-          args: --timeout=8m
+          args: --timeout=8m --concurrency=2
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -674,7 +674,20 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
+            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite_test.py
+            PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite.py --packages "$PKGS" --coverage "coverage/${{ matrix.coverage_file }}"
+          else
+            go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          fi
+
+      - name: preserve full state suite receipts
+        if: ${{ always() && matrix.state_coverage }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-suite-${{ github.sha }}-${{ github.run_attempt }}
+          path: coverage/state-suite
+          retention-days: 14
 
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}
