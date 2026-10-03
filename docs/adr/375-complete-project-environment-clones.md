@@ -5359,7 +5359,8 @@ completion timestamps. New databases remain bootstrap-owned and closed. These re
 grant neither import authority nor data-resource identity, observed generation or stage
 readiness. Public database/object clone admission stays closed.
 
-Per-database durable SQL pins and maintenance access, final database globals/ACLs/
+Per-database durable SQL pins were initially absent; their integration follows below.
+Maintenance access, final database globals/ACLs/
 owners, credential preparation/activation, independent import verification and private
 ownership retirement remain required. Common-point writer closure, complete object/
 configuration coverage, production-preserving promotion/rollback and native/provider
@@ -5387,3 +5388,85 @@ The final state and sequential primitive runs succeed. Normal production builds,
 focused state/APID vet, normal core vet and the actual 22-file SQLC gate pass. Focused
 overlays replace only test files and preserve all 544 state and 456 APID production
 files. Full-repository, lint, remote-provider and native acceptance are not claimed.
+
+### Private durable per-database preparation pins (2026-10-03)
+
+`copydatabases.SealedPreparation` retains the original source database mapping,
+child SQL identity and first creation completion time under its own authenticated
+namespace. Its encrypted body binds a fingerprint of the complete original database
+plan, including dispositions for other databases and the original role proof.
+Recovery requires that exact plan, original export projection and matching original
+recipient. A bootstrap-pin envelope, another source OID, a changed complete plan,
+relabeled key or changed scope/owner/identity cannot substitute a child receipt.
+Metadata recovery performs no SQL or source reread and proves no current dataset.
+
+`Receipt.VerifyForWorker` authenticates the original bootstrap identity and role
+seed, holds the shared session advisory lock, and reads the existing private
+database journal. It requires the exact original completed/existing entry and
+completion time, and compares the complete current database/settings/tablespace
+catalogue with the retained baseline and owned creations. Fresh dispatch authority
+is checked around lock waiting and verification. A missing journal, pending entry,
+changed timestamp, catalogue drift or missing completed database is rejected.
+Verification installs no durable journal and never retries CREATE DATABASE.
+
+`project_environment_clone_postgres_database_sql_pins` retains one original
+encrypted receipt per source database and prepared target. Its foreign keys bind
+both the complete database plan and an already charged archive reservation. This
+bounds children to the existing archive quotas, including closed databases and
+templates; no source database is omitted. The source OID reuses the existing archive
+index. Target SQL names/OIDs and preparation timestamps remain encrypted. Scope,
+inventory fingerprint, target provider identity/time, exact database-plan ciphertext,
+all immutable archive reservation fields and first pin ownership time are retained.
+Archive upload/retention can progress while its original reservation fingerprint
+remains fixed. First capture requires both original prerequisite hashes. Ciphertext,
+recipient or fingerprint replacement is rejected. Occupied rollback refuses
+ownership loss; parent rollback fixtures remove this child before dropping parents.
+
+The APID capture worker checks the requested database and charged reservation
+before parent preparation. It recovers original child metadata without SQL or a
+current recipient. For an absent child it uses the original complete plan on the
+authenticated bootstrap connection, checks live parent/archive ownership, and
+requires provider postchecks before sealing and retention. Lost target/provider or
+control-plane replies retain owned physical progress; errors return no usable child
+receipt. Exact recovery retains the original SQL identity and creation timestamp.
+
+The separate verification worker requires existing durable child, database and role
+ownership and opens their original encrypted inputs without invoking capture helpers.
+It checks the actual target journal through authenticated SQL borrowing, checks live
+child ownership at verification boundaries and after provider postchecks, and returns
+no receipt when authority or placement is uncertain. It performs no provisioning
+when a preparation is absent. All newly created databases remain bootstrap-owned,
+non-template and closed; this increment supplies no import dispatch, credential
+activation, data-resource identity, observed generation or stage readiness.
+
+Qualified maintenance access and closure for every database, final globals/ACLs/
+owners, credential preparation/activation, unknown-import recovery and independent
+data verification remain required before dataset publication. Common-point source
+writer closure/admission recovery, complete object/configuration coverage, ownership
+retirement, production-preserving promotion/rollback and native/provider acceptance
+remain required for the full one-command workflow. Public database/object clone
+admission stays closed.
+
+Verification for this increment: all 78 contract roots pass with no skips: 40
+focused state/archive/import/bootstrap-pin/role/membership/database/child-pin/schema
+roots (80.825 s), 28 focused APID worker roots (159.321 s), and all 10 database
+primitive roots (7.129 s). Two new primitive roots cover encrypted original plan/
+mapping/time recovery, key/namespace/body/scope substitution and damaged actual
+journals without repair. Four new state roots cover concurrent original ownership,
+handoff, first-capture parent/reservation mismatch, every parent ciphertext and
+archive reservation substitution, legitimate upload progress, bounds/damage/stored
+phase, private output and migration roundtrip/occupied rollback. Four new worker
+roots cover lost retention/provider replies, original-key recovery, handoff,
+validation before provisioning, absent-preparation verification, journal/authority
+drift and complete original coverage of closed databases and templates.
+
+Qualification uses separate local PostgreSQL 16 cluster pairs for primitive,
+state and worker contracts. Ordinary CREATEROLE/CREATEDB owners qualify the primitive;
+state metadata fixtures map existing roles and use private databases with synthetic
+provider placement. Worker fixtures use real target SQL and synthetic provider
+pre/postchecks. Earlier green worker runs before the validation and metadata-only
+verification corrections are excluded. The final worker run succeeds. Normal
+production builds, normal core vet, focused state/APID vet and the actual 22-file
+SQLC gate pass. Focused overlays replace only test files and preserve all 546 state
+and 457 APID production files. No full-repository, lint, remote-provider or native
+acceptance is claimed.

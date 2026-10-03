@@ -9830,6 +9830,85 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresDatabasePlan(ctx context.
 	return i, err
 }
 
+const insertProjectEnvironmentClonePostgresDatabaseSQLPins = `-- name: InsertProjectEnvironmentClonePostgresDatabaseSQLPins :one
+INSERT INTO project_environment_clone_postgres_database_sql_pins(operation_id,source_database_id,database_oid,account_id,project_id,target_database_id,archive_owner_id,
+ archive_reservation_sha256,database_plan_ciphertext_sha256,target_provider_resource_id,target_provider_created_at,scope,inventory_fingerprint,target_fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,$6::uuid,$7::uuid,
+ $8::text,$9::text,$10::text,$11::timestamptz,
+ $12::jsonb,$13::text,$14::text,$15::text,$16::bytea,$17::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+ AND o.account_id=$4::uuid AND o.project_id=$5::uuid AND o.status='capturing'
+ AND o.revision=$18::bigint AND o.lease_token::text=$19::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, account_id, project_id, target_database_id, archive_owner_id, archive_reservation_sha256, database_plan_ciphertext_sha256, target_provider_resource_id, target_provider_created_at, scope, inventory_fingerprint, target_fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at
+`
+
+type InsertProjectEnvironmentClonePostgresDatabaseSQLPinsParams struct {
+	OperationID                  pgtype.UUID
+	SourceDatabaseID             pgtype.UUID
+	DatabaseOid                  int64
+	AccountID                    pgtype.UUID
+	ProjectID                    pgtype.UUID
+	TargetDatabaseID             pgtype.UUID
+	ArchiveOwnerID               pgtype.UUID
+	ArchiveReservationSha256     string
+	DatabasePlanCiphertextSha256 string
+	TargetProviderResourceID     string
+	TargetProviderCreatedAt      pgtype.Timestamptz
+	Scope                        []byte
+	InventoryFingerprint         string
+	TargetFingerprint            string
+	KeyID                        string
+	Ciphertext                   []byte
+	CiphertextSha256             string
+	ExpectedRevision             int64
+	WorkerToken                  string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresDatabaseSQLPins(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresDatabaseSQLPinsParams) (ProjectEnvironmentClonePostgresDatabaseSqlPin, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresDatabaseSQLPins,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.TargetDatabaseID,
+		arg.ArchiveOwnerID,
+		arg.ArchiveReservationSha256,
+		arg.DatabasePlanCiphertextSha256,
+		arg.TargetProviderResourceID,
+		arg.TargetProviderCreatedAt,
+		arg.Scope,
+		arg.InventoryFingerprint,
+		arg.TargetFingerprint,
+		arg.KeyID,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresDatabaseSqlPin
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.ArchiveOwnerID,
+		&i.ArchiveReservationSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.TargetProviderResourceID,
+		&i.TargetProviderCreatedAt,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.TargetFingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const insertProjectEnvironmentClonePostgresImport = `-- name: InsertProjectEnvironmentClonePostgresImport :one
 INSERT INTO project_environment_clone_postgres_imports(operation_id,source_database_id,database_oid,account_id,project_id,import_id,archive_owner_id,archive_ciphertext_sha256,target_database_id,target_provider_resource_id,target_provider_created_at,target_fingerprint)
 SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,
@@ -24935,6 +25014,42 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresDatabasePlan(ctx context.Co
 		&i.TargetFingerprint,
 		&i.TargetPinsCiphertextSha256,
 		&i.RolePlanCiphertextSha256,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentClonePostgresDatabaseSQLPins = `-- name: ReadProjectEnvironmentClonePostgresDatabaseSQLPins :one
+SELECT operation_id, source_database_id, database_oid, account_id, project_id, target_database_id, archive_owner_id, archive_reservation_sha256, database_plan_ciphertext_sha256, target_provider_resource_id, target_provider_created_at, scope, inventory_fingerprint, target_fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at FROM project_environment_clone_postgres_database_sql_pins WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresDatabaseSQLPinsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresDatabaseSQLPins(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresDatabaseSQLPinsParams) (ProjectEnvironmentClonePostgresDatabaseSqlPin, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresDatabaseSQLPins, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	var i ProjectEnvironmentClonePostgresDatabaseSqlPin
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.ArchiveOwnerID,
+		&i.ArchiveReservationSha256,
+		&i.DatabasePlanCiphertextSha256,
+		&i.TargetProviderResourceID,
+		&i.TargetProviderCreatedAt,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.TargetFingerprint,
 		&i.KeyID,
 		&i.Ciphertext,
 		&i.CiphertextSha256,

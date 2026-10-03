@@ -8130,6 +8130,19 @@ SELECT * FROM project_environment_clone_postgres_role_plans WHERE operation_id=$
 -- name: ReadProjectEnvironmentClonePostgresDatabasePlan :one
 SELECT * FROM project_environment_clone_postgres_database_plans WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
 
+-- name: ReadProjectEnvironmentClonePostgresDatabaseSQLPins :one
+SELECT * FROM project_environment_clone_postgres_database_sql_pins WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresDatabaseSQLPins :one
+INSERT INTO project_environment_clone_postgres_database_sql_pins(operation_id,source_database_id,database_oid,account_id,project_id,target_database_id,archive_owner_id,
+ archive_reservation_sha256,database_plan_ciphertext_sha256,target_provider_resource_id,target_provider_created_at,scope,inventory_fingerprint,target_fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(target_database_id)::uuid,sqlc.arg(archive_owner_id)::uuid,
+ sqlc.arg(archive_reservation_sha256)::text,sqlc.arg(database_plan_ciphertext_sha256)::text,sqlc.arg(target_provider_resource_id)::text,sqlc.arg(target_provider_created_at)::timestamptz,
+ sqlc.arg(scope)::jsonb,sqlc.arg(inventory_fingerprint)::text,sqlc.arg(target_fingerprint)::text,sqlc.arg(key_id)::text,sqlc.arg(ciphertext)::bytea,sqlc.arg(ciphertext_sha256)::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+ AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
 -- name: InsertProjectEnvironmentClonePostgresDatabasePlan :one
 INSERT INTO project_environment_clone_postgres_database_plans(operation_id,source_database_id,account_id,project_id,target_database_id,
  scope,inventory_fingerprint,inventory_ciphertext_sha256,target_fingerprint,target_pins_ciphertext_sha256,role_plan_ciphertext_sha256,key_id,ciphertext,ciphertext_sha256)

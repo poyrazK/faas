@@ -10693,6 +10693,46 @@ CREATE TABLE public.project_environment_clone_postgres_database_plans (
 
 
 --
+-- Name: project_environment_clone_postgres_database_sql_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_database_sql_pins (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sha_check CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check3 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_target_provider_created_at_check2 CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_post_archive_reservation_sha256_check CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_da_target_fingerprint_check1 CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_dat_ciphertext_sha256_check1 CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database__database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_database_s_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_database_sq_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pi_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pin_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check1 CHECK ((captured_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check5 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_imports; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15731,6 +15771,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
 
 
 --
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_pos_operation_id_source_database__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database__key UNIQUE (operation_id, source_database_id, target_fingerprint);
+
+
+--
 -- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15824,6 +15872,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
     ADD CONSTRAINT project_environment_clone_postgres_database_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
 
 
 --
@@ -26325,6 +26381,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
 
 
 --
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey12; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey12 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_database_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey13; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey13 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26485,11 +26557,27 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 
 --
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_dat_target_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_dat_target_database_id_fkey1 FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
 -- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_data_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
     ADD CONSTRAINT project_environment_clone_postgres_data_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_databa_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_databa_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
 
 
 --
@@ -26506,6 +26594,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
     ADD CONSTRAINT project_environment_clone_postgres_database_pla_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --
