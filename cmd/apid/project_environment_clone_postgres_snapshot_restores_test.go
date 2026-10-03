@@ -91,9 +91,9 @@ func (s *cloneSnapshotRestoreFailureStore) RecordProjectEnvironmentClonePostgres
 	return r, err
 }
 
-func cloneSnapshotRestoreWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *cloneSnapshotRestoreFailureStore, *cloneSnapshotProvider, string) {
+func cloneSnapshotRestoreWorkerFixture(t *testing.T, major ...int) (cloneCoordinatorFixture, *cloneSnapshotRestoreFailureStore, *cloneSnapshotProvider, string) {
 	t.Helper()
-	f, _, provider, sourceID := cloneSnapshotWorkerFixture(t)
+	f, _, provider, sourceID := cloneSnapshotWorkerFixture(t, major...)
 	var err error
 	f.lease, err = f.srv.captureProjectEnvironmentClonePostgresSnapshots(t.Context(), f.lease)
 	if err != nil {

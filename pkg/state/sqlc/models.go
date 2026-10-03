@@ -3820,6 +3820,20 @@ type ProjectEnvironmentClonePostgresCopyTarget struct {
 	DeletionObservedAt pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresInventory struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	AccountID         pgtype.UUID
+	ProjectID         pgtype.UUID
+	CaptureDatabaseID pgtype.UUID
+	Scope             []byte
+	Fingerprint       string
+	KeyID             string
+	Ciphertext        []byte
+	CiphertextSha256  string
+	CapturedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresSnapshot struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

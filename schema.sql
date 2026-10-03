@@ -10561,6 +10561,32 @@ CREATE TABLE public.project_environment_clone_postgres_copy_targets (
 
 
 --
+-- Name: project_environment_clone_postgres_inventories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_inventories (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_inve_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_check CHECK ((capture_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_inventories_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_inventories_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15464,6 +15490,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
     ADD CONSTRAINT project_environment_clone_postgres_copy_targets_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_pkey PRIMARY KEY (operation_id, source_database_id);
 
 
 --
@@ -25871,6 +25905,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 
 --
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_po_operation_id_source_database_fkey2; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey2 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
 -- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25916,6 +25958,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
     ADD CONSTRAINT project_environment_clone_postgres_copy_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inv_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inv_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --

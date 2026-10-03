@@ -17,9 +17,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func cloneSnapshotRestoreFixture(t *testing.T) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, state.ProjectEnvironmentClonePostgresSnapshot) {
+func cloneSnapshotRestoreFixture(t *testing.T, major ...int) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, state.ProjectEnvironmentClonePostgresSnapshot) {
 	t.Helper()
-	s, ctx, pool, lease, sourceID := clonePostgresSnapshotFixture(t)
+	s, ctx, pool, lease, sourceID := clonePostgresSnapshotFixture(t, major...)
 	r, err := s.ReserveProjectEnvironmentClonePostgresSnapshot(ctx, lease, sourceID)
 	if err != nil {
 		t.Fatal(err)

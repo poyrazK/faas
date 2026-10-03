@@ -104,6 +104,14 @@ const (
 	RealtimeResumeBearerTokenMaxBytes        = 3072
 )
 
+// Private PostgreSQL copy metadata bounds, independent from data/storage
+// entitlements. An oversized inventory fails capture; it is never truncated.
+const (
+	PostgresCopyInventoryMaxBytes  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (

@@ -9307,6 +9307,64 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Co
 	return i, err
 }
 
+const insertProjectEnvironmentClonePostgresInventory = `-- name: InsertProjectEnvironmentClonePostgresInventory :one
+INSERT INTO project_environment_clone_postgres_inventories(operation_id,source_database_id,account_id,project_id,capture_database_id,scope,fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
+    $5::uuid,$6::jsonb,$7::text,$8::text,
+    $9::bytea,$10::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+    AND o.account_id=$3::uuid AND o.project_id=$4::uuid AND o.status='capturing'
+    AND o.revision=$11::bigint AND o.lease_token::text=$12::text AND o.lease_until>clock_timestamp())
+RETURNING operation_id, source_database_id, account_id, project_id, capture_database_id, scope, fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at
+`
+
+type InsertProjectEnvironmentClonePostgresInventoryParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	AccountID         pgtype.UUID
+	ProjectID         pgtype.UUID
+	CaptureDatabaseID pgtype.UUID
+	Scope             []byte
+	Fingerprint       string
+	KeyID             string
+	Ciphertext        []byte
+	CiphertextSha256  string
+	ExpectedRevision  int64
+	WorkerToken       string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresInventory,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.CaptureDatabaseID,
+		arg.Scope,
+		arg.Fingerprint,
+		arg.KeyID,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresInventory
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.CaptureDatabaseID,
+		&i.Scope,
+		&i.Fingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const insertProjectEnvironmentClonePostgresSecret = `-- name: InsertProjectEnvironmentClonePostgresSecret :exec
 INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1)
@@ -23981,6 +24039,34 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Cont
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentClonePostgresInventory = `-- name: ReadProjectEnvironmentClonePostgresInventory :one
+SELECT operation_id, source_database_id, account_id, project_id, capture_database_id, scope, fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at FROM project_environment_clone_postgres_inventories WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresInventoryParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresInventory, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresInventory
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.CaptureDatabaseID,
+		&i.Scope,
+		&i.Fingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
 	)
 	return i, err
 }

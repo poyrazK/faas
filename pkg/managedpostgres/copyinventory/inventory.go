@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory/sqlc"
 )
@@ -155,13 +156,20 @@ func (i Inventory) PayloadForSealing() ([]byte, error) {
 	if i.fingerprint == "" {
 		return nil, managedpostgres.ErrInvalid
 	}
-	return json.Marshal(i.body)
+	raw, err := json.Marshal(i.body)
+	if len(raw) > api.PostgresCopyInventoryMaxBytes {
+		return nil, managedpostgres.ErrQuotaExceeded
+	}
+	return raw, err
 }
 
 // RecoverPrivatePayload consumes an authenticated-decryption result and the
 // original durable fingerprint/config pins. It never contacts today's source.
 // This is metadata recovery, not proof that database data was exported/imported.
 func RecoverPrivatePayload(raw []byte, cfg Config, fingerprint string) (Inventory, error) {
+	if len(raw) > api.PostgresCopyInventoryMaxBytes {
+		return Inventory{}, managedpostgres.ErrQuotaExceeded
+	}
 	if !validConfig(cfg) || len(fingerprint) != 64 {
 		return Inventory{}, managedpostgres.ErrInvalid
 	}
@@ -252,6 +260,7 @@ func Read(ctx context.Context, conn *pgx.Conn, cfg Config) (Inventory, error) {
 	b.PostgresMajor = cfg.PostgresMajor
 	b.DatabaseOID = cfg.DatabaseOID
 	b.RoleOID = cfg.RoleOID
+	var readBytes int
 	for _, step := range []struct {
 		read func(context.Context, sqlc.DBTX) ([]byte, error)
 		out  any
@@ -263,12 +272,20 @@ func Read(ctx context.Context, conn *pgx.Conn, cfg Config) (Inventory, error) {
 		if err != nil {
 			return Inventory{}, classify(ctx, err)
 		}
+		readBytes += len(raw)
+		if readBytes > api.PostgresCopyInventoryMaxBytes {
+			return Inventory{}, managedpostgres.ErrQuotaExceeded
+		}
 		if json.Unmarshal(raw, step.out) != nil {
 			return Inventory{}, managedpostgres.ErrConflict
 		}
 	}
 	if !validPayload(b) {
 		return Inventory{}, managedpostgres.ErrConflict
+	}
+	encoded, err := json.Marshal(b)
+	if err != nil || len(encoded) > api.PostgresCopyInventoryMaxBytes {
+		return Inventory{}, managedpostgres.ErrQuotaExceeded
 	}
 	fingerprint, err := fingerprintPayload(b, cfg.FingerprintKey)
 	if err != nil {

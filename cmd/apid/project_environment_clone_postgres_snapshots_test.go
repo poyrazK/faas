@@ -78,6 +78,12 @@ type cloneSnapshotProvider struct {
 	beforeCopyDelete                                        func(context.Context, managedpostgres.SnapshotCopyTargetRequest) error
 }
 
+func (p *cloneSnapshotProvider) Capabilities() managedpostgres.Capabilities {
+	c := p.environmentClonePostgresProvider.Capabilities()
+	c.PostgresMajors = []int{16, 17}
+	return c
+}
+
 func (p *cloneSnapshotProvider) CaptureSnapshot(ctx context.Context, r managedpostgres.SnapshotCaptureRequest) (managedpostgres.DatabaseSnapshot, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		p.deadlineMissing = true
@@ -131,7 +137,7 @@ func (p *cloneSnapshotProvider) DeleteSnapshot(ctx context.Context, r managedpos
 	return managedpostgres.DeleteResult{Done: true}, nil
 }
 
-func cloneSnapshotWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *cloneSnapshotFailureStore, *cloneSnapshotProvider, string) {
+func cloneSnapshotWorkerFixture(t *testing.T, majors ...int) (cloneCoordinatorFixture, *cloneSnapshotFailureStore, *cloneSnapshotProvider, string) {
 	t.Helper()
 	f := newCloneCoordinatorFixture(t, false)
 	ctx := t.Context()
@@ -157,7 +163,11 @@ func cloneSnapshotWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *cloneSn
 	}
 	f.srv.managedPostgres = service
 	account, project := f.lease.Operation.AccountID, f.lease.Operation.ProjectID
-	source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: account, Name: "snapshot-db", Spec: managedpostgres.Spec{Region: "eu", PostgresMajor: 17,
+	major := 17
+	if len(majors) != 0 {
+		major = majors[0]
+	}
+	source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: account, Name: "snapshot-db", Spec: managedpostgres.Spec{Region: "eu", PostgresMajor: major,
 		Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)

@@ -17,9 +17,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func cloneNativeAdoptionFixture(t *testing.T) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, state.ProjectEnvironmentClonePostgresSnapshot) {
+func cloneNativeAdoptionFixture(t *testing.T, major ...int) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, state.ProjectEnvironmentClonePostgresSnapshot) {
 	t.Helper()
-	s, ctx, pool, lease, snapshot := cloneSnapshotRestoreFixture(t)
+	s, ctx, pool, lease, snapshot := cloneSnapshotRestoreFixture(t, major...)
 	if _, err := s.ReserveProjectEnvironmentClonePostgresSnapshotRestore(ctx, lease, snapshot.SourceDatabaseID, 2); err != nil {
 		t.Fatal(err)
 	}

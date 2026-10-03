@@ -8118,6 +8118,19 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
 -- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
 SELECT * FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
 
+-- name: ReadProjectEnvironmentClonePostgresInventory :one
+SELECT * FROM project_environment_clone_postgres_inventories WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresInventory :one
+INSERT INTO project_environment_clone_postgres_inventories(operation_id,source_database_id,account_id,project_id,capture_database_id,scope,fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,
+    sqlc.arg(capture_database_id)::uuid,sqlc.arg(scope)::jsonb,sqlc.arg(fingerprint)::text,sqlc.arg(key_id)::text,
+    sqlc.arg(ciphertext)::bytea,sqlc.arg(ciphertext_sha256)::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+    AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
+    AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp())
+RETURNING *;
+
 -- name: InsertProjectEnvironmentClonePostgresCopyTarget :one
 INSERT INTO project_environment_clone_postgres_copy_targets(operation_id,source_database_id,account_id,capture_database_id,target_database_id)
 VALUES($1,$2,$3,$4,$5) RETURNING *;

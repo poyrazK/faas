@@ -15,13 +15,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func clonePostgresSnapshotFixture(t *testing.T) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, string) {
+func clonePostgresSnapshotFixture(t *testing.T, major ...int) (*state.PgStore, context.Context, *pgxpool.Pool, state.ProjectEnvironmentCloneLease, string) {
 	t.Helper()
 	s, ctx, pool := pgWithPool(t)
 	a, p, app, op := cloneBindingFixture(t, s)
 	secret := clonePostgresSecretFixture(t, pool, a, app, "production", "snapshot-source", 1)
 	if err := s.PutManagedPostgresSecret(ctx, secret); err != nil {
 		t.Fatal(err)
+	}
+	if len(major) != 0 {
+		if _, err := pool.Exec(ctx, "update managed_postgres_databases set postgres_major=$1 where id=(select database_id from managed_postgres_bindings where id=$2)", major[0], secret.ManagedPostgresBindingID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision); err != nil {
 		t.Fatal(err)

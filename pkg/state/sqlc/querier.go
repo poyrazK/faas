@@ -556,6 +556,7 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error)
 	InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error
 	InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	InsertProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error
 	InsertProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
@@ -1350,6 +1351,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.Context, db DBTX, managedPostgresBindingID pgtype.UUID) ([]AppSecret, error)
 	ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error)
 	ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
+	ReadProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	// Empty scope means that an active graph has an invalid or missing member.
