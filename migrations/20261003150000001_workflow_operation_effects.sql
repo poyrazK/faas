@@ -4,7 +4,7 @@
 -- Effect identity and receiver metadata survive workflow-run retention and
 -- webhook history pruning. The row is inserted in the same transaction that
 -- marks its step successful; id is also the app_webhook_deliveries ID.
-CREATE TABLE workflow_operation_effects (
+CREATE TABLE IF NOT EXISTS workflow_operation_effects (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -23,7 +23,7 @@ CREATE TABLE workflow_operation_effects (
     UNIQUE (operation_id, name)
 );
 
-CREATE INDEX workflow_operation_effects_attempt_idx
+CREATE INDEX IF NOT EXISTS workflow_operation_effects_attempt_idx
     ON workflow_operation_effects (run_id, step_name, generation, name);
 -- +goose StatementEnd
 
