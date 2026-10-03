@@ -3130,12 +3130,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
 	}
-	var placement Placement
-	if haveSnap && snap.StorageKey != "" {
-		placement, releaseRestorePressure, err = e.chooseRestorePlacementLocked(ctx, placementRequest)
-	} else {
-		placement, err = e.choosePlacementLocked(ctx, placementRequest)
-	}
+	placement, restoreRelease, err := e.chooseWakePlacementLocked(ctx, placementRequest, haveSnap && snap.StorageKey != "")
+	releaseRestorePressure = restoreRelease
 	if err != nil {
 		release()
 		return WakeResult{}, err // *api.Problem from chooser
@@ -3182,7 +3178,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
-	if err := e.ledger.Admit(Request{
+	if err := e.admitWakeLocked(ctx, Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
@@ -4482,6 +4478,56 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 		return Placement{}, err
 	}
 	return snapshot.choose(r)
+}
+
+// chooseWakePlacementLocked runs under the wake's app lock. A capacity refusal
+// may reflect terminal reservations missed by this scheduler, even below the
+// app's concurrency cap. Recover only this app, then retry the same checks once.
+func (e *Engine) chooseWakePlacementLocked(ctx context.Context, r Request, restore bool) (Placement, func(), error) {
+	choose := func() (Placement, func(), error) {
+		if restore {
+			return e.chooseRestorePlacementLocked(ctx, r)
+		}
+		placement, err := e.choosePlacementLocked(ctx, r)
+		return placement, nil, err
+	}
+	placement, release, err := choose()
+	if e.recoverAppCapacityLocked(ctx, r.AppID, err) {
+		return choose()
+	}
+	return placement, release, err
+}
+
+// recoverAppCapacityLocked never guesses that a missing row is terminal. The
+// caller holds appMu; only durable non-resident rows can free local capacity.
+func (e *Engine) recoverAppCapacityLocked(ctx context.Context, appID string, capacityErr error) bool {
+	var problem *api.Problem
+	if !errors.As(capacityErr, &problem) || problem.Code != api.CodeCapacity {
+		return false
+	}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil || !e.ownsApp(app) {
+		return false
+	}
+	repaired, err := e.reconcileAppAdmission(ctx, appID)
+	if err != nil {
+		e.log.Warn("sched: reconcile stale admission before capacity refusal", "app", appID, "err", err)
+		return false
+	}
+	if repaired > 0 {
+		e.log.Info("sched: released stale admission before capacity retry", "app", appID, "instances", repaired)
+	}
+	return repaired > 0
+}
+
+// admitWakeLocked also covers a ledger refusal after placement selected a node.
+// The new instance row is already durable, but no VM RPC has been dispatched.
+func (e *Engine) admitWakeLocked(ctx context.Context, r Request) error {
+	err := e.ledger.Admit(r)
+	if e.recoverAppCapacityLocked(ctx, r.AppID, err) {
+		return e.ledger.Admit(r)
+	}
+	return err
 }
 
 // chooseRestorePlacementLocked snapshots local restore pressure, selects a
@@ -6168,8 +6214,8 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 }
 
 // reconcileAppAdmission repairs this process's ledger from durable instance
-// states. It is app-scoped and is called only on a would-be concurrency
-// rejection. Terminal rows release their reservation; snapshotting and
+// states. It is app-scoped and called under appMu on a would-be concurrency or
+// capacity rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
 func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
@@ -6184,6 +6230,11 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 		}
 		if current.CountsForRAM() {
 			e.ledger.BeginSnapshot(ins.ID)
+			continue
+		}
+		// Account deletion marks its terminal state before Destroy returns.
+		// Its reconciler must retain capacity until destruction succeeds.
+		if current != state.StateParked && current != state.StateStopped && current != state.StateFailed {
 			continue
 		}
 		if e.ledger.ResidentFor(ins.ID) {
