@@ -47,7 +47,7 @@ type roleWorkerFixture struct {
 	beforeSQL   func(context.Context) error
 }
 
-func cloneRoleWorkerFixture(t *testing.T) *roleWorkerFixture {
+func cloneRoleWorkerFixture(t *testing.T, configure ...func(*roleWorkerFixture)) *roleWorkerFixture {
 	t.Helper()
 	targetURL := os.Getenv("FAAS_COPY_ROLES_TARGET_DATABASE_URL")
 	if targetURL == "" {
@@ -84,6 +84,9 @@ func cloneRoleWorkerFixture(t *testing.T) *roleWorkerFixture {
 	})
 	if _, err = f.pool.Exec(t.Context(), "ALTER ROLE "+pgx.Identifier{x.member}.Sanitize()+" SET timezone TO 'Europe/Istanbul'"); err != nil {
 		t.Fatal(err)
+	}
+	for _, prepare := range configure {
+		prepare(x)
 	}
 	x.f.lease, _, err = f.srv.prepareProjectEnvironmentClonePostgresCopyReaders(t.Context(), f.lease)
 	if err != nil {

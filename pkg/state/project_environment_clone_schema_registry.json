@@ -527,6 +527,8 @@
     "columns": ["account_id", "captured_at", "ciphertext", "ciphertext_sha256", "inventory_fingerprint", "key_id", "operation_id", "project_id", "scope", "source_database_id", "target_database_id", "target_fingerprint", "target_provider_created_at", "target_provider_resource_id"]},
   {"table": "project_environment_clone_postgres_role_plans", "kind": "operational",
     "columns": ["account_id", "captured_at", "ciphertext", "ciphertext_sha256", "inventory_ciphertext_sha256", "inventory_fingerprint", "key_id", "operation_id", "project_id", "scope", "source_database_id", "target_database_id", "target_fingerprint", "target_pins_ciphertext_sha256"]},
+  {"table": "project_environment_clone_postgres_membership_plans", "kind": "operational",
+    "columns": ["account_id", "captured_at", "ciphertext", "ciphertext_sha256", "inventory_ciphertext_sha256", "inventory_fingerprint", "key_id", "operation_id", "project_id", "role_plan_ciphertext_sha256", "scope", "source_database_id", "target_database_id", "target_fingerprint", "target_pins_ciphertext_sha256"]},
   {"table": "project_environment_clone_postgres_snapshot_restores", "kind": "operational",
     "columns": ["account_id", "adopted_at", "adopted_database_id", "backend_fingerprint", "backend_id", "created_at", "delete_operation_ids", "deleted_at", "deletion_started_at", "observed_at", "operation_id", "request_started_at", "restored_at", "source_database_id", "state", "target_created_at", "target_owner_id", "target_provider_resource_id", "updated_at"]},
   {"table": "project_environment_clone_postgres_snapshots", "kind": "operational",

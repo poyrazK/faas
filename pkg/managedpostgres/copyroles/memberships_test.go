@@ -185,6 +185,15 @@ func TestMembershipsSealingRejectsRotationRelabelSeedScopeAndCatalogueSubstituti
 	if _, err = OpenMemberships([]*age.X25519Identity{other, nil, key}, f.sourcePlan, f.seed, s); err != nil {
 		t.Fatal(err)
 	}
+	recovered, err := RecoverMemberships([]*age.X25519Identity{other, nil, key}, f.sourcePlan, f.seed.plan, s)
+	if err != nil || !reflect.DeepEqual(recovered.body, f.plan.body) {
+		t.Fatalf("SQL-free recovery lost original seed identities/time or graph: %v", err)
+	}
+	changedRolePlan := f.seed.plan
+	changedRolePlan.body.TargetFingerprint = strings.Repeat("f", 64)
+	if _, err = RecoverMemberships([]*age.X25519Identity{key}, f.sourcePlan, changedRolePlan, s); err == nil {
+		t.Fatal("SQL-free recovery accepted a different original role plan")
+	}
 	for _, fault := range []string{"recipient", "scope", "inventory", "target", "seed", "namespace", "source"} {
 		t.Run(fault, func(t *testing.T) {
 			changed, seed, source := s, f.seed, f.sourcePlan
@@ -237,6 +246,39 @@ func TestMembershipsLostCommittedReplyRecoversOriginalGraphAndRejectsDrift(t *te
 	}
 	if got, err := ApplyMemberships(t.Context(), f.target, f.plan, allow); !errors.Is(err, pgerrors.ErrConflict) || !got.AppliedAt().IsZero() {
 		t.Fatalf("journal replay ignored option drift: %v", err)
+	}
+}
+
+func TestMembershipsSQLFreeRecoveryStillRequiresOriginalTargetSeedJournalBeforeGrants(t *testing.T) {
+	f := newMembershipFixture(t, false)
+	raw, err := f.plan.PrivatePayloadForSealing()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changed MembershipPlan
+	if err = json.Unmarshal(raw, &changed.body); err != nil {
+		t.Fatal(err)
+	}
+	changed.body.SeedReceipt.SeededAt = changed.body.SeedReceipt.SeededAt.AddDate(0, 0, 1)
+	key, _ := age.GenerateX25519Identity()
+	sealed, err := SealMemberships(key.Recipient(), changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Metadata recovery does not claim that the embedded seed was committed.
+	// The authenticated target's original transaction journal decides that.
+	plan, err := RecoverMemberships([]*age.X25519Identity{key}, f.sourcePlan, f.seed.plan, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ApplyMemberships(t.Context(), f.target, plan, allow); !errors.Is(err, pgerrors.ErrConflict) || !r.AppliedAt().IsZero() {
+		t.Fatalf("recovered metadata replaced the original target seed journal: %v", err)
+	}
+	i, _ := readCatalogue(t, f.target)
+	c, _ := i.MembershipCatalogueForWorker()
+	sortMemberships(c.Memberships)
+	if !reflect.DeepEqual(c.Memberships, f.plan.body.Baseline) {
+		t.Fatal("rejected seed journal changed the target grant graph")
 	}
 }
 

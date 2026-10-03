@@ -5161,10 +5161,78 @@ recorded when local disk pressure rejected a file write; shared caches and unrel
 files were retained. The corrected test files and final verification runs are the
 acceptance evidence for this increment.
 
-Durable control-plane membership-plan ownership and worker composition still need
-integration. Database creation/scoped globals, comments/security labels, parameter
+The membership primitive was initially delivered before durable control-plane
+ownership and worker composition; that integration is recorded below. Database
+creation/scoped globals, comments/security labels, parameter
 ACLs, credential preparation/activation, archive imports/verification and retirement
 remain required. Public database/object clone admission stays closed. Common-point
 writer closure, complete object/configuration coverage, production-preserving
 promotion/rollback and native/provider acceptance remain required for the full
 one-command stage workflow.
+
+### Private durable membership ownership and worker recovery (2026-10-03)
+
+`project_environment_clone_postgres_membership_plans` retains one original encrypted
+complete grant plan per operation/source and independently prepared target. Its
+lease-authorized capturing transaction locks the original inventory, bootstrap pins
+and role plan. It retains all three exact prerequisite ciphertext hashes, scope,
+fingerprints, original recipient and first ownership timestamp. The worker supplies
+the exact role-plan ciphertext hash it used, so parent replacement during first
+capture is rejected. Re-encryption or rotation cannot replace an occupied plan.
+Existing ciphertext caps and target reservations bound this private ledger. Raw SQL
+names/OIDs, grantors/options, seeded role identities and seed timestamp remain in
+authenticated ciphertext. Occupied migration rollback refuses ownership loss.
+
+`RecoverMemberships` opens that original encrypted graph using the original role
+plan and source inventory without SQL/provider IO or a current recipient. It checks
+the complete source graph, exact embedded role plan and matching original key.
+The embedded seed OIDs/time are subsequently checked against the independently
+authenticated target's original role-seed transaction journal before any grants.
+Recovering metadata supplies no proof that target mutation committed.
+
+The private APID worker first recovers immutable role and membership ownership.
+For an absent membership plan, it prepares/recovers roles, reads the target's
+post-seeding catalogue through authenticated SQL borrowing and requires provider
+postchecks before committing the sealed graph. A lost control-plane record reply
+dispatches no GRANT/REVOKE. Retried recovery uses the original target baseline and
+seeded identities; a changed graph or unavailable original key cannot authorize
+recapture. Live membership ownership is checked before dispatch, after lock waiting,
+before/after SQL commit and after provider postchecks. Errors return no successful
+membership receipt. A lost committed target/provider reply can recover the original
+target graph journal and application timestamp without repeated grants.
+
+Capture and final reconciliation follow database/credential preparation needing
+temporary creator grants and precede LOGIN activation. This private composition
+publishes no data-resource identity, observed generation or stage readiness. Public
+database/object clone admission stays closed. Database creation/scoped globals,
+comments/security labels/parameter ACLs, credentials/activation, independent import
+verification and private ownership retirement remain required. Common-point writer
+closure, complete object/configuration coverage, production-preserving promotion/
+rollback and native/provider acceptance remain required for the full stage workflow.
+
+Verification for this increment: all sixty-seven contract roots pass with no skips:
+thirty-two focused state/archive/import/target-pin/role/membership/schema contracts
+(230.189 s), twenty focused APID inventory/pin/import/role/membership worker
+contracts (343.527 s), and fifteen complete role/membership primitive contracts
+(15.429 s). Four new state roots cover concurrent original ownership, handoff,
+all prerequisite ciphertext substitution, first-capture parent mismatch, metadata
+caps/damage, stored phase changes, private output and empty/occupied rollback.
+Four new worker roots cover lost control-plane and target/provider replies,
+SQL-free original-key recovery, changed live source metadata, stale/phase/owner
+dispatch, target graph drift and recipient/provider rejection before retention.
+The additional primitive root proves that SQL-free recovery cannot substitute
+the authenticated target's original seed journal before grants.
+
+State metadata fixtures require a private database for the fixed SQL journal
+namespace, use existing-role mappings and synthetic provider placement, and perform
+no role DDL. New worker fixtures compare independent cluster system identifiers,
+use real role/grant SQL and an administrator bootstrap; ordinary owner authority
+remains qualified by the dedicated primitive cluster pair. An initial schema-only
+state fixture shared its journal and is excluded. An exploratory worker run omitted
+the pg_dump setting and skipped existing archive contracts; a subsequent primitive
+run encountered cleanup timeouts and residual fixture roles. Both are excluded.
+The final worker and primitive runs use separate fresh cluster pairs and complete
+without skips. Normal production builds, focused state/APID vet, normal role/
+inventory/archive vet and the actual eighteen-file SQLC gate pass. The focused
+overlays preserve all 542 state and 455 APID production files. Full-repository,
+lint, remote-provider and native acceptance are not claimed.

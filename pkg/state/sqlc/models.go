@@ -3899,6 +3899,24 @@ type ProjectEnvironmentClonePostgresInventory struct {
 	CapturedAt        pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresMembershipPlan struct {
+	OperationID                pgtype.UUID
+	SourceDatabaseID           pgtype.UUID
+	AccountID                  pgtype.UUID
+	ProjectID                  pgtype.UUID
+	TargetDatabaseID           pgtype.UUID
+	Scope                      []byte
+	InventoryFingerprint       string
+	InventoryCiphertextSha256  string
+	TargetFingerprint          string
+	TargetPinsCiphertextSha256 string
+	RolePlanCiphertextSha256   string
+	KeyID                      string
+	Ciphertext                 []byte
+	CiphertextSha256           string
+	CapturedAt                 pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresRolePlan struct {
 	OperationID                pgtype.UUID
 	SourceDatabaseID           pgtype.UUID

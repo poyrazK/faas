@@ -46,10 +46,28 @@ func SealMemberships(recipient *age.X25519Recipient, plan MembershipPlan) (Seale
 // Recover only with original source metadata, seed OIDs/time and recipient. A
 // changed membership catalogue or different role seed can never rebase this plan.
 func OpenMemberships(identities []*age.X25519Identity, source copyinventory.ExportPlan, seed Receipt, s SealedMemberships) (MembershipPlan, error) {
+	if seed.validate() != nil {
+		return MembershipPlan{}, pgerrors.ErrConflict
+	}
+	plan, err := RecoverMemberships(identities, source, seed.plan, s)
+	if err != nil {
+		return MembershipPlan{}, err
+	}
+	if !reflect.DeepEqual(plan.body.SeedReceipt, seed.body) {
+		return MembershipPlan{}, pgerrors.ErrConflict
+	}
+	return plan, nil
+}
+
+// RecoverMemberships reads an originally retained encrypted plan without SQL or
+// provider IO. The committed role plan supplies immutable input; the original
+// seed OIDs/time remain authenticated ciphertext. ApplyMemberships must still
+// authenticate that exact seed against the owned target journal before mutation.
+func RecoverMemberships(identities []*age.X25519Identity, source copyinventory.ExportPlan, roles Plan, s SealedMemberships) (MembershipPlan, error) {
 	if err := s.ValidateMetadata(); err != nil {
 		return MembershipPlan{}, err
 	}
-	if seed.validate() != nil || !s.Scope.Equal(seed.plan.body.Target.Scope) || s.InventoryFingerprint != seed.plan.body.InventoryFingerprint || s.TargetFingerprint != seed.plan.body.TargetFingerprint {
+	if roles.validate() != nil || !s.Scope.Equal(roles.body.Target.Scope) || s.InventoryFingerprint != roles.body.InventoryFingerprint || s.TargetFingerprint != roles.body.TargetFingerprint {
 		return MembershipPlan{}, pgerrors.ErrConflict
 	}
 	var matching []*age.X25519Identity
@@ -72,7 +90,7 @@ func OpenMemberships(identities []*age.X25519Identity, source copyinventory.Expo
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&plan.body) != nil || d.Decode(new(any)) != io.EOF || plan.validate() != nil ||
-		!reflect.DeepEqual(plan.body.SeedPlan, seed.plan.body) || !reflect.DeepEqual(plan.body.SeedReceipt, seed.body) {
+		!reflect.DeepEqual(plan.body.SeedPlan, roles.body) {
 		return MembershipPlan{}, pgerrors.ErrConflict
 	}
 	requirements, err := source.RequirementsForWorker()
@@ -84,6 +102,7 @@ func OpenMemberships(identities []*age.X25519Identity, source copyinventory.Expo
 		return MembershipPlan{}, err
 	}
 	sortMemberships(src.Memberships)
+	seed := Receipt{plan: roles, body: plan.body.SeedReceipt}
 	if len(requirements) == 0 || !requirements[0].Scope.Equal(s.Scope) || !membershipSourceMatchesSeed(src, seed) || !reflect.DeepEqual(src.Memberships, plan.body.SourceMemberships) {
 		return MembershipPlan{}, pgerrors.ErrConflict
 	}

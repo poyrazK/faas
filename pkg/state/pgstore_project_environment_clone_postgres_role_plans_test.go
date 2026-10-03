@@ -302,10 +302,17 @@ func TestPgClonePostgresRolePlanMigrationRoundTripAndOwnedDownRefusal(t *testing
 	if err = tx.QueryRow(ctx, shape).Scan(&a, &b); err != nil {
 		t.Fatal(err)
 	}
+	memberUp, memberDown := cloneMembershipPlanMigrationParts(t)
+	if _, err = tx.Exec(ctx, memberDown); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, memberUp); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.QueryRow(ctx, shape).Scan(&c, &d); err != nil {
