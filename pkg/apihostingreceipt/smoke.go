@@ -12,8 +12,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const (
@@ -26,6 +30,9 @@ const (
 	SmokeErrorTransportUnavailable     = "smoke_transport_unavailable"
 	SmokeErrorDeploymentMismatch       = "smoke_deployment_mismatch"
 	SmokeErrorResponseUnproven         = "smoke_response_unproven"
+	SmokeErrorContractUnavailable      = "smoke_contract_unavailable"
+	SmokeErrorContractInvalid          = "smoke_contract_invalid"
+	SmokeErrorContractRouteFailed      = "smoke_contract_route_failed"
 )
 
 const (
@@ -74,6 +81,66 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 // that declare no HTTP health endpoint. It never establishes endpoint health.
 func (v Verifier) VerifyDeploymentRoute(ctx context.Context, slug, deploymentID string) (SmokeResult, error) {
 	return v.verifyWithContract(ctx, slug, "/", deploymentID, VerificationRouteConnectivity)
+}
+
+// VerifyDeploymentAPIRoute checks one explicitly selected, read-only API
+// operation against the exact candidate. Authentication challenges, redirects,
+// and other non-error responses are accepted; 404 and server failures are
+// application verdicts and do not prove the selected operation works.
+func (v Verifier) VerifyDeploymentAPIRoute(ctx context.Context, slug, path, deploymentID string) (SmokeResult, error) {
+	if validationErr := ValidateAPIRouteProbe(APIRouteProbe{Method: "GET", Path: path}); validationErr != nil {
+		invalid := fmt.Errorf("invalid API route check: %w", validationErr)
+		return failedSmoke(path, SmokeErrorContractInvalid, invalid), invalid
+	}
+	return v.verifyWithContract(ctx, slug, path, deploymentID, VerificationAPIRouteContract)
+}
+
+// VerifyDeploymentAPIRoutes checks a bounded set of contract-selected GET
+// operations. The whole set shares the verifier timeout, and each unavailable
+// route returns typed evidence so imaged can retry the same candidate through
+// its durable hosting-verification window.
+func (v Verifier) VerifyDeploymentAPIRoutes(ctx context.Context, slug, deploymentID string, routes []APIRouteProbe) ([]RouteCheckResult, error) {
+	if len(routes) == 0 || len(routes) > MaxAPIRouteChecks {
+		return nil, fmt.Errorf("API route check count must be between 1 and %d", MaxAPIRouteChecks)
+	}
+	ordered := append([]APIRouteProbe(nil), routes...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
+	for _, route := range ordered {
+		if err := ValidateAPIRouteProbe(route); err != nil {
+			return nil, fmt.Errorf("invalid API route check")
+		}
+	}
+
+	checkCtx := ctx
+	cancel := func() {}
+	if v.Timeout > 0 {
+		checkCtx, cancel = context.WithTimeout(ctx, v.Timeout)
+	}
+	defer cancel()
+
+	checks := make([]RouteCheckResult, 0, len(ordered))
+	for i, route := range ordered {
+		probeVerifier := v
+		if deadline, ok := checkCtx.Deadline(); ok {
+			probeVerifier.Timeout = time.Until(deadline)
+			if probeVerifier.Timeout <= 0 {
+				probeVerifier.Timeout = time.Nanosecond
+			}
+		}
+		result, err := probeVerifier.VerifyDeploymentAPIRoute(checkCtx, slug, route.Path, deploymentID)
+		checks = append(checks, RouteCheckResult{
+			Method: "GET", Path: route.Path, Status: result.Status, StatusCode: result.StatusCode,
+			LatencyMS: result.LatencyMS, VerifiedAt: result.VerifiedAt, RequestID: result.RequestID,
+			ErrorCode: result.ErrorCode, Error: result.Error,
+		})
+		if err != nil || result.Status != SmokeVerified {
+			for _, remaining := range ordered[i+1:] {
+				checks = append(checks, RouteCheckResult{Method: "GET", Path: remaining.Path, Status: SmokeSkipped, ErrorCode: "smoke_route_check_not_run"})
+			}
+			return checks, err
+		}
+	}
+	return checks, nil
 }
 
 func (v Verifier) verifyWithContract(ctx context.Context, slug, path, deploymentID, verification string) (SmokeResult, error) {
@@ -218,7 +285,7 @@ func verificationContextExpired(ctx context.Context) bool {
 }
 
 func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, slug, path, deploymentID, token, verification string) (SmokeResult, error) {
-	result := SmokeResult{Status: SmokeSkipped, Path: path}
+	result := SmokeResult{Status: SmokeSkipped, Path: path, Verification: verification}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
 	if err != nil {
 		return failedSmoke(path, SmokeErrorVerifierNotConfigured, fmt.Errorf("public hosting smoke request is invalid")), nil
@@ -242,9 +309,9 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	result.StatusCode = resp.StatusCode
 	result.VerifiedAt = time.Now().UTC()
-	if id := resp.Header.Get("X-Faas-Request-ID"); id != "" {
+	if id := safeSmokeRequestID(resp.Header.Get("X-Faas-Request-ID")); id != "" {
 		result.RequestID = id
-	} else if id := resp.Header.Get("X-Request-ID"); id != "" {
+	} else if id := safeSmokeRequestID(resp.Header.Get("X-Request-ID")); id != "" {
 		result.RequestID = id
 	}
 	result.DeploymentID = resp.Header.Get(ServedDeploymentHeader)
@@ -270,14 +337,22 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	// Only authenticated candidate responses can establish an app verdict.
 	// An identical gateway status without proof remains unavailable evidence.
 	acceptable := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
-	if verification == VerificationRouteConnectivity {
+	switch verification {
+	case VerificationRouteConnectivity:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound
+	case VerificationAPIRouteContract:
+		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
+			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
 	}
 	if !acceptable {
 		result.Status = SmokeFailed
 		result.ErrorCode = "smoke_http_status"
-		result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
+		if verification == VerificationAPIRouteContract {
+			result.Error = fmt.Sprintf("API route check returned HTTP %d", resp.StatusCode)
+		} else {
+			result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
+		}
 		if code := problemCode(resp.Header.Get("Content-Type"), body); code != "" {
 			result.Error += " (" + code + ")"
 		}
@@ -320,7 +395,18 @@ func problemCode(contentType string, body []byte) string {
 	return problem.Code
 }
 
+func safeSmokeRequestID(value string) string {
+	value = safetext.Truncate(strings.TrimSpace(value), 128)
+	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return value
+}
+
 func retryableSmoke(result SmokeResult) bool {
+	if result.Verification == VerificationAPIRouteContract {
+		return IsVerificationRecoveryCode(result.ErrorCode)
+	}
 	if IsVerificationRecoveryCode(result.ErrorCode) {
 		return true
 	}
