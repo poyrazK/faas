@@ -9884,6 +9884,73 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresInventory(ctx context.Con
 	return i, err
 }
 
+const insertProjectEnvironmentClonePostgresRolePlan = `-- name: InsertProjectEnvironmentClonePostgresRolePlan :one
+INSERT INTO project_environment_clone_postgres_role_plans(operation_id,source_database_id,account_id,project_id,target_database_id,
+ scope,inventory_fingerprint,inventory_ciphertext_sha256,target_fingerprint,target_pins_ciphertext_sha256,key_id,ciphertext,ciphertext_sha256)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,
+ $6::jsonb,$7::text,$8::text,$9::text,
+ $10::text,$11::text,$12::bytea,$13::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+ AND o.account_id=$3::uuid AND o.project_id=$4::uuid AND o.status='capturing'
+ AND o.revision=$14::bigint AND o.lease_token::text=$15::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, account_id, project_id, target_database_id, scope, inventory_fingerprint, inventory_ciphertext_sha256, target_fingerprint, target_pins_ciphertext_sha256, key_id, ciphertext, ciphertext_sha256, captured_at
+`
+
+type InsertProjectEnvironmentClonePostgresRolePlanParams struct {
+	OperationID                pgtype.UUID
+	SourceDatabaseID           pgtype.UUID
+	AccountID                  pgtype.UUID
+	ProjectID                  pgtype.UUID
+	TargetDatabaseID           pgtype.UUID
+	Scope                      []byte
+	InventoryFingerprint       string
+	InventoryCiphertextSha256  string
+	TargetFingerprint          string
+	TargetPinsCiphertextSha256 string
+	KeyID                      string
+	Ciphertext                 []byte
+	CiphertextSha256           string
+	ExpectedRevision           int64
+	WorkerToken                string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresRolePlan(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresRolePlanParams) (ProjectEnvironmentClonePostgresRolePlan, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresRolePlan,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.TargetDatabaseID,
+		arg.Scope,
+		arg.InventoryFingerprint,
+		arg.InventoryCiphertextSha256,
+		arg.TargetFingerprint,
+		arg.TargetPinsCiphertextSha256,
+		arg.KeyID,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresRolePlan
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.InventoryCiphertextSha256,
+		&i.TargetFingerprint,
+		&i.TargetPinsCiphertextSha256,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const insertProjectEnvironmentClonePostgresSecret = `-- name: InsertProjectEnvironmentClonePostgresSecret :exec
 INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1)
@@ -24758,6 +24825,37 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresInventory(ctx context.Conte
 		&i.CaptureDatabaseID,
 		&i.Scope,
 		&i.Fingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentClonePostgresRolePlan = `-- name: ReadProjectEnvironmentClonePostgresRolePlan :one
+SELECT operation_id, source_database_id, account_id, project_id, target_database_id, scope, inventory_fingerprint, inventory_ciphertext_sha256, target_fingerprint, target_pins_ciphertext_sha256, key_id, ciphertext, ciphertext_sha256, captured_at FROM project_environment_clone_postgres_role_plans WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresRolePlanParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresRolePlan(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresRolePlanParams) (ProjectEnvironmentClonePostgresRolePlan, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresRolePlan, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresRolePlan
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.InventoryCiphertextSha256,
+		&i.TargetFingerprint,
+		&i.TargetPinsCiphertextSha256,
 		&i.KeyID,
 		&i.Ciphertext,
 		&i.CiphertextSha256,

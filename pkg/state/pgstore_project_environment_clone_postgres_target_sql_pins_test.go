@@ -209,6 +209,16 @@ func TestPgClonePostgresTargetSQLPinsMigrationRoundTripAndOwnedDownRefusal(t *te
 		t.Fatal("migration lacks explicit rollback")
 	}
 	up, down := strings.TrimPrefix(parts[0], "-- +goose Up"), parts[1]
+	// The later role-plan table references these pins. Follow migration order
+	// while round-tripping the empty prerequisite, as goose rollback does.
+	childRaw, err := migrations.FS.ReadFile("20261003080000000_environment_clone_postgres_role_plans.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	childParts := strings.Split(string(childRaw), "-- +goose Down")
+	if len(childParts) != 2 {
+		t.Fatal("role plan migration lacks rollback")
+	}
 	_, ctx, pool := pgWithPool(t)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -222,10 +232,16 @@ func TestPgClonePostgresTargetSQLPinsMigrationRoundTripAndOwnedDownRefusal(t *te
 	if err := tx.QueryRow(ctx, shape).Scan(&beforeCols, &beforeConstraints); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(ctx, childParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, strings.TrimPrefix(childParts[0], "-- +goose Up")); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(ctx, shape).Scan(&afterCols, &afterConstraints); err != nil {

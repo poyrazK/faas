@@ -4999,3 +4999,60 @@ PG14/15 qualification and remote provider acceptance remain required. Public
 database/object clone admission stays closed. Complete writer closure/common-point
 capture, object/configuration coverage, production-preserving promotion/rollback
 and native acceptance remain required for the full one-command stage workflow.
+
+### Private durable role plan ownership (2026-10-03)
+
+Each independently prepared target can now retain one write-once encrypted role
+plan before role DDL. The ledger binds the original inventory fingerprint and
+ciphertext hash, original bootstrap descriptor fingerprint and ciphertext hash,
+source scope and exact target database owner. It locks the live operation, native
+capture, frozen reservation, target catalogue, inventory and bootstrap pin record
+before accepting input. The actual stored operation must still be capturing and
+the independent target must be prepared. The first ciphertext, recipient and
+capture timestamp win; equivalent re-encryption cannot replace them. The existing
+charged target bounds record count and central encrypted-metadata ceilings bound
+each record. Plaintext SQL names, SQL OIDs and role settings are absent.
+
+Lease-bound recovery reads the original encrypted record. Substituting either
+committed prerequisite's ciphertext fails even when its logical fingerprint is
+unchanged. Live source desired configuration cannot rebase the input. Recovery
+and capture check current authority again before commit. This ledger records
+private plan ownership only: it performs no provider IO, role DDL or dataset
+publication and sets no target data-resource identity or observed generation.
+
+Verification: all 28 focused state archive/import/independent-target/pin/role-plan
+and schema coverage contracts pass on isolated PostgreSQL 16 with no skips
+(65.819 s), including four new role-plan contracts. They qualify concurrent first
+capture, original encrypted plan recovery/key rotation, worker handoff and stale
+leases, source/target/scope and ciphertext/recipient replacement, prerequisite
+ciphertext replacement, fresh stored-phase rejection, original-pin prerequisites,
+metadata bounds, damaged committed bytes and absent publication. The fixture uses
+real catalogue/encryption data with synthetic provider/capture placement; it does
+not execute target role DDL. Actual isolated role creation is qualified by the
+separate role contracts. The migration round-trips an empty ledger with identical
+columns/constraints and refuses rollback with committed ownership. The prerequisite
+pin migration test now follows the child-before-parent rollback order.
+
+The test overlay preserves all 540 production state files and selects original
+internal/external test declarations by their dependency closure and package scope.
+Earlier exploratory failures from a shared test error variable are excluded from
+this complete run. Normal state/managedpostgres/Neon/role/APID production builds,
+focused state vet and the actual SQLC check pass. The schema snapshot is regenerated
+from live migrations on the temporary UTF8 verification database; all seventeen
+generated files match. The schema registry classifies role-plan ownership as
+operational. Full-repository/lint/native/provider acceptance is not claimed.
+
+Inventory recovery now restricts age decryption to identities matching the
+committed recipient. A relabeled recipient cannot borrow another available
+rotation key. All eleven inventory and twenty-two archive contracts pass with no
+skips (2.959 s and 9.279 s), including the new recipient-substitution regression.
+The stored-phase role-plan test additionally restores and successfully reads its
+original ciphertext before changing the operation phase; that isolated contract
+passes again (2.192 s), separating phase rejection from damaged-byte rejection.
+
+Worker capture/seeding composition, complete role/database/global materialization,
+credential activation and ownership retirement remain required. Public database/
+object clone admission stays closed. Complete writer closure/common-point capture,
+independent dataset verification, object/configuration coverage,
+production-preserving promotion/rollback and native/provider acceptance remain
+required for the full one-command stage workflow.
