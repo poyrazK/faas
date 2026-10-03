@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,7 +134,7 @@ func TestMainSupervisorRestartsWithCurrentSecretProjection(t *testing.T) {
 		}
 		return nil
 	}
-	manifest := api.AppManifest{User: strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()), SecretReloadSignal: "SIGHUP", Entrypoint: []string{
+	manifest := api.AppManifest{User: "0", SecretReloadSignal: "SIGHUP", Entrypoint: []string{
 		"/bin/sh", "-c", `printf '%s|%s|%s|%s' "$DATABASE_URL" "${REVOKED_TOKEN-unset}" "$FAAS_SECRETS_RELOAD_ACK_ENDPOINT" "$FAAS_SECRETS_RELOAD_GENERATION" > "$1"`, "main", output,
 	}}
 	sup := newSupervisorForMain(spec, manifest, initial, nil, nil)

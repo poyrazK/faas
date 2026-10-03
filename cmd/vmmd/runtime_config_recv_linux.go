@@ -401,9 +401,6 @@ func validRuntimeSecretRevision(revision string) bool {
 }
 
 func runtimeSecretErrorKind(err error) string {
-	if errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
-		return "sidecars_unsupported"
-	}
 	return "refresh_failed"
 }
 

@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 -- adr:436 A successful exec can consume the current projection without a signal.
-ALTER TABLE app_secrets DROP CONSTRAINT app_secrets_runtime_reload_observation_consistent;
+ALTER TABLE app_secrets DROP CONSTRAINT IF EXISTS app_secrets_runtime_reload_observation_consistent;
 ALTER TABLE app_secrets ADD CONSTRAINT app_secrets_runtime_reload_observation_consistent CHECK (
                 (last_runtime_reload_version IS NULL AND
                  last_runtime_reload_revision IS NULL AND
@@ -42,7 +42,7 @@ ALTER TABLE app_secrets ADD CONSTRAINT app_secrets_runtime_reload_observation_co
                    last_runtime_reload_signal = 'not_attempted' AND
                    last_runtime_reload_error_code IS NULL))
             ));
-ALTER TABLE app_secret_runtime_reload_observations DROP CONSTRAINT app_secret_runtime_reload_observation_outcome_chk;
+ALTER TABLE app_secret_runtime_reload_observations DROP CONSTRAINT IF EXISTS app_secret_runtime_reload_observation_outcome_chk;
 ALTER TABLE app_secret_runtime_reload_observations ADD CONSTRAINT app_secret_runtime_reload_observation_outcome_chk CHECK (
         (projection = 'failed' AND signal = 'not_attempted' AND error_code IS NOT DISTINCT FROM 'projection_failed') OR
         (projection = 'updated' AND signal IN ('sent', 'queued', 'not_attempted') AND error_code IS NULL) OR

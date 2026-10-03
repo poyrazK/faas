@@ -2,8 +2,10 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE app_tasks ADD COLUMN binding_verification jsonb;
-ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
+ALTER TABLE app_tasks ADD COLUMN IF NOT EXISTS binding_verification jsonb;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app_tasks'::regclass AND conname='app_tasks_binding_verification_check') THEN
+  ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK (
  binding_verification IS NULL OR COALESCE((
   jsonb_typeof(binding_verification) = 'object'
   AND binding_verification ?& ARRAY['type', 'binding', 'revision']
@@ -15,8 +17,10 @@ ALTER TABLE app_tasks ADD CONSTRAINT app_tasks_binding_verification_check CHECK 
    WHEN 'service' THEN '__gregale_service_binding_probe_v1__'
    ELSE '__gregale_postgres_binding_probe_v1__' END
  ), false)
-);
-CREATE INDEX app_tasks_binding_verification_latest_idx ON app_tasks
+  );
+ END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS app_tasks_binding_verification_latest_idx ON app_tasks
  (account_id, app_id, (binding_verification->>'type'), (binding_verification->>'binding'), deployment_scope, created_at DESC, id DESC)
  WHERE binding_verification IS NOT NULL;
 -- +goose StatementEnd

@@ -1,13 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE app_binding_promotion_revisions (
+CREATE TABLE IF NOT EXISTS app_binding_promotion_revisions (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
  epoch uuid NOT NULL DEFAULT gen_random_uuid(),
  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0)
 );
-INSERT INTO app_binding_promotion_revisions(app_id) SELECT id FROM apps;
+INSERT INTO app_binding_promotion_revisions(app_id) SELECT id FROM apps ON CONFLICT (app_id) DO NOTHING;
 
-CREATE FUNCTION bump_binding_promotion_revision(target uuid) RETURNS void
+CREATE OR REPLACE FUNCTION bump_binding_promotion_revision(target uuid) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
  INSERT INTO app_binding_promotion_revisions(app_id)
@@ -17,7 +17,7 @@ END $$;
 
 -- Revision increments commit in the same transaction as the observed facts.
 -- Lease/usage/heartbeat fields outside inventory's policy are deliberately omitted.
-CREATE FUNCTION capture_binding_promotion_revision() RETURNS trigger
+CREATE OR REPLACE FUNCTION capture_binding_promotion_revision() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
  old_row jsonb := CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
@@ -79,42 +79,61 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
 
+DROP TRIGGER IF EXISTS binding_promotion_revision ON apps;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON apps
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,slug,status,manifest,type');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON accounts;
 CREATE TRIGGER binding_promotion_revision AFTER UPDATE ON accounts
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,plan');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON app_envs;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON app_envs
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('account_id,app_id,scope,key,value');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON app_secrets;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON app_secrets
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,managed_object_storage_credential_id,delivery_version,secret_class');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON app_runtime_config_changes;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON app_runtime_config_changes
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('app_id,changed_at');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON managed_postgres_bindings;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON managed_postgres_bindings
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,app_id,database_id,scope,environment_key,access,state,credential_generation,credential_ref,rotation_previous_generation,rotation_wake_id,rotation_cleanup_ready');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON managed_postgres_databases;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON managed_postgres_databases
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,name,state');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON object_buckets;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON object_buckets
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,app_id,name,state');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON object_storage_s3_credentials;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON object_storage_s3_credentials
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,bucket_id,permission,status,managed_app_id,managed_scope,managed_prefix,rotation_parent_id,rotation_wake_id,secret_sealed,kid,created_at');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON queue_bindings;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON queue_bindings
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,app_id,name,queue_name,mode,enabled');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON triggers;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON triggers
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,kind,source,config,enabled,created_at');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON trigger_consumer_health;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON trigger_consumer_health
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('trigger_id,last_poll_at,last_success_at,last_error_at');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_app_bindings;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_app_bindings
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('app_id,account_id,integration_id,allowed_methods,allowed_path_prefixes,daily_request_limit');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integrations;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integrations
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,account_id,name,enabled,allowed_methods,allowed_path_prefixes,credential_source,origin,provider_auth_mode,owner_kind,token_hash,daily_request_limit');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON outbound_integration_credentials;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON outbound_integration_credentials
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('integration_id,account_id,authorization_sealed');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON app_tasks;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON app_tasks
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,account_id,deployment_id,deployment_scope,binding_verification,status,created_at,finished_at,stdout_tail,output_truncated,exit_code');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON instances;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON instances
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,deployment_id,kind,mode,state,started_at');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON deployments;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON deployments
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('id,app_id,status,scope,rootfs_key,image_digest,traffic_percent,canary_total_steps,rollout_state');
+DROP TRIGGER IF EXISTS binding_promotion_revision ON notification_outbox;
 CREATE TRIGGER binding_promotion_revision AFTER INSERT OR UPDATE OR DELETE ON notification_outbox
  FOR EACH ROW EXECUTE FUNCTION capture_binding_promotion_revision('channel,payload,state,attempts,created_at,delivered_at,last_error');
 -- +goose StatementEnd

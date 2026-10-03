@@ -386,7 +386,7 @@ Inspect app bindings, verification, runtime freshness, and rotation progress
 
 Configure or remove an outbound integration probe
 
-`gregale bindings probe-policy <integration-id> [--path <PATH>] [--method <METHOD>] [--expect-status <STATUS>] [--delete]`
+`gregale bindings probe-policy [--path <PATH>] [--method <METHOD>] [--expect-status <STATUS>] [--delete] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -405,7 +405,7 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check <app> [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack]`
+`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -473,7 +473,7 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify <app> [<service>] [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5019,7 +5019,7 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
 
 | Flag | Meaning | |
 |---|---|---|
