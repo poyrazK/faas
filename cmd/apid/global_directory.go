@@ -45,6 +45,8 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.attachGlobalAppTarget))
 	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.detachGlobalAppTarget))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/targets/{region}/resolve", read(s.resolveGlobalApp))
+	cellDeploy := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(s.idempotent(s.createDeployment)))))
+	mux.HandleFunc("POST /v1/cells/{cell_id}/apps/{app_id}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cellDeploy))))
 	mux.HandleFunc("GET /v1/cell/apps/{slug}/binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireRegionalAccountKey(s.requireDirectoryAccount(s.cellAppBinding))))))
 }
 

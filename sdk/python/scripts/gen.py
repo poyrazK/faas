@@ -284,6 +284,7 @@ def regen(overwrite: bool = True) -> None:
 
     _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
     _protect_global_directory_request(OUT / "faas_sdk")
+    _protect_cell_deployment_request(OUT / "faas_sdk")
     _patch_generator_bugs(OUT / "faas_sdk")
 
     # Restore the hand-curated project files that we stashed before
@@ -979,6 +980,22 @@ def _protect_global_directory_request(package: Path) -> None:
         "from attrs import define as _attrs_define\nfrom attrs import field as _attrs_field",
     )
     model.write_text(source.replace(anchor, "    regional_api_key: str = _attrs_field(repr=False)\n"))
+
+
+def _protect_cell_deployment_request(package: Path) -> None:
+    """A mutation addressed to a cell/app tuple must not move to another URL."""
+    endpoint = package / "api" / "deployments" / "deploy_cell_app.py"
+    if not endpoint.exists():
+        return  # The generator's minimal regression fixture has no cell route.
+    source = endpoint.read_text()
+    anchor = "    return _kwargs"
+    if source.count(anchor) != 1:
+        raise RuntimeError("cell deployment transport generator anchor missing")
+    boundary = '        headers["Content-Type"] = "multipart/form-data; boundary=+++"'
+    if source.count(boundary) != 1:
+        raise RuntimeError("cell deployment multipart generator anchor missing")
+    source = source.replace(boundary, "        # httpx supplies the boundary for the encoded files.")
+    endpoint.write_text(source.replace(anchor, '    _kwargs["follow_redirects"] = False\n' + anchor))
 
 
 def main() -> None:

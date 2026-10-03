@@ -210,7 +210,7 @@ export const sendRequest = async (
     signal: controller.signal,
   };
 
-  if (options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') {
+  if ((options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') || (options.method === 'POST' && options.url === '/v1/cells/{cell_id}/apps/{app_id}/deployments')) {
     request.redirect = 'error';
   }
 

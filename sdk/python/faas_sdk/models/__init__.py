@@ -605,6 +605,9 @@ from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
 from .deliver_app_event_response_status import DeliverAppEventResponseStatus
+from .deploy_cell_app_files_body import DeployCellAppFilesBody
+from .deploy_cell_app_files_body_kind import DeployCellAppFilesBodyKind
+from .deploy_cell_app_files_body_runtime import DeployCellAppFilesBodyRuntime
 from .deploy_dev_source_body import DeployDevSourceBody
 from .deploy_dev_source_body_runtime import DeployDevSourceBodyRuntime
 from .deploy_token_response import DeployTokenResponse
@@ -2756,6 +2759,9 @@ __all__ = (
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
     "DeliverAppEventResponseStatus",
+    "DeployCellAppFilesBody",
+    "DeployCellAppFilesBodyKind",
+    "DeployCellAppFilesBodyRuntime",
     "DeployDevSourceBody",
     "DeployDevSourceBodyRuntime",
     "DeploymentAliasListResponse",

@@ -784,7 +784,7 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 	s.createDeploymentMultipart(w, r, acct, app, true)
 }
 
-// loadAppAndPreflight resolves the app from the URL slug, enforces
+// loadAppAndPreflight uses a pinned cell/app identity or resolves the URL slug, enforces
 // IDOR (app.AccountID == acct.ID), and hoists the per-plan limits.
 // On any failure path, writes the appropriate error response and
 // returns ok=false; on success returns (app, true, limits).
@@ -796,7 +796,7 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 // multipart-source-tarball cap and the override / sidecar
 // validators.
 func (s *server) loadAppAndPreflight(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool, api.Limits) {
-	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+	app, err := s.deploymentAppForRequest(r)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
 		return state.App{}, false, api.Limits{}

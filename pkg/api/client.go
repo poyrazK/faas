@@ -1226,6 +1226,10 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 // an empty value means the archive root. The legacy DeployMultipart method
 // delegates here with an empty root so existing callers remain unchanged.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
+	return c.deployMultipartToPath(ctx, "/v1/apps/"+slug+"/deployments", slug, source, sourceName, runtime, handler, dockerfile, sourceRoot, ann, c.uploadHTTP())
+}
+
+func (c *Client) deployMultipartToPath(ctx context.Context, path, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations, client *http.Client) (DeploymentResponse, error) {
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
 	if err != nil {
 		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
@@ -1243,7 +1247,7 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 		return DeploymentResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/apps/"+slug+"/deployments", &b)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, &b)
 	if err != nil {
 		return DeploymentResponse{}, err
 	}
@@ -1263,7 +1267,7 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 	}
 	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out DeploymentResponse
-	return out, c.doReq(c.uploadHTTP(), req, &out)
+	return out, c.doReq(client, req, &out)
 }
 
 // DeployDevSource uploads either a complete developer source snapshot

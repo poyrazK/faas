@@ -108,3 +108,41 @@ regional APIs and a separate directory API. Private PostgreSQL tests verify
 quota races, ownership uniqueness, generation fencing in both lock orders,
 SQL identity/scope guards and startup refusal. They do not qualify native VM
 recovery or end-to-end ingress failover.
+
+## Deployment intent for a resolved target
+
+ADR-477 adds `POST /v1/cells/{cell_id}/apps/{app_id}/deployments` to regional
+apid. Use the immutable `cell_id` and `regional_app_id` from resolution, plus
+a personal-account API key issued by that cell with admin or deploy-write scope.
+The endpoint accepts the existing digest-pinned image JSON and source multipart
+forms. It applies the normal MFA, verified-email, image and plan checks. Sessions,
+shared organization keys, app-scoped keys and platform-tenant principals are not
+accepted by this initial personal-account path.
+
+The cell/app pair is checked before idempotent replay. Reusing a key on another
+app UUID creates a distinct operation. A deleted identity returns 404 even when
+an earlier success was cached, and reuse of its slug cannot select a new app.
+Renaming an app preserves its UUID. An unconfigured cell returns 503, a foreign
+cell/app or owner returns 404, and malformed/noncanonical UUIDs return 400.
+
+Use a stable retry key for each regional target's release:
+
+```go
+regional := api.NewClient(resolved.APIBase, regionalKey)
+ctx := api.ContextWithIdempotencyKey(ctx, releaseKey)
+deployment, err := regional.DeployCellApp(ctx, resolved.CellID, resolved.RegionalAppID, request)
+```
+
+Go source uploads use `DeployCellAppMultipart`. Node image deployments use
+`DeploymentsService.deployCellApp`; source uploads use `deployCellAppMultipart`
+with a `CellDeploymentSourceForm`. Python uses `deploy_cell_app.sync_detailed`
+or `asyncio_detailed`, with `CreateDeploymentRequest` or
+`DeployCellAppFilesBody`. All three transports refuse redirects for this route;
+Python and Node source transports let the HTTP encoder supply the multipart
+boundary.
+
+An accepted response is regional deployment intent. Wait for that regional
+pipeline's readiness before publication. Global quota reservations, durable
+multi-target coordination and ingress publication remain pending. The global
+routing policy remains `all_selected_regions`; this endpoint alone does not
+publish a global route.

@@ -9068,6 +9068,110 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/cells/{cell_id}/apps/{app_id}/deployments:
+    parameters:
+      - name: cell_id
+        in: path
+        required: true
+        description: Canonical nonzero UUID of the target regional cell.
+        schema: { type: string, format: uuid }
+      - name: app_id
+        in: path
+        required: true
+        description: Canonical nonzero UUID of the personally owned regional app.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [deployments]
+      operationId: deployCellApp
+      summary: Create deployment intent for an immutable regional app.
+      description: |
+        Requires a personal-account regional API key with admin or deploy-write
+        scope, MFA when required, and a verified email. Both canonical nonzero
+        UUIDs must identify this configured cell and a personally owned live app.
+        Identity and authorization are checked before idempotent replay. Slug
+        reuse cannot redirect this mutation. Redirects must not be followed.
+        Acceptance creates regional intent and does not report global readiness.
+        Two content-types are accepted:
+        - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
+        - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
+        Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+        The optional `workflows` array is plan-gated and schema-validated;
+        accepted definitions are persisted with the deployment and snapshotted
+        when a workflow run starts.
+      requestBody:
+        required: true
+        description: "Pinned-image JSON or a source archive for the UUID-selected regional app; the regional plan caps apply to source uploads."
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeploymentRequest'
+              example: {"image":"ghcr.io/onebox-faas/hello@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: string
+                  format: binary
+                  description: "Source archive passed to this cell’s existing tarball or Dockerfile build pipeline."
+                dockerfile:
+                  type: boolean
+                kind:
+                  type: string
+                  enum: [app, function]
+                runtime:
+                  type: string
+                  enum: [node22, python312, go124, go124-alpine, node24, python313]
+                handler:
+                  type: string
+                  description: Function handler selector when a function runtime is supplied.
+                healthcheck:
+                  type: string
+                  description: "Startup readiness configuration encoded as JSON, selecting either an HTTP path or a gRPC health check."
+                source_root:
+                  type: string
+                  maxLength: 256
+                  pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                  description: "Build directory relative to the uploaded regional archive. An omitted or empty directory selects its root."
+                scope:
+                  type: string
+                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  description: "Regional environment scope for this deployment; an omitted scope selects default."
+                source_url:
+                  type: string
+                  maxLength: 1024
+                  description: "Repository URL recorded as regional deployment provenance. Code comes from the uploaded archive; this URL is not fetched."
+                commit_sha:
+                  type: string
+                  minLength: 7
+                  maxLength: 64
+                  pattern: '^[0-9a-f]+$'
+                  description: "Lowercase hexadecimal Git revision recorded with this regional deployment."
+                workflows:
+                  type: string
+                  description: "Workflow definitions encoded as a JSON array, subject to the regional account plan."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Deployment intent accepted by this regional cell and queued in its existing pipeline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentResponse'
+                example: {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","image_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","kind":"tarball","status":"pending","created_at":"2026-08-29T11:25:00Z"}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'

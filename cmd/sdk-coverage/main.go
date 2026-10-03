@@ -263,6 +263,7 @@ var sdkMethodExclude = map[string]bool{
 	"ListDeploymentsAll":      true, // cursor walker; not a route
 	"ListAppErrorRequestsAll": true, // cursor walker; not a route (ADR-096 / PR-B)
 	"DeployMultipart":         true, // open-ended reader-based upload; CLI's DeployTarball is the wired route
+	"DeployCellAppMultipart":  true, // ADR-477: source-form wrapper for the DeployCellApp route
 	"MintCliAuthCode":         true, // anonymous device-code mint; route excluded above
 	"ExchangeCliAuthCode":     true, // anonymous device-code poll; route excluded above
 	"GetStatusSLO":            true, // public status; route excluded above
@@ -552,6 +553,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/global-apps/{slug}/targets/{region}":                                        "DetachGlobalAppTarget",
 	"GET /v1/global-apps/{slug}/targets/{region}/resolve":                                   "ResolveGlobalApp",
 	"GET /v1/cell/apps/{slug}/binding":                                                      "GetCellAppBinding",
+	"POST /v1/cells/{cell_id}/apps/{app_id}/deployments":                                    "DeployCellApp",
 	"GET /v1/regions":                                                                       "ListComputeRegions",
 	"GET /v1/apps":                                                                          "ListApps",
 	"POST /v1/apps":                                                                         "CreateApp",

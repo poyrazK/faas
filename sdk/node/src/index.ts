@@ -155,3 +155,6 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+
+export { deployCellAppMultipart } from './cell-deployments.js';
+export type { CellDeploymentSourceForm } from './cell-deployments.js';

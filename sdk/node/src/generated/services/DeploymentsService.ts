@@ -141,6 +141,82 @@ export class DeploymentsService {
     });
   }
   /**
+   * Create deployment intent for an immutable regional app.
+   * Requires a personal-account regional API key with admin or deploy-write
+   * scope, MFA when required, and a verified email. Both canonical nonzero
+   * UUIDs must identify this configured cell and a personally owned live app.
+   * Identity and authorization are checked before idempotent replay. Slug
+   * reuse cannot redirect this mutation. Redirects must not be followed.
+   * Acceptance creates regional intent and does not report global readiness.
+   * Two content-types are accepted:
+   * - `application/json` (`CreateDeploymentRequest` with an `image` field): prebuilt OCI reference.
+   * - `multipart/form-data`: source tarball upload (or Dockerfile escape hatch).
+   * Source size is plan-capped (Free/Hobby 100 MB, Pro/Scale 250 MB).
+   * The optional `workflows` array is plan-gated and schema-validated;
+   * accepted definitions are persisted with the deployment and snapshotted
+   * when a workflow run starts.
+   *
+   * @returns DeploymentResponse Deployment intent accepted by this regional cell and queued in its existing pipeline.
+   * @throws ApiError
+   */
+  public static deployCellApp({
+    cellId,
+    appId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Canonical nonzero UUID of the target regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical nonzero UUID of the personally owned regional app.
+     */
+    appId: string,
+    /**
+     * Pinned-image JSON or a source archive for the UUID-selected regional app; the regional plan caps apply to source uploads.
+     */
+    requestBody: CreateDeploymentRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/deployments',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: source_too_large`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * List deployments for an app.
    * Paged backwards (newest first) for the app identified by `slug`.
    * `next_before` is an opaque RFC3339Nano cursor from the last row in
