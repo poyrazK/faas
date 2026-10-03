@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -184,7 +186,16 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 	if err := os.WriteFile(configPath, encoded, 0o600); err != nil {
 		t.Fatalf("write managed postgres config: %v", err)
 	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientPath := filepath.Join(t.TempDir(), "fleet.age.pub")
+	if err := secretbox.WriteRecipientFile(recipientPath, identity); err != nil {
+		t.Fatal(err)
+	}
 	return []string{
+		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_MANAGED_POSTGRES_CONFIG=" + configPath,
 		"FAAS_E2E_NEON_API_KEY=e2e-provider-key",
 		"FAAS_ENVIRONMENT=staging",

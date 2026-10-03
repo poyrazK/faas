@@ -3,12 +3,13 @@
 -- +goose Up
 -- +goose StatementBegin
 -- ADR-466: app-wide admission barrier, separate from writer-drain evidence.
-ALTER TABLE apps ADD COLUMN managed_postgres_admission_cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
-ALTER TABLE apps ADD COLUMN managed_postgres_admission_fenced_at timestamptz;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS managed_postgres_admission_cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS managed_postgres_admission_fenced_at timestamptz;
+ALTER TABLE apps DROP CONSTRAINT IF EXISTS apps_managed_postgres_admission_fence_check;
 ALTER TABLE apps ADD CONSTRAINT apps_managed_postgres_admission_fence_check
  CHECK ((managed_postgres_admission_cutover_id IS NULL)=(managed_postgres_admission_fenced_at IS NULL));
 
-CREATE FUNCTION guard_managed_postgres_admission_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_managed_postgres_admission_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE intent managed_postgres_cutovers%ROWTYPE; checked_at timestamptz;
 BEGIN
  IF NEW.managed_postgres_admission_cutover_id IS NOT DISTINCT FROM OLD.managed_postgres_admission_cutover_id THEN
@@ -40,10 +41,11 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS managed_postgres_admission_fence_guard ON apps;
 CREATE TRIGGER managed_postgres_admission_fence_guard BEFORE INSERT OR UPDATE ON apps
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_admission_fence();
 
-CREATE FUNCTION guard_managed_postgres_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_managed_postgres_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE pinned uuid;
 BEGIN
  IF NEW.app_id IS NULL THEN RETURN NEW; END IF;
@@ -62,6 +64,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS managed_postgres_instance_admission_guard ON instances;
 CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE OF app_id,state ON instances
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_instance_admission();
 -- +goose StatementEnd

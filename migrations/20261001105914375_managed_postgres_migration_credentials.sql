@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE managed_postgres_bindings DROP CONSTRAINT managed_postgres_bindings_access_check;
+ALTER TABLE managed_postgres_bindings DROP CONSTRAINT IF EXISTS managed_postgres_bindings_access_check;
 ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_access_check
     CHECK (access IN ('read_write', 'read_only', 'migration'));
 -- +goose StatementEnd

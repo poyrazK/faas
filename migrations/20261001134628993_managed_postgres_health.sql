@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE managed_postgres_health (
+CREATE TABLE IF NOT EXISTS managed_postgres_health (
  database_id uuid PRIMARY KEY REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  backend_id text NOT NULL,
@@ -21,8 +21,8 @@ CREATE TABLE managed_postgres_health (
  CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
  CHECK (last_success_at IS NULL OR (checked_at IS NOT NULL AND last_success_at <= checked_at))
 );
-CREATE INDEX managed_postgres_health_next_check_idx ON managed_postgres_health(next_check_at, database_id);
-CREATE INDEX managed_postgres_health_account_idx ON managed_postgres_health(account_id);
+CREATE INDEX IF NOT EXISTS managed_postgres_health_next_check_idx ON managed_postgres_health(next_check_at, database_id);
+CREATE INDEX IF NOT EXISTS managed_postgres_health_account_idx ON managed_postgres_health(account_id);
 -- +goose StatementEnd
 
 -- +goose Down

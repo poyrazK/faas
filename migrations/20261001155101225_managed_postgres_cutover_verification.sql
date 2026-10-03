@@ -2,17 +2,19 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE managed_postgres_cutovers DROP CONSTRAINT managed_postgres_cutovers_state_check;
+ALTER TABLE managed_postgres_cutovers DROP CONSTRAINT IF EXISTS managed_postgres_cutovers_state_check;
 ALTER TABLE managed_postgres_cutovers ADD CONSTRAINT managed_postgres_cutovers_state_check
  CHECK (state IN ('preparing','prepared','verifying','verified','cancelling','cancelled'));
-ALTER TABLE managed_postgres_cutovers ADD COLUMN verified_at timestamptz;
+ALTER TABLE managed_postgres_cutovers ADD COLUMN IF NOT EXISTS verified_at timestamptz;
+ALTER TABLE managed_postgres_cutovers DROP CONSTRAINT IF EXISTS managed_postgres_cutovers_verified_at_check;
 ALTER TABLE managed_postgres_cutovers ADD CONSTRAINT managed_postgres_cutovers_verified_at_check
  CHECK ((state='verified')=(verified_at IS NOT NULL));
-ALTER TABLE managed_postgres_cutover_credentials ADD COLUMN verified_at timestamptz;
+ALTER TABLE managed_postgres_cutover_credentials ADD COLUMN IF NOT EXISTS verified_at timestamptz;
+ALTER TABLE managed_postgres_cutover_credentials DROP CONSTRAINT IF EXISTS managed_postgres_cutover_credentials_verified_at_check;
 ALTER TABLE managed_postgres_cutover_credentials ADD CONSTRAINT managed_postgres_cutover_credentials_verified_at_check
  CHECK (verified_at IS NULL OR state='sealed');
-DROP INDEX managed_postgres_cutovers_due_idx;
-CREATE INDEX managed_postgres_cutovers_due_idx ON managed_postgres_cutovers(retry_at,id)
+DROP INDEX IF EXISTS managed_postgres_cutovers_due_idx;
+CREATE INDEX IF NOT EXISTS managed_postgres_cutovers_due_idx ON managed_postgres_cutovers(retry_at,id)
  WHERE state IN ('preparing','verifying','cancelling');
 -- +goose StatementEnd
 

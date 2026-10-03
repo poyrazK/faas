@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -115,6 +116,7 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bound := make(chan struct{})
 	load, write := nopHostKeyDeps(t)
 	deps := runDeps{
 		configPath: cfgPath,
@@ -124,7 +126,11 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return net.Listen("unix", t.Address)
+			ln, err := net.Listen("unix", t.Address)
+			if err == nil {
+				close(bound)
+			}
+			return ln, err
 		},
 		loadHostKey:    load,
 		loadHostKeys:   nopHostKeysDep(t),
@@ -136,8 +142,14 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), deps) }()
 
-	// Give the goroutine a beat to bind the listener.
-	time.Sleep(50 * time.Millisecond)
+	defer cancel()
+	select {
+	case <-bound:
+	case err := <-done:
+		t.Fatalf("run stopped before binding: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not bind listener")
+	}
 	cancel()
 
 	select {
@@ -214,6 +226,7 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bound := make(chan struct{})
 	load, write := nopHostKeyDeps(t)
 	deps := runDeps{
 		configPath: cfgPath,
@@ -223,7 +236,11 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return net.Listen("unix", t.Address)
+			ln, err := net.Listen("unix", t.Address)
+			if err == nil {
+				close(bound)
+			}
+			return ln, err
 		},
 		loadHostKey:    load,
 		loadHostKeys:   nopHostKeysDep(t),
@@ -235,7 +252,14 @@ func TestRun_FCDetectFailureIsWarning(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), deps) }()
 
-	time.Sleep(50 * time.Millisecond)
+	defer cancel()
+	select {
+	case <-bound:
+	case err := <-done:
+		t.Fatalf("run stopped before binding: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not bind listener")
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -418,5 +442,50 @@ func TestLoadOrGenerateHostIdentity_RejectsInsecureHostKeyPerms(t *testing.T) {
 	}
 	if perm := st.Mode().Perm(); perm != 0o644 {
 		t.Errorf("file mode changed during rejection: got %o want 0o644 (helper must NOT overwrite on ErrHostKeyInsecurePerms)", perm)
+	}
+}
+
+// adr: 472 — stopping during inventory must neither serve nor hide real errors.
+func TestRun_RestartInventoryCancellation(t *testing.T) {
+	wantErr := errors.New("inventory corrupt")
+	for _, tc := range []struct {
+		name         string
+		inventoryErr error
+		want         error
+	}{
+		{"parent cancellation", context.Canceled, nil},
+		{"inventory cancellation without parent", context.Canceled, context.Canceled},
+		{"independent failure during stop", wantErr, wantErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := shortDir(t)
+			cfgPath := filepath.Join(dir, "vmmd.toml")
+			if err := os.WriteFile(cfgPath, []byte("resource_journal_dir = \""+filepath.Join(dir, "resources")+"\"\n"+"socket_path = \""+filepath.Join(dir, "vmmd.sock")+"\"\nowner_user = \"root\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			load, write := nopHostKeyDeps(t)
+			deps := runDeps{
+				configPath:  cfgPath,
+				capCheck:    nopCapCheck(),
+				detectFC:    func(context.Context) (string, error) { return "1.7.0-test", nil },
+				loadHostKey: load, loadHostKeys: nopHostKeysDep(t), writeRecipient: write,
+				recoverResources: func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error) {
+					if tc.name != "inventory cancellation without parent" {
+						cancel()
+					}
+					return nil, fmt.Errorf("restart inventory: %w", tc.inventoryErr)
+				},
+				listen: func(context.Context, string, *tls.Config, string) (net.Listener, error) {
+					t.Error("listener opened after interrupted inventory")
+					return nil, errors.New("unexpected listener")
+				},
+			}
+			err := runWithDeps(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), deps)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("run returned %v, want %v", err, tc.want)
+			}
+		})
 	}
 }

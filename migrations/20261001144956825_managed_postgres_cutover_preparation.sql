@@ -1,7 +1,7 @@
 -- ADR-464: stage credentials without publishing or switching application bindings.
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE managed_postgres_cutovers (
+CREATE TABLE IF NOT EXISTS managed_postgres_cutovers (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -20,9 +20,9 @@ CREATE TABLE managed_postgres_cutovers (
  CHECK (source_database_id<>target_database_id),
  CHECK ((lease_token IS NULL)=(lease_until IS NULL))
 );
-CREATE UNIQUE INDEX managed_postgres_cutovers_active_app_scope_idx ON managed_postgres_cutovers(app_id,scope) WHERE state<>'cancelled';
-CREATE INDEX managed_postgres_cutovers_due_idx ON managed_postgres_cutovers(retry_at,id) WHERE state IN ('preparing','cancelling');
-CREATE TABLE managed_postgres_cutover_credentials (
+CREATE UNIQUE INDEX IF NOT EXISTS managed_postgres_cutovers_active_app_scope_idx ON managed_postgres_cutovers(app_id,scope) WHERE state<>'cancelled';
+CREATE INDEX IF NOT EXISTS managed_postgres_cutovers_due_idx ON managed_postgres_cutovers(retry_at,id) WHERE state IN ('preparing','cancelling');
+CREATE TABLE IF NOT EXISTS managed_postgres_cutover_credentials (
  id uuid PRIMARY KEY,
  cutover_id uuid NOT NULL REFERENCES managed_postgres_cutovers(id) ON DELETE CASCADE,
  source_binding_id uuid NOT NULL REFERENCES managed_postgres_bindings(id) ON DELETE CASCADE,
@@ -35,10 +35,10 @@ CREATE TABLE managed_postgres_cutover_credentials (
  CHECK ((state='sealed' AND num_nonnulls(provider_identity_id,credential_ref,ciphertext,kid,value_hash)=5 AND length(provider_identity_id)>0 AND length(credential_ref)>0 AND length(ciphertext)>0 AND length(kid)>0 AND length(value_hash)>0)
  OR (state IN ('pending','revoked') AND provider_identity_id IS NULL AND credential_ref IS NULL AND ciphertext IS NULL AND kid IS NULL AND value_hash IS NULL))
 );
-ALTER TABLE managed_postgres_databases ADD COLUMN cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
-ALTER TABLE managed_postgres_bindings ADD COLUMN cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
+ALTER TABLE managed_postgres_databases ADD COLUMN IF NOT EXISTS cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
+ALTER TABLE managed_postgres_bindings ADD COLUMN IF NOT EXISTS cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
 
-CREATE FUNCTION guard_managed_postgres_cutover_database() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_database() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.cutover_id IS NOT NULL THEN
   IF TG_OP='DELETE' OR ROW(NEW.account_id,NEW.state,NEW.backend_id,NEW.backend_fingerprint,NEW.provider_resource_id,NEW.desired_generation,NEW.region,NEW.postgres_major,NEW.service_class,NEW.availability,NEW.scale_to_zero,NEW.storage_limit_bytes,NEW.restore_window_seconds)
@@ -51,8 +51,9 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS managed_postgres_cutover_database_guard ON managed_postgres_databases;
 CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE UPDATE OR DELETE ON managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_cutover_database();
-CREATE FUNCTION guard_managed_postgres_cutover_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_binding() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE pinned uuid;
 BEGIN
  IF TG_OP IN ('UPDATE','DELETE') AND OLD.cutover_id IS NOT NULL THEN
@@ -71,6 +72,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS managed_postgres_cutover_binding_guard ON managed_postgres_bindings;
 CREATE TRIGGER managed_postgres_cutover_binding_guard BEFORE INSERT OR UPDATE OR DELETE ON managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_cutover_binding();
 -- +goose StatementEnd
 

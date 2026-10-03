@@ -1,136 +1,133 @@
 # ADR-463: degraded, stale, replica, opt-out, and heartbeat alert coverage.
 rule_files:
-- faas.rules.yml
+  - faas.rules.yml
 evaluation_interval: 30s
 tests:
-- name: degraded catalog aggregates replicas and respects opt out
-  interval: 1m
-  input_series:
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="a"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="a",status="degraded"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="b"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="b",status="degraded"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="disabled"}
-    values: 0+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="disabled",status="degraded"}
-    values: 99+0x20
-  alert_rule_test:
-  - eval_time: 4m
-    alertname: FaasManagedPostgresHealthDegraded
-    exp_alerts: []
-  - eval_time: 6m
-    alertname: FaasManagedPostgresHealthDegraded
-    exp_alerts:
-    - exp_labels:
-        severity: warn
-        component: apid
-        family: managed_postgres
-      exp_annotations:
-        summary: Managed PostgreSQL provider health is degraded
-        description: At least one ready database has a fresh provider failure, missing
-          resource, or specification mismatch. Inspect cached customer health and
-          provider metadata; suspended compute is healthy and health collection never
-          opens SQL connections or repairs resources.
-        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
-- name: stale rows and never completed collector alert independently
-  interval: 1m
-  input_series:
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="stalled"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="stalled"}
-    values: 0+0x20
-  - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="stalled"}
-    values: 300+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="stalled",status="stale"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="disabled"}
-    values: 0+0x20
-  - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="disabled"}
-    values: 0+0x20
-  - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="disabled"}
-    values: 300+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="disabled",status="stale"}
-    values: 1+0x20
-  alert_rule_test:
-  - eval_time: 6m
-    alertname: FaasManagedPostgresHealthCollectorStalled
-    exp_alerts:
-    - exp_labels:
-        severity: warn
-        component: apid
-        family: managed_postgres
-        job: apid
-        instance: stalled
-      exp_annotations: &id001
-        summary: Managed PostgreSQL health collector is stalled
-        description: An enabled apid health collector has not completed a catalog
-          sweep within its freshness window. Check apid logs and catalog connectivity;
-          provider failures are recorded as degraded checks and do not stop successful
-          sweeps.
-        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
-  - eval_time: 9m
-    alertname: FaasManagedPostgresHealthStale
-    exp_alerts: []
-  - eval_time: 11m
-    alertname: FaasManagedPostgresHealthStale
-    exp_alerts:
-    - exp_labels:
-        severity: warn
-        component: apid
-        family: managed_postgres
-      exp_annotations:
-        summary: Managed PostgreSQL health observations are stale
-        description: At least one ready database has no recent metadata check. Check
-          collector capacity, provider backoff, and apid catalog connectivity before
-          relying on cached health.
-        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
-- name: healthy catalog with progressing collector has no alerts
-  interval: 1m
-  input_series:
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="healthy"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="healthy"}
-    values: 0+60x20
-  - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="healthy"}
-    values: 300+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="healthy",status="stale"}
-    values: 0+0x20
-  - series: apid_managed_postgres_health_databases{job="apid",instance="healthy",status="degraded"}
-    values: 0+0x20
-  alert_rule_test:
-  - eval_time: 20m
-    alertname: FaasManagedPostgresHealthDegraded
-    exp_alerts: []
-  - eval_time: 20m
-    alertname: FaasManagedPostgresHealthStale
-    exp_alerts: []
-  - eval_time: 20m
-    alertname: FaasManagedPostgresHealthCollectorStalled
-    exp_alerts: []
-- name: completed sweep later ages out
-  interval: 1m
-  input_series:
-  - series: apid_managed_postgres_health_enabled{job="apid",instance="expired"}
-    values: 1+0x20
-  - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="expired"}
-    values: 60+0x20
-  - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="expired"}
-    values: 300+0x20
-  alert_rule_test:
-  - eval_time: 10m
-    alertname: FaasManagedPostgresHealthCollectorStalled
-    exp_alerts: []
-  - eval_time: 12m
-    alertname: FaasManagedPostgresHealthCollectorStalled
-    exp_alerts:
-    - exp_labels:
-        severity: warn
-        component: apid
-        family: managed_postgres
-        job: apid
-        instance: expired
-      exp_annotations: *id001
+  - name: degraded catalog aggregates replicas and respects opt out
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="a"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="a",status="degraded"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="b"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="b",status="degraded"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="disabled"}
+        values: 0+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="disabled",status="degraded"}
+        values: 99+0x20
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasManagedPostgresHealthDegraded
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FaasManagedPostgresHealthDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+            exp_annotations:
+              summary: Managed PostgreSQL provider health is degraded
+              description: At least one ready database has a fresh provider failure, missing resource,
+                or specification mismatch. Inspect cached customer health and provider metadata; suspended
+                compute is healthy and health collection never opens SQL connections or repairs resources.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+  - name: stale rows and never completed collector alert independently
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="stalled"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="stalled"}
+        values: 0+0x20
+      - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="stalled"}
+        values: 300+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="stalled",status="stale"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="disabled"}
+        values: 0+0x20
+      - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="disabled"}
+        values: 0+0x20
+      - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="disabled"}
+        values: 300+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="disabled",status="stale"}
+        values: 1+0x20
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasManagedPostgresHealthCollectorStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: stalled
+            exp_annotations: &id001
+              summary: Managed PostgreSQL health collector is stalled
+              description: An enabled apid health collector has not completed a catalog sweep within its
+                freshness window. Check apid logs and catalog connectivity; provider failures are recorded
+                as degraded checks and do not stop successful sweeps.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+      - eval_time: 9m
+        alertname: FaasManagedPostgresHealthStale
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasManagedPostgresHealthStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+            exp_annotations:
+              summary: Managed PostgreSQL health observations are stale
+              description: At least one ready database has no recent metadata check. Check collector capacity,
+                provider backoff, and apid catalog connectivity before relying on cached health.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+  - name: healthy catalog with progressing collector has no alerts
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="healthy"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="healthy"}
+        values: 0+60x20
+      - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="healthy"}
+        values: 300+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="healthy",status="stale"}
+        values: 0+0x20
+      - series: apid_managed_postgres_health_databases{job="apid",instance="healthy",status="degraded"}
+        values: 0+0x20
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresHealthDegraded
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasManagedPostgresHealthStale
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasManagedPostgresHealthCollectorStalled
+        exp_alerts: []
+  - name: completed sweep later ages out
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_health_enabled{job="apid",instance="expired"}
+        values: 1+0x20
+      - series: apid_managed_postgres_health_last_sweep_timestamp_seconds{job="apid",instance="expired"}
+        values: 60+0x20
+      - series: apid_managed_postgres_health_stale_after_seconds{job="apid",instance="expired"}
+        values: 300+0x20
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasManagedPostgresHealthCollectorStalled
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasManagedPostgresHealthCollectorStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: expired
+            exp_annotations: *id001

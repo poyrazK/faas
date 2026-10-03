@@ -376,6 +376,9 @@ type runDeps struct {
 	// prepareJailHelper moves the release helper copy onto daemon startup.
 	// nil lets orchestration tests avoid writing the production chroot.
 	prepareJailHelper func(*fcvm.JailerVMM) error
+	// recoverResources permits deterministic cancellation during startup inventory.
+	// nil selects the platform restart quarantine implementation.
+	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
 }
 
 func defaultDeps() runDeps {
@@ -940,8 +943,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
-	resourceJournal, err := recoverRestartResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+	recoverResources := deps.recoverResources
+	if recoverResources == nil {
+		recoverResources = recoverRestartResources
+	}
+	resourceJournal, err := recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
 	if err != nil {
+		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
 		return err
 	}
 	if resourceJournal != nil {

@@ -3,7 +3,7 @@
 -- +goose Up
 -- +goose StatementBegin
 -- ADR-467: deployment-attached commands can carry migration credentials.
-CREATE FUNCTION guard_managed_postgres_app_task_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_managed_postgres_app_task_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE pinned uuid;
 BEGIN
  IF NEW.status NOT IN ('restoring','running') THEN RETURN NEW; END IF;
@@ -19,6 +19,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS managed_postgres_app_task_admission_guard ON app_tasks;
 CREATE TRIGGER managed_postgres_app_task_admission_guard BEFORE INSERT OR UPDATE OF app_id,status ON app_tasks
  FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_app_task_admission();
 -- +goose StatementEnd

@@ -79,6 +79,13 @@ func (f *credentialFixture) connect(t *testing.T, name string) *pgx.Conn {
 	t.Helper()
 	config := f.config.Copy()
 	config.User = name
+	if name != f.config.User {
+		// Neon supplies role passwords through its API. The local fixture has
+		// no password API, so install a known test password before exercising
+		// the login under both trust and SCRAM authentication.
+		config.Password = "local-fixture-password"
+		executeSQL(t, f.admin, "ALTER ROLE "+roleIdentifier(name)+" PASSWORD 'local-fixture-password'")
+	}
 	conn, err := pgx.ConnectConfig(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
