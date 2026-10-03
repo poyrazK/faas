@@ -1727,3 +1727,24 @@ complete ownership, wait, device setup and receipt phase in `SetupJailMs`; legac
 subphase timing fields remain zero on this path. Native crash-after-device-setup
 and hardened service restart acceptance remain outstanding, along with the
 complete qualification, serving and environment gates listed above.
+
+The incoming qualification journal now records the complete original execution
+frame, cleanup capability, local node, kernel boot, one request generation and
+its bounded dispatch deadline. A cleanup request arriving before Create writes
+an irreversible tombstone. The same instance UUID has one canonical file key;
+changing its spelling cannot create parallel authority. Claim and revocation
+share a private file lock, and acknowledgement loss after publication cannot
+authorize replay. Record decoding requires every field, including false flags
+and nested artifact fields; damaged, public, replaced or wrong-boot records hold
+ownership. Cleanup capabilities stay outside diagnostic formatting and public
+execution JSON, and persist only in the private journal.
+
+This journal currently records incoming identity and revocation only. It grants
+no native VM launch or retirement receipt, and is not wired to production RPCs.
+The next required integration must bind every original native lease and producer
+to this request under its revocation fence, quarantine uncertain admissions on
+startup, reject generic instance operations that bypass attempt ownership, and
+return complete native process/resource evidence. Client, router, server,
+qualification consumer and graph serving integration remain required. Portable
+file-lock, publication-loss, deadline, changed-frame and strict-record contracts
+do not establish native retirement or end-to-end environment acceptance.
