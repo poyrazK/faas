@@ -54,11 +54,11 @@ func TestMetalRestoreUserspaceRNGDiffers(t *testing.T) {
 	}{
 		{
 			name: "node", rootfsEnv: "FAAS_TEST_RNG_NODE_ROOTFS", file: "srv/rng-app.js", script: rngNodeApp,
-			entrypoint: []string{"/usr/local/bin/node", "/srv/rng-app.js"}, replayed: []string{"uuid", "math"},
+			entrypoint: []string{"/usr/local/bin/node", "/srv/rng-app.js"}, replayed: []string{"uuid", "bytes", "math"},
 		},
 		{
 			name: "python", rootfsEnv: "FAAS_TEST_RNG_PYTHON_ROOTFS", file: "srv/rng-app.py", script: rngPythonApp,
-			entrypoint: []string{"/usr/bin/python3", "/srv/rng-app.py"}, replayed: []string{"random"},
+			entrypoint: []string{"/usr/bin/python3", "/srv/rng-app.py"}, replayed: []string{"random", "ssl"},
 		},
 	}
 	ran := 0
