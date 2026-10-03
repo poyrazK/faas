@@ -62,20 +62,26 @@ import (
 // dashboard panel can lift the same JSON for the cluster's
 // dedicated surface (commit 20, separate PR).
 type doctorCheck struct {
-	Name    string   `json:"name"`             // e.g. "port-bind"
-	Status  string   `json:"status"`           // "ok" | "warn" | "error" | "skipped"
-	Code    string   `json:"code,omitempty"`   // stable doctor finding code; RFC 7807 code when applicable
-	Reason  string   `json:"reason,omitempty"` // why a check was skipped
-	Hint    string   `json:"hint,omitempty"`
-	Why     string   `json:"why,omitempty"`
-	Fix     string   `json:"fix,omitempty"`
-	Sources []string `json:"sources,omitempty"` // file:line that triggered
+	Name                string   `json:"name"`             // e.g. "port-bind"
+	Status              string   `json:"status"`           // "ok" | "warn" | "error" | "skipped" | "unknown"
+	Code                string   `json:"code,omitempty"`   // stable doctor finding code; RFC 7807 code when applicable
+	Reason              string   `json:"reason,omitempty"` // why a check was skipped or evidence is unavailable
+	Hint                string   `json:"hint,omitempty"`
+	Why                 string   `json:"why,omitempty"`
+	Fix                 string   `json:"fix,omitempty"`
+	Sources             []string `json:"sources,omitempty"` // file:line that triggered
+	ObservedAt          string   `json:"observed_at,omitempty"`
+	DeploymentID        string   `json:"deployment_id,omitempty"`
+	DeploymentCreatedAt string   `json:"deployment_created_at,omitempty"`
+	WindowStart         string   `json:"window_start,omitempty"`
+	WindowEnd           string   `json:"window_end,omitempty"`
 }
 
 // doctorReport is the top-level JSON shape. Always emits a
 // "checks" array even when empty so script consumers can grep on
 // `length(checks) == 0` as the "all green" signal.
 type doctorReport struct {
+	App     *doctorApp                `json:"app,omitempty"`
 	Path    string                    `json:"path,omitempty"`
 	Image   *doctorImage              `json:"image,omitempty"`
 	Profile *frameworkprofile.Profile `json:"profile,omitempty"`
@@ -144,7 +150,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 }
 
 // cmdDoctor implements `gregale doctor [path]` — the customer
-// preflight. Flags:
+// preflight, or authenticated recorded diagnostics with --app. Flags:
 //
 //	--strict         exit 1 on warn (default: exit 0 on warn, 1 on error)
 //	--json           machine output (default: human prose)
@@ -168,6 +174,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
+	app := fs.String("app", "", "diagnose recorded evidence for a deployed app (requires login)")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, doctorUsage, "doctor")
@@ -178,8 +185,21 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		PrintUsage(osStderr, doctorUsage, "doctor")
 		return 2
 	}
+	appMode := false
+	fs.Visit(func(f *flag.Flag) { appMode = appMode || f.Name == "app" })
 	if imageFlags.image != "" {
+		if appMode {
+			_, _ = fmt.Fprintln(osStderr, "choose --app or --image")
+			return 2
+		}
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
+	}
+	if appMode {
+		if !validCLISlug(*app) || fs.NArg() != 0 {
+			_, _ = fmt.Fprintln(osStderr, "--app requires a valid app slug and cannot be combined with a source path")
+			return 2
+		}
+		return runDoctorAppCommand(*app, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."
 	if fs.NArg() > 0 {

@@ -950,14 +950,14 @@ var cliCommands = []cliCommand{
 	},
 	{
 		// Error-explanations cluster (spec §6.4 amendment 1):
-		// customer preflight that scans the cwd for the 8 source-side
-		// failure modes the cluster's runtime detectors catch
-		// post-deploy. Auth not required (local source only).
+		// Local preflight stays unauthenticated; --app reads the caller's
+		// deployment and runtime evidence through existing customer APIs.
 		Name:     dispatchDoctor,
 		DocSlug:  "doctor",
-		Short:    "Preflight local source or OCI image metadata; runtime checks are skipped",
-		Examples: []string{"gregale doctor", "gregale doctor --strict"},
+		Short:    "Preflight local source or OCI images, or diagnose a deployed app",
+		Examples: []string{"gregale doctor", "gregale doctor --strict", "gregale doctor --app my-api --json"},
 		Flags: []cliFlag{
+			{Name: "app", Value: "SLUG", Short: "diagnose deployed-app evidence; requires login and excludes source/image mode"},
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},

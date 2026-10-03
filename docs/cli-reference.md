@@ -29,7 +29,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
-| [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
+| [`doctor`](#doctor) | Preflight local source or OCI images, or diagnose a deployed app |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances |
@@ -1761,12 +1761,13 @@ Open the account dashboard in your browser
 
 ## doctor
 
-Preflight local source or OCI image metadata; runtime checks are skipped
+Preflight local source or OCI images, or diagnose a deployed app
 
-`gregale doctor [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
+`gregale doctor [--app <SLUG>] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | diagnose deployed-app evidence; requires login and excludes source/image mode |  |
 | `--image <REF>` | inspect the Linux/amd64 image without downloading layers |  |
 | `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
@@ -1778,6 +1779,7 @@ Examples:
 ```sh
 gregale doctor
 gregale doctor --strict
+gregale doctor --app my-api --json
 ```
 
 
