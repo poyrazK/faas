@@ -459,3 +459,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
+- [ADR-459: Candidate verification cache isolation](459-candidate-verification-cache-isolation.md)
