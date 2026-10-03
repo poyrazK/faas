@@ -284,6 +284,7 @@ type ApiKey struct {
 	CreatedUa       pgtype.Text
 	ParentKeyID     pgtype.UUID
 	RunsPrincipalID pgtype.UUID
+	DisplayPrefix   pgtype.Text
 }
 
 type App struct {
