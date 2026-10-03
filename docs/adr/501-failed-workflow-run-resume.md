@@ -1,4 +1,4 @@
-# ADR-495: Customer-requested continuation of failed workflow runs
+# ADR-501: Customer-requested continuation of failed workflow runs
 
 ## Status
 

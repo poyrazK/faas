@@ -57,10 +57,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
-| 497 | [Stateless automation simulation with bounded sample data](497-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
-| 496 | [Start customer automations from verified Stripe webhooks](496-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
-| 495 | [Customer-requested continuation of failed workflow runs](495-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
-| 494 | [Bounded workflow iteration](494-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
+| 503 | [Stateless automation simulation with bounded sample data](503-automation-simulation.md) | accepted | Validate definitions and sample traces without invoking app handlers or external integrations |
+| 502 | [Start customer automations from verified Stripe webhooks](502-verified-webhook-automation-starts.md) | accepted | Verify inbound webhook signatures, deduplicate provider events, and route directly into published automations |
+| 501 | [Customer-requested continuation of failed workflow runs](501-failed-workflow-run-resume.md) | accepted | Resume failed runs with fenced retries and an auditable continuation history |
+| 500 | [Bounded workflow iteration](500-bounded-workflow-iteration.md) | accepted | Execute bounded list iterations durably and recover completed items without restarting them |
 | 491 | [Native workflow branch joins](491-native-workflow-branch-joins.md) | accepted | Merge selected conditional branches with deterministic outputs and durable skip propagation |
 | 490 | [Declarative workflow step guards](490-declarative-workflow-step-guards.md) | accepted | Select workflow paths from prior step outputs without a customer adapter handler |
 | 489 | [Managed outbound integration steps in workflows](489-workflow-outbound-integration-steps.md) | accepted (preview) | Call managed integrations with scoped identity, bounded responses, and durable retry decisions |

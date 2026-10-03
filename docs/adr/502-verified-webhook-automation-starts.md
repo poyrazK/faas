@@ -1,4 +1,4 @@
-# ADR-496: Start customer automations from verified Stripe webhooks
+# ADR-502: Start customer automations from verified Stripe webhooks
 
 Status: Accepted — 2026-10-03.
 

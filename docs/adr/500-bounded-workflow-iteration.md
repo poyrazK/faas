@@ -1,4 +1,4 @@
-# ADR-494: Bounded workflow iteration
+# ADR-500: Bounded workflow iteration
 
 Status: Accepted
 
