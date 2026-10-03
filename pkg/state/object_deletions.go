@@ -13,12 +13,13 @@ import (
 
 type ObjectDeletion struct {
 	api.ObjectDeletion
-	RecoveryClaimed                                            bool      `json:"-"`
-	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string    `json:"-"`
-	TargetProviderVersionID                                    string    `json:"-"`
-	Baseline                                                   []string  `json:"-"`
-	LeaseUntil, RetryAt                                        time.Time `json:"-"`
-	ReservedBytes                                              int64     `json:"-"`
+	RecoveryClaimed                                            bool                            `json:"-"`
+	AccountID, AppID, Token, ProviderStatus, ProviderVersionID string                          `json:"-"`
+	TargetProviderVersionID                                    string                          `json:"-"`
+	Baseline                                                   []string                        `json:"-"`
+	LeaseUntil, RetryAt                                        time.Time                       `json:"-"`
+	ReservedBytes                                              int64                           `json:"-"`
+	Lifecycle                                                  *ObjectLifecycleDeletionBinding `json:"-"`
 }
 
 type ObjectDeletionStore interface {
@@ -32,13 +33,14 @@ type ObjectDeletionStore interface {
 }
 
 func newDeletionIntent(j ObjectDeletion) ObjectDeletion {
-	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token}
+	return ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: j.ID, BucketID: j.BucketID, Key: j.Key, Selector: j.Selector}, AccountID: j.AccountID, AppID: j.AppID, Token: j.Token, Lifecycle: cloneLifecycleDeletionBinding(j.Lifecycle)}
 }
 
 func deletionActive(j ObjectDeletion) bool    { return j.State == "prepared" || j.State == "dispatched" }
 func immutableDeletion(j ObjectDeletion) bool { return j.Selector != "" && j.Selector != "null" }
 func cloneDeletion(j ObjectDeletion) ObjectDeletion {
 	j.Baseline = append([]string{}, j.Baseline...)
+	j.Lifecycle = cloneLifecycleDeletionBinding(j.Lifecycle)
 	return j
 }
 func validDeletionIdentity(j ObjectDeletion) bool {
@@ -48,7 +50,7 @@ func validDeletionIdentity(j ObjectDeletion) bool {
 			return false
 		}
 	}
-	return j.Key != "" && len(j.Key) <= api.MaxObjectS3ListTextBytes && utf8.ValidString(j.Key) && !strings.ContainsRune(j.Key, 0) && (j.Selector == "" || ValidObjectVersionID(j.Selector)) && j.Token != "" && len(j.Token) <= 128
+	return j.Key != "" && len(j.Key) <= api.MaxObjectS3ListTextBytes && utf8.ValidString(j.Key) && !strings.ContainsRune(j.Key, 0) && (j.Selector == "" || ValidObjectVersionID(j.Selector)) && j.Token != "" && len(j.Token) <= 128 && validLifecycleDeletionBinding(j.Lifecycle, j.Selector)
 }
 func validDeletionLease(j ObjectDeletion, token string, now time.Time) bool {
 	return deletionActive(j) && token != "" && j.Token == token && j.LeaseUntil.After(now)

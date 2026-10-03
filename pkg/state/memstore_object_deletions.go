@@ -34,7 +34,7 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 		if old.AccountID != j.AccountID || old.BucketID != j.BucketID {
 			return ObjectDeletion{}, false, ErrNotFound
 		}
-		if old.Key != j.Key || old.Selector != j.Selector {
+		if old.Key != j.Key || old.Selector != j.Selector || !sameLifecycleDeletionBinding(old.Lifecycle, j.Lifecycle) {
 			return old, false, ErrConflict
 		}
 		return cloneDeletion(old), false, nil
@@ -46,6 +46,9 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 			return ObjectDeletion{}, false, ErrNotFound
 		}
 		j.TargetProviderVersionID = v.ProviderVersionID
+	}
+	if err := m.validateLifecycleDeletionLocked(j); err != nil {
+		return ObjectDeletion{}, false, err
 	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
 	v := m.objectBucketVersioning[b.ID]
@@ -93,6 +96,9 @@ func (m *MemStore) DispatchObjectDeletion(_ context.Context, id, token, status s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.objectDeletions[id]
+	if err := m.validateLifecycleDeletionLocked(j); err != nil {
+		return cloneDeletion(j), err
+	}
 	if j.ProviderStatus != status {
 		return cloneDeletion(j), ErrConflict
 	}

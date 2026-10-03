@@ -2697,6 +2697,8 @@ type ObjectDeletion struct {
 	UpdatedAt               pgtype.Timestamptz
 	TargetProviderVersionID string
 	RecoveryClaimed         bool
+	LifecycleScanID         pgtype.UUID
+	LifecycleBinding        []byte
 }
 
 type ObjectLifecycleScan struct {

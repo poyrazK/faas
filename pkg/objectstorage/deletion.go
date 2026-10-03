@@ -26,6 +26,7 @@ type DeletionService struct {
 	Store         state.ObjectDeletionStore
 	Provider      Provider
 	BeforeRequest func(context.Context) error
+	Preflight     func(context.Context, state.ObjectBucket, state.ObjectDeletion) error
 }
 
 func (s DeletionService) before(ctx context.Context) error {
@@ -35,6 +36,10 @@ func (s DeletionService) before(ctx context.Context) error {
 	return nil
 }
 func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, selector, id string, p api.ObjectStoragePolicy) (state.ObjectDeletion, error) {
+	return s.start(ctx, b, key, selector, id, nil, p)
+}
+
+func (s DeletionService) start(ctx context.Context, b state.ObjectBucket, key, selector, id string, binding *state.ObjectLifecycleDeletionBinding, p api.ObjectStoragePolicy) (state.ObjectDeletion, error) {
 	if !ValidKey(key) || selector != "" && !state.ValidObjectVersionID(selector) {
 		return state.ObjectDeletion{}, ErrInvalid
 	}
@@ -56,7 +61,7 @@ func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, s
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ObjectDeletionOperationTimeout)
 	defer cancel()
-	j, created, e := s.Store.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString()}, p)
+	j, created, e := s.Store.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString(), Lifecycle: binding}, p)
 	if e != nil || !created {
 		return j, e
 	}
@@ -64,12 +69,20 @@ func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, s
 	if e != nil {
 		return s.failPreparation(ctx, j, e)
 	}
+	if s.Preflight != nil {
+		if e = s.Preflight(ctx, b, j); e != nil {
+			return s.failPreparation(ctx, j, e)
+		}
+	}
 	// Metrics must commit before dispatch; a recording failure cannot mutate.
 	if e = s.before(ctx); e != nil {
 		return s.failPreparation(ctx, j, e)
 	}
 	j, e = s.Store.DispatchObjectDeletion(ctx, j.ID, j.Token, status, baseline)
 	if e != nil {
+		if j.Lifecycle != nil && j.State == "prepared" {
+			return s.failPreparation(ctx, j, e)
+		}
 		return j, e
 	}
 	return s.execute(ctx, b, j, false)

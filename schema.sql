@@ -7846,6 +7846,9 @@ CREATE TABLE public.object_deletions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     target_provider_version_id text DEFAULT ''::text NOT NULL,
     recovery_claimed boolean DEFAULT false NOT NULL,
+    lifecycle_scan_id uuid,
+    lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT object_deletion_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) = '{}'::jsonb) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_version_id'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) <= 1024)) AND (jsonb_typeof((lifecycle_binding -> 'expected_last_modified'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_last_modified'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND ((((lifecycle_binding ->> 'kind'::text) = 'current'::text) AND (selector = ''::text)) OR (((lifecycle_binding ->> 'kind'::text) = ANY (ARRAY['noncurrent'::text, 'expired_marker'::text])) AND (selector <> ''::text)))))),
     CONSTRAINT object_deletions_baseline_check CHECK (((jsonb_typeof(baseline) = 'array'::text) AND (jsonb_array_length(baseline) <= 4096) AND (octet_length((baseline)::text) <= 278530))),
     CONSTRAINT object_deletions_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_deletions_check1 CHECK (((state = ANY (ARRAY['prepared'::text, 'dispatched'::text])) OR (lease_token = ''::text))),
@@ -23769,3 +23772,63 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 ALTER TABLE ONLY public.object_lifecycle_scans
     ADD CONSTRAINT object_lifecycle_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+--
+-- Name: fence_object_lifecycle_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_lifecycle_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE aid uuid; allowed boolean;
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.lifecycle_scan_id IS DISTINCT FROM OLD.lifecycle_scan_id OR NEW.lifecycle_binding<>OLD.lifecycle_binding) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle deletion identity is immutable';
+ END IF;
+ IF NEW.lifecycle_scan_id IS NULL THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND NOT (OLD.state='prepared' AND NEW.state='dispatched') THEN RETURN NEW; END IF;
+ -- Both the API store and this defensive trigger follow bucket-before-account
+ -- lock order. Re-read the lease and revision after acquiring those locks.
+ SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND state='ready' FOR NO KEY UPDATE;
+ IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle deletion requires a ready owned bucket'; END IF;
+ PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+ SELECT EXISTS(
+  SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
+   LATERAL jsonb_array_elements(s.rules) r
+  WHERE s.id=NEW.lifecycle_scan_id AND s.bucket_id=NEW.bucket_id AND s.revision=p.revision AND s.state='scanning'
+   AND s.lease_token=NEW.lifecycle_binding->>'scan_token' AND s.lease_until>clock_timestamp()
+   AND r->>'id'=NEW.lifecycle_binding->>'rule_id' AND r->>'status'='Enabled'
+   AND left(NEW.object_key,char_length(coalesce(r->'filter'->>'prefix','')))=coalesce(r->'filter'->>'prefix','')
+   AND ((NEW.lifecycle_binding->>'kind'='current' AND (r->'expiration' ? 'days' OR r->'expiration' ? 'date'))
+    OR (NEW.lifecycle_binding->>'kind'='noncurrent' AND r ? 'noncurrent_version_expiration')
+    OR (NEW.lifecycle_binding->>'kind'='expired_marker' AND (r->'expiration' ? 'days' OR r->'expiration' ? 'date' OR r->'expiration'->>'expired_object_delete_marker'='true')))
+ ) INTO allowed;
+ IF NOT allowed OR (NEW.lifecycle_binding->>'expected_last_modified')::timestamptz>clock_timestamp()
+  OR (NEW.selector='null' AND NEW.lifecycle_binding->>'expected_provider_version_id'<>'null')
+  OR (NEW.selector NOT IN ('','null') AND NEW.lifecycle_binding->>'expected_provider_version_id'<>coalesce(to_jsonb(NEW)->>'target_provider_version_id','')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lifecycle_deletion_fenced',MESSAGE='A live matching lifecycle scan and target are required before dispatch';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_deletion_lifecycle_scan; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_deletion_lifecycle_scan ON public.object_deletions USING btree (lifecycle_scan_id, object_key, id) WHERE (lifecycle_scan_id IS NOT NULL);
+
+
+--
+-- Name: object_deletions object_lifecycle_deletion_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lifecycle_deletion_fence BEFORE INSERT OR UPDATE ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_lifecycle_deletion();
+
+
+--
+-- Name: object_deletions object_deletions_lifecycle_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_deletions
+    ADD CONSTRAINT object_deletions_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
