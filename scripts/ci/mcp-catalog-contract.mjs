@@ -32,7 +32,7 @@ for (const [role, scope] of [['reader', 'mcp:tools math:read'], ['writer', 'mcp:
 }
 const methods = [], calls = [], servers = [];
 async function serve(toolScopes) {
-  const { app, handler } = createApp({ ...config, auth: { ...config.auth, tool_scopes: toolScopes } }, { keyResolver: publicKey, log: line => calls.push(line) });
+  const { app, handler } = createApp({ ...config, auth: { ...config.auth, tool_scopes: toolScopes } }, { keyResolver: publicKey, log: line => { if (JSON.parse(line).event === 'mcp_tool_call') calls.push(line); } });
   const server = createServer((req, res) => {
     // Observe Express's parsed request after dispatch without consuming its stream.
     res.on('finish', () => { if (req.body?.method) methods.push(req.body.method); });

@@ -3,7 +3,7 @@ import { createToolPolicy, validateScopes } from './tool-policy.js';
 
 // The provider owns login, consent, PKCE, discovery and access-token issuance.
 // This application is an OAuth resource server and never accepts CLI credentials.
-export function createAuth(config, keyResolver) {
+export function createAuth(config, keyResolver, mark = () => {}) {
   const auth = config.auth;
   if (!auth || !['open', 'external-oauth'].includes(auth.mode)) throw new Error('Set auth.mode to open or external-oauth');
   const toolPolicy = createToolPolicy(auth);
@@ -13,6 +13,7 @@ export function createAuth(config, keyResolver) {
     if (typeof name !== 'string' || toolPolicy.canAccess(name, req.auth)) return next();
     const scopes = toolPolicy.requiredScopes(name);
     if (auth.mode === 'external-oauth' && scopes) return reject(res, 403, 'insufficient_scope', [...new Set([...auth.scopes, ...scopes])]);
+    mark('denied', 'tool_access_denied');
     res.setHeader('Cache-Control', 'no-store');
     return res.status(403).json({ error: 'tool_access_denied' });
   }
@@ -30,6 +31,7 @@ export function createAuth(config, keyResolver) {
   const metadataURL = new URL(`/.well-known/oauth-protected-resource${config.endpoint}`, auth.resource).href;
   const resolver = keyResolver ?? createRemoteJWKSet(new URL(auth.jwks_url), { timeoutDuration: 5000 });
   function reject(res, status, error, scopes = auth.scopes) {
+    mark('denied', error || 'authentication_required');
     const challenge = `Bearer resource_metadata="${metadataURL}", scope="${scopes.join(' ')}"${error ? `, error="${error}"` : ''}`;
     res.setHeader('WWW-Authenticate', challenge);
     res.setHeader('Cache-Control', 'no-store');

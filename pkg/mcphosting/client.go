@@ -35,6 +35,7 @@ type Client struct {
 
 type Exchange struct {
 	Result          json.RawMessage     `json:"result,omitempty"`
+	RequestID       string              `json:"request_id,omitempty"`
 	ContentType     string              `json:"content_type"`
 	WakeTier        string              `json:"wake_tier,omitempty"`
 	DurationMS      int64               `json:"duration_ms"`
@@ -138,6 +139,9 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	}
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
+	if id := res.Header.Get("X-MCP-Request-ID"); ValidEventRequestID(id) {
+		x.RequestID = id
+	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return x, httpResponseError(res)
 	}

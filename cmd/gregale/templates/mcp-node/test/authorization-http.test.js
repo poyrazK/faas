@@ -18,7 +18,7 @@ async function token(scope, subject = 'private-customer-identity') {
 }
 async function serve(t, cfg = config) {
   const logs = [];
-  const { app, handler } = createApp(cfg, { keyResolver: publicKey, log: line => logs.push(JSON.parse(line)) });
+  const { app, handler } = createApp(cfg, { keyResolver: publicKey, log: line => { const event = JSON.parse(line); if (event.event === 'mcp_tool_call') logs.push(event); } });
   const listener = app.listen(0, '127.0.0.1');
   await once(listener, 'listening');
   t.after(async () => { await handler.close(); await new Promise(resolve => listener.close(resolve)); });
