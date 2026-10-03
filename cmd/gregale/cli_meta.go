@@ -1778,9 +1778,11 @@ var cliCommands = []cliCommand{
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "restoring", "running", "succeeded", "failed", "timed_out", "out_of_memory", "cancelled"}},
 				{Name: "workflow-id", Short: "filter by caller-generated workflow id", Value: "ID"},
 			}},
-			{Name: "workflow", Short: "Show workflow status or resume a sequential Runs plan", Positionals: []string{"<workflow-id>"}, Subcommands: []cliSub{
-				{Name: "run", Short: "Run or resume a sequential disposable Runs plan", Flags: []cliFlag{
+			{Name: "workflow", Short: "Show workflow status or manage an agent-owned Runs plan", Positionals: []string{"<workflow-id>"}, Subcommands: []cliSub{
+				{Name: "run", Short: "Run, resume, or preview a disposable Runs plan", Flags: []cliFlag{
 					{Name: "manifest", Short: "JSON workflow plan file", Req: true, Value: "PLAN.json"},
+					{Name: "managed", Short: "continue a bounded Run DAG on the control plane after this client exits"},
+					{Name: "dry-run", Short: "validate and preview without creating Runs"},
 					{Name: "poll-interval", Short: "status polling interval", Value: "D"},
 					{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
 				}, Examples: []string{"gregale runs workflow run --manifest incident.json --json"}},

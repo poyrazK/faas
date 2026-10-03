@@ -236,14 +236,14 @@ func TestUsageStoresRejectUnsafeWindows(t *testing.T) {
 	for name, store := range map[string]UsageStore{"memory": memory, "postgres": postgres} {
 		t.Run(name, func(t *testing.T) {
 			for _, window := range []time.Duration{61 * time.Minute, 5 * time.Hour} {
-				from := now.Truncate(window)
+				from := database.CreatedAt.UTC().Truncate(window)
 				err := store.RecordUsage(ctx, []UsageRecord{{AccountID: account, DatabaseID: database.ID, BackendID: database.BackendID,
 					BackendFingerprint: database.BackendFingerprint, WindowFrom: from, WindowTo: from.Add(window), ObservedAt: now,
 					Meter: MeterComputeUnitSeconds, Quantity: 60}})
 				if !errors.Is(err, ErrInvalid) {
 					t.Fatalf("%s ledger window: %v", window, err)
 				}
-				if err := store.RecordSharedUsage(ctx, account, database.ID, "missing-source", window); !errors.Is(err, ErrInvalid) {
+				if err := store.RecordSharedUsage(ctx, account, database.ID, "00000000-0000-0000-0000-000000000001", window); !errors.Is(err, ErrInvalid) {
 					t.Fatalf("%s shared coverage window: %v", window, err)
 				}
 			}

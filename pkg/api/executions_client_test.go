@@ -68,6 +68,15 @@ func TestExecutionWorkflowClientMethods(t *testing.T) {
 			_, _ = w.Write([]byte(`{"executions":[],"limit":10,"offset":0,"next_offset":-1}`))
 		case "/v1/execution-workflows/agent-flow:42":
 			_, _ = w.Write([]byte(`{"workflow_id":"agent-flow:42","run_count":1,"status_counts":{"queued":0,"restoring":0,"running":1,"succeeded":0,"failed":0,"timed_out":0,"out_of_memory":0,"cancelled":0},"usage":{"wall_time_ms":0,"cpu_time_ms":0,"peak_memory_mb":0,"output_bytes":0}}`))
+		case "/v1/execution-workflows":
+			if r.Method != http.MethodPost {
+				t.Fatalf("managed workflow method = %s", r.Method)
+			}
+			var request CreateManagedExecutionWorkflowRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.WorkflowID != "agent-flow:42" {
+				t.Fatalf("managed workflow request = %+v, %v", request, err)
+			}
+			_, _ = w.Write([]byte(`{"workflow_id":"agent-flow:42","plan_id":"0123456789abcdef01234567","status":"queued","step_count":1,"next_step":0,"created_at":"2026-10-02T00:00:00Z"}`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -81,7 +90,14 @@ func TestExecutionWorkflowClientMethods(t *testing.T) {
 	if err != nil || summary.RunCount != 1 || summary.StatusCounts.Running != 1 {
 		t.Fatalf("GetExecutionWorkflow = %+v, %v", summary, err)
 	}
-	if len(calls) != 2 {
+	managed, err := c.CreateManagedExecutionWorkflow(context.Background(), CreateManagedExecutionWorkflowRequest{
+		WorkflowID: "agent-flow:42", Version: "v1",
+		Steps: []CreateManagedExecutionWorkflowStep{{Label: "inspect", Request: CreateExecutionRequest{Runtime: ExecutionRuntimeNode22, Source: "return 1"}}},
+	})
+	if err != nil || managed.Status != ManagedExecutionWorkflowQueued {
+		t.Fatalf("CreateManagedExecutionWorkflow = %+v, %v", managed, err)
+	}
+	if len(calls) != 3 {
 		t.Fatalf("workflow calls = %v", calls)
 	}
 }

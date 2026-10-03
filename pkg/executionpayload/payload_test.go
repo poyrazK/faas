@@ -43,6 +43,32 @@ func TestSealDecodeRoundTripAndKIDBinding(t *testing.T) {
 	}
 }
 
+func TestWorkflowPlanSealingKeepsNamespaceAndKIDBinding(t *testing.T) {
+	current, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := []byte(`{"workflow_id":"agent-check","version":"v1","steps":[]}`)
+	sealed, err := SealWorkflowPlan(current.Recipient(), plan)
+	if err != nil {
+		t.Fatalf("SealWorkflowPlan: %v", err)
+	}
+	decoded, err := DecodeWorkflowPlan(context.Background(), []*age.X25519Identity{current}, sealed, current.Recipient().String())
+	if err != nil {
+		t.Fatalf("DecodeWorkflowPlan: %v", err)
+	}
+	if string(decoded) != string(plan) {
+		t.Fatalf("decoded plan = %s, want %s", decoded, plan)
+	}
+	clear(decoded)
+	if _, err := DecodeWorkflowPlan(context.Background(), []*age.X25519Identity{current}, sealed, "wrong-key-id"); !errors.Is(err, ErrKIDMismatch) {
+		t.Fatalf("wrong key id error = %v, want ErrKIDMismatch", err)
+	}
+	if _, err := SealWorkflowPlan(current.Recipient(), []byte(`{"broken"`)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid plan error = %v, want ErrInvalid", err)
+	}
+}
+
 func TestDecodeRejectsTamperNamespaceAndMalformedEnvelope(t *testing.T) {
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
