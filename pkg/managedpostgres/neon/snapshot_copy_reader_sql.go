@@ -39,11 +39,7 @@ func (p *Provider) borrowSnapshotCopyReaderSQL(ctx context.Context, d managedpos
 	expected := config.Copy()
 	conn, err := connect(ctx, config)
 	if conn != nil {
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer cancel()
-			_ = conn.Close(cleanup)
-		}()
+		defer closeSnapshotCopySQLConnection(ctx, conn)
 	}
 	if err != nil {
 		return maintenanceConnectionError(ctx, err)
@@ -83,6 +79,12 @@ func (p *Provider) borrowSnapshotCopyReaderSQL(ctx context.Context, d managedpos
 		return managedpostgres.ErrConflict
 	}
 	return nil
+}
+
+func closeSnapshotCopySQLConnection(ctx context.Context, conn *pgx.Conn) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = conn.Close(cleanup)
 }
 
 func authenticateSnapshotCopyReaderSQL(ctx context.Context, conn *pgx.Conn, expected *pgx.ConnConfig, major int) (managedpostgres.SnapshotCopyReaderSQLIdentity, error) {

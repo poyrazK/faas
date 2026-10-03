@@ -4729,3 +4729,37 @@ and closed-database materialization, complete dataset verification, frozen artif
 storage and cleanup/metering, writer closure/common-point capture, complete object
 and configuration coverage, production-preserving promotion/rollback and native/
 provider acceptance remain required for the full one-command stage workflow.
+
+### Private owned-target SQL borrowing (2026-10-03)
+
+A trusted worker can now borrow authenticated SQL for an already prepared,
+independently owned target. The request binds the original source/capture scope,
+target owner/project creation time, root branch, direct read-write endpoint and
+creation time, and selected database/role names and OIDs. The service requires one
+completed synchronous callback, preserves callback failures and enforces its
+deadline even when a provider supplies another context. Repeated, late, missing
+or unfinished callbacks cannot produce successful borrowing. Existing ownership
+recovery remains independent of new-resource rollout and account admission.
+
+Neon authenticates native capture and independent project topology around SQL
+access. Credentials come from the fixed provisioned bootstrap database and role;
+the selected database name is assigned literally after rebuilding a minimal
+verify-full connection configuration. Provider URI options cannot choose another
+host, endpoint or startup policy. SQL requires an idle read-write session with
+exact major, database/role OIDs and current/session role. Provider placement and
+SQL identity are checked again after the callback, and every opened connection
+is closed. Shared reader/target closure preserves the existing bounded cleanup.
+Only the existing platform bootstrap role is supported at this boundary.
+
+Verification: all ten focused service contracts (0.558 s) and fourteen Neon
+contracts (4.896 s) pass with no skips, including seven new target SQL contracts.
+They cover authority/scope substitution, callback protocol and cancellation,
+provider metadata/credential/endpoint faults, literal unusual database names,
+ordinary owner writes, SQL identity/transaction drift, post-write placement
+rejection and partial-connection cleanup. Original target preparation/discovery/
+cleanup and reader SQL contracts pass. Normal state/managedpostgres/Neon/archive/
+APID builds and provider vet pass. HTTP/provider metadata is synthetic and actual
+SQL uses an isolated PostgreSQL 16 Unix socket; remote Neon trust/placement and
+native acceptance remain unqualified. Bootstrap discovery, durable SQL identity
+pins and all database/global provisioning remain required. Public clone admission
+is still closed for database/object copies.
