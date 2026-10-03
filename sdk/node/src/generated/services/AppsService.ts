@@ -3257,6 +3257,9 @@ export class AppsService {
   public static getRouteHealthReport({
     slug,
     deployment,
+    customers = false,
+    customerGroupBy,
+    customerDetails = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -3266,6 +3269,18 @@ export class AppsService {
      * Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
      */
     deployment: string,
+    /**
+     * Include advisory customer health cohorts. Never changes aggregate health or rollout decisions.
+     */
+    customers?: boolean,
+    /**
+     * Request-time identity dimension. Requires customers=true. Tenant is the default; consumer groups API consumers independently.
+     */
+    customerGroupBy?: 'tenant' | 'consumer',
+    /**
+     * Include scoped customer UUIDs. Requires customers=true. IDs are omitted by default.
+     */
+    customerDetails?: boolean,
   }): CancelablePromise<RouteHealthReport> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -3273,6 +3288,11 @@ export class AppsService {
       path: {
         'slug': slug,
         'deployment': deployment,
+      },
+      query: {
+        'customers': customers,
+        'customer_group_by': customerGroupBy,
+        'customer_details': customerDetails,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

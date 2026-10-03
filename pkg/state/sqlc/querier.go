@@ -1413,6 +1413,10 @@ type Querier interface {
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)
+	// Advisory identity cohorts use the same exact routes, deployment pair and
+	// closed windows as aggregate health. Rank before bounding output and sorting
+	// weighted latency. Request-time attribution never follows today's tenant link.
+	RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error)
 	RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like

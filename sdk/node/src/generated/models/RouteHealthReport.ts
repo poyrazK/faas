@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { RouteCustomerHealthReport } from './RouteCustomerHealthReport.js';
 import type { RouteHealthFinding } from './RouteHealthFinding.js';
 /**
  * Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
  */
 export type RouteHealthReport = {
+  customers?: RouteCustomerHealthReport;
   app_id: string;
   deployment_id: string;
   candidate_commit_sha: string;

@@ -62,23 +62,24 @@ type RouteHealthFinding struct {
 
 // Coverage refers to stored observations: full capture cannot be established.
 type RouteHealthReport struct {
-	OnRegression           string               `json:"on_regression,omitempty"`
-	AppID                  string               `json:"app_id"`
-	DeploymentID           string               `json:"deployment_id"`
-	CandidateCommitSHA     string               `json:"candidate_commit_sha"`
-	StableDeploymentID     string               `json:"stable_deployment_id"`
-	StableCommitSHA        string               `json:"stable_commit_sha"`
-	CanaryStep             int                  `json:"canary_step"`
-	Mode                   string               `json:"mode"`
-	Revision               int64                `json:"revision"`
-	CheckedAt              time.Time            `json:"checked_at"`
-	ObservationAnchor      *time.Time           `json:"observation_anchor,omitempty"`
-	Coverage               string               `json:"coverage"`
-	Status                 string               `json:"status"`
-	Reason                 string               `json:"reason"`
-	MinimumRequests        int64                `json:"minimum_requests"`
-	MinimumLatencyRequests int64                `json:"minimum_latency_requests,omitempty"`
-	Routes                 []RouteHealthFinding `json:"routes"`
+	Customers              *RouteCustomerHealthReport `json:"customers,omitempty"`
+	OnRegression           string                     `json:"on_regression,omitempty"`
+	AppID                  string                     `json:"app_id"`
+	DeploymentID           string                     `json:"deployment_id"`
+	CandidateCommitSHA     string                     `json:"candidate_commit_sha"`
+	StableDeploymentID     string                     `json:"stable_deployment_id"`
+	StableCommitSHA        string                     `json:"stable_commit_sha"`
+	CanaryStep             int                        `json:"canary_step"`
+	Mode                   string                     `json:"mode"`
+	Revision               int64                      `json:"revision"`
+	CheckedAt              time.Time                  `json:"checked_at"`
+	ObservationAnchor      *time.Time                 `json:"observation_anchor,omitempty"`
+	Coverage               string                     `json:"coverage"`
+	Status                 string                     `json:"status"`
+	Reason                 string                     `json:"reason"`
+	MinimumRequests        int64                      `json:"minimum_requests"`
+	MinimumLatencyRequests int64                      `json:"minimum_latency_requests,omitempty"`
+	Routes                 []RouteHealthFinding       `json:"routes"`
 }
 
 // RouteHealthDecision is metadata-only for advancement responses and audits.

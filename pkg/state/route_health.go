@@ -26,6 +26,11 @@ type RouteHealthStore interface {
 	GetRouteHealthReport(context.Context, string, string, string) (api.RouteHealthReport, error)
 }
 
+// Customer health is opt-in and computed only for live report reads.
+type RouteCustomerHealthStore interface {
+	GetRouteHealthReportWithCustomers(context.Context, string, string, string, string, bool) (api.RouteHealthReport, error)
+}
+
 func defaultRouteHealthGate(appID string) api.RouteHealthGate {
 	return api.RouteHealthGate{AppID: appID, Mode: "report", OnRegression: "hold", Routes: []api.RouteHealthRoute{}}
 }

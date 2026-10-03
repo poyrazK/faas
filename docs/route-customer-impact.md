@@ -95,3 +95,6 @@ Python: `get_app_route_customer_usage.sync(slug, client=client, deployment_id=id
 
 This is retained debugger telemetry. It is separate from the durable consumer
 usage ledger and must not be used as a billing total or full customer inventory.
+
+For observed per-customer errors and latency during a canary, see
+[customer health reports](route-customer-health.md).

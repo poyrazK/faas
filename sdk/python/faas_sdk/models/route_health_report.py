@@ -18,6 +18,7 @@ from ..models.route_health_report_status import RouteHealthReportStatus, check_r
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.route_customer_health_report import RouteCustomerHealthReport
     from ..models.route_health_finding import RouteHealthFinding
 
 
@@ -46,6 +47,13 @@ class RouteHealthReport:
     reason: str
     minimum_requests: int
     routes: list[RouteHealthFinding]
+    customers: RouteCustomerHealthReport | Unset = UNSET
+    """Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and
+    consecutive-window error and selected latency checks per identity. A confirmed observed regression takes
+    precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary.
+    Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical
+    SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical
+    observations. No identities enter decisions, history, audits or webhooks."""
     on_regression: RouteHealthReportOnRegression | Unset = UNSET
     """Recovery policy used for this observation. Abort permits worker recovery on confirmed critical-route errors
     in enforce mode; reading the report never performs that action."""
@@ -87,6 +95,10 @@ class RouteHealthReport:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        customers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.customers, Unset):
+            customers = self.customers.to_dict()
+
         on_regression: str | Unset = UNSET
         if not isinstance(self.on_regression, Unset):
             on_regression = self.on_regression
@@ -117,6 +129,8 @@ class RouteHealthReport:
                 "routes": routes,
             }
         )
+        if customers is not UNSET:
+            field_dict["customers"] = customers
         if on_regression is not UNSET:
             field_dict["on_regression"] = on_regression
         if observation_anchor is not UNSET:
@@ -128,6 +142,7 @@ class RouteHealthReport:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_customer_health_report import RouteCustomerHealthReport
         from ..models.route_health_finding import RouteHealthFinding
 
         d = dict(src_dict)
@@ -164,6 +179,13 @@ class RouteHealthReport:
 
             routes.append(routes_item)
 
+        _customers = d.pop("customers", UNSET)
+        customers: RouteCustomerHealthReport | Unset
+        if isinstance(_customers, Unset):
+            customers = UNSET
+        else:
+            customers = RouteCustomerHealthReport.from_dict(_customers)
+
         _on_regression = d.pop("on_regression", UNSET)
         on_regression: RouteHealthReportOnRegression | Unset
         if isinstance(_on_regression, Unset):
@@ -195,6 +217,7 @@ class RouteHealthReport:
             reason=reason,
             minimum_requests=minimum_requests,
             routes=routes,
+            customers=customers,
             on_regression=on_regression,
             observation_anchor=observation_anchor,
             minimum_latency_requests=minimum_latency_requests,

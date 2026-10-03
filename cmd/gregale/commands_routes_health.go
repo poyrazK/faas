@@ -24,12 +24,13 @@ func cmdRoutesHealth(args []string) int {
 		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|report|explain> APP [flags]"))
 	}
 	action := args[0]
-	flags, positional := splitArgsForFlags(args[1:], "fail-on-unhealthy")
+	flags, positional := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customers", "customer-details")
 	fs := newFlagSet("routes health "+action, flag.ContinueOnError)
 	var mode, path, deployment string
 	var onRegression string
 	var revision int64
 	var fail bool
+	var customerOpts api.RouteHealthReportOptions
 	if action == "set" {
 		fs.StringVar(&mode, "mode", "", "report or enforce observed route health")
 		fs.StringVar(&onRegression, "on-regression", "hold", "hold or automatically abort on confirmed route 5xx regression")
@@ -39,6 +40,9 @@ func cmdRoutesHealth(args []string) int {
 	if action == "report" {
 		fs.StringVar(&deployment, "deployment", "", "candidate deployment UUID")
 		fs.BoolVar(&fail, "fail-on-unhealthy", false, "exit nonzero unless all selected routes are healthy")
+		fs.BoolVar(&customerOpts.Customers, "customers", false, "include advisory customer health comparisons")
+		fs.StringVar(&customerOpts.CustomerGroupBy, "customer-group-by", "", "group customer health by tenant (default) or consumer")
+		fs.BoolVar(&customerOpts.CustomerDetails, "customer-details", false, "include customer IDs in advisory comparisons; requires --customers")
 	}
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -58,6 +62,9 @@ func cmdRoutesHealth(args []string) int {
 		}
 	}
 	if action == "report" {
+		if err := customerOpts.Validate(); err != nil {
+			return printErr("Invalid customer health options", err)
+		}
 		id, err := uuid.Parse(deployment)
 		if err != nil || id.String() != deployment {
 			return printErr("Invalid route health report", errors.New("supply --deployment with a canonical UUID"))
@@ -70,12 +77,15 @@ func cmdRoutesHealth(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), api.RouteCheckTimeout)
 	defer cancel()
 	if action == "report" {
-		report, err := client.GetRouteHealthReport(ctx, positional[0], deployment)
+		report, err := client.GetRouteHealthReportWithOptions(ctx, positional[0], deployment, customerOpts)
 		if err != nil {
 			return printErr("Could not read route health", err)
 		}
 		if err := validateRouteHealthReport(report, deployment); err != nil {
 			return printErr("Invalid route health response", err)
+		}
+		if err := prepareCustomerHealthReport(&report, customerOpts); err != nil {
+			return printErr("Invalid customer health response", err)
 		}
 		if jsonOutput {
 			if code := jsonOut(writeJSON(report)); code != 0 {
@@ -236,6 +246,7 @@ func renderRouteHealthReport(r api.RouteHealthReport) {
 			}
 		}
 	}
+	renderRouteCustomerHealth(r.Customers)
 }
 
 func validateRouteHealthVerdicts(r api.RouteHealthReport) error {

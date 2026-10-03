@@ -8038,18 +8038,19 @@ const RouteGroupPlanMaxChanges = 32
 
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
-	RouteHealthMaxRoutes               = 20
-	RouteHealthMaxPathBytes            = 240 // reserves method prefix within telemetry's 256-byte label
-	RouteHealthRequestMaxBytes         = 16 << 10
-	RouteHealthWindow                  = time.Minute
-	RouteHealthIngestionLag            = 30 * time.Second
-	RouteHealthWindows                 = 2
-	RouteHealthMinRequests       int64 = 20
-	RouteHealthMinErrors         int64 = 2
-	RouteHealthErrorRateFloor          = 0.05
-	RouteHealthErrorRateDelta          = 0.05
-	RouteHealthErrorRateFactor         = 3.0
-	RouteHealthComparisonEpsilon       = 1e-12
+	RouteHealthMaxRoutes                  = 20
+	RouteCustomerHealthMaxCustomers       = 20  // per selected route, before window expansion
+	RouteHealthMaxPathBytes               = 240 // reserves method prefix within telemetry's 256-byte label
+	RouteHealthRequestMaxBytes            = 16 << 10
+	RouteHealthWindow                     = time.Minute
+	RouteHealthIngestionLag               = 30 * time.Second
+	RouteHealthWindows                    = 2
+	RouteHealthMinRequests          int64 = 20
+	RouteHealthMinErrors            int64 = 2
+	RouteHealthErrorRateFloor             = 0.05
+	RouteHealthErrorRateDelta             = 0.05
+	RouteHealthErrorRateFactor            = 3.0
+	RouteHealthComparisonEpsilon          = 1e-12
 )
 
 // RouteHealth latency is selected independently of the existing 5xx comparison.

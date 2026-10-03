@@ -880,6 +880,7 @@ from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperatio
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
@@ -1739,6 +1740,14 @@ from .route_check_history_summary_status import RouteCheckHistorySummaryStatus
 from .route_checks import RouteChecks
 from .route_checks_authentication import RouteChecksAuthentication
 from .route_coverage_inventory import RouteCoverageInventory
+from .route_customer_health_attribution import RouteCustomerHealthAttribution
+from .route_customer_health_cohort import RouteCustomerHealthCohort
+from .route_customer_health_report import RouteCustomerHealthReport
+from .route_customer_health_report_coverage import RouteCustomerHealthReportCoverage
+from .route_customer_health_report_group_by import RouteCustomerHealthReportGroupBy
+from .route_customer_health_report_status import RouteCustomerHealthReportStatus
+from .route_customer_health_route import RouteCustomerHealthRoute
+from .route_customer_health_route_method import RouteCustomerHealthRouteMethod
 from .route_customer_observation import RouteCustomerObservation
 from .route_customer_usage import RouteCustomerUsage
 from .route_customer_usage_method import RouteCustomerUsageMethod
@@ -3031,6 +3040,7 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GetRouteHealthReportCustomerGroupBy",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
@@ -3844,6 +3854,14 @@ __all__ = (
     "RouteChecks",
     "RouteChecksAuthentication",
     "RouteCoverageInventory",
+    "RouteCustomerHealthAttribution",
+    "RouteCustomerHealthCohort",
+    "RouteCustomerHealthReport",
+    "RouteCustomerHealthReportCoverage",
+    "RouteCustomerHealthReportGroupBy",
+    "RouteCustomerHealthReportStatus",
+    "RouteCustomerHealthRoute",
+    "RouteCustomerHealthRouteMethod",
     "RouteCustomerObservation",
     "RouteCustomerUsage",
     "RouteCustomerUsageMethod",

@@ -70,6 +70,12 @@ Low-traffic routes may need more real requests before progression can resume.
 Live reports move with their observation windows. Evaluated canary advances now
 retain their exact decision evidence for later explanation.
 
+## Advisory customer comparisons
+
+Use `--customers` to compare tenants or API consumers within the same observation
+windows. IDs require `--customer-details`. Customer evidence remains advisory;
+see [customer health](route-customer-health.md) for samples, attribution and caps.
+
 ## Optional latency checks
 
 Add a p95 budget, a relative slowdown check, or both to individual selectors:

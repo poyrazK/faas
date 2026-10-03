@@ -2994,12 +2994,15 @@ Save exact normalized telemetry route selectors
 
 Read candidate/stable counts, selected p95 checks and route verdicts
 
-`gregale routes health report --deployment <ID> [--fail-on-unhealthy] <slug>`
+`gregale routes health report --deployment <ID> [--fail-on-unhealthy] [--customers] [--customer-group-by <DIMENSION>] [--customer-details] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--deployment <ID>` | candidate deployment UUID | required |
 | `--fail-on-unhealthy` | exit nonzero unless every selected route is healthy |  |
+| `--customers` | include advisory customer health comparisons |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customers | one of `tenant` · `consumer` |
+| `--customer-details` | include customer IDs; requires --customers |  |
 
 #### routes health explain
 

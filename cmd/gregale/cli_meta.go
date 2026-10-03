@@ -1606,6 +1606,9 @@ var cliCommands = []cliCommand{
 			{Name: "report", Positionals: []string{"<slug>"}, Short: "Read candidate/stable counts, selected p95 checks and route verdicts", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
 				{Name: "fail-on-unhealthy", Short: "exit nonzero unless every selected route is healthy"},
+				{Name: "customers", Short: "include advisory customer health comparisons"},
+				{Name: "customer-group-by", Value: "DIMENSION", Short: "tenant (default) or consumer; requires --customers", ClosedSet: []string{"tenant", "consumer"}},
+				{Name: "customer-details", Short: "include customer IDs; requires --customers"},
 			}},
 			{Name: "explain", Positionals: []string{"<slug>"}, Short: "Explain saved canary health decisions and their evidence timeline", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},

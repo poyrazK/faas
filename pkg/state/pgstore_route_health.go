@@ -155,6 +155,9 @@ func pgRouteHealthObservations(ctx context.Context, db sqlc.DBTX, accountID stri
 	return nil
 }
 func (s *PgStore) GetRouteHealthReport(ctx context.Context, accountID, appID, deploymentID string) (api.RouteHealthReport, error) {
+	return s.getRouteHealthReport(ctx, accountID, appID, deploymentID, "", false)
+}
+func (s *PgStore) getRouteHealthReport(ctx context.Context, accountID, appID, deploymentID, groupBy string, details bool) (api.RouteHealthReport, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return api.RouteHealthReport{}, fmt.Errorf("begin route health report: %w", err)
@@ -175,6 +178,11 @@ func (s *PgStore) GetRouteHealthReport(ctx context.Context, accountID, appID, de
 	report, err := pgRouteHealthReport(ctx, tx, snapshot, d, now.Time)
 	if err != nil {
 		return report, err
+	}
+	if groupBy != "" {
+		if err := pgRouteCustomerHealth(ctx, tx, accountID, &report, groupBy, details); err != nil {
+			return report, err
+		}
 	}
 	return report, tx.Commit(ctx)
 }

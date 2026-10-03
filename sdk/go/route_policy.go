@@ -71,3 +71,10 @@ type RouteHealthHistoryEntry = api.RouteHealthHistoryEntry
 type RouteHealthHistoryPage = api.RouteHealthHistoryPage
 
 type RouteHealthTransitionWebhookPayload = api.RouteHealthTransitionWebhookPayload
+
+// Customer comparisons are optional, advisory live route-health evidence.
+type RouteHealthReportOptions = api.RouteHealthReportOptions
+type RouteCustomerHealthAttribution = api.RouteCustomerHealthAttribution
+type RouteCustomerHealthCohort = api.RouteCustomerHealthCohort
+type RouteCustomerHealthRoute = api.RouteCustomerHealthRoute
+type RouteCustomerHealthReport = api.RouteCustomerHealthReport

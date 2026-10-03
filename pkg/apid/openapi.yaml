@@ -9889,6 +9889,19 @@ paths:
       operationId: getRouteHealthReport
       summary: Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
       description: 'Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.'
+      parameters:
+        - name: customers
+          in: query
+          description: Include advisory customer health cohorts. Never changes aggregate health or rollout decisions.
+          schema: { type: boolean, default: false }
+        - name: customer_group_by
+          in: query
+          description: Request-time identity dimension. Requires customers=true. Tenant is the default; consumer groups API consumers independently.
+          schema: { type: string, enum: [tenant, consumer] }
+        - name: customer_details
+          in: query
+          description: Include scoped customer UUIDs. Requires customers=true. IDs are omitted by default.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Current observation evidence, identities and route verdicts.
@@ -25234,11 +25247,52 @@ components:
         latency_status: { type: string, enum: [healthy, regressed, unknown], description: Independently confirmed latency verdict across both windows when selected. }
         latency_reason: { type: string }
         windows: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/RouteHealthWindowEvidence' } }
+    RouteCustomerHealthAttribution:
+      type: object
+      description: Weighted request attribution for one selected identity dimension across both shared windows. Missing identities and unresolved scoped identities remain separate. Other requests are identified traffic outside the cohort output cap.
+      required: [identified_requests, unattributed_requests, unresolved_identity_requests, other_customer_requests]
+      properties:
+        identified_requests: { type: integer, format: int64, minimum: 0 }
+        unattributed_requests: { type: integer, format: int64, minimum: 0 }
+        unresolved_identity_requests: { type: integer, format: int64, minimum: 0 }
+        other_customer_requests: { type: integer, format: int64, minimum: 0 }
+    RouteCustomerHealthCohort:
+      type: object
+      description: One observed tenant or API consumer, compared independently with the same route thresholds and windows. Sparse or one-sided evidence is unknown.
+      required: [health]
+      properties:
+        customer_id: { type: string, format: uuid, description: Present only when customer_details=true. Identity names and external references are excluded. }
+        health: { $ref: '#/components/schemas/RouteHealthFinding' }
+    RouteCustomerHealthRoute:
+      type: object
+      description: Exact selected route with bounded identity cohorts from the union of candidate and stable observations. Ranking uses candidate 5xx counts descending, then combined request volume descending, then UUID ascending. Totals precede caps.
+      required: [method, path, observed_customers, customers_truncated, candidate, stable, customers]
+      properties:
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        path: { type: string, maxLength: 240 }
+        observed_customers: { type: integer, format: int64, minimum: 0 }
+        customers_truncated: { type: boolean }
+        candidate: { $ref: '#/components/schemas/RouteCustomerHealthAttribution' }
+        stable: { $ref: '#/components/schemas/RouteCustomerHealthAttribution' }
+        customers: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthCohort' } }
+    RouteCustomerHealthReport:
+      type: object
+      description: Advisory live comparisons in the same repeatable-read snapshot as aggregate health. Reuses sample minima and consecutive-window error and selected latency checks per identity. A confirmed observed regression takes precedence; empty, sparse, capped, unattributed, unresolved or unavailable evidence prevents a healthy summary. Healthy means the retained observed cohort comparisons passed, not proof of complete capture or a statistical SLO. Request-time tenant IDs never follow current consumer links. Revoked consumers remain eligible historical observations. No identities enter decisions, history, audits or webhooks.
+      required: [group_by, details_included, coverage, status, reason, customers_limit, routes]
+      properties:
+        group_by: { type: string, enum: [tenant, consumer] }
+        details_included: { type: boolean }
+        coverage: { type: string, enum: [observed_only] }
+        status: { type: string, enum: [healthy, regressed, unknown, disabled] }
+        reason: { type: string }
+        customers_limit: { type: integer, minimum: 20, maximum: 20 }
+        routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
     RouteHealthReport:
       type: object
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance.
       required: [app_id, deployment_id, candidate_commit_sha, stable_deployment_id, stable_commit_sha, canary_step, mode, revision, checked_at, coverage, status, reason, minimum_requests, routes]
       properties:
+        customers: { $ref: '#/components/schemas/RouteCustomerHealthReport' }
         app_id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
         candidate_commit_sha: { type: string }
