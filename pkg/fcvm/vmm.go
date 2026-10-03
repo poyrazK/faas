@@ -51,11 +51,14 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	chrootBase     string        // /srv/fc/jail
-	fcName         string        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
-	destroyWait    time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
-	exportMaxBytes int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
+	chrootBase   string        // /srv/fc/jail
+	fcName       string        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout time.Duration // WAKING/cold-boot readiness budget (spec §6)
+	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
+	// nil uses net.DialTimeout; configure only before the VMM is used.
+	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
+	destroyWait      time.Duration // cap for DestroyWithExport's wait-for-exit; 0 => 10m
+	exportMaxBytes   int64         // cap for build-artifact copy-out; 0 => api.MaxExportedLayerBytes
 	// restoreSlots bounds the expensive Firecracker snapshot-load window. A
 	// small gate prevents admitted wake bursts from making every restore miss
 	// its latency SLO through CPU and mount contention. nil preserves the
@@ -5183,7 +5186,7 @@ func (v *JailerVMM) ownChrootRoot(root string, l Lease) error {
 // :8080 inside the guest, so the path is the customer's choice and the
 // port is the host's choice. Wake must always work (ADR-005): a
 // transient customer-app 500 must not wedge a wake, so we retry instead
-// of fast-failing. 200ms backoff matches the legacy TCP cadence.
+// of fast-failing. The retry delay is 10ms, like the TCP and gRPC paths.
 //
 // The HTTP client is a per-VMM cached instance with a 2s per-probe
 // timeout (bounded by the readyTimeout deadline). On a successful 2xx
@@ -5275,9 +5278,12 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		}
 	}
 
-	// Legacy TCP-accept — pre-PR-D contract. Byte-identical to the
-	// pre-PR-D loop.
+	// Legacy TCP-accept readiness contract.
 	if healthcheckPath == "" {
+		dial := v.tcpReadinessDial
+		if dial == nil {
+			dial = net.DialTimeout
+		}
 		// Track ECONNREFUSED specifically across the loop — a
 		// sustained ECONNREFUSED is the kernel's "no listener"
 		// shibboleth for app_not_listening. Other transient
@@ -5293,10 +5299,10 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 				return ctxErr
 			}
 			probeCount++
-			conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+			conn, err := dial("tcp", addr, 200*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
-				v.emitReadiness200(ctx, l, healthcheckPath, 1, readinessStartedAt)
+				v.emitReadiness200(ctx, l, healthcheckPath, probeCount, readinessStartedAt)
 				return nil
 			}
 			// ECONNREFUSED on TCP dial = nothing is listening on
@@ -5315,7 +5321,7 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	}
 
 	// PR-D HTTP GET probe. Reuse the cached client across probes —
-	// the 200ms cadence would otherwise allocate a Transport on
+	// the 10ms retry cadence would otherwise allocate a Transport on
 	// every iteration. The host loop is bounded by ctx.Done() and
 	// the deadline.
 	client := v.healthcheckClient()
