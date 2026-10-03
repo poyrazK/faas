@@ -7789,6 +7789,50 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issue-ownership-rules:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueOwnershipRules
+      summary: Read the app's automatic issue ownership rules.
+      description: Rules are ordered and only apply when Gregale creates a new issue group. Every populated matcher on a rule must match; route prefixes respect path-segment boundaries.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The current ordered policy; apps without rules return an empty list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueOwnershipRules' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueOwnershipRules
+      summary: Replace the app's automatic issue ownership rules.
+      description: Replaces the complete ordered policy and applies prospectively to new issue groups. Existing assignments are unchanged, and later manual assignments remain authoritative. Each target must be the app owner or an active organization member.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueOwnershipRules' }
+      responses:
+        '200':
+          description: The updated ordered policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueOwnershipRules' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46474,6 +46518,25 @@ components:
       additionalProperties: false
       properties:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
+
+    IssueOwnershipRule:
+      description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account."
+      type: object
+      additionalProperties: false
+      required: [assignee_account_id]
+      properties:
+        exception_type: { type: string, minLength: 1, maxLength: 256, description: Exact exception type match. }
+        source_kind: { type: string, enum: [exception, http, runtime, worker] }
+        route_prefix: { type: string, pattern: '^/', maxLength: 256, description: Path prefix; matches only at a path-segment boundary. }
+        assignee_account_id: { type: string, format: uuid }
+
+    IssueOwnershipRules:
+      description: "Complete ordered app-level ownership policy. An empty rules list disables automatic assignment."
+      type: object
+      additionalProperties: false
+      required: [rules]
+      properties:
+        rules: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/IssueOwnershipRule' } }
 
     IssueDetail:
       description: "Issue metadata and independently paginated occurrence, release, and activity collections."

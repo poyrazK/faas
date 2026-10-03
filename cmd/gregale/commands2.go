@@ -4626,7 +4626,7 @@ func cmdDomains(args []string) int {
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4827,7 +4827,7 @@ func cmdCrons(args []string) int {
 		// commands_crons_fire_now.go (cmdCronsFireNowGet).
 		return cmdCronsFireNowGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5110,7 +5110,7 @@ func cmdKeys(args []string) int {
 	case "grace-window":
 		return cmdKeysGraceWindow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5247,7 +5247,7 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
-	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

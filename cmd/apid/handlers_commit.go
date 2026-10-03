@@ -181,8 +181,12 @@ func (s *server) getCommitReceipt(w http.ResponseWriter, r *http.Request, acct s
 		}
 	}
 	receipt, err := store.CommitReceiptByEvent(r.Context(), acct.ID, r.PathValue("source"), r.PathValue("event"))
-	if err != nil {
+	if errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, api.NewProblem(404, "commit_event_not_found", "Event not found", "event has not been accepted"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("read commit receipt"))
 		return
 	}
 	writeJSON(w, http.StatusOK, receipt)

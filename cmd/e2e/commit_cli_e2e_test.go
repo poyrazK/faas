@@ -71,7 +71,7 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
 		command := exec.CommandContext(ctx, cliPath, append([]string{"--json", "commit"}, args...)...)
-		command.Env = append(os.Environ(), "FAAS_API="+f.h.APIDURL, "FAAS_TOKEN="+f.key)
+		command.Env = append(os.Environ(), "FAAS_API="+f.h.APIDURL, "FAAS_TOKEN="+f.key, "PGSSLROOTCERT="+cluster.CAPath)
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("Commit CLI %s failed: %v\n%s", args[0], err, output)
@@ -157,5 +157,24 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 	var info api.CommitSourceResponse
 	if err := json.Unmarshal(run("info", source.ID), &info); err != nil || info.ID != source.ID || !info.Enabled {
 		t.Fatalf("CLI source info: %+v (%v)", info, err)
+	}
+	waitCommitSourceHealth(t, f.h, f.key, source.ID, "healthy", time.Time{})
+	var doctor struct {
+		Healthy bool                         `json:"healthy"`
+		Checks  []commitwork.DiagnosticCheck `json:"checks"`
+	}
+	if err := json.Unmarshal(run("doctor", source.ID, "--file", connectionFile), &doctor); err != nil || !doctor.Healthy || len(doctor.Checks) != 7 {
+		t.Fatalf("CLI doctor: %+v %v", doctor, err)
+	}
+	for _, verb := range []string{"inspect", "wait"} {
+		var inspection struct {
+			Acceptance     string                    `json:"acceptance"`
+			Execution      string                    `json:"execution"`
+			DatabaseCommit string                    `json:"database_commit"`
+			Receipt        api.CommitReceiptResponse `json:"receipt"`
+		}
+		if err := json.Unmarshal(run(verb, source.ID, event.ID), &inspection); err != nil || inspection.Acceptance != "accepted" || inspection.Execution != "completed" || inspection.DatabaseCommit != "unknown" || inspection.Receipt.ID != receipt.ID {
+			t.Fatalf("CLI %s inspection: %+v %v", verb, inspection, err)
+		}
 	}
 }

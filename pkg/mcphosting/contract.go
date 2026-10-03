@@ -137,10 +137,17 @@ type ContractChange struct {
 }
 
 type ContractDiff struct {
-	Compatible  bool             `json:"compatible"`
-	Breaking    bool             `json:"breaking"`
-	NeedsReview bool             `json:"needs_review"`
-	Changes     []ContractChange `json:"changes"`
+	Compatible    bool             `json:"compatible"`
+	Breaking      bool             `json:"breaking"`
+	NeedsReview   bool             `json:"needs_review"`
+	StrictCatalog bool             `json:"strict_catalog,omitempty"`
+	Changes       []ContractChange `json:"changes"`
+}
+
+type ContractDiffOptions struct {
+	// StrictCatalog requires review when a caller gains visibility of a tool.
+	// It does not verify permission to execute that tool.
+	StrictCatalog bool
 }
 
 // CompareContracts is a conservative structural check, not a proof of arbitrary
@@ -148,12 +155,18 @@ type ContractDiff struct {
 // references are preserved and never fetched. Input accepts must not narrow;
 // output promises must not widen. Annotations never authorize execution.
 func CompareContracts(before, after Contract) (ContractDiff, error) {
+	return CompareContractsWithOptions(before, after, ContractDiffOptions{})
+}
+
+// CompareContractsWithOptions optionally treats catalog expansion as requiring
+// review. Compare captures made with the same caller permissions and protocol.
+func CompareContractsWithOptions(before, after Contract, options ContractDiffOptions) (ContractDiff, error) {
 	for _, c := range []Contract{before, after} {
 		if err := c.Validate(); err != nil {
 			return ContractDiff{}, err
 		}
 	}
-	d := ContractDiff{Compatible: true, Changes: make([]ContractChange, 0)}
+	d := ContractDiff{Compatible: true, StrictCatalog: options.StrictCatalog, Changes: make([]ContractChange, 0)}
 	add := func(tool, path, kind, severity string) {
 		d.Changes = append(d.Changes, ContractChange{Tool: tool, Path: path, Kind: kind, Severity: severity})
 		d.Breaking = d.Breaking || severity == "breaking"
@@ -174,7 +187,11 @@ func CompareContracts(before, after Contract) (ContractDiff, error) {
 		b, bok := base[name]
 		a, aok := next[name]
 		if !bok {
-			add(name, "", "tool_added", "informational")
+			severity := "informational"
+			if options.StrictCatalog {
+				severity = "needs_review"
+			}
+			add(name, "", "tool_added", severity)
 			continue
 		}
 		if !aok {

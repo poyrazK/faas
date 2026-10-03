@@ -49,6 +49,9 @@ func startCommitRelay(ctx context.Context, store *state.PgStore, identities []*a
 	if err := registry.Register(accepted); err != nil {
 		return err
 	}
+	if err := registry.Register(commitmanaged.NewObservationCollector(store)); err != nil {
+		return err
+	}
 	manager := &commitmanaged.Manager{Store: store, Identities: identities, Policy: policy, Report: func(source, code string, n int) {
 		cycles.WithLabelValues(code).Inc()
 		accepted.Add(float64(n))

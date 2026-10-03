@@ -83,6 +83,7 @@ func cmdMCPDiff(args []string) int {
 	before := fs.String("before", "", "baseline MCP contract snapshot")
 	after := fs.String("after", "", "candidate MCP contract snapshot")
 	check := fs.Bool("check", false, "fail on breaking changes or changes needing review")
+	strictCatalog := fs.Bool("strict-catalog", false, "require review when a caller gains visibility of a tool")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -97,7 +98,7 @@ func cmdMCPDiff(args []string) int {
 	if err != nil {
 		return printErr("MCP candidate contract", err)
 	}
-	diff, err := mcphosting.CompareContracts(b, a)
+	diff, err := mcphosting.CompareContractsWithOptions(b, a, mcphosting.ContractDiffOptions{StrictCatalog: *strictCatalog})
 	if err != nil {
 		return printErr("MCP contract comparison", err)
 	}

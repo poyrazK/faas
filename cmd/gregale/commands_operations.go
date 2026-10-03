@@ -40,7 +40,7 @@ func cmdOperations(args []string) int {
 	case "cancel":
 		return cmdOperationCancel(args[1:])
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "unknown operations command %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown operations command %q\n", args[0])
 		return 1
 	}
 }
@@ -412,7 +412,7 @@ func cmdOperationPolicy(args []string) int {
 		_, _ = fmt.Fprintf(os.Stdout, "Saved operation policy %s (revision %d).\n", row.Policy.Name, row.Revision)
 		return 0
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "unknown operation policy command %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown operation policy command %q\n", args[0])
 		return 1
 	}
 }

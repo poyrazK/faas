@@ -15,7 +15,7 @@ import (
 
 func TestPgApplicationStandardVersions(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestPgApplicationStandardVersions(t *testing.T) {
 
 func TestPgApplicationStandardResources(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestPgApplicationStandardResources(t *testing.T) {
 
 func TestPgApplicationStandardPublisherErasure(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenDatabase(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

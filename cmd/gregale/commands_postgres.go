@@ -40,7 +40,7 @@ func cmdPostgres(args []string) int {
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown postgres subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -331,7 +331,7 @@ func cmdPostgresBindings(args []string) int {
 	case "delete":
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
 		return 1
 	}
 }

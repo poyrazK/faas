@@ -1003,6 +1003,9 @@ from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
+from .issue_ownership_rule import IssueOwnershipRule
+from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
+from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
 from .issue_state import IssueState
 from .job_artifact_download_response import JobArtifactDownloadResponse
@@ -3063,6 +3066,9 @@ __all__ = (
     "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
+    "IssueOwnershipRule",
+    "IssueOwnershipRules",
+    "IssueOwnershipRuleSourceKind",
     "IssueRelease",
     "IssueState",
     "JobArtifactDownloadResponse",

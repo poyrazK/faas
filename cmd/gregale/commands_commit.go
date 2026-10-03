@@ -12,8 +12,16 @@ import (
 )
 
 func cmdCommit(args []string) int {
+	if len(args) > 0 {
+		switch args[0] {
+		case "doctor":
+			return cmdCommitDoctor(args[1:])
+		case "inspect", "wait":
+			return cmdCommitInspect(args[0], args[1:])
+		}
+	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|operation|receipt|blocked|replay>", "commit")
+		PrintUsage(os.Stderr, "usage: gregale commit <add|connection|pause|resume|info|doctor|inspect|wait|operation|receipt|blocked|replay>", "commit")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:])

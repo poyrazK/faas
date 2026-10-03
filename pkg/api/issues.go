@@ -1,6 +1,12 @@
 package api
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // IssueImpactSummaryWindow is the fixed window used for list-level triage
 // summaries. Detailed issue views can still request a plan-bounded window.
@@ -8,6 +14,10 @@ const IssueImpactSummaryWindow = 24 * time.Hour
 
 // IssueImpactAlertWindow is the fixed rolling window used by impact alerts.
 const IssueImpactAlertWindow = 24 * time.Hour
+
+// IssueOwnershipRulesMax is the number of ordered routing rules an app may
+// configure. Rules are evaluated only when a new issue group is created.
+const IssueOwnershipRulesMax = 50
 
 // IssueEvent is the instrumentation envelope. Identity and deployment fields
 // are resolved from the ingest credential, never accepted from this body.
@@ -75,6 +85,53 @@ type IssueImpactAlertPolicy struct {
 type UpdateIssueImpactAlertPolicyRequest struct {
 	// Zero disables customer-impact alerts; positive values enable the policy.
 	MinimumCustomers int64 `json:"minimum_customers"`
+}
+
+// IssueOwnershipRule applies when every populated matcher equals the incoming
+// event. The first matching rule assigns a newly-created issue to the account.
+type IssueOwnershipRule struct {
+	ExceptionType     string `json:"exception_type,omitempty"`
+	SourceKind        string `json:"source_kind,omitempty"`
+	RoutePrefix       string `json:"route_prefix,omitempty"`
+	AssigneeAccountID string `json:"assignee_account_id"`
+}
+
+// IssueOwnershipRules is the complete, ordered app-level routing policy.
+type IssueOwnershipRules struct {
+	Rules []IssueOwnershipRule `json:"rules"`
+}
+
+// NormalizeIssueOwnershipRules validates a replacement routing policy and
+// canonicalizes account UUIDs and surrounding whitespace before persistence.
+func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipRule, error) {
+	if len(rules) > IssueOwnershipRulesMax {
+		return nil, fmt.Errorf("rules may contain at most %d entries", IssueOwnershipRulesMax)
+	}
+	out := make([]IssueOwnershipRule, len(rules))
+	for i, rule := range rules {
+		rule.ExceptionType = strings.TrimSpace(rule.ExceptionType)
+		rule.SourceKind = strings.TrimSpace(rule.SourceKind)
+		rule.RoutePrefix = strings.TrimSpace(rule.RoutePrefix)
+		if rule.ExceptionType == "" && rule.SourceKind == "" && rule.RoutePrefix == "" {
+			return nil, fmt.Errorf("rules[%d] must include at least one matcher", i)
+		}
+		if len(rule.ExceptionType) > IssueMaxTypeBytes {
+			return nil, fmt.Errorf("rules[%d].exception_type exceeds %d bytes", i, IssueMaxTypeBytes)
+		}
+		if rule.SourceKind != "" && rule.SourceKind != "exception" && rule.SourceKind != "http" && rule.SourceKind != "runtime" && rule.SourceKind != "worker" {
+			return nil, fmt.Errorf("rules[%d].source_kind must be exception, http, runtime, or worker", i)
+		}
+		if rule.RoutePrefix != "" && (len(rule.RoutePrefix) > IssueMaxTypeBytes || !strings.HasPrefix(rule.RoutePrefix, "/") || strings.ContainsAny(rule.RoutePrefix, "?#")) {
+			return nil, fmt.Errorf("rules[%d].route_prefix must be a path prefix starting with / and contain no query or fragment", i)
+		}
+		id, err := uuid.Parse(strings.TrimSpace(rule.AssigneeAccountID))
+		if err != nil {
+			return nil, fmt.Errorf("rules[%d].assignee_account_id must be a UUID", i)
+		}
+		rule.AssigneeAccountID = id.String()
+		out[i] = rule
+	}
+	return out, nil
 }
 
 type IssueOccurrence struct {

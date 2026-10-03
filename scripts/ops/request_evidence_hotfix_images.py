@@ -5,10 +5,11 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
+
+import request_evidence_hotfix as controller
 
 root = Path(sys.argv[1])
 tag = sys.argv[2]
@@ -112,8 +113,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
 publishers = {}
 for kind in ['runtime', 'builder']:
     run_id = candidate[kind + '_main_push_publisher_run']
-    data = json.loads(subprocess.check_output(['gh', 'api',
-        'repos/poyrazK/faas/actions/runs/' + str(run_id)], text=True))
+    data = controller.api('actions/runs/' + str(run_id))
     assert data['status'] == 'completed' and data['conclusion'] == 'success'
     assert data['head_sha'] == candidate[kind + '_source_sha']
     assert data['head_branch'] == 'main' and data['event'] == 'push'

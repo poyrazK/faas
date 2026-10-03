@@ -6814,6 +6814,24 @@ CREATE TABLE public.app_issue_impact_alert_policies (
 
 
 --
+-- Name: app_issue_ownership_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_ownership_rules (
+    app_id uuid NOT NULL,
+    rule_order integer NOT NULL,
+    exception_type text,
+    source_kind text,
+    route_prefix text,
+    assignee_account_id uuid NOT NULL,
+    CONSTRAINT app_issue_ownership_rules_check CHECK ((((exception_type IS NOT NULL) AND ((length(exception_type) >= 1) AND (length(exception_type) <= 256))) OR (source_kind IS NOT NULL) OR (route_prefix IS NOT NULL))),
+    CONSTRAINT app_issue_ownership_rules_route_prefix_check CHECK (((route_prefix IS NULL) OR ((length(route_prefix) <= 256) AND ("left"(route_prefix, 1) = '/'::text) AND (POSITION(('?'::text) IN (route_prefix)) = 0) AND (POSITION(('#'::text) IN (route_prefix)) = 0)))),
+    CONSTRAINT app_issue_ownership_rules_rule_order_check CHECK (((rule_order >= 0) AND (rule_order <= 49))),
+    CONSTRAINT app_issue_ownership_rules_source_kind_check CHECK (((source_kind IS NULL) OR (source_kind = ANY (ARRAY['exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))))
+);
+
+
+--
 -- Name: app_issues; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14703,6 +14721,14 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_issue_impact_alert_policies
     ADD CONSTRAINT app_issue_impact_alert_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_issue_ownership_rules app_issue_ownership_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_ownership_rules
+    ADD CONSTRAINT app_issue_ownership_rules_pkey PRIMARY KEY (app_id, rule_order);
 
 
 --
@@ -24896,6 +24922,22 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_issue_impact_alert_policies
     ADD CONSTRAINT app_issue_impact_alert_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_ownership_rules app_issue_ownership_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_ownership_rules
+    ADD CONSTRAINT app_issue_ownership_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_ownership_rules app_issue_ownership_rules_assignee_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_ownership_rules
+    ADD CONSTRAINT app_issue_ownership_rules_assignee_account_id_fkey FOREIGN KEY (assignee_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

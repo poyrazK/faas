@@ -118,7 +118,7 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatal("exception HTML not escaped")
 	}
-	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Most recently seen", "Most verified customers (24h)", "Minimum verified customers (24h)", "issue.impact_threshold_reached", "Customer-impact webhook alert", "Unassigned", `value="unassigned" selected`} {
+	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Most recently seen", "Most verified customers (24h)", "Minimum verified customers (24h)", "issue.impact_threshold_reached", "Customer-impact webhook alert", "Automatic issue ownership", "rules_json", "Unassigned", `value="unassigned" selected`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("issues inbox missing %q", want)
 		}
@@ -168,6 +168,26 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	policy := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issue-impact-alert-policy", nil, nil), http.StatusOK)
 	if !policy.Enabled || policy.MinimumCustomers != 3 {
 		t.Fatalf("dashboard did not persist impact policy: %+v", policy)
+	}
+	rulesJSON, err := json.Marshal(api.IssueOwnershipRules{Rules: []api.IssueOwnershipRule{{SourceKind: "worker", AssigneeAccountID: e.acct.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleForm := url.Values{"csrf_token": {csrf.Value}, "rules_json": {string(rulesJSON)}}
+	ruleRequest := httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/ownership-rules", strings.NewReader(ruleForm.Encode()))
+	ruleRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range r.Cookies() {
+		ruleRequest.AddCookie(c)
+	}
+	ruleRequest.AddCookie(csrf)
+	ruleResponse := httptest.NewRecorder()
+	e.h.ServeHTTP(ruleResponse, ruleRequest)
+	if ruleResponse.Code != http.StatusSeeOther {
+		t.Fatalf("ownership rules form %d %s", ruleResponse.Code, ruleResponse.Body.String())
+	}
+	configuredRules := issueDecode[api.IssueOwnershipRules](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issue-ownership-rules", nil, nil), http.StatusOK)
+	if len(configuredRules.Rules) != 1 || configuredRules.Rules[0].SourceKind != "worker" {
+		t.Fatalf("dashboard did not persist ownership rules: %+v", configuredRules)
 	}
 }
 

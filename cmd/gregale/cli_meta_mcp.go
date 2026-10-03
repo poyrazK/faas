@@ -35,6 +35,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "before", Short: "baseline MCP contract snapshot", Value: "PATH", Req: true},
 			{Name: "after", Short: "candidate MCP contract snapshot", Value: "PATH", Req: true},
 			{Name: "check", Short: "fail on breaking changes or changes needing review"},
+			{Name: "strict-catalog", Short: "require review when a caller gains visibility of a tool"},
 		}, Examples: []string{"gregale mcp diff --before baseline.json --after candidate.json --check --json"}},
 	}}
 }
