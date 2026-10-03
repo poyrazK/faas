@@ -8053,7 +8053,7 @@ const (
 	RouteHealthComparisonEpsilon          = 1e-12
 )
 
-// RouteHealth watched status comparisons are advisory (ADR-461).
+// RouteHealth watched status comparisons are advisory (ADR-495).
 const RouteHealthMaxWatchedStatuses = 5
 
 // Bounded diagnostic rows per deployment/window, independent of publisher weights.
@@ -8091,7 +8091,7 @@ const (
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
 
-// Production route monitoring and bounded customer evidence (ADR-464/465).
+// Production route monitoring and bounded customer evidence (ADR-498/499).
 const (
 	RouteMonitorVersion                         = 1
 	RouteMonitorMaxRateBPS                int64 = 10_000

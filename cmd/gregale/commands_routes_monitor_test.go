@@ -30,7 +30,7 @@ func cliProductionIncident(t *testing.T) api.RouteMonitorIncident {
 	return i
 }
 
-// ADR-464: wire scopes, reports, bounded saved diagnostics and create-new export.
+// ADR-498: wire scopes, reports, bounded saved diagnostics and create-new export.
 func TestProductionRouteMonitorCLIReportsAndIncidentEvidence(t *testing.T) {
 	for _, scenario := range []string{"human", "json", "export", "overwrite", "symlink", "wrong_id", "wrong_weight", "wrong_link", "wrong_verdict", "report", "report_gate", "incidents"} {
 		t.Run(scenario, func(t *testing.T) {

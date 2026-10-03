@@ -1,4 +1,4 @@
-# ADR-460: Advisory customer route health
+# ADR-494: Advisory customer route health
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted — 2026-10-03.
 
 ## Context
 
-ADR-454's selected-route canary checks compare aggregate telemetry. ADR-459
+ADR-454's selected-route canary checks compare aggregate telemetry. ADR-493
 exposes request-time customer attribution for route changes, but aggregate
 health can still hide a tenant-specific regression. Customers need comparable
 per-identity production evidence without inferring historical tenant membership

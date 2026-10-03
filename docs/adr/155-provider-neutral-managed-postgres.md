@@ -135,7 +135,7 @@ complete provider window. The conversion is overflow-checked and remains an
 internal canonical meter until commercial rates and caps are approved.
 
 **Correction (2026-10-03):** The byte-hour interpretation above was incorrect
-for Neon's v2 endpoint. [ADR-481](481-managed-postgres-consumption-contract.md)
+for Neon's v2 endpoint. [ADR-492](492-managed-postgres-consumption-contract.md)
 supersedes that conversion with the provider's fixed 744-hour byte-month unit
 and requires complete returned time coverage before advancing accounting.
 

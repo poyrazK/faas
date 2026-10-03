@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 )
 
-// ADR-464: independent advisory intent, MFA/read-write scopes and strict budget input.
+// ADR-498: independent advisory intent, MFA/read-write scopes and strict budget input.
 func TestProductionRouteMonitorAPIConfigurationScopeAndWorker(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	slug := mustSeedEdgeRuleApp(t, e, "production-routes-api")

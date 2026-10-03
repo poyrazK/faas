@@ -1,8 +1,8 @@
-# ADR-464: Advisory production route budgets and saved incidents
+# ADR-498: Advisory production route budgets and saved incidents
 
 - Status: Accepted
 - Date: 2026-10-03
-- Related: ADR-454, ADR-456, ADR-462, ADR-463, ADR-344
+- Related: ADR-454, ADR-456, ADR-496, ADR-497, ADR-344
 
 ## Context
 

@@ -79,7 +79,7 @@ func productionMonitorClear(t *testing.T, pool *pgxpool.Pool, appID string) {
 	productionMonitorExec(t, pool, "DELETE FROM request_telemetry WHERE app_id=$1", appID)
 }
 
-// ADR-464: production evaluation survives promotion, snapshots diagnostics and
+// ADR-498: production evaluation survives promotion, snapshots diagnostics and
 // emits exactly one open/recovery transition without inferring recovery from unknown.
 func TestProductionRouteMonitorPostgresLifecycleAndSavedEvidence(t *testing.T) {
 	pool, s, a, app, stable, d := productionMonitorPG(t)

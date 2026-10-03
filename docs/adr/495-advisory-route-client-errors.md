@@ -1,4 +1,4 @@
-# ADR-461: Advisory watched response codes
+# ADR-495: Advisory watched response codes
 
 ## Status
 

@@ -26136,7 +26136,7 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 -- filename: 20261003124846116_route_production_monitoring.sql
 
--- ADR-464: customer intent and periodic work belong to APID. No traffic mutation.
+-- ADR-498: customer intent and periodic work belong to APID. No traffic mutation.
 CREATE TABLE IF NOT EXISTS route_monitors (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

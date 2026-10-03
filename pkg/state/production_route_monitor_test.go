@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-464: independent intent, optimistic revisions, entitlement and unknown telemetry.
+// ADR-498: independent intent, optimistic revisions, entitlement and unknown telemetry.
 func TestProductionRouteMonitorMemConfigurationAndWorker(t *testing.T) {
 	s := state.NewMemStore()
 	a, app, _, _ := healthFixture(t, s)

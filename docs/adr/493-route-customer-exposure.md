@@ -1,4 +1,4 @@
-# ADR-459: Observed customer exposure for route changes
+# ADR-493: Observed customer exposure for route changes
 
 - **Status:** accepted for initial implementation
 - **Date:** 2026-10-03

@@ -1,4 +1,4 @@
-# ADR-463: Route latency investigation
+# ADR-497: Route latency investigation
 
 ## Status
 
@@ -7,7 +7,7 @@ Accepted — 2026-10-03.
 ## Context
 
 Route health already identifies relative p95 slowdowns and absolute latency
-budget violations. ADR-462 investigation selects failing responses, so slow
+budget violations. ADR-496 investigation selects failing responses, so slow
 successful requests and their dependency evidence require manual debugger
 filters. Trace retention and collapsed request rows limit what those samples
 can establish.

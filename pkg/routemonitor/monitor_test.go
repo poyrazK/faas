@@ -24,7 +24,7 @@ func monitorFixture() api.RouteMonitorReport {
 	return r
 }
 
-// ADR-464: independent sustained signals, strict absolute budgets and sparse evidence.
+// ADR-498: independent sustained signals, strict absolute budgets and sparse evidence.
 func TestProductionRouteMonitorBudgets(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
