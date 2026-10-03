@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 const (
@@ -392,10 +394,7 @@ func problemCode(contentType string, body []byte) string {
 }
 
 func safeSmokeRequestID(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 128 {
-		value = value[:128]
-	}
+	value = safetext.Truncate(strings.TrimSpace(value), 128)
 	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return ""
 	}
