@@ -1682,3 +1682,26 @@ func TestExportBundleV2WireShape(t *testing.T) {
 		}
 	}
 }
+
+// The shipped DPA template opens with operator-only notes (rendering rules,
+// placeholder syntax). `gregale account dpa` printed them to customers.
+func TestCustomerDPAMarkdownDropsOperatorNotesAndKeepsTheAgreement(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "docs", "DPA.md"))
+	if err != nil {
+		t.Fatalf("read shipped DPA template: %v", err)
+	}
+	got := string(customerDPAMarkdown(template))
+	for _, gone := range []string{"<!--", "-->", "Operator-facing template notes"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("customer DPA still contains %q", gone)
+		}
+	}
+	if !strings.HasPrefix(got, "# Data Processing Addendum (DPA)\n\n") || strings.Contains(got, "\n\n\n") {
+		t.Errorf("customer DPA heading or spacing changed: %q", got[:min(len(got), 120)])
+	}
+	// Only the operator notes go; the agreement text is untouched.
+	withoutNotes := strings.Replace(string(template), string(template[strings.Index(string(template), "<!--"):strings.Index(string(template), "-->")+len("-->")]), "", 1)
+	if strings.Count(got, "{{") != strings.Count(withoutNotes, "{{") {
+		t.Errorf("agreement placeholders changed: got %d, want %d", strings.Count(got, "{{"), strings.Count(withoutNotes, "{{"))
+	}
+}

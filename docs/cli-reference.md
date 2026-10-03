@@ -4657,12 +4657,13 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 Remove a sealed secret
 
-`gregale secrets unset --app <slug> [--scope <SCOPE>] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
+`gregale secrets unset --app <slug> [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] <KEY>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--scope <SCOPE>` | env scope to delete from (defaults to linked project environment) |  |
+| `--restart` | restart the app so running instances drop the removed secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
 | `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements |  |
 
@@ -4672,6 +4673,7 @@ Examples:
 gregale secrets unset --app my-api OLD_API_KEY
 gregale secrets unset --app my-api OLD_API_KEY --scope staging
 gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack
+gregale secrets unset --app my-api OLD_API_KEY --restart
 ```
 
 ### secrets list-all
@@ -4683,7 +4685,7 @@ List every secret across apps
 | Flag | Meaning | |
 |---|---|---|
 | `--before <slug|key>` | pagination cursor from a previous call&#39;s next_before |  |
-| `--limit <N>` | page size (1..200; server caps at 200) |  |
+| `--limit <N>` | page size (1..100; server caps at 100) |  |
 | `--class <CLASS>` | filter this page by snapshot-retention class | one of `persistent` · `ephemeral` |
 | `--older-than <DURATION>` | filter this page to secrets not updated within a duration; unknown timestamps are excluded |  |
 

@@ -1,4 +1,4 @@
-# ADR-480: Validate the Neon consumption contract
+# ADR-481: Validate the Neon consumption contract
 
 - **Status:** Accepted
 - **Date:** 2026-10-03

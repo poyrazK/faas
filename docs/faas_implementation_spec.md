@@ -150,10 +150,13 @@ the upstream Caddy/Cloudflare edge.
 already-decrypted traffic from the trusted upstream edge and hands every
 request to `gatewayd-internal`, which checks `isApidPath`
 (`cmd/gatewayd-internal/proxy.go:202-228`) before falling through to the
-host-routed wake/proxy path. The matcher is the canonical reservation list —
-customer apps **cannot** expose routes under any of these prefixes, and the
-spec §4.1.1 enumerates them so customer-facing docs can mirror the platform's
-own contract.
+host-routed wake/proxy path. The matcher is the canonical reservation list,
+and the spec §4.1.1 enumerates it so customer-facing docs can mirror the
+platform's own contract. **ADR-480:** the reservation applies on platform
+hosts only — the apps-domain apex, `api.<apps domain>`,
+`operations.<apps domain>` and loopback/IP probes (`apid.IsPlatformHost`).
+On app subdomains, preview hosts and customer domains these paths belong to
+the app.
 
 | Reserved path                          | Owning handler (apid)                                     | Why reserved                                     |
 |----------------------------------------|------------------------------------------------------------|--------------------------------------------------|
@@ -174,7 +177,7 @@ own contract.
 
 **Anchor discipline.** Every anchored root matches exact + `/` subtree via `hasApidPrefix` (cmd/gatewayd-internal/proxy.go:171-176). A bare `HasPrefix(prefix)` would also match `prefix + arbitrary junk` (e.g. `/v1.zip`, `/loginfoo`) and silently steal customer-app paths — review finding #6 from the dashboard era. Bare `HasPrefix` is therefore deliberately avoided; only `/oauth/` is subtree-form because the only mounted route is `/oauth/callback`.
 
-**Customer-facing implication.** Apps must pick a different prefix for their own routes (e.g. `/api/`, `/v2/`). `/v1.zip` is **not** reserved — only `/v1` and `/v1/...` — so customers who want to expose a single-character-shorter alternative can use `/v1.<service>` or similar. The reservation table is enforced by `isApidPath` at request time; `gatewayd-internal` returns a 404 to any path the customer tries to expose that conflicts.
+**Customer-facing implication (ADR-480).** On its own hosts an app may serve every path in the table above. A small set stays reserved on every Host because platform components address it through app hosts or it gates certificate issuance: `/v1/apps/{slug}/logs`, `/v1/synthesize`, `/v1/invocations:dispatch`, `/v1/invocations:dispatch_batch`, `/v1/internal/realtime/`, `/v1/traces/`, `/v1/otel/v1/traces` and `/.well-known/acme-challenge/`. With no apps domain configured (dev single-box, the e2e harness) the router cannot tell app hosts from platform hosts and reserves the whole table on every Host.
 
 **Drift protection.** The `TestApidPathReservations_Documented` test in `cmd/gatewayd-internal/proxy_test.go` reads this section and asserts every `apidRoot*` constant in `cmd/gatewayd-internal/proxy.go:233-246` appears verbatim — the spec is documentation that must match the matcher, but the matcher is the source of truth. If a future change adds a new `apidRoot*` constant, this section must be updated in the same PR; CI fails the merge otherwise.
 

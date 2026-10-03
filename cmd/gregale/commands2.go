@@ -744,7 +744,13 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		// An unset idle timeout is stored as NULL and the plan default
+		// applies (600 s on Scale); printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 {
+			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
+		} else {
+			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		}
 		if a.RequestTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "request timeout:", "plan default")
 		} else {
@@ -6133,7 +6139,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
-			_, _ = fmt.Fprintln(osStdout, e.Data)
+			line := e.Data
+			if !jsonOutput {
+				line = formatRuntimeLogLine(e.Data)
+			}
+			_, _ = fmt.Fprintln(osStdout, line)
 			if collector != nil {
 				collector.observe(e.Data)
 			}
