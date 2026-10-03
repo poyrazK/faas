@@ -4523,3 +4523,39 @@ thirteen generated files across state/inventory/connection-fence. Normal state
 build and focused state vet pass. Test overlays replace only test files and keep
 all production sources. Qualified retirement, retry generations, storage
 entitlement and usage metering remain required before public admission.
+
+### Private retained archive worker recovery (2026-10-03)
+
+The private APID archive worker selects the database only from immutable export
+requirements derived from the original sealed inventory. It uses the retained
+owner's encryption recipient and storage pins on every retry. Only a first
+durable upload claim calls the trusted export producer; uploading and retained
+owners use independent readback without another dump or storage write. Retained
+receipt replay can operate without a source connection or producer and survives
+key rotation when the original decryption key remains available. Missing original
+keys or changed artifact configuration prevent IO. An unknown claimed upload
+with no stored artifact keeps its ownership and byte reservation; it cannot
+infer absence as permission to overwrite or release admission. Only fresh
+lease authority can commit the verified receipt.
+
+Verification: all thirty-nine focused APID clone/coordinator contracts pass
+against isolated PostgreSQL 16 with no skips (25.665 s), including two new archive
+worker contracts. They exercise committed reservation, claim, upload and receipt
+reply loss, original-key recovery after worker handoff, storage drift, corrupt
+ciphertext and unknown write holds. Worker fixtures use real local storage and
+SQL identity checks with synthetic dump output; the archive package separately
+verifies actual PostgreSQL dump/restore data. Normal managedpostgres/Neon/archive/
+state/APID builds and archive/focused state/APID vet pass. The APID test overlay
+keeps all 450 production source files and replaces only test files. Initial
+state/APID disk-backed attempts exhausted host disk space; successful reruns
+used a task-owned RAM volume and isolated PostgreSQL instance. Missing schema
+classification was corrected before the successful coordinator run.
+
+This helper is not installed in the public coordinator. Selected-database SQL
+access, closed-database admission, archive storage configuration freezing and
+create-only publication (including the OCI namespace), qualified artifact
+cleanup/retry/metering, all database/global imports and independent dataset
+completion remain required. Source writer closure/common-point capture,
+object/configuration coverage, production-preserving promotion/rollback and
+native/provider acceptance remain part of the complete objective. No public
+clone readiness or production stage promotion is claimed.
