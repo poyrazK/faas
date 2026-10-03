@@ -632,6 +632,12 @@ current main branch. Historical validation captures retain their original
 387–405 numbering and source paths; add 74 to map those references to the current
 ADRs. Captured logs, patches and source manifests remain unchanged.
 
+The [main integration verification](ops/evidence/20261003-managed-postgres-main-integration/README.md)
+records fresh/upgrade schema parity, lost-ledger migration replay, SCRAM role
+checks, SQL preparation, full race suites and 99 selected nested metal tests.
+It includes the journal close/reopen regression and preserves failed attempts
+with their source revisions. Native lifecycle acceptance remains pending.
+
 The `gregale postgres` command is the supported customer entry point for the
 provider-neutral API:
 
