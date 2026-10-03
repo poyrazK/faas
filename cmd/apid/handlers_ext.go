@@ -4204,6 +4204,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
 	// IAM-4 (ADR-035): record the key mint. subject = account_id (the
@@ -4261,10 +4262,11 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 		return
 	}
 	out := make([]api.APIKeyResponse, 0, len(keys))
+	prefixes := s.listedKeyPrefixes(r.Context(), keys)
 	for _, k := range keys {
 		resp := api.APIKeyResponse{
 			ID:        k.ID,
-			Prefix:    keyPrefixFromHash(k.Hash),
+			Prefix:    prefixes[k.ID],
 			Label:     k.Label,
 			Scopes:    k.Scopes,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
@@ -4447,6 +4449,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
+	s.recordKeyDisplayPrefix(r.Context(), newKey.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
@@ -6745,6 +6748,44 @@ func keyPrefix(plaintext string) string {
 		return plaintext
 	}
 	return plaintext[:16]
+}
+
+// recordKeyDisplayPrefix stores the prefix shown at mint so key listings show
+// the same value. Best-effort: on failure the listing falls back to the
+// hash-derived identifier, which is what every key showed before.
+func (s *server) recordKeyDisplayPrefix(ctx context.Context, keyID, plaintext string) {
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return
+	}
+	if err := store.SetAPIKeyDisplayPrefix(ctx, keyID, keyPrefix(plaintext)); err != nil {
+		s.log.WarnContext(ctx, "record api key display prefix", slog.String("key", keyID), slog.String("err", err.Error()))
+	}
+}
+
+// listedKeyPrefixes maps each key to the prefix a listing shows: the prefix
+// printed when the key was minted, or the hash-derived identifier for keys
+// minted before display prefixes were recorded.
+func (s *server) listedKeyPrefixes(ctx context.Context, keys []state.APIKey) map[string]string {
+	out := make(map[string]string, len(keys))
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out[k.ID] = keyPrefixFromHash(k.Hash)
+		ids = append(ids, k.ID)
+	}
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return out
+	}
+	recorded, err := store.APIKeyDisplayPrefixes(ctx, ids)
+	if err != nil {
+		s.log.WarnContext(ctx, "read api key display prefixes", slog.String("err", err.Error()))
+		return out
+	}
+	for id, prefix := range recorded {
+		out[id] = prefix
+	}
+	return out
 }
 
 // keyPrefixFromHash derives the display prefix from the stored hash. The hash

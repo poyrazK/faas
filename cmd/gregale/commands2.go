@@ -5062,6 +5062,13 @@ func cmdKeys(args []string) int {
 			return jsonOut(writeNDJSON(out))
 		}
 		for _, k := range out {
+			// Revoked and grace-period keys looked identical to live ones,
+			// so a customer could not see which listed keys still work.
+			// Active rows keep their two-column shape for existing scripts.
+			if k.Status != "" && k.Status != "active" {
+				fmt.Printf("%-30s %-22s %s\n", k.Label, k.Prefix, k.Status)
+				continue
+			}
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
 		return 0
