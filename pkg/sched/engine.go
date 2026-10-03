@@ -5929,6 +5929,12 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
+	primeCompleted := false
+	defer func() {
+		if !primeCompleted && ctx.Err() != nil {
+			e.cleanupInterruptedPrime(ctx, appID, ins)
+		}
+	}()
 	var provisionalPrimeCPUBoostUntil time.Time
 	if primeStartupCPU > primeConfiguredCPU {
 		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
@@ -6046,12 +6052,79 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_ready_notify_failed")
 			return err
 		}
+		primeCompleted = true
 		return nil
 	}
 
 	// Request/service boot succeeded; capture the reusable init snapshot and
 	// park the prime. Non-snapshot modes returned above.
-	return e.snapshotAndParkPrime(ctx, ins)
+	err = e.snapshotAndParkPrime(ctx, ins)
+	primeCompleted = err == nil
+	return err
+}
+
+// cleanupInterruptedPrime releases only the instance created by the Prime
+// call whose daemon context was cancelled. Leaving a cold_booting, running or
+// snapshotting row behind would make the recovery sweep mistake it for a
+// healthy prime that is still in flight. Destroy is idempotent in vmmd, so it
+// also covers a cancellation racing a successful cold-boot RPC response.
+func (e *Engine) cleanupInterruptedPrime(ctx context.Context, appID string, prime state.Instance) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
+	defer cancel()
+
+	if state.InstanceMode(prime.Mode) == state.InstanceModeWorker {
+		dep, err := e.store.DeploymentByID(cleanupCtx, prime.DeploymentID)
+		if err != nil {
+			e.log.Warn("sched: interrupted prime: load deployment for cleanup", "deployment", prime.DeploymentID, "err", err)
+			return
+		}
+		if dep.Status == state.DeployLive {
+			// Readiness may have committed just before the daemon context was
+			// cancelled. That is a completed handoff, so keep its VM intact.
+			return
+		}
+	}
+	current, stateErr := e.store.InstanceByID(cleanupCtx, prime.ID)
+	if stateErr == nil {
+		currentState := state.State(current.State)
+		if currentState == state.StateParked || currentState == state.StateStopped {
+			e.ledger.Release(prime.ID)
+			return
+		}
+	}
+	if stateErr != nil {
+		e.log.Warn("sched: interrupted prime: inspect instance before cleanup", "instance", prime.ID, "err", stateErr)
+	}
+	if err := e.timedDestroy(cleanupCtx, prime.NodeID, prime.ID, DestroyTimeout); err != nil {
+		e.log.Warn("sched: interrupted prime: destroy instance", "instance", prime.ID, "err", err)
+		// A cancelled cold-boot RPC can have already written FAILED before the
+		// daemon observed cancellation. Restore an active fence when teardown is
+		// unconfirmed so recovery will not create a second VM beside it.
+		if stateErr == nil && state.State(current.State) == state.StateFailed {
+			e.transitionWithKind(cleanupCtx, prime.ID, appID, state.StateColdBooting,
+				"wake_boot_error", "prime_shutdown_destroy_unconfirmed")
+		}
+		return
+	}
+	e.ledger.Release(prime.ID)
+	if stateErr != nil {
+		current, stateErr = e.store.InstanceByID(cleanupCtx, prime.ID)
+		if stateErr != nil {
+			e.log.Warn("sched: interrupted prime: reload instance after cleanup", "instance", prime.ID, "err", stateErr)
+			return
+		}
+	}
+	currentState := state.State(current.State)
+	if currentState == state.StateParked || currentState == state.StateStopped || currentState == state.StateEvictingAccountDeleting {
+		return
+	}
+	if !state.CanTransition(currentState, state.StateStopped) {
+		e.log.Warn("sched: interrupted prime: cannot stop cleaned instance",
+			"instance", prime.ID, "state", currentState)
+		return
+	}
+	e.transitionWithKind(cleanupCtx, prime.ID, appID, state.StateStopped,
+		"wake_boot_error", "prime_interrupted_by_scheduler_shutdown")
 }
 
 // markPrimeFailed closes the deployment lifecycle when the scheduler cannot

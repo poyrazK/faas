@@ -1,12 +1,15 @@
 """Hello-world handler for gregale (Flask).
 
-Listens on :8080 (the port guest-init forwards to). Returns a tiny
+Served by gunicorn (see Procfile), which binds 0.0.0.0:$PORT when the
+platform sets PORT. `python handler.py` still runs Flask's development
+server for local use only. Returns a tiny
 JSON greeting so a curl check is enough to verify a deploy landed.
 The handler reads env vars (set via `gregale env push`) and reports
 the key NAMES only — never values — so a stdout log scrape can't leak
 plaintext.
 """
 import os
+import platform
 
 from flask import Flask, jsonify
 
@@ -23,7 +26,7 @@ def root():
     )
     return jsonify(
         message="hello from gregale",
-        python=os.environ.get("PYTHON_VERSION", "unknown"),
+        python=platform.python_version(),
         secret_keys=secret_keys,
     )
 
@@ -34,5 +37,6 @@ def healthz():
 
 
 if __name__ == "__main__":
+    # Local development only; production traffic is served by gunicorn.
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)  # noqa: S104 — guest-only listener

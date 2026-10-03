@@ -30,8 +30,8 @@ type Notification struct {
 	Channel string
 	Payload string
 	// OutboxID is non-zero when this delivery came from the durable handoff
-	// queue. Consumers acknowledge it after handing the payload to their
-	// idempotent handler; legacy/direct notifications leave it zero.
+	// queue. Renewable consumers claim the row before handling it and complete
+	// their claim afterward; legacy/direct notifications leave it zero.
 	OutboxID int64
 }
 

@@ -15,6 +15,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// The shared app can change independently of this already reviewed candidate.
+// Inject a different runtime so the checkpoint path must choose its build from
+// frozen inputs before any layer builder applies its own manifest projection.
+type changedEnvironmentImageRuntimeStore struct {
+	*state.MemStore
+	appID string
+}
+
+func (s changedEnvironmentImageRuntimeStore) AppByID(ctx context.Context, id string) (state.App, error) {
+	app, err := s.MemStore.AppByID(ctx, id)
+	if id == s.appID {
+		app.Runtime = "node22"
+	}
+	return app, err
+}
+
 func TestEnvironmentWorkloadFrozenManifestProjection(t *testing.T) {
 	deniedCallers := []string{}
 	app := state.App{ID: "app", StartCommand: "./changed-after-review", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeRequest}}
@@ -191,7 +207,7 @@ func TestEnvironmentWorkloadReviewedIntentReachesHeldImagingArtifact(t *testing.
 		t.Fatal(err)
 	}
 	notifier, builder := &fakeNotifier{}, &fakeBuilder{bytesOut: 4096}
-	handler := New(store, notifier, fakePuller{digest: image, cfg: oci.ImageConfig{Cmd: []string{"./image"}}}, builder, "./init", t.TempDir(), silentLogger())
+	handler := New(changedEnvironmentImageRuntimeStore{MemStore: store, appID: app.ID}, notifier, fakePuller{digest: image, cfg: oci.ImageConfig{Cmd: []string{"./image"}}}, builder, "./init", t.TempDir(), silentLogger())
 	payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "to": candidates[0].DeploymentID, "kind": "image"})
 	notification := db.Notification{Channel: db.NotifyEnvironmentWorkloadImage, Payload: string(payload)}
 	for attempt := 0; attempt < 2; attempt++ {

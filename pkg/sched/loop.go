@@ -1131,6 +1131,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.beatMain()
 		select {
 		case <-ctx.Done():
+			// Prime teardown uses a detached, bounded context. Join accepted
+			// work before Run returns so its instance-state write can finish
+			// while cmd/schedd still owns an open Postgres pool.
+			if !l.workPool().drainFor(2*DestroyTimeout + 5*time.Second) {
+				l.log.Warn("sched: timed out draining loop work during shutdown")
+			}
 			return nil
 		case n, ok := <-notif:
 			if !ok {
@@ -1880,6 +1886,20 @@ const maxConcurrentPrimes = 4
 
 const maxSnapshotPrimeAttempts = 2
 
+func snapshotPrimeInterruptedByShutdown(ctx context.Context, err error) bool {
+	if ctx == nil || err == nil {
+		return false
+	}
+	switch ctx.Err() {
+	case context.Canceled:
+		return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+	case context.DeadlineExceeded:
+		return errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded
+	default:
+		return false
+	}
+}
+
 func retryableSnapshotPrimeError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -1955,6 +1975,11 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 				"app", appID, "deployment", deploymentID, "attempt", attempt, "err", err)
 		}
 		if err != nil {
+			if snapshotPrimeInterruptedByShutdown(ctx, err) {
+				l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
+					"app", appID, "deployment", deploymentID, "err", err)
+				return
+			}
 			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
 			l.engine.markPrimeFailed(ctx, deploymentID, err)
 		}

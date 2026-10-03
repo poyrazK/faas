@@ -1545,6 +1545,17 @@ type DeploymentAudit struct {
 	AlertRuleID  pgtype.UUID
 }
 
+type DeploymentImagePreparation struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	InputPath    string
+	InputKey     string
+	InputBytes   int64
+	ClaimToken   pgtype.UUID
+	Phase        string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type DeploymentLog struct {
 	DeploymentID pgtype.UUID
 	Seq          int64

@@ -4786,6 +4786,34 @@ $$;
 
 
 --
+-- Name: notification_outbox_target_node(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notification_outbox_target_node(event_channel text, event_payload text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE
+    body jsonb;
+BEGIN
+    IF event_channel <> 'snapshot_boot' THEN
+        RETURN '';
+    END IF;
+    BEGIN
+        body := event_payload::jsonb;
+    EXCEPTION WHEN data_exception THEN
+        RETURN '';
+    END;
+    IF jsonb_typeof(body -> 'node_id') IS DISTINCT FROM 'string' THEN
+        RETURN '';
+    END IF;
+    -- Match Go strings.TrimSpace, including Unicode White_Space.
+    RETURN btrim(body ->> 'node_id', E' \t\n\013\f\r' ||
+        U&'\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000');
+END;
+$$;
+
+
+--
 -- Name: notify_deployment_alias_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8502,6 +8530,25 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: deployment_image_preparations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_image_preparations (
+    deployment_id uuid NOT NULL,
+    node_name text NOT NULL,
+    input_path text NOT NULL,
+    input_key text NOT NULL,
+    input_bytes bigint NOT NULL,
+    claim_token uuid NOT NULL,
+    phase text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_image_preparations_input_bytes_check CHECK ((input_bytes >= 0)),
+    CONSTRAINT deployment_image_preparations_input_path_check CHECK ((input_path <> ''::text)),
+    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text])))
 );
 
 
@@ -15746,6 +15793,14 @@ ALTER TABLE ONLY public.deployment_audit
 
 
 --
+-- Name: deployment_image_preparations deployment_image_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_logs deployment_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19822,6 +19877,13 @@ CREATE INDEX deployment_audit_deployment_idx ON public.deployment_audit USING bt
 
 
 --
+-- Name: deployment_image_preparations_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_image_preparations USING btree (updated_at, deployment_id) WHERE (phase <> 'handed_off'::text);
+
+
+--
 -- Name: deployment_logs_seq_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21681,6 +21743,13 @@ CREATE INDEX node_join_jobs_phase_idx ON public.node_join_jobs USING btree (phas
 --
 
 CREATE INDEX notification_outbox_claim_idx ON public.notification_outbox USING btree (channel, available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: notification_outbox_node_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX notification_outbox_node_claim_idx ON public.notification_outbox USING btree (channel, md5(public.notification_outbox_target_node(channel, payload)), available_at, id) WHERE (state = ANY (ARRAY['pending'::text, 'processing'::text]));
 
 
 --
@@ -26402,6 +26471,14 @@ ALTER TABLE ONLY public.deployment_aliases
 
 ALTER TABLE ONLY public.deployment_aliases
     ADD CONSTRAINT deployment_aliases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_image_preparations deployment_image_preparations_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_image_preparations
+    ADD CONSTRAINT deployment_image_preparations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

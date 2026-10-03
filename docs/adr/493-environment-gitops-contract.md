@@ -1777,3 +1777,9 @@ The all-secrets baseline excludes release-only migration credentials, and an
 explicit alias or version for such a credential cannot prove serving freshness.
 Memory and PostgreSQL receipt validation enforce this boundary; rollback keeps
 it in place.
+
+The resumable image-preparation integration projects the candidate's frozen app
+before selecting its build path, staging its runtime base, or completing the
+handoff. Shared runtime changes cannot change an already reviewed candidate's
+artifact preparation. The node-owned outbox retains the dedicated environment
+image channel; a held artifact handoff still grants no serving or release work.

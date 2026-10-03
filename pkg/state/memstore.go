@@ -158,6 +158,7 @@ type MemStore struct {
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
 	discoveryReceipts           map[string]struct{}
 	revisionPins                map[string]time.Time
+	imagePreparations           map[string]ImagePreparation
 	deploymentActivationMu      sync.Mutex
 	deploymentActivationLocks   map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
