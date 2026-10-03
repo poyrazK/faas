@@ -22,7 +22,11 @@ type lifecycleXMLNode struct {
 // dropped by encoding/xml's permissive struct decoder. No directives or PIs
 // other than an initial XML declaration are interpreted.
 func readLifecycleXML(body []byte) (*lifecycleXMLNode, error) {
-	if int64(len(body)) > api.MaxObjectLifecycleBodyBytes {
+	return readBoundedObjectXML(body, api.MaxObjectLifecycleBodyBytes, api.MaxObjectLifecycleXMLDepth, api.MaxObjectLifecycleXMLNodes)
+}
+
+func readBoundedObjectXML(body []byte, maxBytes int64, maxDepth, maxNodes int) (*lifecycleXMLNode, error) {
+	if int64(len(body)) > maxBytes {
 		return nil, ErrInvalid
 	}
 	d := xml.NewDecoder(bytes.NewReader(body))
@@ -43,7 +47,7 @@ func readLifecycleXML(body []byte) (*lifecycleXMLNode, error) {
 		switch v := token.(type) {
 		case xml.StartElement:
 			nodes++
-			if nodes > api.MaxObjectLifecycleXMLNodes || len(stack) >= api.MaxObjectLifecycleXMLDepth || v.Name.Space != "" && v.Name.Space != taggingXMLNamespace {
+			if nodes > maxNodes || len(stack) >= maxDepth || v.Name.Space != "" && v.Name.Space != taggingXMLNamespace {
 				return nil, ErrInvalid
 			}
 			for _, a := range v.Attr {

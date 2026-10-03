@@ -15,6 +15,7 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+
 --
 -- Name: citext; Type: EXTENSION; Schema: -; Owner: -
 --
@@ -23951,3 +23952,19 @@ CREATE TRIGGER object_lifecycle_multipart_fence BEFORE INSERT OR UPDATE ON publi
 
 ALTER TABLE ONLY public.object_storage_multipart_uploads
     ADD CONSTRAINT object_storage_multipart_uploads_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+-- ADR-410: owned notification intent. Extracted from the live schema dump.
+CREATE TABLE public.object_bucket_notifications (
+    bucket_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    CONSTRAINT object_bucket_notifications_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_notifications_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000)))
+);
+
+ALTER TABLE ONLY public.object_bucket_notifications
+    ADD CONSTRAINT object_bucket_notifications_pkey PRIMARY KEY (bucket_id);
+
+ALTER TABLE ONLY public.object_bucket_notifications
+    ADD CONSTRAINT object_bucket_notifications_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;

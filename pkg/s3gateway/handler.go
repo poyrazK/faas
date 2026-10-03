@@ -260,6 +260,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.routeLifecycleReadOrRemoval(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
 		return
 	}
+	if h.routeBucketNotifications(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
+		return
+	}
 	bodyLimit := h.maxPutBytes
 	if r.Method == http.MethodPut && r.URL.Query().Has("lifecycle") {
 		bodyLimit = api.MaxObjectLifecycleBodyBytes

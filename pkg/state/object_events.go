@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -61,8 +62,11 @@ func publishObjectEventTx(ctx context.Context, db sqlc.DBTX, account, identity, 
 	if err != nil {
 		return err
 	}
-	return mapErr(sqlc.New().ObjectMutationEventAppend(ctx, db, sqlc.ObjectMutationEventAppendParams{
-		AccountID: mustPgUUID(account), Payload: payload, At: objectUsageTime(now)}))
+	if err = sqlc.New().ObjectMutationEventAppend(ctx, db, sqlc.ObjectMutationEventAppendParams{
+		AccountID: mustPgUUID(account), Payload: payload, At: objectUsageTime(now)}); err != nil {
+		return mapErr(err)
+	}
+	return captureObjectNotifications(ctx, db, account, identity, typ, data)
 }
 
 func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data api.ObjectStorageEvent, now time.Time) error {
@@ -70,5 +74,22 @@ func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data 
 	if err != nil {
 		return err
 	}
-	return m.appendEventLocked("objectstorage", "event.published", &account, payload, nil, now)
+	b := m.objectBuckets[data.BucketID]
+	recipients, err := notificationRecipients(b, m.objectNotifications[b.ID], typ, data, m.notificationQueueLocked)
+	if err != nil {
+		return err
+	}
+	accountUUID, err := uuid.Parse(account)
+	if err != nil {
+		return err
+	}
+	key := accountUUID.String() + "\x00" + api.ObjectEventSource + "\x00" + identity
+	previous := m.eventFanout[key]
+	if err = m.appendEventLocked("objectstorage", "event.published", &account, payload, nil, now); err != nil {
+		return err
+	}
+	if previous == nil {
+		m.eventFanout[key].RecipientSnapshot = append(m.eventFanout[key].RecipientSnapshot, recipients...)
+	}
+	return nil
 }

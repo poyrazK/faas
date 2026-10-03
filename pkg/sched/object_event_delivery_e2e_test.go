@@ -34,12 +34,16 @@ type objectEventIntegrationStore interface {
 	state.EventSubscriptionStore
 	state.PublishedEventWorkStore
 	state.PublishedEventRecipientProgressStore
+	state.ObjectNotificationStore
+	state.ObjectCapacityStore
+	state.ObjectVersionInventoryStore
 }
 
 type objectDeliveryFaultStore struct {
 	state.Store
 	state.PublishedEventWorkStore
 	state.PublishedEventRecipientProgressStore
+	state.ObjectNotificationStore
 	enqueueApp, progressRecipient string
 	enqueueFailed, progressFailed bool
 }
@@ -260,5 +264,9 @@ func objectEventDeliveryEndToEnd(t *testing.T, st objectEventIntegrationStore, r
 	}
 	if calls.Load() != 1 {
 		t.Fatal("delivery retried a provider write", calls.Load())
+	}
+	objectNotificationsSDKEndToEnd(t, st, restart, account, b, client, app(account.ID, "queue-"), app(account.ID, "function-"))
+	if calls.Load() != 3 {
+		t.Fatal("notification intent called provider or delivery repeated mutation", calls.Load())
 	}
 }

@@ -7865,3 +7865,15 @@ const (
 	ObjectLifecycleRetry                     = 30 * time.Second
 	ObjectLifecycleSweepInterval             = time.Hour
 )
+
+// Notification configuration is bounded independently of object upload bodies.
+const (
+	MaxObjectNotificationRules                = 1000
+	MaxObjectNotificationIDRunes              = 255
+	MaxObjectNotificationEvents               = 10
+	MaxObjectNotificationFilterBytes          = 1024
+	MaxObjectNotificationQueueNameBytes       = 63
+	MaxObjectNotificationBodyBytes      int64 = 1 << 20
+	MaxObjectNotificationXMLDepth             = 6
+	MaxObjectNotificationXMLNodes             = MaxObjectNotificationRules*24 + 1
+)

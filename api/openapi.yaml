@@ -1748,6 +1748,65 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/notifications:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose notification policy is inspected., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Bucket whose notification configuration is managed., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketNotifications
+      summary: Read durable bucket notification rules
+      description: Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
+      tags: [storage]
+      responses:
+        '200':
+          description: Persisted notification configuration; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        default:
+          description: Notification policy access denied or the owned bucket was not found
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketNotifications
+      summary: Replace durable bucket notification rules
+      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectBucketNotificationsRequest' }
+      responses:
+        '200':
+          description: Normalized notification destinations, filters and configuration revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        default:
+          description: Invalid rule replacement, unavailable destination or unsupported event
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketNotifications
+      summary: Remove bucket notification rules
+      description: Requires storage manage scope and the bucket write grant. Clears future routing while accepted events retain captured destinations. Available while storage ingress is disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Cleared notification intent with its retained revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        default:
+          description: Policy removal denied or invalid ownership
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+
   /v1/apps/{slug}/buckets/{bucket}/lifecycle:
     parameters:
       - { name: slug, in: path, required: true, description: App whose lifecycle policy is inspected., schema: { type: string } }
@@ -24713,6 +24772,47 @@ components:
         method: { type: string, enum: [GET, HEAD, PUT] }
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
+
+    ObjectBucketNotificationsRequest:
+      type: object
+      description: Complete atomic replacement; an empty array clears notification intent.
+      additionalProperties: false
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObjectNotificationRule' }
+    ObjectBucketNotifications:
+      type: object
+      description: Durable normalized bucket notification configuration.
+      additionalProperties: false
+      required: [bucket_id, revision, rules]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObjectNotificationRule' }
+    ObjectNotificationRule:
+      type: object
+      description: Proven mutation routing to a Gregale function or existing enabled queue binding. Prefix and suffix are decoded strings; overlapping filters for the same event are rejected. IDs are generated when omitted.
+      additionalProperties: false
+      required: [destination, events]
+      properties:
+        id: { type: string, maxLength: 255 }
+        destination: { type: string, description: 'arn:gregale:lambda:REGION:ACCOUNT:function:APP_UUID or arn:gregale:sqs:REGION:ACCOUNT:APP_UUID/QUEUE_NAME' }
+        events:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload', 's3:ObjectRemoved:*', 's3:ObjectRemoved:Delete', 's3:ObjectRemoved:DeleteMarkerCreated', 's3:LifecycleExpiration:*', 's3:LifecycleExpiration:Delete', 's3:LifecycleExpiration:DeleteMarkerCreated']
+        prefix: { type: string, maxLength: 1024 }
+        suffix: { type: string, maxLength: 1024 }
 
     ObjectBucketLifecycleRequest:
       type: object

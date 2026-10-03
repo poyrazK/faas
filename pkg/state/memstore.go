@@ -169,6 +169,7 @@ type MemStore struct {
 	objectCapacityJobs        map[string]ObjectCapacityReconciliation
 	objectBucketVersioning    map[string]ObjectBucketVersioning
 	objectLifecyclePolicies   map[string]ObjectLifecyclePolicy
+	objectNotifications       map[string]api.ObjectBucketNotifications
 	objectLifecycleScans      map[string]ObjectLifecycleScan
 	objectDeletions           map[string]ObjectDeletion
 	objectVersionReferences   map[string]ObjectVersionIdentity
@@ -6333,6 +6334,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.objectBuckets {
 		if v.AppID == id {
 			delete(m.objectBuckets, key)
+			delete(m.objectNotifications, key)
 		}
 	}
 	filteredUsage := m.usage[:0]
@@ -20467,6 +20469,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectVersionObservations, bucketID)
 			delete(m.objectBucketVersioning, bucketID)
 			delete(m.objectLifecyclePolicies, bucketID)
+			delete(m.objectNotifications, bucketID)
 			for scanID, scan := range m.objectLifecycleScans {
 				if scan.BucketID == bucketID {
 					delete(m.objectLifecycleScans, scanID)

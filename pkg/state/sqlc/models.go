@@ -2660,6 +2660,12 @@ type ObjectBucketLifecycle struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type ObjectBucketNotification struct {
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
 type ObjectBucketVersioning struct {
 	BucketID         pgtype.UUID
 	DesiredStatus    string

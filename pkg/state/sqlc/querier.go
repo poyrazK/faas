@@ -1029,6 +1029,16 @@ type Querier interface {
 	ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error)
 	ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error)
 	ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error
+	ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error)
+	ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error
+	ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
+	ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error)
+	ObjectNotificationQueueDepth(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	ObjectNotificationTargetApp(ctx context.Context, db DBTX, arg ObjectNotificationTargetAppParams) (pgtype.UUID, error)
+	ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) (ObjectNotificationTargetQueueRow, error)
+	ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error)
+	ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error)
+	ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error
 	ObjectRouteWriteSettle(ctx context.Context, db DBTX, arg ObjectRouteWriteSettleParams) (int64, error)
 	ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error)
 	ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg ObjectS3BindingLockAppParams) (pgtype.UUID, error)

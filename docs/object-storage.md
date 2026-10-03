@@ -1489,5 +1489,88 @@ use the event identity to make external effects idempotent. Distinct mutations
 have no delivery-order guarantee. Failure/replay inspection uses the existing
 event delivery and fanout surfaces. Historical completions are not replayed.
 
-The S3 `?notification` configuration API, S3 `Records` envelope, queue targets and
-notifications for direct URL or provider-external writes remain unsupported.
+The owned S3 notification and queue profile is described below. Notifications
+for direct URL or provider-external writes still require authoritative proof.
+
+
+## S3 notification configuration
+
+Configure Gregale-owned destinations through signed S3 GET/PUT `?notification`,
+or `GET/PUT/DELETE /v1/apps/{slug}/buckets/{bucket}/notifications`. The control
+API requires storage manage, MFA and the bucket write grant. S3 GET requires
+bucket read and PUT requires bucket write. Bucket-write delegation includes
+selecting eligible destinations in the same account and bucket region.
+
+Function destinations use `arn:gregale:lambda:REGION:ACCOUNT_UUID:function:APP_UUID`.
+Queue destinations use `arn:gregale:sqs:REGION:ACCOUNT_UUID:APP_UUID/QUEUE_NAME` and
+require an existing enabled Gregale queue binding. AWS ARNs, SNS, EventBridge
+and skip-destination-validation are unsupported. Validation checks owned state
+and plan eligibility; it does not probe a function or send an AWS test message.
+
+```json
+{
+  "rules": [
+    {
+      "id": "new-images",
+      "destination": "arn:gregale:sqs:us-east-1:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222/storage",
+      "events": ["s3:ObjectCreated:*"],
+      "prefix": "images/",
+      "suffix": ".jpg"
+    }
+  ]
+}
+```
+
+Replace the example account, application, region and queue with your owned
+values. Control JSON filters are decoded strings. S3 XML `FilterRule` values
+use form URL encoding: `+` means space and `%2B` means a literal plus.
+Overlapping filters for intersecting event types are rejected. Rules are
+limited to 1,000, IDs to 255 Unicode characters, key filters to 1,024 UTF-8
+bytes, and configuration bodies to 1 MiB.
+
+```sh
+gregale bucket notifications set APP BUCKET_UUID notifications.json
+gregale bucket notifications get APP BUCKET_UUID
+gregale bucket notifications clear APP BUCKET_UUID
+```
+
+SDK methods are `GetObjectBucketNotifications`, `PutObjectBucketNotifications`
+and `DeleteObjectBucketNotifications` in Go; `StorageService` exposes their
+camel-case equivalents in Node; Python provides the corresponding storage
+API functions and typed `ObjectBucketNotificationsRequest`/`ObjectNotificationRule`.
+An empty rule array or empty S3 `NotificationConfiguration` clears intent.
+Reads and clearing stay available without provider access when ingress is disabled.
+
+Supported events are `s3:ObjectCreated:Put`, `Copy`, `CompleteMultipartUpload`;
+`s3:ObjectRemoved:Delete`, `DeleteMarkerCreated`; and
+`s3:LifecycleExpiration:Delete`, `DeleteMarkerCreated`, plus each group `:*`.
+Lifecycle expiration does not match customer `ObjectRemoved` events. POST
+uploads, tagging, restoration, replication and transition notifications are
+not implemented by this profile.
+
+Matching functions receive an async POST and queues receive a named queue
+message containing `{"Records":[...]}`. Records use event schema 2.1, an event
+name without `s3:`, logical bucket name, configuration ID, form-encoded key,
+confirmed size/ETag when known and the owned public version selector. Queue
+messages use the binding retry configuration captured with the mutation.
+Gregale event headers provide stable identity for deduplicating external effects.
+There is no provider sequencer, request/actor provenance or ordering promise.
+The bucket ARN uses the Gregale partition; private placement and provider
+version IDs are never included.
+
+Configuration replacement/removal cannot redirect accepted events. A queue
+binding removed and recreated with the same name is a different destination
+for an accepted receipt. Full queues retry through durable fanout; exhausted
+retries and removed destinations appear in the existing event failure and
+operator replay surfaces. A lost delivery checkpoint reuses the committed
+invocation without taking another queue slot. Application execution retains
+normal retries, queue consumers, account concurrency and dead-letter handling.
+Direct URL and provider-external mutations still have no authoritative event
+proof; no historical mutation backfill occurs. See
+[ADR-410](adr/410-owned-s3-notification-destinations.md).
+
+Roll out notification-capable scheduler consumers before updating mutation
+producers and exposing configuration to customers. Older scheduler consumers
+do not understand the captured queue-delivery metadata. Downgrade is blocked
+while active configuration or notification snapshots remain in the durable
+fanout ledger, including retained delivered receipts.

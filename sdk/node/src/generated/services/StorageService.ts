@@ -13,6 +13,8 @@ import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGr
 import type { ObjectBucketLifecycle } from '../models/ObjectBucketLifecycle.js';
 import type { ObjectBucketLifecycleRequest } from '../models/ObjectBucketLifecycleRequest.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectBucketNotifications } from '../models/ObjectBucketNotifications.js';
+import type { ObjectBucketNotificationsRequest } from '../models/ObjectBucketNotificationsRequest.js';
 import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
 import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
@@ -942,6 +944,97 @@ export class StorageService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read durable bucket notification rules
+   * Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
+   * @returns ObjectBucketNotifications Persisted notification configuration; Cache-Control no-store
+   * @returns Problem Notification policy access denied or the owned bucket was not found
+   * @throws ApiError
+   */
+  public static getObjectBucketNotifications({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Replace durable bucket notification rules
+   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+   * @returns ObjectBucketNotifications Normalized notification destinations, filters and configuration revision
+   * @returns Problem Invalid rule replacement, unavailable destination or unsupported event
+   * @throws ApiError
+   */
+  public static putObjectBucketNotifications({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketNotificationsRequest,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove bucket notification rules
+   * Requires storage manage scope and the bucket write grant. Clears future routing while accepted events retain captured destinations. Available while storage ingress is disabled.
+   * @returns ObjectBucketNotifications Cleared notification intent with its retained revision
+   * @returns Problem Policy removal denied or invalid ownership
+   * @throws ApiError
+   */
+  public static deleteObjectBucketNotifications({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose notification policy is inspected.
+     */
+    slug: string,
+    /**
+     * Bucket whose notification configuration is managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
     });
   }
   /**

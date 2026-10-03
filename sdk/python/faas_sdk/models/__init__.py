@@ -1074,6 +1074,8 @@ from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermis
 from .object_bucket_lifecycle import ObjectBucketLifecycle
 from .object_bucket_lifecycle_request import ObjectBucketLifecycleRequest
 from .object_bucket_list import ObjectBucketList
+from .object_bucket_notifications import ObjectBucketNotifications
+from .object_bucket_notifications_request import ObjectBucketNotificationsRequest
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -1104,6 +1106,8 @@ from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
 from .object_multipart_upload import ObjectMultipartUpload
 from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
+from .object_notification_rule import ObjectNotificationRule
+from .object_notification_rule_events_item import ObjectNotificationRuleEventsItem
 from .object_s3_credential import ObjectS3Credential
 from .object_s3_credential_list import ObjectS3CredentialList
 from .object_s3_credential_permission import ObjectS3CredentialPermission
@@ -3042,6 +3046,10 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketNotifications",
+    "ObjectBucketNotificationsRequest",
+    "ObjectNotificationRule",
+    "ObjectNotificationRuleEventsItem",
     "ObjectBucketLifecycle",
     "ObjectBucketLifecycleRequest",
     "ObjectBucketList",

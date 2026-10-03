@@ -570,6 +570,8 @@ export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGra
 export type { ObjectBucketLifecycle } from './models/ObjectBucketLifecycle.js';
 export type { ObjectBucketLifecycleRequest } from './models/ObjectBucketLifecycleRequest.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
+export type { ObjectBucketNotifications } from './models/ObjectBucketNotifications.js';
+export type { ObjectBucketNotificationsRequest } from './models/ObjectBucketNotificationsRequest.js';
 export type { ObjectBucketVersioning } from './models/ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './models/ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
@@ -586,6 +588,7 @@ export type { ObjectMultipartPartList } from './models/ObjectMultipartPartList.j
 export type { ObjectMultipartPartSignRequest } from './models/ObjectMultipartPartSignRequest.js';
 export type { ObjectMultipartUpload } from './models/ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './models/ObjectMultipartUploadList.js';
+export type { ObjectNotificationRule } from './models/ObjectNotificationRule.js';
 export type { ObjectS3Credential } from './models/ObjectS3Credential.js';
 export type { ObjectS3CredentialList } from './models/ObjectS3CredentialList.js';
 export type { ObjectS3CredentialSecret } from './models/ObjectS3CredentialSecret.js';

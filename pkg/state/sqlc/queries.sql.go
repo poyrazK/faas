@@ -13722,6 +13722,204 @@ func (q *Queries) ObjectMutationEventAppend(ctx context.Context, db DBTX, arg Ob
 	return err
 }
 
+const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
+SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1
+`
+
+type ObjectNotificationInvocationExistingRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Source    string
+	QueueName string
+	Payload   []byte
+}
+
+func (q *Queries) ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error) {
+	row := db.QueryRow(ctx, objectNotificationInvocationExisting, id)
+	var i ObjectNotificationInvocationExistingRow
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.QueueName,
+		&i.Payload,
+	)
+	return i, err
+}
+
+const objectNotificationInvocationInsert = `-- name: ObjectNotificationInvocationInsert :exec
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9)
+`
+
+type ObjectNotificationInvocationInsertParams struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	Source      string
+	QueueName   string
+	Payload     []byte
+	Headers     []byte
+	DueAt       pgtype.Timestamptz
+	RetryPolicy []byte
+}
+
+func (q *Queries) ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error {
+	_, err := db.Exec(ctx, objectNotificationInvocationInsert,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Source,
+		arg.QueueName,
+		arg.Payload,
+		arg.Headers,
+		arg.DueAt,
+		arg.RetryPolicy,
+	)
+	return err
+}
+
+const objectNotificationLockAccount = `-- name: ObjectNotificationLockAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectNotificationLockAccount, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const objectNotificationLockApp = `-- name: ObjectNotificationLockApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE
+`
+
+type ObjectNotificationLockAppParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationLockApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationQueueDepth = `-- name: ObjectNotificationQueueDepth :one
+SELECT count(*) FROM invocations WHERE app_id=$1 AND source='queue' AND state IN ('pending','dispatching')
+`
+
+func (q *Queries) ObjectNotificationQueueDepth(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectNotificationQueueDepth, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectNotificationTargetApp = `-- name: ObjectNotificationTargetApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted'
+`
+
+type ObjectNotificationTargetAppParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationTargetApp(ctx context.Context, db DBTX, arg ObjectNotificationTargetAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectNotificationTargetApp, arg.ID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :one
+SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled
+`
+
+type ObjectNotificationTargetQueueParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+type ObjectNotificationTargetQueueRow struct {
+	ID          pgtype.UUID
+	RetryPolicy []byte
+}
+
+func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) (ObjectNotificationTargetQueueRow, error) {
+	row := db.QueryRow(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	var i ObjectNotificationTargetQueueRow
+	err := row.Scan(&i.ID, &i.RetryPolicy)
+	return i, err
+}
+
+const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || $1::jsonb
+WHERE account_id=$2::uuid AND source='gregale.storage' AND event_id=$3::text
+AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification')
+`
+
+type ObjectNotificationsCaptureParams struct {
+	Recipients []byte
+	AccountID  pgtype.UUID
+	EventID    string
+}
+
+func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNotificationsCapture, arg.Recipients, arg.AccountID, arg.EventID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
+SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
+WHERE n.bucket_id=$1
+`
+
+type ObjectNotificationsGetRow struct {
+	Revision  int64
+	Rules     []byte
+	Name      string
+	Region    string
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
+	row := db.QueryRow(ctx, objectNotificationsGet, bucketID)
+	var i ObjectNotificationsGetRow
+	err := row.Scan(
+		&i.Revision,
+		&i.Rules,
+		&i.Name,
+		&i.Region,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+`
+
+type ObjectNotificationsSaveParams struct {
+	BucketID pgtype.UUID
+	Revision int64
+	Rules    []byte
+}
+
+func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
+	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	return err
+}
+
 const objectRouteWriteSettle = `-- name: ObjectRouteWriteSettle :execrows
 UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt
 `

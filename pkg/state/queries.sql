@@ -5257,6 +5257,42 @@ INSERT INTO events (actor, kind, subject, data, at)
 VALUES ('objectstorage', 'event.published', sqlc.arg(account_id)::uuid,
         sqlc.arg(payload)::jsonb, sqlc.arg(at)::timestamptz);
 
+-- name: ObjectNotificationsGet :one
+SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
+WHERE n.bucket_id=$1;
+
+-- name: ObjectNotificationsSave :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules;
+
+-- name: ObjectNotificationsCapture :execrows
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || sqlc.arg(recipients)::jsonb
+WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
+AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+
+-- name: ObjectNotificationTargetApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
+
+-- name: ObjectNotificationTargetQueue :one
+SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled;
+
+-- name: ObjectNotificationLockAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: ObjectNotificationLockApp :one
+SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE;
+
+-- name: ObjectNotificationInvocationExisting :one
+SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1;
+
+-- name: ObjectNotificationQueueDepth :one
+SELECT count(*) FROM invocations WHERE app_id=$1 AND source='queue' AND state IN ('pending','dispatching');
+
+-- name: ObjectNotificationInvocationInsert :exec
+INSERT INTO invocations (id,app_id,account_id,source,queue_name,payload,headers,due_at,method,path,retry_policy)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'POST','/',$9);
+
 -- name: ObjectTrackedUploadDue :many
 SELECT * FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
  AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1;
