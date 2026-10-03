@@ -1,4 +1,5 @@
 // adr: 401
+// adr: 403
 package fcvm
 
 import (
@@ -94,8 +95,7 @@ func (m *Manager) checkNamespaceContext(owned resourceAsset) error {
 	return nil
 }
 
-// Prepared spares have no guest lease record. Their live observations stay in
-// memory until claim; startup inventory still quarantines any renamed survivor.
+// Spares and pending handoffs resolve their durable network-only record.
 func (m *Manager) namespaceJournal(instance string) (*ResourceJournal, error) {
 	if m.resourceJournal == nil {
 		return nil, nil
@@ -204,6 +204,9 @@ func (m *Manager) removeNamespaceForRebuild(ctx context.Context, nc netns.Config
 func (m *Manager) checkpointPreparedNamespace(nc netns.Config) error {
 	if m.resourceJournal == nil {
 		return nil
+	}
+	if committed, err := m.preparedCheckpointCommitted(nc); committed || err != nil {
+		return err
 	}
 	if err := m.checkOwnedNamespace(nc.Netns); err != nil {
 		return err

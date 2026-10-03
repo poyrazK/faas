@@ -1,4 +1,5 @@
 // adr: 402
+// adr: 403
 package fcvm
 
 import (
@@ -59,7 +60,7 @@ func (j *ResourceJournal) checkpointLink(instance, path string, link resourceLin
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
 	if !ok {
 		return errors.New("veth checkpoint requires lease intent")
 	}

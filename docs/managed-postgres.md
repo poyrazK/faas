@@ -553,7 +553,7 @@ precede mkdir/namespace creation; checkpoints precede staging and policy setup.
 The running owner refuses changed directory or namespace bindings, checks for
 remaining jail mounts, and retains failed retirement for retry. Prepared alias
 transfer preserves the namespace inode and captures its new mount ID before
-policy retarget or guest launch. Crash-safe prepared handoff,
+policy retarget or guest launch. ADR-403 adds durable handoff intent;
 complete resource incarnations and verified restart cleanup remain pending.
 These observations do not grant a replacement daemon lifecycle ownership.
 The final nested-node [asset diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
@@ -569,11 +569,27 @@ the slot. Live private-link replacement uses the same fence, including failed
 attachments not yet published to Config. Prepared claims persist observations
 before policy or guest start. The creation address is not privileged-process
 authentication, and Linux has no atomic address compare-and-delete. Reopened journals still grant
-no cleanup authority; crash-safe prepared handoff remains pending.
+no cleanup authority.
 
 The [link diagnostics](ops/evidence/20261003-managed-postgres-resource-links/README.md)
 passed 49 selected top-level tests, full macOS fcvm/vmmd race suites, bounded Linux
 regressions and three leak checks. Native lifecycle acceptance remains pending.
+
+Version-5 prepared-network records commit a network-only spare before creation
+and its target before namespace alias movement
+([ADR-403](adr/403-managed-postgres-prepared-network-journal.md)). One stable source
+filename survives guest adoption, which atomically commits the validated guest
+lease and transferred checkpoints before staging, policy or launch. Spares have
+no VM admission or process state. Live cleanup retires the record before returning
+the slot. Restart quarantines both identities and the slot, including interrupted
+alias movement, and skips name-based spare deletion. Reopened records never grant
+cleanup authority or return spares to the ready pool. Automatic reclamation,
+serving recovery and physical alias power-loss qualification remain pending.
+
+The [handoff diagnostics](ops/evidence/20261003-managed-postgres-prepared-handoff/README.md)
+passed 71 selected top-level tests, five real process-crash checkpoints,
+full Linux/macOS race suites and three lifecycle leak checks. Native lifecycle
+acceptance remains pending.
 
 Prepare and Verify never install the customer-cutover fence. Existing VMs and SQL
 sessions still require scheduler drain; atomic publication and customer activation remain

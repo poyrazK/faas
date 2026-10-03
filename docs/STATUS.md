@@ -77,11 +77,20 @@ Version-4 veth assets add atomic creation addresses, interface indices and vmmd
 network namespace context ([ADR-402](adr/402-managed-postgres-resource-links.md)).
 Live owners fence ordinary/prepared teardown and private-link reconciliation;
 indexed host-link deletion precedes namespace deletion. Prepared claims persist
-link provenance before policy or guest start. Crash-safe prepared handoff and
-verified restart cleanup remain pending.
+link provenance before policy or guest start. ADR-403 extends this with durable
+spares and handoff intent; verified restart cleanup remains pending.
 Its nested-node [diagnostics](ops/evidence/20261003-managed-postgres-resource-links/README.md)
 passed 49 selected top-level tests, full macOS race suites and three leak
 checks, including real foreign veth/dummy links, renames and prepared reuse.
+Version-5 records preserve one stable spare filename through transfer intent and
+validated guest adoption ([ADR-403](adr/403-managed-postgres-prepared-network-journal.md)).
+Startup quarantines source, target and slot; journal-enabled startup skips
+name-based spare deletion. Live cleanup retires the durable record before slot
+release. Automatic restart reclamation and filesystem power-loss qualification
+remain pending.
+The [handoff diagnostics](ops/evidence/20261003-managed-postgres-prepared-handoff/README.md)
+passed 71 selected top-level tests, five real process-crash checkpoints,
+full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 

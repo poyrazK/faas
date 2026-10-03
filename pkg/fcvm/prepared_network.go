@@ -1,3 +1,4 @@
+// adr: 403
 package fcvm
 
 import (
@@ -111,7 +112,7 @@ func (m *Manager) ClosePreparedNetworks() error {
 // pool with apps on 8080. The full resulting config is checked again after
 // Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
-	if !req.Plan.Valid() || req.ExportDir != "" || req.StaticEgressIP != "" ||
+	if !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
 		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
@@ -164,6 +165,12 @@ func (p *preparedNetworkPool) claim(instance string, policy preparedNetworkPolic
 	oldInstance := entry.config.Instance
 	oldNS := entry.config.Netns
 	entry.lease, entry.adopted = lease, true
+	if j := p.m.resourceJournal; j != nil {
+		if err := j.transferPrepared(oldInstance, instance); err != nil {
+			p.discard(*entry)
+			return nil
+		}
+	}
 	if err := p.move(oldNS, lease.Netns); err != nil {
 		// move rolls back the new binding on failure. No VMM has started;
 		// destroy the old namespace before releasing the adopted slot.
@@ -254,7 +261,12 @@ func (p *preparedNetworkPool) fill() {
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
-		err = p.m.setupNetwork(ctx, nc)
+		if j := p.m.resourceJournal; j != nil {
+			err = j.beginPrepared(lease)
+		}
+		if err == nil {
+			err = p.m.setupNetwork(ctx, nc)
+		}
 		cancel()
 		if err != nil {
 			p.discard(e)
@@ -302,6 +314,15 @@ func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
 		p.mu.Unlock()
 		p.m.log.Error("prepared network survived teardown; retaining slot", "netns", e.config.Netns, "slot", e.lease.Slot)
 		return
+	}
+	if j := p.m.resourceJournal; j != nil {
+		if err := j.forgetPrepared(leaseForSlot(e.config.Instance, e.lease.Slot)); err != nil {
+			p.mu.Lock()
+			p.retired = append(p.retired, e)
+			p.mu.Unlock()
+			p.m.log.Error("prepared record retirement failed; retaining slot", "slot", e.lease.Slot, "err", err)
+			return
+		}
 	}
 	if e.adopted {
 		_ = p.m.alloc.Release(e.lease.Instance)

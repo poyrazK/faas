@@ -1,4 +1,5 @@
 // adr: 399
+// adr: 403
 package fcvm
 
 import (
@@ -41,10 +42,11 @@ type resourceProcessIdentity struct {
 }
 
 type resourceJournalRecord struct {
-	Version int                      `json:"version"`
-	Lease   Lease                    `json:"lease"`
-	Process *resourceProcessIdentity `json:"process,omitempty"`
-	Assets  []resourceAsset          `json:"assets,omitempty"`
+	Version  int                      `json:"version"`
+	Lease    Lease                    `json:"lease"`
+	Process  *resourceProcessIdentity `json:"process,omitempty"`
+	Assets   []resourceAsset          `json:"assets,omitempty"`
+	Prepared *resourcePreparedNetwork `json:"prepared,omitempty"`
 }
 
 func resourceRecordName(id string) string {
@@ -145,6 +147,7 @@ func (j *ResourceJournal) load() error {
 		return err
 	}
 	slots := make(map[int]bool)
+	identities := make(map[string]bool)
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == ".lock" {
@@ -163,8 +166,21 @@ func (j *ResourceJournal) load() error {
 		if err != nil {
 			return err
 		}
-		if name != resourceRecordName(r.Lease.Instance) || slots[r.Lease.Slot] || len(j.records) >= MaxSlots {
+		if name != resourceRecordName(r.storageIdentity()) || slots[r.Lease.Slot] || len(j.records) >= MaxSlots {
 			return errors.New("resource journal: ambiguous record identity or slot")
+		}
+		for _, id := range []string{r.storageIdentity(), r.Lease.Instance, preparedTarget(r)} {
+			if id == "" {
+				continue
+			}
+			if identities[id] {
+				return errors.New("resource journal: overlapping prepared identity")
+			}
+		}
+		for _, id := range []string{r.storageIdentity(), r.Lease.Instance, preparedTarget(r)} {
+			if id != "" {
+				identities[id] = true
+			}
 		}
 		slots[r.Lease.Slot] = true
 		j.records[r.Lease.Instance] = r
@@ -205,7 +221,7 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if (r.Version < 1 || r.Version > 4) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || !l.Plan.Valid() || l.MemoryMaxMiB <= 0 {
+	if (r.Version < 1 || r.Version > 5) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)
@@ -215,24 +231,30 @@ func (r resourceJournalRecord) validate() error {
 	if r.Process != nil && (r.Process.PID <= 1 || r.Process.StartTicks == 0 || !looksLikeInstanceID(r.Process.BootID)) {
 		return errors.New("invalid resource journal process incarnation")
 	}
+	if err := r.validatePrepared(); err != nil {
+		return err
+	}
 	return r.validateAssets()
 }
 
 func (j *ResourceJournal) begin(l Lease) error {
+	return j.beginRecord(resourceJournalRecord{Version: 3, Lease: l})
+}
+
+func (j *ResourceJournal) beginRecord(r resourceJournalRecord) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r := resourceJournalRecord{Version: 3, Lease: l}
 	if err := r.validate(); err != nil {
 		return err
 	}
-	if _, ok := j.records[l.Instance]; ok {
+	if _, ok := j.recordForInstance(r.Lease.Instance); ok {
 		return errors.New("resource journal: instance already recorded")
 	}
 	for _, old := range j.records {
-		if old.Lease.Slot == l.Slot {
+		if old.Lease.Slot == r.Lease.Slot {
 			return errors.New("resource journal: slot already recorded")
 		}
 	}
@@ -283,8 +305,11 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	if err != nil {
 		return err
 	}
-	if err = j.dir.Rename(name, resourceRecordName(r.Lease.Instance)); err != nil {
+	if err = j.dir.Rename(name, resourceRecordName(r.storageIdentity())); err != nil {
 		return err
+	}
+	if r.Prepared != nil {
+		delete(j.records, r.Prepared.Source)
 	}
 	j.records[r.Lease.Instance] = r
 	return j.directorySync()
@@ -298,20 +323,24 @@ func (j *ResourceJournal) forget(l Lease) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[l.Instance]
+	r, ok := j.recordForInstance(l.Instance)
 	if !ok {
 		return nil
 	} // Validation failures can precede journal intent.
-	if !resourceLeaseMatches(r.Lease, l) {
+	if !resourceLeaseMatches(r.Lease, l) && !pendingPreparedLeaseMatches(r, l) {
 		return errors.New("resource journal: cleanup lease does not match")
 	}
-	if err := j.dir.Remove(resourceRecordName(l.Instance)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	return j.forgetRecord(r)
+}
+
+func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
+	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err := j.directorySync(); err != nil {
 		return err
 	}
-	delete(j.records, l.Instance)
+	delete(j.records, r.Lease.Instance)
 	return nil
 }
 
@@ -324,6 +353,10 @@ func (j *ResourceJournal) snapshot() ([]resourceJournalRecord, error) {
 	items := make([]resourceJournalRecord, 0, len(j.records))
 	for _, r := range j.records {
 		r.Assets = cloneResourceAssets(r.Assets)
+		if r.Prepared != nil {
+			p := *r.Prepared
+			r.Prepared = &p
+		}
 		if r.Process != nil {
 			p := *r.Process
 			r.Process = &p
@@ -339,7 +372,11 @@ func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, 
 	if j.closed {
 		return resourceJournalRecord{}, false, errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
+	if r.Prepared != nil {
+		p := *r.Prepared
+		r.Prepared = &p
+	}
 	r.Assets = cloneResourceAssets(r.Assets)
 	if r.Process != nil {
 		p := *r.Process
@@ -379,6 +416,9 @@ func (m *Manager) WithResourceJournal(j *ResourceJournal) error {
 func (m *Manager) journalLease(l Lease) error {
 	if m.resourceJournal == nil {
 		return nil
+	}
+	if adopted, err := m.adoptPreparedJournal(l); adopted || err != nil {
+		return err
 	}
 	if err := m.resourceJournal.begin(l); err != nil {
 		return fmt.Errorf("commit resource intent for %s: %w", l.Instance, err)

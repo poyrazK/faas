@@ -1,6 +1,7 @@
 //go:build linux && metal
 
 // adr: 401
+// adr: 403
 package fcvm
 
 import (
@@ -42,6 +43,16 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 		_ = m.run.Run(ctx, []string{"ip", "netns", "del", "fc-" + idLive})
 		leakcheck.AssertZero(t)
 	})
+	if err := j.beginPrepared(l); err != nil {
+		t.Fatal(err)
+	}
+	creator, err := resourcePlacementContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.addAsset(l.Instance, resourceAsset{Kind: "netns", Path: filepath.Join("/run/netns", nc.Netns), Namespace: creator}); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.run.Run(t.Context(), []string{"ip", "netns", "add", nc.Netns}); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +61,9 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 		t.Fatalf("prepared nsfs observation: %v", err)
 	}
 	m.rememberNamespace(nc.Netns, *a)
+	if err := j.checkpointAsset(l.Instance, a.Path, *a.File, a.Mount); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.runJournalIPSetup(t.Context(), nc, [][]string{{"ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer}}); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +77,7 @@ func TestMetalResourcePlacementPreparedAlias(t *testing.T) {
 	}
 	t.Cleanup(func() { p.discard(*e); leakcheck.AssertZero(t) })
 	claimed := journalTestLease(idLive, e.lease.Slot)
-	if err := j.begin(claimed); err != nil {
+	if err := m.journalLease(claimed); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.checkpointPreparedNamespace(e.config); err != nil {

@@ -953,10 +953,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
-	// Recover only unused cache names from a previous daemon, including when
-	// an operator has disabled the cache. Active instance names are excluded.
+	// ADR-403: journal survivors remain quarantined. The legacy name reaper
+	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
-	preparedCleanupErr := fcvm.ReapPreparedNetworks(preparedCleanupCtx, wire.ExecRunner{})
+	var preparedCleanupErr error
+	if resourceJournal == nil {
+		preparedCleanupErr = fcvm.ReapPreparedNetworks(preparedCleanupCtx, wire.ExecRunner{})
+	} // Journal survivors require verified recovery, never name-based deletion.
 	preparedCleanupCancel()
 	if preparedCleanupErr != nil {
 		return fmt.Errorf("vmmd: recover prepared networks: %w", preparedCleanupErr)

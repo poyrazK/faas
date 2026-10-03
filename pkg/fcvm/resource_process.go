@@ -1,4 +1,5 @@
 // adr: 399
+// adr: 403
 package fcvm
 
 import (
@@ -64,6 +65,9 @@ func (v *JailerVMM) prepareJournalLaunch(l Lease) error {
 		return err
 	}
 	if ok {
+		if r.preparedSpare() {
+			return errors.New("resource journal: spare requires committed guest intent before launch")
+		}
 		if !resourceLeaseMatches(r.Lease, l) {
 			return errors.New("resource journal: launch lease mismatch")
 		}
@@ -99,6 +103,12 @@ func (inv *restartInventory) reconcileJournal(ctx context.Context, j *ResourceJo
 		}
 		inv.slots[r.Lease.Slot] = struct{}{}
 		inv.instances[r.Lease.Instance] = struct{}{}
+		if r.Prepared != nil {
+			inv.instances[r.Prepared.Source] = struct{}{}
+			if r.Prepared.Target != "" {
+				inv.instances[r.Prepared.Target] = struct{}{}
+			}
+		}
 		if r.Process == nil {
 			continue
 		}

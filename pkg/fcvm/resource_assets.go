@@ -1,5 +1,6 @@
 // adr: 400
 // adr: 402
+// adr: 403
 package fcvm
 
 import (
@@ -150,7 +151,7 @@ func (j *ResourceJournal) checkpointBindTarget(instance, path string, file resou
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
 	if !ok {
 		return errors.New("bind target checkpoint requires lease intent")
 	}
@@ -178,7 +179,7 @@ func (j *ResourceJournal) addAsset(instance string, a resourceAsset) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
 	if !ok {
 		return errors.New("resource asset requires committed lease intent")
 	}
@@ -188,7 +189,7 @@ func (j *ResourceJournal) addAsset(instance string, a resourceAsset) error {
 	if r.Version < 3 && (a.Kind == "jail" || a.Kind == "netns") {
 		r.Version = 3
 	}
-	if a.Kind == "veth" {
+	if a.Kind == "veth" && r.Version < 4 {
 		r.Version = 4
 	}
 	r.Assets = append(cloneResourceAssets(r.Assets), a)
@@ -204,7 +205,7 @@ func (j *ResourceJournal) checkpointAsset(instance, path string, file resourceFi
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
 	if !ok {
 		return errors.New("resource checkpoint requires lease intent")
 	}
@@ -231,7 +232,7 @@ func (j *ResourceJournal) retireAsset(instance, path string) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	r, ok := j.records[instance]
+	r, ok := j.recordForInstance(instance)
 	if !ok {
 		return errors.New("resource retirement requires lease intent")
 	}

@@ -1,4 +1,5 @@
 // adr: 401
+// adr: 403
 package fcvm
 
 import (
@@ -318,7 +319,7 @@ func TestResourcePlacementPreparedTransfer(t *testing.T) {
 		t.Fatal("prepared claim failed")
 	}
 	l := journalTestLease(idLive, e.lease.Slot)
-	if err := j.begin(l); err != nil {
+	if err := m.journalLease(l); err != nil {
 		t.Fatal(err)
 	}
 	if hit, err := m.setupWakeNetwork(t.Context(), e.config, e); !hit || err != nil {
