@@ -4898,3 +4898,45 @@ complete run uses a fresh unmigrated bootstrap and isolated migrated test
 databases. Full-repository/lint/native/provider acceptance is not claimed. Pin
 retirement and account/project deletion integration remain required along with
 complete database/global provisioning and independent dataset completion.
+
+### Private target SQL pin worker composition (2026-10-03)
+
+The private worker now composes retained source inventory, authenticated target
+bootstrap inspection, encryption and durable pin ownership. It validates the
+frozen source/version/backend against the original inventory, then checks fresh
+snapshot/adopted-capture/prepared-target records before inspection. Shared SQL
+preparation also checks the exact retained snapshot ID, point and creation time
+against sealed inventory scope; the selected-database import worker uses that
+same preparation. No provider observation can replace a committed pin receipt.
+
+A committed-but-lost record reply recovers the original encrypted descriptor
+without another inspection. Rotation uses the original retained recipient key
+and requires neither the managed service nor a current encryption recipient.
+Missing decryption keys or damaged committed bytes preserve ownership and return
+an error. In-flight target catalogue changes cannot become a committed receipt.
+This operation performs identity capture only: complete database/global
+provisioning, durable DDL dispatch and final dataset proof remain separate work.
+
+Verification: all 47 focused APID clone/coordinator contracts pass against
+isolated PostgreSQL 16 with no skips (106.269 s), including three new worker
+contracts. They read real target SQL OIDs, encrypt/recover exact pins, inject a
+committed lost reply, hand off the worker, rotate keys and recover with provider
+inspection disabled. Other cases reject absent/unreadable keys, source-version
+and stale-lease substitution, provider/observation failure, damaged ciphertext and
+in-flight catalogue ownership drift without another capture or publication.
+Physical provider/native capture metadata is synthetic; the composition fixture
+uses administrator SQL. Ordinary-owner/fixed-bootstrap privileges and local
+provider SQL placement are qualified separately by their existing contracts.
+
+The APID overlay keeps all 453 production source files; the state overlay keeps
+all 538 production source files. Both replace only test declarations. Together
+with archive and state verification, 90 focused contracts pass, including ten new
+contracts. Normal state/managedpostgres/Neon/archive/APID production builds,
+state/archive vet and focused APID vet pass. Complete verification explicitly
+provides the fixed PostgreSQL dump executable; earlier exploratory runs omitted
+that test input and their skipped results are excluded. Public clone admission
+and coordinator wiring remain closed/unchanged. Full database/global
+materialization and dataset verification, unknown-write recovery and ownership
+retirement, writer closure/common-point capture, object/configuration completeness,
+production-preserving promotion/rollback and remote/native acceptance remain
+required for the full one-command stage workflow.

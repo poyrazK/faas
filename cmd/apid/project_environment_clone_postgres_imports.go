@@ -116,35 +116,13 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 
 func (s *server) projectEnvironmentClonePostgresImportSQLRequest(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
 	d copyinventory.DatabaseExport, target copyarchive.RestoreTarget) (managedpostgres.SnapshotCopyTargetDatabaseSQLRequest, error) {
-	snapshots, snapshotOK := s.store.(state.ProjectEnvironmentClonePostgresSnapshotStore)
-	captures, captureOK := s.store.(state.ProjectEnvironmentClonePostgresSnapshotRestoreStore)
-	targets, targetOK := s.store.(state.ProjectEnvironmentClonePostgresCopyTargetStore)
-	if !snapshotOK || !captureOK || !targetOK {
-		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, managedpostgres.ErrUnavailable
-	}
-	snapshot, err := snapshots.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, lease, source.source.ID)
-	if err == nil {
-		err = validateClonePostgresSnapshotPlan(lease.Operation, source, snapshot)
-	}
+	preparation, actual, err := s.projectEnvironmentClonePostgresTargetSQLPreparation(ctx, lease, source, d.Scope)
 	if err != nil {
 		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, err
 	}
-	capture, err := captures.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(ctx, lease, source.source.ID)
-	if err != nil {
-		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, err
-	}
-	actual, err := targets.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, lease, source.source.ID)
-	if err != nil {
-		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, err
-	}
-	if snapshot.State != "retained" || capture.State != "adopted" || capture.AdoptedDatabaseID != d.Scope.CaptureDatabaseID || capture.TargetProviderResourceID != d.Scope.CaptureProviderResourceID ||
-		!capture.TargetCreatedAt.Equal(d.Scope.CaptureCreatedAt) || actual.State != "prepared" || actual.TargetDatabaseID != target.OwnerID || actual.ProviderResourceID != target.ProviderResourceID ||
+	if actual.TargetDatabaseID != target.OwnerID || actual.ProviderResourceID != target.ProviderResourceID ||
 		!actual.ProviderCreatedAt.Equal(target.ProviderCreatedAt) {
 		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, managedpostgres.ErrConflict
 	}
-	return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{Target: target, Preparation: managedpostgres.SnapshotCopyTargetRequest{
-		ResourceID: actual.TargetDatabaseID, ExpectedProviderResourceID: actual.ProviderResourceID, ExpectedCreatedAt: actual.ProviderCreatedAt,
-		SnapshotCreatedAt: snapshot.SnapshotCreatedAt, CaptureCreatedAt: capture.TargetCreatedAt,
-		Capture: managedpostgres.SnapshotRestoreRequest{ResourceID: capture.TargetOwnerID, ProviderSnapshotID: snapshot.ProviderSnapshotID,
-			ExpectedTargetResourceID: capture.TargetProviderResourceID, Snapshot: clonePostgresSnapshotRequest(snapshot)}}}, nil
+	return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{Target: target, Preparation: preparation}, nil
 }

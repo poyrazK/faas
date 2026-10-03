@@ -96,6 +96,8 @@ type cloneSnapshotProvider struct {
 	targetSQLConnect                                        func(context.Context, string) (*pgx.Conn, error)
 	targetSQLCalls, targetSQLAfterCalls                     int
 	targetSQLAfterError                                     error
+	targetSQLInspections                                    int
+	inspectTargetSQL                                        func(context.Context, managedpostgres.RestoreSourceDefinition, managedpostgres.SnapshotCopyTargetRequest) (managedpostgres.SnapshotCopyTargetSQLObservation, error)
 }
 
 func (p *cloneSnapshotProvider) Capabilities() managedpostgres.Capabilities {
