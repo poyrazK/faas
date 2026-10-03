@@ -37,6 +37,7 @@ type baseReplacementResult struct {
 	Inconsistent     []int               `json:"tasks_with_more_than_one_digest"`
 	PIDs             map[int]int         `json:"responses_by_pid"`
 	RuntimeErrors    []string            `json:"runtime_errors"`
+	Console          []string            `json:"console_after_restore"`
 	Lifecycle        []map[string]string `json:"lifecycle"`
 }
 
@@ -162,10 +163,19 @@ func TestDiagnosticRestoreAfterBaseReplacement(t *testing.T) {
 		var cursor int64 = 1
 		read := func() {
 			if ring == nil {
-				return
+				// The ring attaches asynchronously after a restore; keep
+				// asking instead of reading nothing for the whole run.
+				if ring = active.LogRing(name); ring == nil {
+					return
+				}
 			}
 			for _, line := range ring.Snapshot(cursor) {
 				cursor = line.Seq + 1
+				mu.Lock()
+				if !strings.Contains(line.Line, "function invoked") && len(res.Console) < 400 {
+					res.Console = append(res.Console, line.Line)
+				}
+				mu.Unlock()
 				for _, marker := range baseReplacementErrorMarkers {
 					if strings.Contains(line.Line, marker) {
 						mu.Lock()
