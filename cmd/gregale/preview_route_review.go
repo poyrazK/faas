@@ -3,17 +3,18 @@ package main
 import "sort"
 
 type previewRouteReview struct {
-	Method                string                `json:"method,omitempty"`
-	Path                  string                `json:"path,omitempty"`
-	Scope                 string                `json:"scope"`
-	Priority              string                `json:"priority"`
-	Reasons               []string              `json:"reasons"`
-	RequestCompatibility  string                `json:"request_compatibility,omitempty"`
-	SecurityCompatibility string                `json:"security_compatibility,omitempty"`
-	SourceChange          string                `json:"source_change,omitempty"`
-	CandidateChecks       string                `json:"candidate_checks"`
-	BaselineTraffic       *previewReportTraffic `json:"baseline_traffic,omitempty"`
-	NextActions           []string              `json:"next_actions"`
+	Method                string                      `json:"method,omitempty"`
+	Path                  string                      `json:"path,omitempty"`
+	Scope                 string                      `json:"scope"`
+	Priority              string                      `json:"priority"`
+	Reasons               []string                    `json:"reasons"`
+	RequestCompatibility  string                      `json:"request_compatibility,omitempty"`
+	SecurityCompatibility string                      `json:"security_compatibility,omitempty"`
+	SourceChange          string                      `json:"source_change,omitempty"`
+	CandidateChecks       string                      `json:"candidate_checks"`
+	BaselineTraffic       *previewReportTraffic       `json:"baseline_traffic,omitempty"`
+	CustomerImpact        *previewRouteCustomerImpact `json:"customer_impact,omitempty"`
+	NextActions           []string                    `json:"next_actions"`
 }
 
 func prioritizePreviewRouteReview(report *previewRouteReport) {
@@ -138,7 +139,7 @@ func previewReviewRequirementStatus(report *previewRouteReport, row previewRepor
 }
 
 func previewSourceReviewRoute(row previewReportRoute, requirementStatus string) (previewRouteReview, bool) {
-	item := previewRouteReview{Method: row.Method, Path: row.Path, Scope: "captured_route", Priority: "review", Reasons: []string{}, NextActions: []string{}, BaselineTraffic: row.BaselineTraffic}
+	item := previewRouteReview{Method: row.Method, Path: row.Path, Scope: "captured_route", Priority: "review", Reasons: []string{}, NextActions: []string{}, BaselineTraffic: row.BaselineTraffic, CustomerImpact: row.CustomerImpact}
 	if row.RouteSource != "captured_deployment_contract" {
 		item.Scope, item.BaselineTraffic = "current_route", nil
 	}
@@ -234,6 +235,9 @@ func previewSourceReviewRoute(row previewReportRoute, requirementStatus string) 
 	}
 	if len(item.Reasons) == 0 {
 		return item, false
+	}
+	if row.CustomerImpact != nil && row.CustomerImpact.Usage != nil && row.CustomerImpact.Usage.IdentifiedRequests > 0 {
+		item.NextActions = append(item.NextActions, "Review observed baseline customers before changing this route; use --customer-details for recorded identity groups and coordinate any required client migration.")
 	}
 	if item.CandidateChecks == "missing" {
 		if item.Priority != "blocker" {

@@ -50,7 +50,7 @@ func TestPreviewSourceBindsDeclaredMetadataAndKeepsContractClassification(t *tes
 	if report.SourceImpact.CandidateRevision != source.Candidate.Revision || report.SourceImpact.Repository != source.Repository || report.SourceImpact.SourceRoot != source.SourceRoot {
 		t.Fatal("analyzed provenance absent from the joined report")
 	}
-	if report.Version != 4 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
+	if report.Version != 5 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
 		t.Fatalf("binding=%+v", report.SourceImpact)
 	}
 	row := report.Routes[0]
@@ -370,7 +370,7 @@ func TestPreviewSourceReportCommandAndMarkdown(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if reads != 6 || report.Version != 4 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
+	if reads != 6 || report.Version != 5 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
 		t.Fatalf("reads=%d report=%+v", reads, report)
 	}
 	for _, secret := range []string{"secret-origin", "secret-scope", "secret-issue"} {

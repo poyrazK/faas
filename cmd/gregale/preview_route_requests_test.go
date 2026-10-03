@@ -124,7 +124,7 @@ func TestPreviewRequestCompatibilityCommandGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			row := findPreviewReportRoute(t, report, "POST /checkout")
-			if report.Version != 4 || report.SourceImpact != nil || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || !row.RequestContractChanged {
+			if report.Version != 5 || report.SourceImpact != nil || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || !row.RequestContractChanged {
 				t.Fatalf("report = %+v; route = %+v", report, row)
 			}
 			if reads.Load() != 6 {

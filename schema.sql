@@ -7360,7 +7360,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.recovered'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -13683,6 +13683,57 @@ CREATE TABLE public.route_health_notification_state (
 
 
 --
+-- Name: route_monitor_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_monitor_incidents (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    closed_at timestamp with time zone,
+    encoded_bytes bigint NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT route_monitor_incidents_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'version'::text) = '1'::text) AND ((entry ->> 'id'::text) = (id)::text) AND ((entry ->> 'app_id'::text) = (app_id)::text) AND ((entry ->> 'deployment_id'::text) = (deployment_id)::text) AND ((entry ->> 'revision'::text) = (revision)::text) AND ((entry ->> 'status'::text) = status) AND (octet_length((entry)::text) <= 524288))),
+    CONSTRAINT route_monitor_incidents_check1 CHECK ((((status = 'open'::text) AND (closed_at IS NULL)) OR ((status <> 'open'::text) AND (closed_at >= opened_at)))),
+    CONSTRAINT route_monitor_incidents_closed_at_check CHECK (isfinite(closed_at)),
+    CONSTRAINT route_monitor_incidents_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 524288))),
+    CONSTRAINT route_monitor_incidents_opened_at_check CHECK (isfinite(opened_at)),
+    CONSTRAINT route_monitor_incidents_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT route_monitor_incidents_status_check CHECK ((status = ANY (ARRAY['open'::text, 'recovered'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: route_monitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_monitors (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean NOT NULL,
+    revision bigint NOT NULL,
+    routes jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    next_check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    last_deployment_id uuid,
+    active_incident_id uuid,
+    customer_group_by text DEFAULT ''::text NOT NULL,
+    customer_recovery_state jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT route_monitors_check CHECK (((NOT enabled) OR (jsonb_array_length(routes) > 0))),
+    CONSTRAINT route_monitors_customer_group_by_check CHECK ((customer_group_by = ANY (ARRAY[''::text, 'tenant'::text, 'consumer'::text]))),
+    CONSTRAINT route_monitors_customer_recovery_state_check CHECK (((jsonb_typeof(customer_recovery_state) = 'object'::text) AND (octet_length((customer_recovery_state)::text) <= 262144))),
+    CONSTRAINT route_monitors_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT route_monitors_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT route_monitors_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20) AND (octet_length((routes)::text) <= 16384))),
+    CONSTRAINT route_monitors_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: route_policy_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18084,6 +18135,22 @@ ALTER TABLE ONLY public.route_health_history
 
 ALTER TABLE ONLY public.route_health_notification_state
     ADD CONSTRAINT route_health_notification_state_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: route_monitor_incidents route_monitor_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitor_incidents
+    ADD CONSTRAINT route_monitor_incidents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: route_monitors route_monitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitors
+    ADD CONSTRAINT route_monitors_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -22762,6 +22829,27 @@ CREATE INDEX route_check_history_deployment_idx ON public.route_check_history US
 --
 
 CREATE INDEX route_health_history_deployment_idx ON public.route_health_history USING btree (deployment_id, checked_at DESC, id DESC);
+
+
+--
+-- Name: route_monitor_incidents_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_monitor_incidents_history_idx ON public.route_monitor_incidents USING btree (app_id, opened_at DESC, id DESC);
+
+
+--
+-- Name: route_monitor_incidents_one_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX route_monitor_incidents_one_open_idx ON public.route_monitor_incidents USING btree (app_id) WHERE (status = 'open'::text);
+
+
+--
+-- Name: route_monitors_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_monitors_due_idx ON public.route_monitors USING btree (next_check_at, app_id) WHERE enabled;
 
 
 --
@@ -29256,6 +29344,62 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 ALTER TABLE ONLY public.route_health_notification_state
     ADD CONSTRAINT route_health_notification_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitor_incidents route_monitor_incidents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitor_incidents
+    ADD CONSTRAINT route_monitor_incidents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitor_incidents route_monitor_incidents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitor_incidents
+    ADD CONSTRAINT route_monitor_incidents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitor_incidents route_monitor_incidents_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitor_incidents
+    ADD CONSTRAINT route_monitor_incidents_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitors route_monitors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitors
+    ADD CONSTRAINT route_monitors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitors route_monitors_active_incident_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitors
+    ADD CONSTRAINT route_monitors_active_incident_fk FOREIGN KEY (active_incident_id) REFERENCES public.route_monitor_incidents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: route_monitors route_monitors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitors
+    ADD CONSTRAINT route_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_monitors route_monitors_last_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_monitors
+    ADD CONSTRAINT route_monitors_last_deployment_id_fkey FOREIGN KEY (last_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
 
 
 --

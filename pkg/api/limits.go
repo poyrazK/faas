@@ -90,6 +90,12 @@ const (
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
 
+// Route customer analytics bounds are structural safeguards, not plan quotas.
+const (
+	RouteCustomerUsageMaxRoutes    = 200
+	RouteCustomerUsageMaxCustomers = 20
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (
@@ -8103,18 +8109,34 @@ const RouteGroupPlanMaxChanges = 32
 
 // RouteHealth bounds the opt-in observed-traffic canary guard (ADR-454).
 const (
-	RouteHealthMaxRoutes               = 20
-	RouteHealthMaxPathBytes            = 240 // reserves method prefix within telemetry's 256-byte label
-	RouteHealthRequestMaxBytes         = 16 << 10
-	RouteHealthWindow                  = time.Minute
-	RouteHealthIngestionLag            = 30 * time.Second
-	RouteHealthWindows                 = 2
-	RouteHealthMinRequests       int64 = 20
-	RouteHealthMinErrors         int64 = 2
-	RouteHealthErrorRateFloor          = 0.05
-	RouteHealthErrorRateDelta          = 0.05
-	RouteHealthErrorRateFactor         = 3.0
-	RouteHealthComparisonEpsilon       = 1e-12
+	RouteHealthMaxRoutes                  = 20
+	RouteCustomerHealthMaxCustomers       = 20  // per selected route, before window expansion
+	RouteHealthMaxPathBytes               = 240 // reserves method prefix within telemetry's 256-byte label
+	RouteHealthRequestMaxBytes            = 16 << 10
+	RouteHealthWindow                     = time.Minute
+	RouteHealthIngestionLag               = 30 * time.Second
+	RouteHealthWindows                    = 2
+	RouteHealthMinRequests          int64 = 20
+	RouteHealthMinErrors            int64 = 2
+	RouteHealthErrorRateFloor             = 0.05
+	RouteHealthErrorRateDelta             = 0.05
+	RouteHealthErrorRateFactor            = 3.0
+	RouteHealthComparisonEpsilon          = 1e-12
+)
+
+// RouteHealth watched status comparisons are advisory (ADR-495).
+const RouteHealthMaxWatchedStatuses = 5
+
+// Bounded diagnostic rows per deployment/window, independent of publisher weights.
+const RouteHealthInvestigationExamplesLimit = 3
+
+// Retained evidence reads are independently capped per deployment/window.
+const (
+	RouteHealthLatencyEvidenceRowsLimit = 32
+	RouteHealthLatencyDependenciesLimit = 16
+	DebugEvidenceMaxSpans               = 100
+	DebugEvidenceMaxSpanTextBytes       = 256
+	DebugCriticalPathMaxSpans           = 32
 )
 
 // RouteHealth latency is selected independently of the existing 5xx comparison.
@@ -8139,3 +8161,21 @@ const (
 
 // Route health transition payload version (ADR-457).
 const RouteHealthTransitionVersion = 1
+
+// Production route monitoring and bounded customer evidence (ADR-498/499).
+const (
+	RouteMonitorVersion                         = 1
+	RouteMonitorMaxRateBPS                int64 = 10_000
+	RouteMonitorPollInterval                    = 30 * time.Second
+	RouteMonitorEvaluationInterval              = time.Minute
+	RouteMonitorBatchSize                       = 20
+	RouteMonitorEvidenceRoutesLimit             = 3
+	RouteMonitorIncidentMaxBytes                = 512 << 10
+	RouteMonitorHistoryMaxEntries               = 100
+	RouteMonitorHistoryMaxBytes                 = 8 << 20
+	RouteMonitorPageSize                        = 5
+	RouteMonitorMaxPage                         = 10
+	RouteMonitorCustomersPerRoute               = 5
+	RouteMonitorRecoveryCustomersPerRoute       = 100
+	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
+)

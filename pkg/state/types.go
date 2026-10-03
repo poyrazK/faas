@@ -3466,6 +3466,8 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
 	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
 	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
 	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
@@ -3507,6 +3509,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorRecovered,
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,

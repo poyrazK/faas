@@ -2551,12 +2551,13 @@ gregale preview show pr-42-my-api
 
 Review deployment route changes, current policy, and available test/traffic evidence
 
-`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
+`gregale preview report [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <ID>] [--test-report <PATH>] [--source-impact <PATH>] [--requirements <PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--format <FORMAT>` | report format: text or markdown (or use --json) |  |
 | `--since <DURATION>` | traffic lookback duration (default 24h) |  |
+| `--customer-details` | include observed consumer and tenant IDs in the report |  |
 | `--baseline-deployment <ID>` | explicit parent deployment ID |  |
 | `--test-report <PATH>` | JSON receipts from gregale test |  |
 | `--source-impact <PATH>` | version 2 JSON report from gregale routes impact |  |
@@ -2967,6 +2968,60 @@ Read current route intent and optionally export requirements for planning
 |---|---|---|
 | `--out <PATH>` | export normalized requirements JSON to a new file |  |
 
+### routes monitor
+
+Monitor absolute route budgets after production promotion
+
+#### routes monitor get
+
+Read production route budgets and revision
+
+`gregale routes monitor get <slug>`
+
+#### routes monitor set
+
+Save advisory production route budgets
+
+`gregale routes monitor set --mode <MODE> --routes <PATH> --expected-revision <N> <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--mode <MODE>` | enabled or disabled | required; one of `enabled` · `disabled` |
+| `--routes <PATH>` | JSON array of exact method/path labels with max_5xx_rate_bps and/or max_p95_ms | required |
+| `--expected-revision <N>` | current monitor revision; 0 initially | required |
+
+#### routes monitor report
+
+Read observed health for the fully serving production deployment
+
+`gregale routes monitor report [--fail-on-unhealthy] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fail-on-unhealthy` | exit nonzero unless every selected budget is healthy |  |
+
+#### routes monitor incidents
+
+List retained production route incidents
+
+`gregale routes monitor incidents [--limit <N>] [--before <ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 5; maximum 10) |  |
+| `--before <ID>` | page before a retained incident UUID |  |
+
+#### routes monitor explain
+
+Inspect saved incident windows, request links and dependency timings
+
+`gregale routes monitor explain --incident <ID> [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--incident <ID>` | saved incident UUID | required |
+| `--out <PATH>` | save incident evidence JSON to a new file |  |
+
 ### routes health
 
 Compare critical route errors and optional p95 latency to gate canary progression
@@ -2985,7 +3040,7 @@ Save exact normalized telemetry route selectors
 
 | Flag | Meaning | |
 |---|---|---|
-| `--routes <PATH>` | JSON array of method/path selectors with optional latency checks | required |
+| `--routes <PATH>` | JSON array of method/path selectors with optional latency checks and advisory watch_statuses | required |
 | `--mode <MODE>` | report or enforce | required; one of `report` · `enforce` |
 | `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
 | `--expected-revision <N>` | current revision; 0 initially | required |
@@ -2994,12 +3049,31 @@ Save exact normalized telemetry route selectors
 
 Read candidate/stable counts, selected p95 checks and route verdicts
 
-`gregale routes health report --deployment <ID> [--fail-on-unhealthy] <slug>`
+`gregale routes health report --deployment <ID> [--fail-on-unhealthy] [--customers] [--customer-group-by <DIMENSION>] [--customer-details] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--deployment <ID>` | candidate deployment UUID | required |
 | `--fail-on-unhealthy` | exit nonzero unless every selected route is healthy |  |
+| `--customers` | include advisory customer health comparisons |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customers | one of `tenant` · `consumer` |
+| `--customer-details` | include customer IDs; requires --customers |  |
+
+#### routes health investigate
+
+Investigate route errors or latency with bounded retained evidence
+
+`gregale routes health investigate --deployment <ID> --route <LABEL> [--signal <SIGNAL>] [--status <CODE>] [--customer-id <ID>] [--customer-group-by <DIMENSION>] [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID | required |
+| `--route <LABEL>` | exact configured METHOD /path telemetry label | required |
+| `--signal <SIGNAL>` | errors (default) or latency; requires a configured latency check | one of `errors` · `latency` |
+| `--status <CODE>` | watched 4xx code; 0 (default) selects all 5xx |  |
+| `--customer-id <ID>` | recorded customer UUID; explicitly includes this ID |  |
+| `--customer-group-by <DIMENSION>` | tenant (default) or consumer; requires --customer-id | one of `tenant` · `consumer` |
+| `--out <PATH>` | save the investigation JSON to a new file |  |
 
 #### routes health explain
 

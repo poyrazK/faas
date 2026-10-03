@@ -142,7 +142,7 @@ func TestRouteLatencyCLIConfiguration(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				var req api.SetRouteHealthGateRequest
-				if r.Method != "PUT" || json.NewDecoder(r.Body).Decode(&req) != nil || len(req.Routes) != 1 || req.Routes[0] != route {
+				if r.Method != "PUT" || json.NewDecoder(r.Body).Decode(&req) != nil || !routehealth.RoutesEqual(req.Routes, []api.RouteHealthRoute{route}) {
 					t.Error("latency intent not preserved")
 				}
 				response := route
