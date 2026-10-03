@@ -5537,8 +5537,18 @@ SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(m
     inputs::bigint, bytes::bigint FROM bounds;
 
 -- name: ConfigureTrafficPolicyAnalysisTimeout :one
-WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
-SELECT prior.value::text AS prior, set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS configured FROM prior;
+-- This metadata query has a high planner cost despite small bounded output.
+-- JIT compilation can consume its entire latency budget before rows execute.
+-- Keep both settings local to the transaction and restore them after the read.
+WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value,
+    current_setting('jit')::text AS jit)
+SELECT prior.value::text AS prior, prior.jit::text AS prior_jit,
+    set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS configured,
+    set_config('jit', 'off', true)::text AS configured_jit FROM prior;
+
+-- name: RestoreTrafficPolicyAnalysisSettings :one
+SELECT set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS timeout,
+    set_config('jit', sqlc.arg(jit)::text, true)::text AS jit;
 
 -- name: ReadAppTrafficAccount :one
 -- Discover ownership before coordinating; repeat it under the app row lock.

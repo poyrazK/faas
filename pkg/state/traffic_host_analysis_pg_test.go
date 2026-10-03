@@ -107,13 +107,34 @@ func TestPgTrafficHostEstimateBoundsDecodedRuntime(t *testing.T) {
 	if _, err := sqlc.New().RestoreTrafficPolicyStatementTimeout(t.Context(), tx, "5s"); err != nil {
 		t.Fatal(err)
 	}
-	analysis, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID), store.trafficAppsSuffix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var restored string
-	if err := tx.QueryRow(t.Context(), `SHOW statement_timeout`).Scan(&restored); err != nil || restored != "5s" {
-		t.Fatalf("analysis did not restore statement timeout: setting=%q err=%v", restored, err)
+	var analysis trafficHostAnalysis
+	for _, jit := range []string{"on", "off"} {
+		var setting string
+		if err := tx.QueryRow(t.Context(), `SELECT set_config('jit',$1,true)`, jit).Scan(&setting); err != nil {
+			t.Fatal(err)
+		}
+		configured, err := sqlc.New().ConfigureTrafficPolicyAnalysisTimeout(t.Context(), tx,
+			fmt.Sprintf("%dms", api.TrafficPolicyAnalysisSQLTimeout.Milliseconds()))
+		if err != nil || configured.Prior != "5s" || configured.PriorJit != jit {
+			t.Fatalf("analysis lost prior settings: configured=%+v err=%v", configured, err)
+		}
+		if err := tx.QueryRow(t.Context(), `SHOW jit`).Scan(&setting); err != nil || setting != "off" {
+			t.Fatalf("bounded analysis retained JIT compilation: setting=%q err=%v", setting, err)
+		}
+		if _, err := sqlc.New().RestoreTrafficPolicyAnalysisSettings(t.Context(), tx,
+			sqlc.RestoreTrafficPolicyAnalysisSettingsParams{Timeout: configured.Prior, Jit: configured.PriorJit}); err != nil {
+			t.Fatal(err)
+		}
+		analysis, err = readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID), store.trafficAppsSuffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRow(t.Context(), `SHOW statement_timeout`).Scan(&setting); err != nil || setting != "5s" {
+			t.Fatalf("analysis did not restore statement timeout: setting=%q err=%v", setting, err)
+		}
+		if err := tx.QueryRow(t.Context(), `SHOW jit`).Scan(&setting); err != nil || setting != jit {
+			t.Fatalf("analysis did not restore JIT: setting=%q want=%q err=%v", setting, jit, err)
+		}
 	}
 	if len(analysis.Groups) != len(actions) || len(analysis.Assets) != 1 {
 		t.Fatalf("unexpected skinny analysis: %+v", analysis)

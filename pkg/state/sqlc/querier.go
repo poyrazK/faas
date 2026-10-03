@@ -110,6 +110,9 @@ type Querier interface {
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
 	CompareAndSetTrafficAppStatus(ctx context.Context, db DBTX, arg CompareAndSetTrafficAppStatusParams) (int64, error)
+	// This metadata query has a high planner cost despite small bounded output.
+	// JIT compilation can consume its entire latency budget before rows execute.
+	// Keep both settings local to the transaction and restore them after the read.
 	ConfigureTrafficPolicyAnalysisTimeout(ctx context.Context, db DBTX, timeout string) (ConfigureTrafficPolicyAnalysisTimeoutRow, error)
 	ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1253,6 +1256,7 @@ type Querier interface {
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
+	RestoreTrafficPolicyAnalysisSettings(ctx context.Context, db DBTX, arg RestoreTrafficPolicyAnalysisSettingsParams) (RestoreTrafficPolicyAnalysisSettingsRow, error)
 	RestoreTrafficPolicyStatementTimeout(ctx context.Context, db DBTX, timeout string) (string, error)
 	RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)

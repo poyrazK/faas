@@ -4064,3 +4064,53 @@ were removed. Failed receipts, the recovered-source proof, profile and candidate
 patch are retained under `outputs/traffic-ci-20261003/` in the checkout's parent.
 Fresh corrected software CI is pending. All six release requirements remain
 unchecked, including native KVM/network/leak and deployed/staging acceptance.
+
+
+### Third CI result and bounded SQL planning correction
+
+Run [37145776404](https://github.com/poyrazK/faas/actions/runs/37145776404)
+finished with failure on `945dfe0ef25ba71aba2c29dbd420ddea0bcc0fcf`.
+All 25 jobs became terminal: 22 passed, two state partitions failed, and the
+full state coverage gate rejected their incomplete/failed receipts. Both failed
+partitions completed all 303 selected roots with 302 passes, one failure and no
+skips. The first failed while cloning a legacy environment policy; the second
+failed while seeding rule 94 in the original per-app quota test. Both hit the
+unchanged two-second policy-analysis bound. The PostgreSQL conformance root and
+the earlier memory overlay/compiler-growth regressions passed. No root, quota,
+analysis limit, timeout, race flag or coverage floor was relaxed.
+
+The full traffic job passed, with 11,620 accepted unit results, 1,521 guarded
+results and 425 PostgreSQL results. All 40 required database package/test pairs,
+72 results beneath their fixture roots and zero database skips were verified
+against the exact 12,571-file source freeze. Unit and PostgreSQL phases took
+377.862 s and 257.889 s. Both compiled Linux binaries match their recorded hashes;
+this remains compilation only. All four E2E shards, load, lint/build, drift and
+contract gates, migrations, SDKs, boot checks and the other state partitions
+passed. The complete failed run and its passing portions remain preliminary.
+
+A disposable PostgreSQL 16 query-plan diagnostic for 100 small rules reported
+estimated cost near 6.9 million, above the ordinary JIT, inlining and optimization
+thresholds. Its local build has no LLVM/JIT implementation, so its millisecond
+execution does not reproduce CI's compilation cost. [PostgreSQL 15 JIT documentation](https://www.postgresql.org/docs/15/jit-decision.html) explains that
+JIT uses estimated cost and can cost more than short-query execution; JIT is a
+likely contributor, not a measured CI cause. Diagnostic setup omits foreign
+keys/triggers and is explicitly excluded from platform acceptance.
+
+The bounded SQLC read now records both prior settings, disables JIT locally to
+its transaction during analysis, and restores both JIT and statement timeout
+before returning the projection. Rollback retains PostgreSQL's existing local
+setting cleanup. The statement and total analysis bounds and all canonical/
+compiled measurements are unchanged. The actual database regression checks
+JIT-disabled execution and restoration from both prior on/off settings while
+retaining its original decoded-runtime and metadata-bound comparisons. SQLC
+1.31.1 generates the query and restore method. Direct local SQL settings checks
+pass; fresh Go/PostgreSQL 15 CI completion is still required.
+
+A proposed reuse of unchanged serialized rule bodies was deferred after SQLC
+rejected the added nested lateral/CTE layouts. Those candidates and generation
+failures are retained outside the checkout; the original measurement query's
+hash is unchanged. The final source, terminal CI status, full failed job logs,
+original artifact ZIPs, streamed binary hashes, query plans and settings receipts
+are retained under `outputs/traffic-ci-20261003/` in the checkout's parent.
+All six release requirements remain unchecked, including native KVM/network/
+firewall/leak and deployed/staging acceptance. No acceptance host is available.

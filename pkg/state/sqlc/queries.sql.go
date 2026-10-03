@@ -1020,19 +1020,32 @@ func (q *Queries) CompareAndSetTrafficAppStatus(ctx context.Context, db DBTX, ar
 }
 
 const configureTrafficPolicyAnalysisTimeout = `-- name: ConfigureTrafficPolicyAnalysisTimeout :one
-WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
-SELECT prior.value::text AS prior, set_config('statement_timeout', $1::text, true)::text AS configured FROM prior
+WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value,
+    current_setting('jit')::text AS jit)
+SELECT prior.value::text AS prior, prior.jit::text AS prior_jit,
+    set_config('statement_timeout', $1::text, true)::text AS configured,
+    set_config('jit', 'off', true)::text AS configured_jit FROM prior
 `
 
 type ConfigureTrafficPolicyAnalysisTimeoutRow struct {
-	Prior      string
-	Configured string
+	Prior         string
+	PriorJit      string
+	Configured    string
+	ConfiguredJit string
 }
 
+// This metadata query has a high planner cost despite small bounded output.
+// JIT compilation can consume its entire latency budget before rows execute.
+// Keep both settings local to the transaction and restore them after the read.
 func (q *Queries) ConfigureTrafficPolicyAnalysisTimeout(ctx context.Context, db DBTX, timeout string) (ConfigureTrafficPolicyAnalysisTimeoutRow, error) {
 	row := db.QueryRow(ctx, configureTrafficPolicyAnalysisTimeout, timeout)
 	var i ConfigureTrafficPolicyAnalysisTimeoutRow
-	err := row.Scan(&i.Prior, &i.Configured)
+	err := row.Scan(
+		&i.Prior,
+		&i.PriorJit,
+		&i.Configured,
+		&i.ConfiguredJit,
+	)
 	return i, err
 }
 
@@ -16478,6 +16491,28 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const restoreTrafficPolicyAnalysisSettings = `-- name: RestoreTrafficPolicyAnalysisSettings :one
+SELECT set_config('statement_timeout', $1::text, true)::text AS timeout,
+    set_config('jit', $2::text, true)::text AS jit
+`
+
+type RestoreTrafficPolicyAnalysisSettingsParams struct {
+	Timeout string
+	Jit     string
+}
+
+type RestoreTrafficPolicyAnalysisSettingsRow struct {
+	Timeout string
+	Jit     string
+}
+
+func (q *Queries) RestoreTrafficPolicyAnalysisSettings(ctx context.Context, db DBTX, arg RestoreTrafficPolicyAnalysisSettingsParams) (RestoreTrafficPolicyAnalysisSettingsRow, error) {
+	row := db.QueryRow(ctx, restoreTrafficPolicyAnalysisSettings, arg.Timeout, arg.Jit)
+	var i RestoreTrafficPolicyAnalysisSettingsRow
+	err := row.Scan(&i.Timeout, &i.Jit)
+	return i, err
 }
 
 const restoreTrafficPolicyStatementTimeout = `-- name: RestoreTrafficPolicyStatementTimeout :one

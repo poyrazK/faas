@@ -109,8 +109,8 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		}
 		return trafficHostAnalysis{}, fmt.Errorf("state: read traffic host analysis: %w", mapErr(err))
 	}
-	if _, err := queries.RestoreTrafficPolicyStatementTimeout(ctx, tx, configured.Prior); err != nil {
-		return trafficHostAnalysis{}, fmt.Errorf("state: restore policy statement timeout: %w", err)
+	if _, err := queries.RestoreTrafficPolicyAnalysisSettings(ctx, tx, sqlc.RestoreTrafficPolicyAnalysisSettingsParams{Timeout: configured.Prior, Jit: configured.PriorJit}); err != nil {
+		return trafficHostAnalysis{}, fmt.Errorf("state: restore policy analysis settings: %w", err)
 	}
 	if row.Inputs > api.TrafficPolicyMaxAnalysisInputs {
 		return trafficHostAnalysis{}, analysisLimit("inputs", "groups", api.TrafficPolicyMaxAnalysisInputs, row.Inputs)
