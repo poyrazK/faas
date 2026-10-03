@@ -1,8 +1,10 @@
 """ADR-375: guard test inventory completeness and coverage merging."""
 import importlib.util
 import pathlib
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("state_suite", pathlib.Path(__file__).with_name("state-suite.py"))
 suite = importlib.util.module_from_spec(spec)
@@ -20,6 +22,35 @@ class StateSuiteTest(unittest.TestCase):
         for names in [["TestA", "TestA"], ["TestA", "unexpected output"], []]:
             with self.assertRaises(ValueError):
                 suite.partitions(names)
+
+    def test_inventory_artifact_retains_stdout_and_stderr_separately(self):
+        names = [f"Test{index}" for index in range(16)]
+        stdout = "\n".join(names) + "\n"
+        stderr = "warning: GOCOVERDIR not set, no coverage data emitted\n"
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            result = subprocess.CompletedProcess([], 0, stdout, stderr)
+            with mock.patch.object(suite.subprocess, "run", return_value=result):
+                inventory = suite.list_inventory(output / "state.test", output, {}, output)
+            retained = (output / "inventory.log").read_text().splitlines()
+            self.assertEqual(suite.partitions(retained, 8), suite.partitions(inventory, 8))
+            self.assertEqual(set().union(*map(set, suite.partitions(retained, 8))), set(names))
+            self.assertEqual((output / "inventory.stderr").read_text(), stderr)
+
+    def test_inventory_failure_retains_both_streams_and_unknown_stdout_refuses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            result = subprocess.CompletedProcess([], 2, "TestA\n", "inventory failed\n")
+            with mock.patch.object(suite.subprocess, "run", return_value=result):
+                with self.assertRaises(ValueError):
+                    suite.list_inventory(output / "state.test", output, {}, output)
+            self.assertEqual((output / "inventory.log").read_text(), result.stdout)
+            self.assertEqual((output / "inventory.stderr").read_text(), result.stderr)
+            result = subprocess.CompletedProcess([], 0, "TestA\nunknown stdout\n", "")
+            with mock.patch.object(suite.subprocess, "run", return_value=result):
+                inventory = suite.list_inventory(output / "state.test", output, {}, output)
+            with self.assertRaises(ValueError):
+                suite.partitions(inventory)
 
     def test_eight_partitions_remain_exhaustive(self):
         names = [f"Test{index}" for index in range(32)]

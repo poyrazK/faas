@@ -69,6 +69,15 @@ def validate_terminals(names, log):
         raise ValueError("missing, failed or duplicate state test terminals")
 
 
+def list_inventory(binary, output, env, cwd):
+    result = subprocess.run([str(binary), "-test.list=."], capture_output=True, text=True, env=env, cwd=cwd)
+    (output / "inventory.log").write_text(result.stdout)
+    (output / "inventory.stderr").write_text(result.stderr)
+    if result.returncode:
+        raise ValueError("state test inventory failed")
+    return result.stdout.splitlines()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--packages", required=True)
@@ -108,11 +117,8 @@ def main():
         if build["exit_code"]:
             raise ValueError("state race binary build failed")
         receipt["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-        inventory = subprocess.run([str(binary), "-test.list=."] , capture_output=True, text=True, env=env, cwd=repo / "pkg/state")
-        (output / "inventory.log").write_text(inventory.stdout + inventory.stderr)
-        if inventory.returncode:
-            raise ValueError("state test inventory failed")
-        groups = partitions(inventory.stdout.splitlines(), args.partitions)
+        inventory = list_inventory(binary, output, env, repo / "pkg/state")
+        groups = partitions(inventory, args.partitions)
         receipt["groups"] = groups
         selected = groups[args.partition]
         selector = "^(" + "|".join(selected) + ")$"

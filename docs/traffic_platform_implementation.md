@@ -4114,3 +4114,30 @@ original artifact ZIPs, streamed binary hashes, query plans and settings receipt
 are retained under `outputs/traffic-ci-20261003/` in the checkout's parent.
 All six release requirements remain unchecked, including native KVM/network/
 firewall/leak and deployed/staging acceptance. No acceptance host is available.
+
+### Fourth CI result and state inventory artifact correction
+
+Run [37149894135](https://github.com/poyrazK/faas/actions/runs/37149894135)
+finished with failure on `5b3a3b142ec1621be215b61e07e9cb616e655cf8`.
+All 25 jobs became terminal: 24 passed and the full state coverage gate failed.
+All eight state partitions, all four E2E shards, the dedicated traffic unit and
+PostgreSQL job, load, lint/build, contracts, migrations and SDK checks passed.
+The previously failing legacy environment clone and per-app quota partitions
+passed with their original bounds and assertions. Passing portions of this
+failed run remain preliminary.
+
+The compiled coverage binary lists 2,420 test roots on stdout and emits
+`warning: GOCOVERDIR not set, no coverage data emitted` on stderr. The state
+runner validated stdout but retained both streams in `inventory.log`; the
+aggregate gate correctly rejected that warning as an unknown inventory entry.
+The runner now preserves stdout in `inventory.log` and stderr in a separate
+`inventory.stderr`. Strict inventory parsing, exhaustive partitions, test count,
+race flags, deadlines, source/binary receipts and coverage floors are unchanged.
+Regression checks reproduce the actual warning, preserve both streams on
+failure, and require unknown stdout to remain rejected.
+
+The complete terminal status and source freeze, aggregate failure log, original
+ZIPs and streamed artifact hashes are retained under
+`outputs/traffic-ci-20261003/` in the checkout's parent. Fresh complete CI is
+pending. All six release requirements remain unchecked, including native
+KVM/network/firewall/leak and deployed/staging acceptance.
