@@ -270,7 +270,9 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 	if err := usage.Validate(); err != nil {
 		return ErrUnavailable
 	}
-	if usage.Window.From.UTC() != from || usage.Window.To.UTC() != to {
+	// PostgreSQL checkpoints can carry time.Local; compare instants rather
+	// than time.Time's location pointer or monotonic clock representation.
+	if !usage.Window.From.Equal(from) || !usage.Window.To.Equal(to) {
 		return ErrUnavailable
 	}
 	for _, meter := range backend.Capabilities.UsageMeters {

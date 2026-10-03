@@ -254,3 +254,40 @@ func TestUsageStoresRejectUnsafeWindows(t *testing.T) {
 		})
 	}
 }
+
+type offsetUsageProgressStore struct {
+	UsageStore
+	location *time.Location
+}
+
+func (s offsetUsageProgressStore) UsageProgress(ctx context.Context, accountID, databaseID string, window time.Duration) (UsageProgress, error) {
+	progress, err := s.UsageStore.UsageProgress(ctx, accountID, databaseID, window)
+	progress.CollectedFrom = progress.CollectedFrom.In(s.location)
+	progress.CollectedUntil = progress.CollectedUntil.In(s.location)
+	return progress, err
+}
+
+func TestUsageCollectorResumesCheckpointsWithEquivalentTimezones(t *testing.T) {
+	for _, location := range []*time.Location{time.Local, time.FixedZone("UTC+3", 3*60*60)} {
+		t.Run(location.String(), func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Date(2026, 10, 2, 12, 17, 0, 0, time.UTC)
+			store, registry, _ := usageRecoveryFixture(t, now, time.Hour)
+			collector, err := NewUsageCollector(registry, offsetUsageProgressStore{store, location}, UsageCollectorOptions{Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := collector.Collect(ctx); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Hour)
+			if _, err := collector.Collect(ctx); err != nil {
+				t.Fatalf("equivalent checkpoint timezone blocked collection: %v", err)
+			}
+			snapshot, err := store.UsageSnapshot(ctx, "account", now)
+			if err != nil || snapshot.ComputeUnitSeconds != 120 || snapshot.Stale(registry.UsagePolicy(), now) {
+				t.Fatalf("resumed usage = %+v, %v", snapshot, err)
+			}
+		})
+	}
+}

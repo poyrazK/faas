@@ -36,3 +36,8 @@ See [ADR-481](481-managed-postgres-consumption-contract.md) for the unit and
 complete-response contract. Existing installations with unsupported window
 sizes must reconcile their ledger before adopting a different size; overlapping
 window sizes remain rejected rather than silently double-counted.
+
+Window identity compares timestamps with `time.Time.Equal`. PostgreSQL decodes
+checkpoints with `time.Local`; comparing a UTC-normalized result to that raw
+struct rejects the same instant and can stop collection after its first sweep.
+PostgreSQL-backed and fixed-offset regressions cover resumed collection.

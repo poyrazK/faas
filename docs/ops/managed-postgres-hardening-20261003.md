@@ -39,8 +39,12 @@ that cannot partition UTC billing months, and configuration seconds overflowing
 into valid-looking collection or staleness durations. The follow-up replays the
 last three completed windows after forward recovery, sharing the existing
 24-window per-database budget. It rejects unsupported window sizes and duration
-overflow. PostgreSQL-backed tests verify restart-safe replacement, downward and
-zero revisions, month totals, and rejection without committing coverage.
+overflow. The PostgreSQL-backed replay test also reproduced a checkpoint
+timezone bug: struct comparison rejected the same instant represented with
+`time.Local`, stopping collection after its first sweep. Window identity now
+compares instants. PostgreSQL-backed tests verify restart-safe replacement,
+downward and zero revisions, month totals, and rejection without committing
+coverage; fixed-offset tests cover timezone-independent resumption.
 See [ADR-482](../adr/482-managed-postgres-usage-correction-replay.md).
 
 ## Remaining work, in priority order
