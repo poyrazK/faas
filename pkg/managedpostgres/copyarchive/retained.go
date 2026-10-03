@@ -40,11 +40,21 @@ func validOwnedKey(d copyinventory.DatabaseExport, key string) bool {
 // every pg_restore TOC entry or establish imported/global dataset readiness.
 // The caller pins the backend and selects the retained recipient identity.
 func ReadBack(ctx context.Context, backend Backend, key string, d copyinventory.DatabaseExport, identities []*age.X25519Identity, maxCipherBytes int64) (Receipt, error) {
-	if backend == nil || !validRequirement(d) || !validOwnedKey(d, key) || maxCipherBytes < 1 || maxCipherBytes > api.PostgresCopyArchiveCiphertextMaxBytes {
+	return readRetainedTo(ctx, backend, key, d, identities, maxCipherBytes, api.PostgresCopyArchiveMaxBytes, io.Discard)
+}
+
+// Every consumer authenticates the complete encrypted stream before its output
+// may supply authority. Import staging writes only to a private unlinked file.
+func readRetainedTo(ctx context.Context, backend Backend, key string, d copyinventory.DatabaseExport, identities []*age.X25519Identity, maxCipherBytes, maxPlainBytes int64, output io.Writer) (Receipt, error) {
+	if backend == nil || output == nil || !validRequirement(d) || !validOwnedKey(d, key) || maxCipherBytes < 1 || maxCipherBytes > api.PostgresCopyArchiveCiphertextMaxBytes ||
+		maxPlainBytes < 5 || maxPlainBytes > api.PostgresCopyArchiveMaxBytes {
 		return Receipt{}, pgerrors.ErrInvalid
 	}
 	body, err := backend.Get(ctx, key)
 	if err != nil {
+		if body != nil {
+			_ = body.Close()
+		}
 		if ctx.Err() != nil {
 			return Receipt{}, ctx.Err()
 		}
@@ -68,11 +78,18 @@ func ReadBack(ctx context.Context, backend Backend, key string, d copyinventory.
 	if err != nil {
 		return Receipt{}, retainedReadError(ctx, cipher.bytes, maxCipherBytes, err)
 	}
-	n, err := io.Copy(io.Discard, io.LimitReader(plain, api.PostgresCopyArchiveMaxBytes+1))
-	if n > api.PostgresCopyArchiveMaxBytes {
+	written := &retainedOutput{writer: output}
+	n, err := io.Copy(written, io.LimitReader(plain, maxPlainBytes+1))
+	if n > maxPlainBytes {
 		return Receipt{}, pgerrors.ErrQuotaExceeded
 	}
 	if err != nil {
+		if written.failed {
+			if ctx.Err() != nil {
+				return Receipt{}, ctx.Err()
+			}
+			return Receipt{}, pgerrors.ErrUnavailable
+		}
 		return Receipt{}, retainedReadError(ctx, cipher.bytes, maxCipherBytes, err)
 	}
 	// No unauthenticated trailing ciphertext may become part of a receipt.
@@ -89,6 +106,22 @@ func ReadBack(ctx context.Context, backend Backend, key string, d copyinventory.
 	}
 	return Receipt{Scope: d.Scope, InventoryFingerprint: d.InventoryFingerprint, SourceDatabaseOID: d.Database.OID,
 		PlainBytes: n, CiphertextBytes: cipher.bytes, CiphertextSHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+}
+
+type retainedOutput struct {
+	writer io.Writer
+	failed bool
+}
+
+func (w *retainedOutput) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err != nil || n != len(p) {
+		w.failed = true
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+	}
+	return n, err
 }
 
 func retainedReadError(ctx context.Context, observed, limit int64, err error) error {

@@ -4634,3 +4634,21 @@ frozen/create-only artifact storage and qualified cleanup/retry/metering,
 source writer closure/common-point capture, object/configuration coverage,
 production-preserving promotion/rollback and native/provider acceptance remain
 required for the full one-command stage workflow.
+
+### Private authenticated archive staging (2026-10-03)
+
+Retained database archives can now be fully authenticated into a private local
+spool before any SQL restore. Staging checks the original encrypted header,
+complete age stream and exact retained ciphertext hash/length and plaintext
+count. It reads storage once and retains an immutable requirement copy, so a
+later key replacement or caller metadata mutation cannot change the input.
+The spool is mode 0600 and unlinked before its first plaintext write. Failure,
+close or process termination releases it without leaving a named plaintext file.
+The caller must freeze storage and reserve local capacity within the existing
+central archive ceilings; this primitive supplies no durable dispatch authority.
+
+Verification: three staging contracts and all existing archive contracts pass
+against isolated PostgreSQL 16. Tests cover corrupted/truncated/appended tails,
+receipt and SQL identity drift, declared and actual byte budgets, cancellation,
+storage/output failures, immutable input and plaintext cleanup. A failed storage
+read also closes a returned body. Stage admission remains closed.
