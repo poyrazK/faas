@@ -86,3 +86,12 @@ func TestNativeImageAnchorMountsIncludeNonDefaultJailRoots(t *testing.T) {
 		t.Fatal("unreadable mount proof passed leak inspection")
 	}
 }
+
+func TestNativeTunMountsIncludeNonDefaultAndDeletedTargets(t *testing.T) {
+	for _, point := range []string{"/tmp/fixture/firecracker/instance/root/faas-host-tun", "/tmp/fixture/firecracker/instance/root/faas-host-tun\\040(deleted)", "/tmp/fixture/firecracker/instance/root/faas-host-tun/nested"} {
+		data := "125 1 0:7 /net/tun " + point + " rw,nosuid,noexec - devtmpfs devtmpfs rw\n"
+		if got := nativeImageMountsFrom([]byte(data)); len(got) != 1 {
+			t.Fatalf("missed managed device mount: %s %v", point, got)
+		}
+	}
+}

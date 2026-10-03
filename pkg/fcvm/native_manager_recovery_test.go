@@ -150,6 +150,8 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	r.journal.loopMounts = r.loopMounts
 	r.imageSources = newNativeImageBackendFixture()
 	r.journal.imageSources = r.imageSources
+	r.tunBinds = newNativeTunBackendFixture()
+	r.journal.tunBinds = r.tunBinds
 	t.Cleanup(func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()

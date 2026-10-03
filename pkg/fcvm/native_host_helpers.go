@@ -247,6 +247,10 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	if err := images.require(ctx, owner, owner.Revoked); err != nil {
 		return record, false, err
 	}
+	tun := nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds}
+	if err := tun.require(owner, owner.Revoked); err != nil {
+		return record, false, err
+	}
 	id := uuid.NewString()
 	group, err := j.groups.Plan(id)
 	if err != nil {

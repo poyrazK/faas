@@ -58,7 +58,7 @@ done
 # 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
 while read -r _ _ _ _ mountpoint _; do
   case "$mountpoint" in
-    /srv/fc/jail/firecracker*/*/*|*/.native-processes/loop-mounts/*/points/*|*/.native-processes/image-sources/points/*|/tmp/faas-vmm-*|/tmp/faas-build-*|/tmp/faas-job-manifest-*) note "mount $mountpoint" ;;
+    /srv/fc/jail/firecracker*/*/*|*/.native-processes/loop-mounts/*/points/*|*/.native-processes/image-sources/points/*|*/faas-host-tun|*/faas-host-tun/*|*/faas-host-tun\\040\(deleted\)|/tmp/faas-vmm-*|/tmp/faas-build-*|/tmp/faas-job-manifest-*) note "mount $mountpoint" ;;
   esac
 done < /proc/self/mountinfo
 

@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -64,6 +64,14 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 	if err := images.validateOwners(imageRecords, records); err != nil {
 		return nil, err
 	}
+	tun := nativeTunBindJournal{owner: j}
+	tunRecords, err := tun.records()
+	if err != nil {
+		return nil, err
+	}
+	if err := tun.validateOwners(tunRecords, records); err != nil {
+		return nil, err
+	}
 	return records, ctx.Err()
 }
 
@@ -92,6 +100,10 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	}
 	images := nativeImageSourceJournal{owner: j, backend: j.imageSources}
 	if err := images.require(ctx, record, true); err != nil {
+		return err
+	}
+	tun := nativeTunBindJournal{owner: j, backend: j.tunBinds}
+	if err := tun.require(record, true); err != nil {
 		return err
 	}
 	record.ResourcesRemoved = true
@@ -127,6 +139,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	images := nativeImageSourceJournal{owner: j, backend: j.imageSources}
 	if err := images.require(ctx, old, true); err != nil {
+		return record, err
+	}
+	tun := nativeTunBindJournal{owner: j, backend: j.tunBinds}
+	if err := tun.require(old, true); err != nil {
 		return record, err
 	}
 	archive := filepath.Join(j.root, "retired")

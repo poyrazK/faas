@@ -24,6 +24,7 @@ type nativeProcessRecoveryRuntime struct {
 	helperGroups nativeHostHelperGroups
 	loopMounts   nativeLoopMountBackend
 	imageSources nativeImageSourceBackend
+	tunBinds     nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -39,8 +40,9 @@ type nativeProcessRecoveryRuntime struct {
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	loops := newNativeLoopMountBackend()
 	images := newNativeImageSourceBackend(v.chrootBase)
+	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images},
+		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun},
 		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:        make(map[string]string),
 		lockWait:     v.readyTimeout,
@@ -48,6 +50,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		helperGroups: newNativeHostHelperGroups(),
 		loopMounts:   loops,
 		imageSources: images,
+		tunBinds:     tun,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -136,6 +139,10 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 	}
 	images := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
 	if err := images.inventory(ctx, records); err != nil {
+		return nil, err
+	}
+	tun := nativeTunBindJournal{owner: r.journal, backend: r.tunBinds}
+	if err := tun.inventory(ctx, records); err != nil {
 		return nil, err
 	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
@@ -337,6 +344,10 @@ func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
 	defer cancel()
 	images := nativeImageSourceJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.imageSources}
 	if err := images.require(ctx, owner, true); err != nil {
+		return err
+	}
+	tun := nativeTunBindJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.tunBinds}
+	if err := tun.require(owner, true); err != nil {
 		return err
 	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)

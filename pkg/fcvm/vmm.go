@@ -924,7 +924,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if len(cfg.NetworkInterfaces) > 0 {
-		if err = v.bindTunSource(root, l.Instance); err != nil {
+		if err = v.bindTunSourceForOwner(ctx, stagingOwner, root, l.Instance); err != nil {
 			return err
 		}
 	}
@@ -1803,7 +1803,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !spec.Networkless {
-		if err = v.bindTunSource(root, l.Instance); err != nil {
+		if err = v.bindTunSourceForOwner(ctx, stagingOwner, root, l.Instance); err != nil {
 			return err
 		}
 	}
@@ -5182,6 +5182,24 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 // mknod(/dev/net/tun), while the later helper can bind this source over that
 // synthetic node from inside the private mount namespace.
 func (v *JailerVMM) bindTunSource(root, instance string) error {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return err
+	}
+	return v.bindTunSourceForOwner(ctx, owner, root, instance)
+}
+
+func (v *JailerVMM) bindTunSourceForOwner(ctx context.Context, owner nativeLaunchRecord, root, instance string) error {
+	if v.nativeRecovery != nil {
+		r := v.nativeRecovery
+		if owner.Lease.Instance != instance || owner.Generation != r.generation(instance) || root != v.chrootRoot(instance) {
+			return errors.New("native TUN bind: staging lacks original local jail authority")
+		}
+		journal := nativeTunBindJournal{owner: r.journal, backend: r.tunBinds, helperGroups: r.helperGroups}
+		return journal.stage(ctx, owner, root)
+	}
 	const source = "/dev/net/tun"
 	target := filepath.Join(root, "faas-host-tun")
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -5298,6 +5316,13 @@ func parseSetupJailWorkUs(out []byte) int64 {
 
 func (v *JailerVMM) bindTunDeviceInJailer(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
 	var timings bindTunTimings
+	if v.nativeRecovery != nil {
+		// A numeric nsenter target can be recycled between inspection and
+		// entry. Host TUN ownership alone cannot authorize a different task's
+		// private namespace. Native setup requires the original pidfd plus
+		// pinned mount-namespace/root FDs in the scoped helper protocol.
+		return timings, errors.New("native jail device setup: original namespace and root FD handoff is not yet implemented")
+	}
 	if instance == "" {
 		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
 	}

@@ -309,6 +309,10 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 	if err := helpers.requireRemoved(owner); err != nil {
 		return "", err
 	}
+	tun := nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds}
+	if err := tun.require(owner, false); err != nil {
+		return "", err
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

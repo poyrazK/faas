@@ -45,6 +45,10 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err := loops.retireAll(ctx, record); err != nil {
 		return fmt.Errorf("vmm: native staging retirement: %w", err)
 	}
+	tun := nativeTunBindJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.tunBinds, helperGroups: v.nativeRecovery.helperGroups}
+	if err := tun.retire(ctx, record); err != nil {
+		return fmt.Errorf("vmm: native TUN reference retirement: %w", err)
+	}
 	images := nativeImageSourceJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.imageSources}
 	if err := images.retireAll(ctx, record); err != nil {
 		return fmt.Errorf("vmm: native image reference retirement: %w", err)

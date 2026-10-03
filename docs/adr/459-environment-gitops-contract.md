@@ -1609,7 +1609,7 @@ acceptance; the dedicated acceptance project remains suspended.
 
 Writable image clone/copy materialisation and snapshot drive export explicitly
 refuse their legacy producer paths in native mode. Their complete provenance,
-TUN-device binding, node-wide network/policy effects and other host producers
+private jail-device setup, node-wide network/policy effects and other host producers
 remain required. Source/reference history is retained; its bounded retention
 and legacy adoption still need implementation. Native incoming attempt/RPC
 ownership, qualification consumer/readiness/restore receipts, function/new-app
@@ -1634,3 +1634,55 @@ planning and attachment publication; unmount timing includes physical cleanup
 and its durable acknowledgement. File work stays outside both phases. Timing
 requests do not restore the legacy instance-only pre-boot cache or bypass
 revocation, and they do not change customer wake event fields.
+
+The host TUN bind now has its own durable original-owner journal. Its plan
+retains the prepared VM generation/full lease, kernel boot, jail root, mount
+namespace and original character-device inode/rdev/mode. The VM lock spans
+source pinning, placeholder publication, attachment and readiness. The Linux
+backend opens `/dev/net/tun` with `O_PATH` so preparation does not open a TUN
+session, and it never changes host device metadata. It applies writable,
+device-capable `nosuid,noexec` attributes to this bind only, using
+[`mount_setattr`](https://man7.org/linux/man-pages/man2/mount_setattr.2.html).
+Launch and later host helpers require completed attachment proof. Failed
+publication holds the generation instead of authorizing another attachment.
+
+Stop waits for original VM exit and scoped helper retirement, then retires the
+host TUN bind before image references and root removal. Direct unmount requires
+the original device and kernel mount identity; uncertain, stacked, replaced or
+unavailable namespace effects retain ownership. A missing final mount receipt
+can be recovered only from the previously published placeholder and pinned
+original device proof. Retirement is replayable after physical removal but
+before its acknowledgement. Resource acknowledgement, fallback replacement and
+startup inventory inspect both active and immutable archived TUN frames. Boot
+and restore use the owner captured before staging, and the native bind never
+enters the legacy instance-only in-memory list.
+
+This is host-bind ownership, not completed private jail-device setup. Native
+mode now explicitly refuses the numeric-PID `nsenter` path: inspection cannot
+prevent that PID from being reused before entry. The scoped helper still needs
+the original pidfd plus pinned mount-namespace/root FD handoff and its recovery
+lineage before native boot can finish. Legacy boot retains its current setup
+path. The TUN crash fixture isolates a mount namespace and kills a producer
+before final readiness publication; it tests recovery in that surviving
+original namespace and does not establish production service restart recovery.
+
+The deployed vmmd service uses `ProtectSystem=strict` and `ReadWritePaths`, which
+create a service filesystem namespace. Systemd documents that these namespaces
+are individual to service processes; see its
+[execution environment documentation](https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.exec.xml).
+Durable access to the original namespace across a service restart is still
+required for image, loop and TUN recovery. A fresh namespace does not supply
+evidence about the old mounts; current backends hold ownership on identity
+mismatch. Namespace persistence must preserve the existing service hardening
+and receive dedicated restart acceptance.
+
+Portable TUN contracts cover interrupted plan/placeholder/readiness/retirement
+publication, revoked and stale callers, original-owner producer locking,
+changed mount/device/root/namespace proof, strict private record decoding and
+unknown startup effects. The Linux native crash fixture checks a real surviving
+device bind and refuses altered identities before fresh-journal retirement.
+Both leak checkers include TUN mounts at non-default and deleted target paths.
+The native metal wrapper derives all `TestMetalNative*` ownership tests from
+source and requires individual PASS evidence, refusing missing or skipped
+producers. These gates do not enable qualification dispatch or the full
+environment executor, and native execution remains outstanding.
