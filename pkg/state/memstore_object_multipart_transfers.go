@@ -72,14 +72,14 @@ func (m *MemStore) ObjectMultipartAbortReady(_ context.Context, id, token string
 	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting {
 		return false, ErrConflict
 	}
-	return !m.multipartTransfersPendingLocked(id), nil
+	return !u.PartURLUnsafeUntil.After(m.clock()) && !m.multipartTransfersPendingLocked(id), nil
 }
 
 func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectMultipartUploads[id]
-	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting || m.multipartTransfersPendingLocked(id) {
+	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartAborting || u.PartURLUnsafeUntil.After(m.clock()) || m.multipartTransfersPendingLocked(id) {
 		return ErrConflict
 	}
 	u.State, u.LeaseToken, u.LeaseUntil = ObjectMultipartAborted, "", time.Time{}

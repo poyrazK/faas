@@ -25,6 +25,7 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 		CompletionConditions: api.ObjectWriteConditions{IfMatch: row.CompletionIfMatch, IfNoneMatch: row.CompletionIfNoneMatch}, CompletionErrorCode: row.CompletionErrorCode,
 		CompletionETag: row.CompletionEtag, CompletionVersionID: row.CompletionVersionID,
 		CompletionRecoveryCursor: row.CompletionRecoveryCursor, CompletionVersionsObserved: row.CompletionVersionsObserved, CompletionDispatched: row.CompletionDispatched,
+		PartURLUnsafeUntil: row.PartUrlUnsafeUntil.Time,
 	}
 	if err := json.Unmarshal(row.ObjectMetadata, &upload.Metadata); err != nil {
 		return ObjectMultipartUpload{}, err

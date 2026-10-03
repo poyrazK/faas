@@ -12548,7 +12548,8 @@ func (q *Queries) ObjectLifecycleScanSave(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
-SELECT account_id,bucket_id FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
+SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
+FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
 `
 
 type ObjectMultipartAbortOwnerParams struct {
@@ -12557,14 +12558,15 @@ type ObjectMultipartAbortOwnerParams struct {
 }
 
 type ObjectMultipartAbortOwnerRow struct {
-	AccountID pgtype.UUID
-	BucketID  pgtype.UUID
+	AccountID       pgtype.UUID
+	BucketID        pgtype.UUID
+	PartUrlsDrained bool
 }
 
 func (q *Queries) ObjectMultipartAbortOwner(ctx context.Context, db DBTX, arg ObjectMultipartAbortOwnerParams) (ObjectMultipartAbortOwnerRow, error) {
 	row := db.QueryRow(ctx, objectMultipartAbortOwner, arg.ID, arg.LeaseToken)
 	var i ObjectMultipartAbortOwnerRow
-	err := row.Scan(&i.AccountID, &i.BucketID)
+	err := row.Scan(&i.AccountID, &i.BucketID, &i.PartUrlsDrained)
 	return i, err
 }
 
@@ -12589,7 +12591,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
@@ -12640,12 +12642,13 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -12689,6 +12692,7 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
@@ -12717,7 +12721,7 @@ AND (
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until
 `
 
 type ObjectMultipartClaimParams struct {
@@ -12780,6 +12784,7 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
@@ -12824,7 +12829,7 @@ func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -12871,6 +12876,7 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.CompletionRecoveryCursor,
 			&i.CompletionVersionsObserved,
 			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -12886,7 +12892,7 @@ const objectMultipartFinish = `-- name: ObjectMultipartFinish :execrows
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched) OR (state='aborting' AND $3='aborted'))
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched)
 `
 
 type ObjectMultipartFinishParams struct {
@@ -12907,7 +12913,7 @@ const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
 UPDATE object_storage_multipart_uploads SET state='completed',completion_etag=$1,completion_version_id=$2,
  completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $3::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$4 AND lease_token=$5 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched
+WHERE id=$4 AND lease_token=$5 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until
 `
 
 type ObjectMultipartFinishResultParams struct {
@@ -12958,12 +12964,33 @@ func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg 
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
 
+const objectMultipartFinishVerifiedAbort = `-- name: ObjectMultipartFinishVerifiedAbort :execrows
+UPDATE object_storage_multipart_uploads SET state='aborted',lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='aborting'
+AND (part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())
+`
+
+type ObjectMultipartFinishVerifiedAbortParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBTX, arg ObjectMultipartFinishVerifiedAbortParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartFinishVerifiedAbort, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -13013,6 +13040,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
@@ -13020,7 +13048,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
 (id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until
 `
 
 type ObjectMultipartInsertParams struct {
@@ -13083,12 +13111,13 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -13147,6 +13176,7 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.CompletionRecoveryCursor,
 			&i.CompletionVersionsObserved,
 			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -13303,6 +13333,46 @@ func (q *Queries) ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const objectMultipartRecordPartURL = `-- name: ObjectMultipartRecordPartURL :execrows
+UPDATE object_storage_multipart_uploads
+SET part_url_unsafe_until=greatest(part_url_unsafe_until,$1::timestamptz+make_interval(secs=>$2::int))
+WHERE id=$3 AND account_id=$4 AND app_id=$5 AND bucket_id=$6
+AND object_key=$7 AND provider_upload_id=$8
+AND state='active' AND part_count>0 AND expires_at>clock_timestamp()
+AND $1::timestamptz>clock_timestamp()
+AND $1::timestamptz<=clock_timestamp()+make_interval(secs=>$9::int)
+`
+
+type ObjectMultipartRecordPartURLParams struct {
+	SignedExpiresAt  pgtype.Timestamptz
+	DrainSeconds     int32
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	BucketID         pgtype.UUID
+	ObjectKey        string
+	ProviderUploadID string
+	MaxTtlSeconds    int32
+}
+
+func (q *Queries) ObjectMultipartRecordPartURL(ctx context.Context, db DBTX, arg ObjectMultipartRecordPartURLParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartRecordPartURL,
+		arg.SignedExpiresAt,
+		arg.DrainSeconds,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.ObjectKey,
+		arg.ProviderUploadID,
+		arg.MaxTtlSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartRejectCompletion = `-- name: ObjectMultipartRejectCompletion :execrows
 UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=$3,
 lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=now(),updated_at=now()
@@ -13360,7 +13430,7 @@ func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBT
 }
 
 const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
 `
 
 type ObjectMultipartResultLockParams struct {
@@ -13409,6 +13479,7 @@ func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg Ob
 		&i.CompletionRecoveryCursor,
 		&i.CompletionVersionsObserved,
 		&i.CompletionDispatched,
+		&i.PartUrlUnsafeUntil,
 	)
 	return i, err
 }
@@ -14248,7 +14319,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,$4::text)
@@ -14315,6 +14386,7 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.CompletionRecoveryCursor,
 			&i.CompletionVersionsObserved,
 			&i.CompletionDispatched,
+			&i.PartUrlUnsafeUntil,
 		); err != nil {
 			return nil, err
 		}

@@ -298,15 +298,11 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	if req.ExpiresIn < 0 || req.ExpiresIn > 900 {
+	if req.ExpiresIn < 0 || req.ExpiresIn > api.ObjectMultipartPartURLMaxTTLSeconds {
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	if err = s.admitObjectMultipartPartURL(r.Context(), bucket, upload.Key); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	out, err := provider.PresignMultipartPart(r.Context(), bucket.PhysicalName, objectstorage.MultipartPartRequest{
+	out, err := s.issueObjectMultipartPartURL(r.Context(), bucket, upload, provider, objectstorage.MultipartPartRequest{
 		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: partBytes, ExpiresIn: req.ExpiresIn,
 	})
 	if err != nil {
@@ -505,11 +501,6 @@ func (s *server) executeObjectMultipartAbort(ctx context.Context, store state.Ob
 	request := objectstorage.MultipartAbortRequest{Key: u.Key, ProviderUploadID: u.ProviderUploadID}
 	if err := provider.AbortMultipartUpload(ctx, bucket.PhysicalName, request); err != nil {
 		return err
-	}
-	if u.PartCount != 0 {
-		return finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
-			return store.FinishObjectMultipartUpload(finishCtx, u.ID, u.LeaseToken, state.ObjectMultipartAborted)
-		})
 	}
 	transfers, ok := store.(state.ObjectMultipartTransferStore)
 	if !ok {

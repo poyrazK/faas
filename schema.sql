@@ -8089,8 +8089,10 @@ CREATE TABLE public.object_storage_multipart_uploads (
     completion_recovery_cursor text DEFAULT ''::text NOT NULL,
     completion_versions_observed boolean DEFAULT false NOT NULL,
     completion_dispatched boolean DEFAULT false NOT NULL,
+    part_url_unsafe_until timestamp with time zone,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
     CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -23832,3 +23834,26 @@ CREATE TRIGGER object_lifecycle_deletion_fence BEFORE INSERT OR UPDATE ON public
 
 ALTER TABLE ONLY public.object_deletions
     ADD CONSTRAINT object_deletions_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+
+--
+-- Name: protect_object_multipart_part_url_deadline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_part_url_deadline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.part_url_unsafe_until IS DISTINCT FROM OLD.part_url_unsafe_until
+  AND (OLD.state<>'active' OR NEW.state<>'active' OR NEW.part_url_unsafe_until IS NULL
+   OR (OLD.part_url_unsafe_until IS NOT NULL AND NEW.part_url_unsafe_until<OLD.part_url_unsafe_until)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart part URL cleanup deadline cannot be shortened or changed after admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_part_url_deadline_protected; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_part_url_deadline_protected BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_part_url_deadline();

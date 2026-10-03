@@ -98,6 +98,7 @@ func TestObjectMultipartUploadLifecycle(t *testing.T) {
 	}
 
 	abortResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "cancel.bin", SizeBytes: 10}, nil)
+	provider.multipartParts = objectstorage.MultipartPartsPage{}
 	var abortUpload api.ObjectMultipartUpload
 	if abortResponse.Code != 201 || json.Unmarshal(abortResponse.Body.Bytes(), &abortUpload) != nil {
 		t.Fatal(abortResponse.Code, abortResponse.Body.String())

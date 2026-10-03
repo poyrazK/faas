@@ -74,6 +74,28 @@ dispatch. Deletion acknowledgments never
 refund storage; verified complete inventories remain authoritative. Multipart
 cleanup must reuse existing durable abort and completion fences.
 
+Fixed-size control-plane multipart signing also participates in the abort
+fence, with a five-minute default URL lifetime and a fifteen-minute maximum.
+Before publishing a provider URL, atomically recheck its owned session,
+key and native upload identity, require the session to remain active, and
+persist the maximum issued URL expiry plus the transfer and cleanup allowance.
+Abort or completion admitted during signing withholds the URL. The stored
+deadline is private, monotonic while active and frozen after mutation admission.
+Upgrade backfills nonterminal legacy sessions conservatively through their
+session expiry plus the maximum URL lifetime and cleanup allowance.
+
+All multipart profiles use the durable abort executor: abort, wait for the
+persisted deadline and tracked transfers, then verify a bounded empty part
+listing or NoSuchUpload before marking the session aborted. The generic finish
+method cannot terminate an abort. Failed verification or an uncertain abort
+response keeps the journal retryable after reconstruction, including with new
+S3 ingress disabled. Fixed-size legacy key grants remain untracked and reserved
+after verified cleanup; neither elapsed time nor an abort acknowledgment
+refunds them or rewrites the inventory baseline. A provider URL does not enforce
+Gregale's transfer timeout on an external client. This deadline is a minimum
+cleanup delay, not proof that every external transfer has stopped; direct-write
+proof and reclamation remain separate outstanding work.
+
 All limits live in pkg/api/limits.go: 1,000 rules, 255 Unicode characters per
 ID, a 5 MiB normalized document, ten portable tags, up to 100 retained newer
 noncurrent versions, a 32-policy batch, one key and 32 new actions per step,
@@ -139,9 +161,23 @@ uniqueness, runbook SQL and Git whitespace checks passed. These results validate
 the internal worker increment; customer lifecycle and rule-driven multipart
 acceptance remain open.
 
+The signing-fence prerequisite passed focused memory/PostgreSQL race tests,
+local control API and S3 HTTP restart tests, existing gateway/provider multipart
+regressions, and migration upgrade/rollback guards. These preserve legacy key
+grants and inventory baselines. Pinned Go 1.25.13 and golangci-lint 2.4.0 reported
+zero changed-file issues; lint compilation omitted debug information to reduce
+temporary disk use while retaining all checks. All four SQLC files match isolated
+generation, and the three changed schema sections match a fresh full migration
+run. Formatting, encoding, shell quoting, ADR uniqueness, runbook SQL and Git
+whitespace checks passed. Real provider tests were excluded as requested.
+
 Protocol references:
 [Lifecycle configuration elements](https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html),
 [LifecycleExpiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_LifecycleExpiration.html),
 [NoncurrentVersionExpiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_NoncurrentVersionExpiration.html).
+Multipart cleanup follows the
+[AbortMultipartUpload verification guidance](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html).
+External capabilities retain the
+[presigned URL request-start expiration semantics](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html).
 Key-only continuation follows
 [ListVersionsRequest key-marker semantics](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/s3/model/ListVersionsRequest.html#getKeyMarker--).

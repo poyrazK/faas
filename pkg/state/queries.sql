@@ -4026,7 +4026,22 @@ WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched) OR (state='aborting' AND $3='aborted'));
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched);
+
+-- name: ObjectMultipartFinishVerifiedAbort :execrows
+UPDATE object_storage_multipart_uploads SET state='aborted',lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='aborting'
+AND (part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp());
+
+-- name: ObjectMultipartRecordPartURL :execrows
+UPDATE object_storage_multipart_uploads
+SET part_url_unsafe_until=greatest(part_url_unsafe_until,sqlc.arg(signed_expires_at)::timestamptz+make_interval(secs=>sqlc.arg(drain_seconds)::int))
+WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND bucket_id=sqlc.arg(bucket_id)
+AND object_key=sqlc.arg(object_key) AND provider_upload_id=sqlc.arg(provider_upload_id)
+AND state='active' AND part_count>0 AND expires_at>clock_timestamp()
+AND sqlc.arg(signed_expires_at)::timestamptz>clock_timestamp()
+AND sqlc.arg(signed_expires_at)::timestamptz<=clock_timestamp()+make_interval(secs=>sqlc.arg(max_ttl_seconds)::int);
 
 -- name: ObjectMultipartSetSize :execrows
 UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
@@ -5133,7 +5148,8 @@ SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
 WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending;
 
 -- name: ObjectMultipartAbortOwner :one
-SELECT account_id,bucket_id FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting';
+SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
+FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting';
 
 -- name: ObjectMultipartReleaseTrackedParts :exec
 DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked;

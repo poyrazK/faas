@@ -936,6 +936,16 @@ Sessions expire after
 object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.
 
+Abort can return 409 while issued part URLs remain within their cleanup delay
+or the provider still reports parts. The session remains `aborting`; retrieve
+it with GET and let the recovery worker retry, including after a server restart.
+Signing rechecks the active session before returning a URL, so an abort or
+completion admitted during signing prevents publication. Cleanup waits beyond
+the recorded URL expiry, then checks a bounded part listing before reporting
+`aborted`. Elapsed time and provider acknowledgment alone do not refund legacy
+key reservations or change the inventory baseline. See
+[ADR-408](adr/408-durable-object-lifecycle.md).
+
 Key rotation copies bucket grants to the successor so applications can switch
 credentials during the normal grace window. For compute workloads, prefer the
 compute-binding API above so Gregale owns the sealed credential lifecycle;

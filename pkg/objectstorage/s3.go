@@ -578,12 +578,12 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 }
 
 func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r MultipartPartRequest) (SignedRequest, error) {
-	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > 10000 || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
+	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > api.ObjectMultipartPartURLMaxTTLSeconds {
 		return SignedRequest{}, ErrInvalid
 	}
 	ttl := time.Duration(r.ExpiresIn) * time.Second
 	if ttl == 0 {
-		ttl = 5 * time.Minute
+		ttl = time.Duration(api.ObjectMultipartPartURLDefaultTTLSeconds) * time.Second
 	}
 	out, err := p.signer.PresignUploadPart(ctx, &s3.UploadPartInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),

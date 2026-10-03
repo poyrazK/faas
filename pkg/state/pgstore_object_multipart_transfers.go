@@ -49,7 +49,7 @@ func (s *PgStore) PrepareObjectMultipartCompletion(ctx context.Context, u Object
 
 func (s *PgStore) ObjectMultipartAbortReady(ctx context.Context, id, token string) (bool, error) {
 	q := sqlc.New()
-	_, err := q.ObjectMultipartAbortOwner(ctx, s.pool, sqlc.ObjectMultipartAbortOwnerParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}})
+	owner, err := q.ObjectMultipartAbortOwner(ctx, s.pool, sqlc.ObjectMultipartAbortOwnerParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrConflict
 	}
@@ -57,7 +57,7 @@ func (s *PgStore) ObjectMultipartAbortReady(ctx context.Context, id, token strin
 		return false, mapErr(err)
 	}
 	pending, err := q.ObjectMultipartTransfersPending(ctx, s.pool, mustPgUUID(id))
-	return !pending, err
+	return owner.PartUrlsDrained && !pending, err
 }
 
 // The caller must have verified an empty provider part list (or NoSuchUpload).
@@ -93,7 +93,7 @@ func (s *PgStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, to
 	if pending {
 		return ErrConflict
 	}
-	n, err := q.ObjectMultipartFinish(ctx, tx, sqlc.ObjectMultipartFinishParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}, State: ObjectMultipartAborted})
+	n, err := q.ObjectMultipartFinishVerifiedAbort(ctx, tx, sqlc.ObjectMultipartFinishVerifiedAbortParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}})
 	if err != nil {
 		return err
 	}

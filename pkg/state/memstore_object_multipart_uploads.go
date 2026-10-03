@@ -187,7 +187,7 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	upload, ok := m.objectMultipartUploads[id]
-	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted || upload.State == ObjectMultipartAborting && next == ObjectMultipartAborted
+	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted
 	if !ok || token == "" || upload.LeaseToken != token || !valid || next == ObjectMultipartCompleted && upload.CompletionDispatched {
 		return ErrConflict
 	}

@@ -47,9 +47,10 @@ type ObjectMultipartUpload struct {
 	CompletionErrorCode             string
 	CompletionETag                  string
 	CompletionVersionID             string
-	CompletionRecoveryCursor        string `json:"-"`
-	CompletionVersionsObserved      bool   `json:"-"`
-	CompletionDispatched            bool   `json:"-"`
+	CompletionRecoveryCursor        string    `json:"-"`
+	CompletionVersionsObserved      bool      `json:"-"`
+	CompletionDispatched            bool      `json:"-"`
+	PartURLUnsafeUntil              time.Time `json:"-"`
 	State                           string
 	ExpiresAt, CreatedAt, UpdatedAt time.Time
 	LeaseToken                      string
@@ -68,6 +69,12 @@ type ObjectMultipartUploadStore interface {
 	FinishObjectMultipartUpload(context.Context, string, string, string) error
 	RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error
 	DueObjectMultipartUploads(context.Context, int32) ([]ObjectMultipartUpload, error)
+}
+
+// ObjectMultipartPartURLStore commits a legacy part URL's drain deadline before
+// it can be returned to its caller. An abort/completion race rejects publication.
+type ObjectMultipartPartURLStore interface {
+	RecordObjectMultipartPartURL(context.Context, ObjectMultipartUpload, time.Time) error
 }
 
 // ObjectMultipartCompletionStore atomically commits the actual result and its

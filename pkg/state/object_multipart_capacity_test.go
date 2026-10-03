@@ -146,7 +146,10 @@ func multipartAbortCapacity(t *testing.T, st accountingStore) {
 	if _, e = sessions.ClaimObjectMultipartUpload(ctx, b.AccountID, b.AppID, b.ID, u.ID, "abort", state.ObjectMultipartAborting, nil, false); e != nil {
 		t.Fatal(e)
 	}
-	if e = sessions.FinishObjectMultipartUpload(ctx, u.ID, "abort", state.ObjectMultipartAborted); e != nil {
+	if e = sessions.FinishObjectMultipartUpload(ctx, u.ID, "abort", state.ObjectMultipartAborted); !errors.Is(e, state.ErrConflict) {
+		t.Fatal("unverified abort released quota", e)
+	}
+	if e = st.(state.ObjectMultipartTransferStore).FinishVerifiedObjectMultipartAbort(ctx, u.ID, "abort"); e != nil {
 		t.Fatal(e)
 	}
 	snapshot, _ := st.ObjectUsage(ctx, b.AccountID, time.Now())

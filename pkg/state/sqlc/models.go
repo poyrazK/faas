@@ -2876,6 +2876,7 @@ type ObjectStorageMultipartUpload struct {
 	CompletionRecoveryCursor   string
 	CompletionVersionsObserved bool
 	CompletionDispatched       bool
+	PartUrlUnsafeUntil         pgtype.Timestamptz
 }
 
 type ObjectStorageRequestMetric struct {

@@ -20,6 +20,16 @@ provider qualification.
 | Replication | Configured owned destinations, durable copy/delete jobs, version/marker propagation, loop prevention, failures and destination accounting | Open; depends on durable events and versioning. |
 | Production accounting/deletion | Authoritative usage adapters and cutoffs, coordinated account deletion across new versions/retention/events/jobs, local E2E acceptance | ADR-406 implements permanent deletion/inventory coordination with local SDK, memory/PostgreSQL restart and race coverage. Existing usage adapters and account deletion still need qualification against the expanded features. Live provider tests are excluded by user instruction. |
 
+The multipart cleanup prerequisite now journals fixed-size signed part URL
+deadlines before publication and withholds URLs when abort or completion wins
+the race. Every abort profile verifies a bounded empty part listing or
+NoSuchUpload after its cleanup delay; acknowledgment alone cannot terminate an
+abort through the generic store method. Memory/PostgreSQL race tests and local
+control API → S3 HTTP tests cover URL execution, lost abort responses, remaining
+parts, reconstructed stores, disabled-ingress recovery and terminal replay.
+Legacy untracked key grants and inventory baselines remain conservative. This
+does not complete rule-driven multipart cleanup or direct-write reclamation.
+
 Implement in reviewable increments, updating the evidence here. An increment
 does not mark the entire scope complete. Feature completion requires both the
 ordinary path and its failure/restart/tenant-isolation behavior, not just an

@@ -168,6 +168,12 @@ const (
 	MaxObjectWriteETagBytes                   = 256
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
+
+	// Fixed-size multipart provider URLs share the same bounds across adapters
+	// and durable signing admission.
+	ObjectMultipartPartURLDefaultTTLSeconds = 300
+	ObjectMultipartPartURLMaxTTLSeconds     = 900
+
 	// SourceArchiveMaxEntries is shared by ordinary source validation and
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.

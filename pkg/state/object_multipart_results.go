@@ -24,5 +24,5 @@ func validMultipartFinalResult(u ObjectMultipartUpload, r ObjectMultipartComplet
 }
 
 func emptyInitialMultipartResult(u ObjectMultipartUpload) bool {
-	return u.CompletionETag == "" && u.CompletionVersionID == "" && u.CompletionRecoveryCursor == "" && !u.CompletionDispatched && !u.CompletionVersionsObserved
+	return u.CompletionETag == "" && u.CompletionVersionID == "" && u.CompletionRecoveryCursor == "" && !u.CompletionDispatched && !u.CompletionVersionsObserved && u.PartURLUnsafeUntil.IsZero()
 }

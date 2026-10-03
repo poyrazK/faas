@@ -1005,6 +1005,7 @@ type Querier interface {
 	ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit int32) ([]ObjectStorageMultipartUpload, error)
 	ObjectMultipartFinish(ctx context.Context, db DBTX, arg ObjectMultipartFinishParams) (int64, error)
 	ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBTX, arg ObjectMultipartFinishVerifiedAbortParams) (int64, error)
 	ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMultipartGetParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMultipartListParams) ([]ObjectStorageMultipartUpload, error)
@@ -1016,6 +1017,7 @@ type Querier interface {
 	ObjectMultipartPartSettle(ctx context.Context, db DBTX, arg ObjectMultipartPartSettleParams) (int64, error)
 	ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadID pgtype.UUID) (int64, error)
 	ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg ObjectMultipartPartTransferParams) (ObjectMultipartPartTransferRow, error)
+	ObjectMultipartRecordPartURL(ctx context.Context, db DBTX, arg ObjectMultipartRecordPartURLParams) (int64, error)
 	ObjectMultipartRejectCompletion(ctx context.Context, db DBTX, arg ObjectMultipartRejectCompletionParams) (int64, error)
 	ObjectMultipartRejectResult(ctx context.Context, db DBTX, arg ObjectMultipartRejectResultParams) (int64, error)
 	ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBTX, uploadID pgtype.UUID) error
