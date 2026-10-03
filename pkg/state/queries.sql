@@ -5128,6 +5128,53 @@ SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
 AND request_id=sqlc.arg(request_id) LIMIT 2;
 
+-- name: IssueHasHandoffRecipients :one
+-- Detailed evidence is opt-in: the legacy empty filter never selects it.
+SELECT EXISTS(SELECT 1 FROM app_webhooks
+ WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+ AND scope='app' AND enabled AND 'issue.handoff'=ANY(event_filter));
+
+-- name: IssueHandoffContext :one
+SELECT a.slug,c.plan FROM apps a JOIN accounts c ON c.id=a.account_id
+ WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id);
+
+-- name: IssueHandoffSample :one
+-- Ingest-triggered transitions select the exact occurrence. Manual reopening
+-- selects the latest retained occurrence. Release identity is an immutable
+-- issue-release snapshot, even if the original deployment was deleted.
+SELECT e.event_id,e.deployment_id,e.payload,e.received_at,
+       r.commit_sha,r.image_digest,r.event_count,r.first_seen_at,r.last_seen_at
+ FROM issue_events e JOIN issue_releases r
+ ON r.issue_id=e.issue_id AND r.deployment_id=e.deployment_id
+ WHERE e.issue_id=sqlc.arg(issue_id) AND e.app_id=sqlc.arg(app_id)
+ AND e.received_at >= sqlc.arg(retained_from) AND e.received_at <= sqlc.arg(now)
+ AND (sqlc.narg(event_id)::uuid IS NULL OR e.event_id=sqlc.narg(event_id))
+ AND (sqlc.narg(deployment_id)::uuid IS NULL OR e.deployment_id=sqlc.narg(deployment_id))
+ ORDER BY e.received_at DESC,e.event_id DESC LIMIT 1;
+
+-- name: IssueHandoffRequests :many
+-- Never attach ambiguous, aggregated, out-of-plan, or another deployment's
+-- telemetry. Opaque public request IDs are stored as trace_id by the gateway.
+SELECT id,trace_id,route,method,status,latency_ms,cold_boot,received_at,spans_summary
+ FROM request_telemetry
+ WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+ AND deployment_id=sqlc.arg(deployment_id) AND count=1
+ AND received_at >= sqlc.arg(retained_from) AND received_at <= sqlc.arg(now)
+ AND received_at BETWEEN sqlc.arg(since) AND sqlc.arg(until)
+ AND ((sqlc.arg(request_id)::text<>'' AND (id::text=sqlc.arg(request_id) OR trace_id=sqlc.arg(request_id)))
+      OR (sqlc.arg(trace_id)::text<>'' AND trace_id=sqlc.arg(trace_id)))
+ LIMIT 2;
+
+-- name: IssueAddHandoff :exec
+WITH recipients AS (
+ SELECT array_agg(id) AS ids FROM app_webhooks
+ WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+ AND scope='app' AND enabled AND 'issue.handoff'=ANY(event_filter)
+)
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(app_id),'issue.handoff',sqlc.arg(activity_id),sqlc.arg(payload),ids
+ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING;
+
 -- name: IssueTokenStillValid :one
 SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
 -- name: IssuePurgePlanEvents :execrows

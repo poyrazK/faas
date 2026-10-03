@@ -26,8 +26,8 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Fatalf("defaultContentType = %v, want CloudEvents structured JSON", got)
 	}
 	info := object(t, document, "info")
-	if got := info["version"]; got != "1.11.0" {
-		t.Fatalf("info.version = %v, want 1.11.0 after platform tenant customer lifecycle webhooks", got)
+	if got := info["version"]; got != "1.12.0" {
+		t.Fatalf("info.version = %v, want 1.12.0 after opt-in issue evidence handoffs", got)
 	}
 
 	channels := object(t, document, "channels")
@@ -39,6 +39,7 @@ func TestAsyncAPIContract(t *testing.T) {
 	_ = object(t, securitySchemes, "bearerAuth")
 
 	wantEvents := map[string]string{
+		"issueHandoff":                            "issue.handoff",
 		"appParked":                               "app.parked",
 		"appWoken":                                "app.woken",
 		"deploymentLive":                          "deployment.live",
@@ -104,6 +105,7 @@ func TestAsyncAPIContract(t *testing.T) {
 	}
 
 	for operationName, channelName := range map[string]string{
+		"deliverIssueHandoff":                            "issueHandoff",
 		"deliverAppParked":                               "appParked",
 		"deliverAppWoken":                                "appWoken",
 		"deliverDeploymentLive":                          "deploymentLive",

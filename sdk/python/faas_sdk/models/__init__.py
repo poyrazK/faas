@@ -975,6 +975,12 @@ from .issue_detail import IssueDetail
 from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
+from .issue_handoff import IssueHandoff
+from .issue_handoff_evidence import IssueHandoffEvidence
+from .issue_handoff_request import IssueHandoffRequest
+from .issue_handoff_schema_version import IssueHandoffSchemaVersion
+from .issue_handoff_span import IssueHandoffSpan
+from .issue_handoff_type import IssueHandoffType
 from .issue_impact import IssueImpact
 from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
@@ -3110,6 +3116,12 @@ __all__ = (
     "IssueEvent",
     "IssueEventResponse",
     "IssueFrame",
+    "IssueHandoff",
+    "IssueHandoffEvidence",
+    "IssueHandoffRequest",
+    "IssueHandoffSchemaVersion",
+    "IssueHandoffSpan",
+    "IssueHandoffType",
     "IssueImpact",
     "IssueImpactAlertPolicy",
     "IssueImpactSummary",

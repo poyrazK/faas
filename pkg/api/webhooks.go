@@ -84,7 +84,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.handoff",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
@@ -334,7 +334,8 @@ const AppWebhookEventFilterLenMax = 32
 // alert rule routes.
 //
 // EventFilter is the optional allowlist: empty/nil subscribes to
-// every event in AllowedAppWebhookEvents. When non-empty, every
+// every event in AllowedAppWebhookEvents except issue.handoff, which requires
+// explicit selection because it includes detailed evidence. When non-empty, every
 // entry must be a member of the closed set — the handler rejects
 // drift with 400 ErrAppWebhookInvalid.
 type CreateAppWebhookRequest struct {

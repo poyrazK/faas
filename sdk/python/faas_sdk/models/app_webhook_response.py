@@ -48,6 +48,8 @@ class AppWebhookResponse:
     target_url: str
     webhook_secret_sealed_masked: AppWebhookResponseWebhookSecretSealedMasked
     event_filter: list[AppWebhookResponseEventFilterItem]
+    """Subscribed event names. Empty means summary events; issue.handoff requires explicit opt-in to detailed
+    evidence. Its payload follows IssueHandoff."""
     retry_policy: AppWebhookResponseRetryPolicy
     delivery_format: AppWebhookResponseDeliveryFormat
     enabled: bool

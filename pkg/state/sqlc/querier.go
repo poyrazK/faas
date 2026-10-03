@@ -577,6 +577,7 @@ type Querier interface {
 	// $1 = email
 	IsMailSuppressed(ctx context.Context, db DBTX, lower string) (bool, error)
 	IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddActivityParams) (IssueActivity, error)
+	IssueAddHandoff(ctx context.Context, db DBTX, arg IssueAddHandoffParams) error
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
@@ -598,6 +599,16 @@ type Querier interface {
 	IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (AppIssue, error)
 	IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (int32, error)
 	IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLockedParams) (AppIssue, error)
+	IssueHandoffContext(ctx context.Context, db DBTX, arg IssueHandoffContextParams) (IssueHandoffContextRow, error)
+	// Never attach ambiguous, aggregated, out-of-plan, or another deployment's
+	// telemetry. Opaque public request IDs are stored as trace_id by the gateway.
+	IssueHandoffRequests(ctx context.Context, db DBTX, arg IssueHandoffRequestsParams) ([]IssueHandoffRequestsRow, error)
+	// Ingest-triggered transitions select the exact occurrence. Manual reopening
+	// selects the latest retained occurrence. Release identity is an immutable
+	// issue-release snapshot, even if the original deployment was deleted.
+	IssueHandoffSample(ctx context.Context, db DBTX, arg IssueHandoffSampleParams) (IssueHandoffSampleRow, error)
+	// Detailed evidence is opt-in: the legacy empty filter never selects it.
+	IssueHasHandoffRecipients(ctx context.Context, db DBTX, arg IssueHasHandoffRecipientsParams) (bool, error)
 	IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error)
 	IssueImpactCustomerCount(ctx context.Context, db DBTX, arg IssueImpactCustomerCountParams) (int64, error)
 	IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error)

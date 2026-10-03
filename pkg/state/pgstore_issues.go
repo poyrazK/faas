@@ -289,7 +289,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		if countErr != nil {
 			return api.IssueEventResponse{}, countErr
 		}
-		if err = recordIssueImpactThresholdTransition(ctx, q, tx, row, minimumCustomers, customersBefore, customersAfter, c.DeploymentID, in.Now); err != nil {
+		if err = recordIssueImpactThresholdTransition(ctx, q, tx, row, minimumCustomers, customersBefore, customersAfter, c.DeploymentID, in.Now, in.Event.EventID); err != nil {
 			return api.IssueEventResponse{}, err
 		}
 	}
@@ -301,7 +301,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		action = "regressed"
 	}
 	if action != "" {
-		if err = issueActivity(ctx, q, tx, row, action, "", map[string]string{"deployment_id": c.DeploymentID}, in.Now); err != nil {
+		if err = issueActivity(ctx, q, tx, row, action, "", map[string]string{"deployment_id": c.DeploymentID}, in.Now, in.Event.EventID); err != nil {
 			return api.IssueEventResponse{}, err
 		}
 	}
@@ -358,7 +358,7 @@ func issueAttribution(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, in Rec
 	return consumer, tenant, nil
 }
 
-func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, action, actor string, details map[string]string, now time.Time) error {
+func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, action, actor string, details map[string]string, now time.Time, eventIDs ...string) error {
 	raw, err := json.Marshal(details)
 	if err != nil {
 		return err
@@ -371,10 +371,17 @@ func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.App
 	if err != nil {
 		return err
 	}
-	return q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: activity.ID, AccountID: row.AccountID, AppID: row.AppID, Payload: payload})
+	if err := q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: activity.ID, AccountID: row.AccountID, AppID: row.AppID, Payload: payload}); err != nil {
+		return err
+	}
+	eventID := ""
+	if len(eventIDs) > 0 {
+		eventID = eventIDs[0]
+	}
+	return issueHandoff(ctx, q, tx, row, activity, details, now, eventID)
 }
 
-func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, minimumCustomers, before, after int64, deploymentID string, now time.Time) error {
+func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, minimumCustomers, before, after int64, deploymentID string, now time.Time, eventIDs ...string) error {
 	if minimumCustomers <= 0 || before >= minimumCustomers || after < minimumCustomers {
 		return nil
 	}
@@ -386,7 +393,7 @@ func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, 
 		"window_start":         now.Add(-api.IssueImpactAlertWindow).UTC().Format(time.RFC3339),
 		"window_end":           now.UTC().Format(time.RFC3339),
 	}
-	return issueActivity(ctx, q, tx, row, "impact_threshold_reached", "", details, now)
+	return issueActivity(ctx, q, tx, row, "impact_threshold_reached", "", details, now, eventIDs...)
 }
 
 func issueOwnershipRuleMatches(rule api.IssueOwnershipRule, event api.IssueEvent) bool {
@@ -875,7 +882,7 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 			if getErr != nil {
 				return getErr
 			}
-			if err := recordIssueImpactThresholdTransition(ctx, q, tx, issue, minimumCustomers, customersBefore, customersAfter, issueID(row.DeploymentID), now); err != nil {
+			if err := recordIssueImpactThresholdTransition(ctx, q, tx, issue, minimumCustomers, customersBefore, customersAfter, issueID(row.DeploymentID), now, e.EventID); err != nil {
 				return err
 			}
 		}

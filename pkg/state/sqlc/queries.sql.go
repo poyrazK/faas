@@ -7237,6 +7237,36 @@ func (q *Queries) IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddAct
 	return i, err
 }
 
+const issueAddHandoff = `-- name: IssueAddHandoff :exec
+WITH recipients AS (
+ SELECT array_agg(id) AS ids FROM app_webhooks
+ WHERE account_id=$2 AND app_id=$3
+ AND scope='app' AND enabled AND 'issue.handoff'=ANY(event_filter)
+)
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT $1,$2,$3,'issue.handoff',$4,$5,ids
+ FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
+`
+
+type IssueAddHandoffParams struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ActivityID pgtype.UUID
+	Payload    []byte
+}
+
+func (q *Queries) IssueAddHandoff(ctx context.Context, db DBTX, arg IssueAddHandoffParams) error {
+	_, err := db.Exec(ctx, issueAddHandoff,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.ActivityID,
+		arg.Payload,
+	)
+	return err
+}
+
 const issueAddResolution = `-- name: IssueAddResolution :exec
 INSERT INTO issue_resolutions(issue_id,fixed_deployment_id,resolved_at,actor_account_id) VALUES($1,$2,$3,$4)
 `
@@ -7780,6 +7810,185 @@ func (q *Queries) IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLocke
 		&i.IgnoredUntil,
 	)
 	return i, err
+}
+
+const issueHandoffContext = `-- name: IssueHandoffContext :one
+SELECT a.slug,c.plan FROM apps a JOIN accounts c ON c.id=a.account_id
+ WHERE a.id=$1 AND a.account_id=$2
+`
+
+type IssueHandoffContextParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type IssueHandoffContextRow struct {
+	Slug string
+	Plan string
+}
+
+func (q *Queries) IssueHandoffContext(ctx context.Context, db DBTX, arg IssueHandoffContextParams) (IssueHandoffContextRow, error) {
+	row := db.QueryRow(ctx, issueHandoffContext, arg.AppID, arg.AccountID)
+	var i IssueHandoffContextRow
+	err := row.Scan(&i.Slug, &i.Plan)
+	return i, err
+}
+
+const issueHandoffRequests = `-- name: IssueHandoffRequests :many
+SELECT id,trace_id,route,method,status,latency_ms,cold_boot,received_at,spans_summary
+ FROM request_telemetry
+ WHERE account_id=$1 AND app_id=$2
+ AND deployment_id=$3 AND count=1
+ AND received_at >= $4 AND received_at <= $5
+ AND received_at BETWEEN $6 AND $7
+ AND (($8::text<>'' AND (id::text=$8 OR trace_id=$8))
+      OR ($9::text<>'' AND trace_id=$9))
+ LIMIT 2
+`
+
+type IssueHandoffRequestsParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	RetainedFrom pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
+	RequestID    string
+	TraceID      string
+}
+
+type IssueHandoffRequestsRow struct {
+	ID           pgtype.UUID
+	TraceID      pgtype.Text
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	ReceivedAt   pgtype.Timestamptz
+	SpansSummary []byte
+}
+
+// Never attach ambiguous, aggregated, out-of-plan, or another deployment's
+// telemetry. Opaque public request IDs are stored as trace_id by the gateway.
+func (q *Queries) IssueHandoffRequests(ctx context.Context, db DBTX, arg IssueHandoffRequestsParams) ([]IssueHandoffRequestsRow, error) {
+	rows, err := db.Query(ctx, issueHandoffRequests,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RetainedFrom,
+		arg.Now,
+		arg.Since,
+		arg.Until,
+		arg.RequestID,
+		arg.TraceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueHandoffRequestsRow{}
+	for rows.Next() {
+		var i IssueHandoffRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TraceID,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.ColdBoot,
+			&i.ReceivedAt,
+			&i.SpansSummary,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueHandoffSample = `-- name: IssueHandoffSample :one
+SELECT e.event_id,e.deployment_id,e.payload,e.received_at,
+       r.commit_sha,r.image_digest,r.event_count,r.first_seen_at,r.last_seen_at
+ FROM issue_events e JOIN issue_releases r
+ ON r.issue_id=e.issue_id AND r.deployment_id=e.deployment_id
+ WHERE e.issue_id=$1 AND e.app_id=$2
+ AND e.received_at >= $3 AND e.received_at <= $4
+ AND ($5::uuid IS NULL OR e.event_id=$5)
+ AND ($6::uuid IS NULL OR e.deployment_id=$6)
+ ORDER BY e.received_at DESC,e.event_id DESC LIMIT 1
+`
+
+type IssueHandoffSampleParams struct {
+	IssueID      pgtype.UUID
+	AppID        pgtype.UUID
+	RetainedFrom pgtype.Timestamptz
+	Now          pgtype.Timestamptz
+	EventID      pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type IssueHandoffSampleRow struct {
+	EventID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	Payload      []byte
+	ReceivedAt   pgtype.Timestamptz
+	CommitSha    string
+	ImageDigest  string
+	EventCount   int64
+	FirstSeenAt  pgtype.Timestamptz
+	LastSeenAt   pgtype.Timestamptz
+}
+
+// Ingest-triggered transitions select the exact occurrence. Manual reopening
+// selects the latest retained occurrence. Release identity is an immutable
+// issue-release snapshot, even if the original deployment was deleted.
+func (q *Queries) IssueHandoffSample(ctx context.Context, db DBTX, arg IssueHandoffSampleParams) (IssueHandoffSampleRow, error) {
+	row := db.QueryRow(ctx, issueHandoffSample,
+		arg.IssueID,
+		arg.AppID,
+		arg.RetainedFrom,
+		arg.Now,
+		arg.EventID,
+		arg.DeploymentID,
+	)
+	var i IssueHandoffSampleRow
+	err := row.Scan(
+		&i.EventID,
+		&i.DeploymentID,
+		&i.Payload,
+		&i.ReceivedAt,
+		&i.CommitSha,
+		&i.ImageDigest,
+		&i.EventCount,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+	)
+	return i, err
+}
+
+const issueHasHandoffRecipients = `-- name: IssueHasHandoffRecipients :one
+SELECT EXISTS(SELECT 1 FROM app_webhooks
+ WHERE account_id=$1 AND app_id=$2
+ AND scope='app' AND enabled AND 'issue.handoff'=ANY(event_filter))
+`
+
+type IssueHasHandoffRecipientsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// Detailed evidence is opt-in: the legacy empty filter never selects it.
+func (q *Queries) IssueHasHandoffRecipients(ctx context.Context, db DBTX, arg IssueHasHandoffRecipientsParams) (bool, error) {
+	row := db.QueryRow(ctx, issueHasHandoffRecipients, arg.AccountID, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const issueImpact = `-- name: IssueImpact :one
