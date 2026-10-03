@@ -183,3 +183,29 @@ Pinned by `cmd/apid/handlers_env_test.go::TestEnv_RedeployPreservesEnv`.
   surfaces the change to the customer's audit timeline; a
   compromised admin key is the loss-bearing case and that scenario
   is gated upstream by `admin` scope's own MFA requirement.
+
+## Amendment: explicit customer env export (faas-web issue #108)
+
+The metadata GET remains key/scope/timestamps only. A dedicated
+`POST /v1/apps/{slug}/env-export?scope=<name>` now allows a customer
+with `admin` or `env:write` to explicitly download the mutable plaintext
+environment. This narrows the exception to an acknowledged request body
+(`acknowledge_sensitive_values: true`); `apps:read` and `env:read` alone
+do not grant plaintext export. Session principals pass the existing MFA
+gate and trusted-origin boundary. Bearer principals retain normal scope
+authorization. One scope is selected; omitted means default and `__all__`
+is rejected. Cross-account app lookups remain 404.
+
+The response is `Cache-Control: no-store` and the route deliberately omits
+idempotency response persistence. Sealed secrets, manifest defaults, and
+image defaults are never queried. Only app ID, scope, and count enter the
+`env.exported` audit event. Values must stay out of client query/mutation
+caches and persistent browser storage. The frontend requires a sensitive
+values warning and explicit confirmation before requesting and downloading
+the result. The endpoint is read-only and creates no new credential or
+permission scope.
+
+Bulk import uses the current single-key PUT contract under one frontend
+confirmation. It reports partial success, does not claim atomicity, and
+lets the customer retry failed entries only. Each write retains quota,
+snapshot invalidation, and existing per-key activity semantics.

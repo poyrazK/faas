@@ -511,6 +511,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":    "GetAppsDeploymentOpenAPIDoc",    // issue #975 item #1 / ADR-122 — captured OpenAPI doc per deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":  "PatchAppsDeploymentOpenAPIDoc",  // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi": "DeleteAppsDeploymentOpenAPIDoc", // wipe the captured doc; re-captures on next cold boot
+	"POST /v1/apps/{slug}/env-export":                         "ExportAppEnv",                   // Explicit sensitive-value export (dashboard issue #108).
 	"GET /v1/apps/{slug}/env-diff":                            "GetAppEnvDiff",                  // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
 	"GET /v1/apps/{slug}/openapi":                             "GetAppOpenAPI",                  // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
 	"POST /v1/apps/{slug}/openapi":                            "ImportAppOpenAPI",               // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
