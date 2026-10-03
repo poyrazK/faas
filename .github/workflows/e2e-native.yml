@@ -457,6 +457,10 @@ jobs:
           log="$RUNNER_TEMP/native-e2e.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/native-e2e.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          mkdir -p "$RUNNER_TEMP/native-evidence"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/acceptance-e2e-*.json" \
+            "$RUNNER_TEMP/native-evidence/" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
           if [[ -f "$log" ]]; then
             cat "$log"
           fi
@@ -592,7 +596,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: native-e2e-${{ github.sha }}
-          path: ${{ runner.temp }}/native-e2e.log
+          path: |
+            ${{ runner.temp }}/native-e2e.log
+            ${{ runner.temp }}/native-evidence/*.json
           if-no-files-found: warn
           retention-days: 14
 

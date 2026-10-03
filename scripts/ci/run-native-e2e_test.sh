@@ -386,12 +386,13 @@ grep -Fq 'PKGS=./cmd/e2e/...' "${runner}" ||
 
 # Postgres. pgtest.Open calls t.Skip when the cluster is unreachable, so
 # without these the gate reports a green run of ~zero database-backed tests.
-grep -Fq 'pg_isready' "${runner}" || fail "the wrapper does not probe Postgres before running"
-grep -Fq 'Postgres is not reachable at the configured DSN' "${runner}" ||
-  fail "the wrapper does not hard-fail on an unreachable Postgres"
-# Reachable is not usable: pgtest creates a schema per test and installs citext.
-grep -Fq 'create extension if not exists citext' "${runner}" ||
-  fail "the wrapper does not prove the DSN can create schemas and citext"
+grep -Fq 'native-acceptance-preflight.py" check' "${runner}" ||
+  fail "the wrapper does not run the host/database preflight before tests"
+# The Python contracts exercise unreachable/denied PostgreSQL, read-only
+# privileges and credential redaction. The shell must not put its DSN in argv.
+if grep -E '(psql|pg_isready).*\$\{database_url\}' "${runner}"; then
+  fail "the wrapper exposes database credentials in process arguments"
+fi
 # Must be a refusal on a non-comment line; a comment mentioning the opt-out
 # does not disable it.
 awk '
