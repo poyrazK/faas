@@ -934,7 +934,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	startedJailerAt := time.Now()
 	if len(cfg.NetworkInterfaces) > 0 {
-		if _, err = v.bindTunDeviceInJailer(ctx, root, l.Instance, l.UID, l.GID); err != nil {
+		if _, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1820,7 +1820,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	tStartJailer := time.Now()
 	var tunTimings bindTunTimings
 	if !spec.Networkless {
-		if tunTimings, err = v.bindTunDeviceInJailer(ctx, root, l.Instance, l.UID, l.GID); err != nil {
+		if tunTimings, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -5315,14 +5315,26 @@ func parseSetupJailWorkUs(out []byte) int64 {
 }
 
 func (v *JailerVMM) bindTunDeviceInJailer(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
-	var timings bindTunTimings
+	var owner nativeLaunchRecord
 	if v.nativeRecovery != nil {
-		// A numeric nsenter target can be recycled between inspection and
-		// entry. Host TUN ownership alone cannot authorize a different task's
-		// private namespace. Native setup requires the original pidfd plus
-		// pinned mount-namespace/root FDs in the scoped helper protocol.
-		return timings, errors.New("native jail device setup: original namespace and root FD handoff is not yet implemented")
+		var err error
+		owner, err = v.nativeRecovery.journal.read(instance)
+		if err != nil {
+			return bindTunTimings{}, err
+		}
 	}
+	return v.bindTunDeviceInJailerForOwner(ctx, owner, root, instance, uid, gid)
+}
+
+func (v *JailerVMM) bindTunDeviceInJailerForOwner(ctx context.Context, owner nativeLaunchRecord, root, instance string, uid, gid int) (bindTunTimings, error) {
+	if v.nativeRecovery != nil {
+		return v.bindNativeJailDevices(ctx, owner, root, instance, uid, gid)
+	}
+	return v.bindTunDeviceInJailerLegacy(ctx, root, instance, uid, gid)
+}
+
+func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
+	var timings bindTunTimings
 	if instance == "" {
 		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
 	}

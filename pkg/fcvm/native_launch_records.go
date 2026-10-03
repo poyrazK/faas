@@ -94,6 +94,9 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	if err := helpers.requireRetired(record); err != nil {
 		return err
 	}
+	if err := helpers.requireDeviceNamespacesRemoved(ctx, record); err != nil {
+		return err
+	}
 	loops := nativeLoopMountJournal{owner: j}
 	if err := loops.requireRetired(record); err != nil {
 		return err
@@ -131,6 +134,9 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	helpers := nativeHostHelperJournal{owner: j}
 	if err := helpers.requireRetired(old); err != nil {
+		return record, err
+	}
+	if err := helpers.requireDeviceNamespacesRemoved(ctx, old); err != nil {
 		return record, err
 	}
 	loops := nativeLoopMountJournal{owner: j}

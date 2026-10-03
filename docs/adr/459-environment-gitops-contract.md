@@ -1609,7 +1609,7 @@ acceptance; the dedicated acceptance project remains suspended.
 
 Writable image clone/copy materialisation and snapshot drive export explicitly
 refuse their legacy producer paths in native mode. Their complete provenance,
-private jail-device setup, node-wide network/policy effects and other host producers
+native private-jail device acceptance, node-wide network/policy effects and other host producers
 remain required. Source/reference history is retained; its bounded retention
 and legacy adoption still need implementation. Native incoming attempt/RPC
 ownership, qualification consumer/readiness/restore receipts, function/new-app
@@ -1657,14 +1657,37 @@ startup inventory inspect both active and immutable archived TUN frames. Boot
 and restore use the owner captured before staging, and the native bind never
 enters the legacy instance-only in-memory list.
 
-This is host-bind ownership, not completed private jail-device setup. Native
-mode now explicitly refuses the numeric-PID `nsenter` path: inspection cannot
-prevent that PID from being reused before entry. The scoped helper still needs
-the original pidfd plus pinned mount-namespace/root FD handoff and its recovery
-lineage before native boot can finish. Legacy boot retains its current setup
-path. The TUN crash fixture isolates a mount namespace and kills a producer
-before final readiness publication; it tests recovery in that surviving
-original namespace and does not establish production service restart recovery.
+Native private jail-device setup now uses a separate scoped helper purpose. The
+original VM lock spans capture of its pidfd, mount namespace, root directory in
+that namespace and original TUN descriptor. The journal records those identities,
+the original process/start time and lease, kernel mount IDs, and the producer's
+own descriptor numbers and process incarnation. Four descriptors accompany the
+launch gate; parent copies close before helper authorization and gate release.
+Missing publication or failed closure preserves the original frame for recovery.
+Another setup cannot layer effects onto a generation with a retained frame.
+
+The one-shot helper validates inherited identities and the pidfd target, unshares
+filesystem state, enters the retained mount namespace and verifies its original
+mount IDs. It uses a locked thread and private propagation before mounting a
+private device tmpfs through the original root descriptor. It binds the original
+TUN, creates the jail KVM node and checks both devices using the exact jail UID/GID
+without host groups. The structured readiness receipt retains the exact scope,
+device mount identities and successful KVM API/TUN access. Helper exit alone
+cannot authorize readiness; publication requires original VM authority and helper
+cgroup retirement. Native setup does not enter the legacy numeric-PID `nsenter`
+path or its in-memory mount list. The existing legacy setup remains available.
+See the Linux [setns](https://man7.org/linux/man-pages/man2/setns.2.html) and
+[pidfd_open](https://man7.org/linux/man-pages/man2/pidfd_open.2.html) contracts.
+
+Recovery proves producer descriptor closure after uncertain publication and
+joins the original helper cgroup. VM cleanup, resource acknowledgement,
+replacement and finished-frame inventory also require absence of the original
+namespace from process threads and namespace descriptors. Uncertain inspection
+holds ownership. This inventory does not independently prove absence of arbitrary
+external root-held file or detached-mount descriptors; dedicated leak acceptance
+and the remaining host producer coverage are still required. The TUN crash
+fixture tests recovery in a surviving original namespace; it does not establish
+production service restart recovery.
 
 The deployed vmmd service uses `ProtectSystem=strict` and `ReadWritePaths`, which
 create a service filesystem namespace. Systemd documents that these namespaces
@@ -1686,3 +1709,16 @@ The native metal wrapper derives all `TestMetalNative*` ownership tests from
 source and requires individual PASS evidence, refusing missing or skipped
 producers. These gates do not enable qualification dispatch or the full
 environment executor, and native execution remains outstanding.
+
+Portable private-device contracts use real descriptor inheritance and launch
+gating with modeled kernel identities. They cover original-owner locking,
+closure before authorization, failures at each publication stage, exact receipt
+validation, revocation, retry refusal and namespace retention across replacement
+and archived-frame inventory. Shared mount/pidfd evidence parsing runs without
+KVM. The Linux fixture uses a real private namespace/chroot, release-matched
+helper and device access under the jail UID, and checks confinement and cleanup;
+its source compilation is not execution evidence. Native timing reports the
+complete ownership, wait, device setup and receipt phase in `SetupJailMs`; legacy
+subphase timing fields remain zero on this path. Native crash-after-device-setup
+and hardened service restart acceptance remain outstanding, along with the
+complete qualification, serving and environment gates listed above.

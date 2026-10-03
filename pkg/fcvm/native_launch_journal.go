@@ -39,6 +39,7 @@ type nativeLaunchJournal struct {
 	loopMounts   nativeLoopMountBackend
 	imageSources nativeImageSourceBackend
 	tunBinds     nativeTunBindBackend
+	jailDevices  nativeJailDeviceBackend
 	// Native records cannot survive into another kernel incarnation even if
 	// an operator places the journal on a persistent filesystem.
 	bootID func() (string, error)

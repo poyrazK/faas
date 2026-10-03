@@ -42,7 +42,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	images := newNativeImageSourceBackend(v.chrootBase)
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun},
+		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
 		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:        make(map[string]string),
 		lockWait:     v.readyTimeout,
@@ -332,16 +332,19 @@ func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
 	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
 	if err := helpers.requireRemoved(owner); err != nil {
+		return err
+	}
+	if err := helpers.requireDeviceNamespacesRemoved(ctx, owner); err != nil {
 		return err
 	}
 	loops := nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.loopMounts}
 	if err := loops.requireRemoved(owner); err != nil {
 		return err
 	}
-	ctx, cancel := v.driveStagingContext()
-	defer cancel()
 	images := nativeImageSourceJournal{owner: v.nativeRecovery.journal, backend: v.nativeRecovery.imageSources}
 	if err := images.require(ctx, owner, true); err != nil {
 		return err

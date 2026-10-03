@@ -449,9 +449,9 @@ func TestNativeTunBootStagingNeverUsesLegacyBindList(t *testing.T) {
 	}
 }
 
-func TestNativeTunPrivateDeviceSetupRefusesUnpinnedPIDTarget(t *testing.T) {
+func TestNativeTunPrivateDeviceSetupRefusesMissingOriginalAuthority(t *testing.T) {
 	_, v, _ := nativeManagerFixture(t)
-	if _, err := v.bindTunDeviceInJailer(t.Context(), v.chrootRoot("unprepared-tun"), "unprepared-tun", 20000, 20000); err == nil || !strings.Contains(err.Error(), "namespace and root FD") {
+	if _, err := v.bindTunDeviceInJailerForOwner(t.Context(), nativeLaunchRecord{}, v.chrootRoot("unprepared-tun"), "unprepared-tun", 20000, 20000); err == nil || !strings.Contains(err.Error(), "original local lease") {
 		t.Fatalf("native private-device setup bypassed original namespace handoff: %v", err)
 	}
 	if len(v.bindMounts) != 0 {

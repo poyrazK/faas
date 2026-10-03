@@ -22,6 +22,12 @@ func Run(args []string) bool {
 		return false
 	}
 	switch args[1] {
+	case "--launch-jail-device-setup":
+		if err := awaitDeviceSetup(args); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: native jail device setup: %v\n", err)
+			os.Exit(1)
+		}
+		return true
 	case "--launch-jailer", "--launch-host-command":
 		if err := launchCommand(args); err != nil {
 			fmt.Fprintf(os.Stderr, "vmmd: native launch: %v\n", err)
