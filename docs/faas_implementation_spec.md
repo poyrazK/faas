@@ -1108,7 +1108,7 @@ The schedd-side wake path is decomposed into four `schedd_wake_rpc_duration_seco
 |---|---|---|
 | `admit_to_rpc` | 0.01–5 s | gRPC handler → `Engine.admitGate` → `NodeLedger.Admit` → placement → `vmmd` RPC start. Lock + admission + ledger + placement. |
 | `rpc_call` | 0.01–5 s | vmmd `CreateFromSnapshot` / `CreateColdBoot` round trip. Cross-process boundary, the only phase that crosses a node-local socket. |
-| `rpc_to_running` | 0.01–5 s | RPC return → `e.transition(ctx, ..., state.StateRunning)`. Boot-input re-read + `SetInstanceRuntime` + audit emit. |
+| `rpc_to_running` | 0.01–5 s | RPC return → atomic runtime/RUNNING publication and its notifications. Includes restore-pressure release, startup CPU-tail persistence, publication-lock wait and audit emission. These post-RPC costs are excluded from `rpc_call`. |
 | `resume` | 0.01–5 s | vmmd in-place resume of a paused warm-pool VM before the durable `WARM → RUNNING` promotion. |
 
 `wake_id` is attached as a `prometheus.Exemplar` on every observation so an operator can join the histogram to `gateway_wake_latency_seconds` on the gateway side and to the `events` table — no `wake_id` label is added to the histogram (cardinality blow-up). Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. ADR-097.
