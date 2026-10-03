@@ -105,6 +105,10 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 			w := p.idle[n-1]
 			p.idle = p.idle[:n-1]
 			p.mu.Unlock()
+			if w.exited() {
+				p.release(w, false)
+				continue
+			}
 			return w, nil
 		}
 		if p.live < maxWorkers {
@@ -135,6 +139,7 @@ func (p *pool) notifyLocked() {
 }
 
 func (p *pool) release(w *worker, healthy bool) {
+	healthy = healthy && !w.exited()
 	if !healthy {
 		w.close()
 	}
@@ -190,13 +195,15 @@ func (p *pool) invoke(ctx context.Context, request, response any) error {
 }
 
 type worker struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	once   sync.Once
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stdout     *bufio.Reader
+	stdoutPipe io.ReadCloser
+	done       chan struct{}
+	once       sync.Once
 }
 
-func startWorker(ctx context.Context, spec Spec) (*worker, error) {
+func launchWorker(spec Spec) (*worker, error) {
 	if spec.Executable == "" {
 		return nil, errors.New("workerpool: executable is required")
 	}
@@ -207,16 +214,34 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workerpool: stdin pipe: %w", err)
 	}
-	stdout, err := cmd.StdoutPipe()
+	// Own the read end: Cmd.Wait closes StdoutPipe before a buffered response
+	// is necessarily consumed. Exit monitoring must not truncate that reply.
+	stdout, output, err := os.Pipe()
 	if err != nil {
 		_ = stdin.Close()
 		return nil, fmt.Errorf("workerpool: stdout pipe: %w", err)
 	}
+	cmd.Stdout = output
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = output.Close()
 		return nil, fmt.Errorf("workerpool: start handler: %w", err)
 	}
-	w := &worker{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
+	_ = output.Close()
+	w := &worker{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout), stdoutPipe: stdout, done: make(chan struct{})}
+	go func() {
+		_ = cmd.Wait()
+		close(w.done)
+	}()
+	return w, nil
+}
+
+func startWorker(ctx context.Context, spec Spec) (*worker, error) {
+	w, err := launchWorker(spec)
+	if err != nil {
+		return nil, err
+	}
 	ready := make(chan error, 1)
 	go func() {
 		line, readErr := w.stdout.ReadBytes('\n')
@@ -250,12 +275,22 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 	}
 }
 
+func (w *worker) exited() bool {
+	select {
+	case <-w.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (w *worker) close() {
 	w.once.Do(func() {
 		_ = w.stdin.Close()
 		if w.cmd.Process != nil {
 			_ = w.cmd.Process.Kill()
 		}
-		_ = w.cmd.Wait()
+		<-w.done
+		_ = w.stdoutPipe.Close()
 	})
 }
