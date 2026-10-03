@@ -65,7 +65,7 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 	if len(identities) == 0 || s.managedPostgres == nil {
 		return copyarchive.RestoreExecution{}, managedpostgres.ErrUnavailable
 	}
-	request, err := s.projectEnvironmentClonePostgresImportSQLRequest(ctx, lease, source, d, target)
+	request, err := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, lease, source, d.Scope, target)
 	if err != nil {
 		return copyarchive.RestoreExecution{}, err
 	}
@@ -114,9 +114,9 @@ func (s *server) projectEnvironmentClonePostgresImport(ctx context.Context, leas
 	return execution, nil
 }
 
-func (s *server) projectEnvironmentClonePostgresImportSQLRequest(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
-	d copyinventory.DatabaseExport, target copyarchive.RestoreTarget) (managedpostgres.SnapshotCopyTargetDatabaseSQLRequest, error) {
-	preparation, actual, err := s.projectEnvironmentClonePostgresTargetSQLPreparation(ctx, lease, source, d.Scope)
+func (s *server) projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx context.Context, lease state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
+	scope copyinventory.Scope, target copyarchive.RestoreTarget) (managedpostgres.SnapshotCopyTargetDatabaseSQLRequest, error) {
+	preparation, actual, err := s.projectEnvironmentClonePostgresTargetSQLPreparation(ctx, lease, source, scope)
 	if err != nil {
 		return managedpostgres.SnapshotCopyTargetDatabaseSQLRequest{}, err
 	}

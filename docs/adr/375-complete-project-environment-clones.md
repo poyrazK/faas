@@ -5056,3 +5056,58 @@ object clone admission stays closed. Complete writer closure/common-point captur
 independent dataset verification, object/configuration coverage,
 production-preserving promotion/rollback and native/provider acceptance remain
 required for the full one-command stage workflow.
+
+### Private role plan capture and seeding worker (2026-10-03)
+
+The private APID worker now composes role-plan ownership with authenticated target
+SQL borrowing. It recovers source roles only from the originally sealed inventory
+and bootstrap identity only from the originally sealed target pins, checking the
+frozen source definition and operation scope. Its role-only export-plan view does
+not project temporary database admission and must never be used for database
+exports. Existing target roles are classified by their independently observed
+catalogue OIDs; the role planner additionally requires identical source logical
+attributes and settings. Every source role remains required, including predefined
+and provider/private roles. Unsupported differences fail without mutation.
+
+When no role plan is retained, the worker reads the independently owned target
+catalogue through the provider borrower. Only successful provider postchecks
+permit sealing and committing the original role plan. A lost control-plane commit
+reply performs no role DDL; retry first recovers the original ciphertext. Committed
+plan recovery requires no target SQL/provider IO, current encryption recipient or
+source reread. Missing original keys and damaged ownership remain errors rather
+than recapture permission.
+
+Role seeding starts only after durable plan recovery and live ownership checks.
+The provider borrower checks target placement around the SQL callback, while the
+role primitive rechecks the original plan owner and lease before dispatch, after
+the advisory-lock wait and before/after transaction commit. The worker checks
+ownership again after provider postchecks. Any error returns no successful role
+receipt. Exact retries authenticate the original target transaction journal and
+retain original created role OIDs and timestamp after uncertain committed replies.
+New roles remain NOLOGIN with PASSWORD NULL, preserving original settings and
+holding captured login intent for later credential activation. This does not grant
+database dataset readiness or publish a stage.
+
+Verification: all sixteen focused APID role/import/bootstrap-pin/inventory worker
+contracts pass with no skips (77.202 s), including four new role-worker contracts.
+The new fixture compares PostgreSQL system identifiers to require genuinely
+independent local source and target clusters. It exercises real role creation,
+original source metadata despite later source role changes, explicit target role
+identity recovery, original-recipient rotation, control-plane handoff, committed
+provider reply loss, stale/phase/owner drift at dispatch, unreadable plans and
+provider postcheck rejection before plan retention. Borrowed connections close on
+success and failure; target data-resource identity and observed generation remain
+unpublished. Provider/capture placement is synthetic, and the worker fixture uses
+an administrator; ordinary CREATEROLE owner privileges remain qualified by the
+separate role primitive contracts. The focused overlay preserves all 454 original
+production APID files and selects original test declarations by dependency closure.
+An initial final-assertion failure used a nonexistent pg_authid column and is
+excluded from the corrected complete run. Normal production builds and focused
+APID vet pass. Full-repository/lint/native/remote-provider acceptance is not claimed.
+
+This worker remains private and is not installed in public database/object clone
+admission. Complete role memberships/grantors, database-scoped globals and creation,
+dataset import/verification, credentials/activation and ownership retirement remain
+required. Common-point writer closure, complete object/configuration coverage,
+production-preserving promotion/rollback and native/provider acceptance remain
+required for the full one-command stage workflow.

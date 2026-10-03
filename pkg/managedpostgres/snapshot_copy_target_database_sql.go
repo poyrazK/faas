@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 )
 
-// Target comes from a durably reserved import descriptor. Preparation pins the
+// Target comes from a durably retained private target descriptor. Preparation pins the
 // independently owned project and original adopted capture. Neither request
 // shape nor an SQL borrow grants durable dispatch or dataset readiness.
 type SnapshotCopyTargetDatabaseSQLRequest struct {
@@ -55,7 +55,7 @@ type SnapshotCopyTargetDatabaseSQLProvider interface {
 }
 
 // Borrowing an already owned target remains independent of creation rollout or
-// new account admission. The trusted worker must hold fresh import ownership.
+// new account admission. The trusted worker must hold fresh mutation ownership.
 func (s *Service) WithSnapshotCopyTargetDatabaseSQL(ctx context.Context, d RestoreSourceDefinition, r SnapshotCopyTargetDatabaseSQLRequest, run SnapshotCopyTargetSQLRun) error {
 	if run == nil {
 		return ErrInvalid

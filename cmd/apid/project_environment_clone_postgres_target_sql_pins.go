@@ -26,8 +26,7 @@ func (s *server) projectEnvironmentClonePostgresTargetSQLPins(ctx context.Contex
 	}
 	scope := inventory.Sealed.Scope
 	d := clonePostgresSnapshotDefinition(source)
-	if scope.SourceDatabaseID != source.source.ID || scope.SourceVersion != source.hash || scope.OperationID != l.Operation.ID || scope.AccountID != l.Operation.AccountID || scope.ProjectID != l.Operation.ProjectID ||
-		scope.PostgresMajor != d.Spec.PostgresMajor || scope.BackendID != d.BackendID || scope.BackendFingerprint != d.BackendFingerprint || scope.SourceProviderResourceID != d.ProviderResourceID || scope.SourceDataResourceID != d.DataResourceID {
+	if !clonePostgresInventoryMatchesSource(l, source, scope) {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrConflict
 	}
 	identities := mfaIdentities()
@@ -67,6 +66,12 @@ func (s *server) projectEnvironmentClonePostgresTargetSQLPins(ctx context.Contex
 		return copyarchive.RestoreTarget{}, err
 	}
 	return copyarchive.OpenTarget(identities, scope, receipt.Sealed)
+}
+
+func clonePostgresInventoryMatchesSource(l state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan, scope copyinventory.Scope) bool {
+	d := clonePostgresSnapshotDefinition(source)
+	return scope.SourceDatabaseID == source.source.ID && scope.SourceVersion == source.hash && scope.OperationID == l.Operation.ID && scope.AccountID == l.Operation.AccountID && scope.ProjectID == l.Operation.ProjectID &&
+		scope.PostgresMajor == d.Spec.PostgresMajor && scope.BackendID == d.BackendID && scope.BackendFingerprint == d.BackendFingerprint && scope.SourceProviderResourceID == d.ProviderResourceID && scope.SourceDataResourceID == d.DataResourceID
 }
 
 func (s *server) projectEnvironmentClonePostgresTargetSQLPreparation(ctx context.Context, l state.ProjectEnvironmentCloneLease, source capturedProjectEnvironmentDatabasePlan,
