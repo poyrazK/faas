@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,7 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 		"FAAS_E2E_NEON_API_KEY=e2e-provider-key",
 		"FAAS_ENVIRONMENT=staging",
 		"FAAS_MANAGED_POSTGRES_QUALIFIED=true",
+		managedpostgres.QualificationVersionEnv + "=" + strconv.Itoa(managedpostgres.QualificationArtifactVersion),
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND=" + backend.ID,
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT=" + backend.Fingerprint,
 		"FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL=" + time.Now().UTC().Add(2*time.Hour).Format(time.RFC3339),
