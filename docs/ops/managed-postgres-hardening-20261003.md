@@ -17,7 +17,7 @@ claim that all provider or VM failure modes are qualified.
 The HTTP tests failed against the merged adapter before their fixes. Existing
 fixtures modeled missing time metadata and an empty cursor, concealing these
 contract mismatches. The storage fixture also asserted the incorrect unit.
-See [ADR-481](../adr/481-managed-postgres-consumption-contract.md) for provider
+See [ADR-492](../adr/492-managed-postgres-consumption-contract.md) for provider
 sources and the existing-ledger reconciliation requirement.
 
 ## Implemented capability boundary
