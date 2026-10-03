@@ -984,3 +984,51 @@ Portable tests and Linux compilation do not execute this gate. The gate has not
 yet run on the dedicated host; it also does not replace actual Grype execution,
 guest-kernel KVM consumption, current whole-runtime approval or leakcheck.
 Public activation remains disabled.
+
+
+## Protected native materialization lifetime
+
+Verified parent materialization reserves a mount slot before storage reads,
+source staging or loopback mounting. The owner attaches the exact mountpoint,
+source file, storage key and mount kind to that reservation and retains the
+lease until copying and cleanup finish. Capacity exhaustion refuses new work
+instead of releasing an in-flight mount. Both legacy production mount paths
+also reserve before mounting; the legacy mountpoint API explicitly hands its
+mount back to its caller and the orphan sweep.
+
+A verified copy cannot be externally unmounted, forgotten, replaced, evicted
+or swept while its lease is active. Cleanup has a separate bounded context even
+when the imaging request is canceled. The registry serializes each physical
+release without holding its mutex across the subprocess. Cleanup failure keeps
+the exact ownership record and whether the kernel mount has already been
+released. A retry can therefore remove a failed source or mount directory
+without trying to unmount the released filesystem again. Unknown mount kinds
+remain visible for operator repair; refusal to dispatch does not prove cleanup.
+
+A cleanup failure clears the verified materialization receipt. A later orphan
+sweep can recover the resource but cannot upgrade the earlier failed receipt.
+The mount RPCs report capacity exhaustion as `ResourceExhausted` and refuse
+external release of an active owner with `FailedPrecondition`.
+
+Parent mounts explicitly select ext4 and use `ro,noload,nodev,nosuid,noexec`.
+`noload` prevents journal replay from modifying the measured source even on a
+read-only mount, as described in the
+[Linux ext4 administration documentation](https://www.kernel.org/doc/html/latest/admin-guide/ext4.html).
+This does not approve an unclean filesystem for runtime use.
+
+`TestMetalApplicationStandardOwnedParentMount` exercises a real ext4 mount,
+copy, capacity refusal, external-release refusal and final source/mount cleanup
+on the designated native Linux amd64 KVM host. It re-executes in a private mount
+namespace, verifies the namespace against its live parent, and binds a private
+fixture over the existing native mount root only inside that namespace:
+
+```sh
+FAAS_RUN_APPLICATION_STANDARD_OWNED_MOUNT_TESTS=1 go test -p 1 -tags metal -timeout 3m -run '^TestMetalApplicationStandardOwnedParentMount$' ./pkg/vmmdmount
+```
+
+Portable lease, concurrency and wire checks are not native mount acceptance.
+This lifecycle change does not implement whiteout conversion for unprivileged
+imaged, bounded bootable parent copying, composed-runtime approval, restore or
+promotion authority, consumer adoption acknowledgments, or restart recovery of
+the in-memory parent-mount registry. Those gates and public activation remain
+pending.

@@ -5,12 +5,14 @@ package vmmdgrpc_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
+	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,6 +27,9 @@ type receiptContractVMM struct {
 
 func (m *receiptContractVMM) MaterializeVerifiedParentExt4(_ context.Context, in imagechain.ParentMaterialization) (imagechain.ParentMaterialization, error) {
 	m.calls++
+	if m.mode == "capacity" {
+		return imagechain.ParentMaterialization{}, fmt.Errorf("native owner: %w", vmmdmount.ErrMountCapacity)
+	}
 	if m.mode == "failure" {
 		return imagechain.ParentMaterialization{}, errors.New("copy failed")
 	}
@@ -34,7 +39,7 @@ func (m *receiptContractVMM) MaterializeVerifiedParentExt4(_ context.Context, in
 	return in, nil
 }
 func TestVerifiedParentCapabilityRefusals(t *testing.T) {
-	for _, mode := range []string{"legacy", "unknown", "wrong key", "failure", "mismatch", "complete"} {
+	for _, mode := range []string{"legacy", "unknown", "wrong key", "failure", "capacity", "mismatch", "complete"} {
 		t.Run(mode, func(t *testing.T) {
 			owner := &receiptContractVMM{fakeVMM: &fakeVMM{}, mode: mode}
 			var backend vmmdgrpc.VmmdAPI = owner
@@ -53,6 +58,8 @@ func TestVerifiedParentCapabilityRefusals(t *testing.T) {
 			case "wrong key":
 				req.StorageKey = "apps/customer.ext4"
 				expectedCode = codes.InvalidArgument
+			case "capacity":
+				expectedCode = codes.ResourceExhausted
 			case "complete":
 				expectedCode = codes.OK
 			}

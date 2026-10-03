@@ -2747,7 +2747,7 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 // identified by `storageKey` read-only and returns the absolute
 // host path of the mountpoint. The flow:
 //
-//  1. Stage the StorageBackend bytes into
+//  1. Reserve capacity, then stage the StorageBackend bytes into
 //     vmmdmount.MountRoot/faas-parent-src-* (currently
 //     /srv/fc/parent/faas-parent-src-*) via a sibling-temp tmp file
 //     so the Storage.Put pattern in pkg/rootfs (which mkdirs its
@@ -2757,8 +2757,8 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 //     /tmp read-only under ProtectSystem=strict (run 30848763268).
 //  2. Create vmmdmount.MountRoot/faas-parent-mnt-* via
 //     vmmdmount.MountExt4ReadOnly.
-//  3. Register (mountpoint, storageKey) in parentMounts; load-shed
-//     the oldest entry when the cap is reached.
+//  3. Attach the mount to its reservation, then hand off the legacy
+//     mountpoint. Capacity exhaustion refuses before staging or mounting.
 //  4. The src tmp is removed on UmountParentExt4 (it lives as long
 //     as the mount).
 //
@@ -2768,11 +2768,26 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 // the same storageKey: returns a fresh mountpoint — imaged's
 // EnsureBaseExt4 calls once per child restage so two concurrent
 // restages of different runtimes see distinct mountpoints.
-func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (string, error) {
-	return m.mountParentExt4(ctx, storageKey, nil)
+func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (mountpoint string, err error) {
+	if m.parentMounts == nil {
+		return "", vmmdmount.ErrNotFound
+	}
+	lease, err := m.parentMounts.ReserveMount(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer releaseParentMount(ctx, lease, &err)
+	mountpoint, err = m.mountParentExt4(ctx, storageKey, nil, lease)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = lease.HandOff()
+	}
+	return mountpoint, err
 }
 
-func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expected *imagechain.BaseArtifact) (string, error) {
+func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expected *imagechain.BaseArtifact, lease *vmmdmount.MountLease) (string, error) {
 	if m.storage == nil {
 		return "", vmmdmount.ErrNotFound
 	}
@@ -2782,37 +2797,9 @@ func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expect
 	if storageKey == "" {
 		return "", vmmdmount.ErrNotFound
 	}
-	rc, err := m.storage.Get(ctx, storageKey)
+	srcPath, err := m.stageParentSource(ctx, storageKey, expected)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s: %w", vmmdmount.ErrNotFound, storageKey, err)
-	}
-	defer func() { _ = rc.Close() }()
-
-	// vmmdmount.MountRoot (pkg/vmmdmount/mount.go:71) — created by
-	// bootstrap as 0750 root:faas. vmmd's unit whitelists /srv/fc via
-	// ReadWritePaths (deploy/etc/faas-vmmd.service:20), but /tmp is
-	// not whitelisted and ProtectSystem=strict would block the
-	// CreateTemp call there (run 30848763268 — imaged → vmmd RPC
-	// "create src tmp: open /tmp/faas-parent-src-NNNN: read-only
-	// file system"). The umount/rmdir sweeps in pkg/vmmdmount also
-	// expect src files under MountRoot.
-	src, err := os.CreateTemp(vmmdmount.MountRoot, parentSrcPrefix)
-	if err != nil {
-		return "", fmt.Errorf("parent mount: create src tmp: %w", err)
-	}
-	srcPath := src.Name()
-	if expected != nil {
-		err = writeVerifiedParentSource(ctx, src, rc, *expected)
-	} else {
-		err = src.Close()
-		if err == nil {
-			err = streamToPath(rc, srcPath)
-		}
-	}
-	if err != nil {
-		_ = src.Close()
-		_ = os.Remove(srcPath)
-		return "", fmt.Errorf("parent mount: stream src bytes: %w", err)
+		return "", err
 	}
 
 	mp, err := vmmdmount.MountExt4ReadOnly(ctx, srcPath)
@@ -2820,15 +2807,8 @@ func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expect
 		_ = os.Remove(srcPath)
 		return "", err
 	}
-	evicted := m.parentMounts.RegisterOrEvict(mp, vmmdmount.MountKindParentExt4, storageKey, srcPath)
-	if evicted != "" {
-		m.log.Warn("vmmd: parent mount cap reached; force-umounted oldest",
-			"evicted_mountpoint", evicted)
-		// Best-effort umount of the evicted entry; the registry
-		// already forgot it, so vmmdmount.UmountExt4 will fall
-		// through to the kernel syscall and clean the mountpoint
-		// dir.
-		_ = vmmdmount.UmountExt4(ctx, evicted)
+	if err := lease.Attach(mp, vmmdmount.MountKindParentExt4, storageKey, srcPath); err != nil {
+		return "", errors.Join(err, cleanupUnregisteredParent(ctx, mp, srcPath))
 	}
 	m.log.Info("vmmd: parent mounted", "storage_key", storageKey, "mountpoint", mp)
 	return mp, nil
@@ -2839,17 +2819,20 @@ func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expect
 // before returning. The explicit copy is required because imaged and vmmd
 // run in separate service mount namespaces; returning a mountpoint alone does
 // not make the mounted view visible to imaged.
-func (m *Manager) MaterializeParentExt4(ctx context.Context, storageKey, targetDir string) error {
-	mountpoint, err := m.MountParentExt4(ctx, storageKey)
+func (m *Manager) MaterializeParentExt4(ctx context.Context, storageKey, targetDir string) (err error) {
+	if m.parentMounts == nil {
+		return vmmdmount.ErrNotFound
+	}
+	lease, err := m.parentMounts.ReserveMount(ctx)
 	if err != nil {
 		return err
 	}
-	copyErr := vmmdmount.MaterializeParentExt4(ctx, mountpoint, targetDir)
-	umountErr := m.UmountParentExt4(context.WithoutCancel(ctx), mountpoint)
-	if copyErr != nil || umountErr != nil {
-		return errors.Join(copyErr, umountErr)
+	defer releaseParentMount(ctx, lease, &err)
+	mountpoint, err := m.mountParentExt4(ctx, storageKey, nil, lease)
+	if err != nil {
+		return err
 	}
-	return nil
+	return errors.Join(vmmdmount.MaterializeParentExt4(ctx, mountpoint, targetDir), ctx.Err())
 }
 
 // UmountParentExt4 (ADR-053) releases a parent mount MountParentExt4
@@ -2859,28 +2842,10 @@ func (m *Manager) MaterializeParentExt4(ctx context.Context, storageKey, targetD
 // mountpoint; surfaces a real umount error (e.g. EBUSY) verbatim.
 func (m *Manager) UmountParentExt4(ctx context.Context, mountpoint string) error {
 	if m.parentMounts == nil {
-		// No registry wired — every call is a no-op. Matches the
-		// default-local unit-test path; production cmd/vmmd wires
-		// the registry at startup.
 		return nil
 	}
-	entry, ok := m.parentMounts.Lookup(mountpoint)
-	if !ok {
-		// Idempotent on unknown: imaged's defer-after-error may
-		// call here after a partial Mount failure (mount succeeded
-		// but registration raced, or the registry was swept). The
-		// gRPC handler treats nil as success.
-		return nil
-	}
-	if err := vmmdmount.UmountExt4(ctx, mountpoint); err != nil {
-		return err
-	}
-	m.parentMounts.Forget(mountpoint)
-	if entry.SrcPath != "" {
-		_ = os.Remove(entry.SrcPath)
-	}
-	m.log.Info("vmmd: parent umounted", "mountpoint", mountpoint, "storage_key", entry.StorageKey)
-	return nil
+	_, err := m.parentMounts.Umount(ctx, mountpoint)
+	return err
 }
 
 // MountOverlayParent (ADR-075 / DEPLOY-1) mounts an overlayfs
@@ -2904,40 +2869,30 @@ func (m *Manager) UmountParentExt4(ctx context.Context, mountpoint string) error
 // are NOT cleaned up here — imaged owns upper/work (it created
 // them via MkdirBaseStaging + MkdirTemp) and a vmmd-side
 // cleanup would race with imaged's own defer-after-error.
-func (m *Manager) MountOverlayParent(ctx context.Context, lowerdir, upperdir, workdir, merged string) error {
+func (m *Manager) MountOverlayParent(ctx context.Context, lowerdir, upperdir, workdir, merged string) (err error) {
 	if m.parentMounts == nil {
 		return fmt.Errorf("vmmd: parent overlay mount: registry not wired")
 	}
+	lease, err := m.parentMounts.ReserveMount(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseParentMount(ctx, lease, &err)
 	if err := vmmdmount.MountOverlayParent(ctx, lowerdir, upperdir, workdir, merged); err != nil {
 		return err
 	}
-	// Track merged in the registry with MountKindOverlayParent
-	// + empty StorageKey/SrcPath (the overlay mount has neither —
-	// it's a vmmd-issued mount over paths imaged chose). The
-	// cap (16) is the same as loopback mounts; imaged should
-	// umount before issuing the next one anyway.
-	//
-	// Review finding B5: pre-B5 the returned mountpoint was
-	// discarded, so when the cap was hit the evicted mount
-	// stayed live on disk — leaking upper/work/merged until
-	// the next sweep tick. Now we honor the eviction by
-	// dispatching through Registry.Umount (which switches on
-	// MountKind and tears down the overlay properly).
-	evicted := m.parentMounts.RegisterOrEvict(merged, vmmdmount.MountKindOverlayParent, "", "")
-	if evicted != "" {
-		m.log.Warn("vmmd: parent overlay mount cap reached; force-umounted oldest",
-			"evicted_mountpoint", evicted)
-		// Registry.Umount dispatches on MountKind (B4), so this
-		// works for either ext4 or overlay evictions. Best-effort
-		// — a failed umount surfaces in the next sweep tick.
-		if _, uerr := m.parentMounts.Umount(ctx, evicted); uerr != nil {
-			m.log.Warn("vmmd: evicted parent overlay umount failed (sweep will retry)",
-				"evicted_mountpoint", evicted, "err", uerr)
-		}
+	if err := lease.Attach(merged, vmmdmount.MountKindOverlayParent, "", ""); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
+		defer cancel()
+		return errors.Join(err, vmmdmount.UmountOverlayParent(cleanupCtx, merged))
 	}
-	m.log.Info("vmmd: parent overlay mounted",
-		"lowerdir", lowerdir, "upperdir", upperdir,
-		"workdir", workdir, "merged", merged)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := lease.HandOff(); err != nil {
+		return err
+	}
+	m.log.Info("vmmd: parent overlay mounted", "mountpoint", merged)
 	return nil
 }
 

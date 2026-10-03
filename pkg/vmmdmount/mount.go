@@ -1,6 +1,6 @@
 // Package vmmdmount — loopback mount/umount for the ADR-053
 // parent-base staging path. vmmd is the only root component (spec
-// §11) and runs `mount -o loop,ro,nodev,nosuid,noexec` on imaged's
+// §11) and runs `mount -o loop,ro,noload,nodev,nosuid,noexec` on imaged's
 // behalf; imaged (User=faas-imaged + NoNewPrivileges=yes) cannot
 // do this itself.
 //
@@ -27,7 +27,7 @@
 // box bootstrap; imaged's ReadWritePaths already covers /srv/fc).
 //
 // Sweep: Registry.SweepOrphans walks every entry older than
-// ParentMountMaxAge (default 30 min) and force-umounts it. Called
+// ParentMountMaxAge (default 30 min) and releases idle, unowned mounts. Called
 // from cmd/vmmd's main goroutine on SIGTERM (sync sweep via
 // SweepAll) and on a configurable background ticker (orphan
 // sweep). The 30-minute default is generous — a normal mkfs.ext4
@@ -76,7 +76,7 @@ const MountRoot = "/srv/fc/parent"
 const DefaultCap = 16
 
 // ParentMountMaxAge is the orphan-sweep threshold. Anything older
-// than this when SweepOrphans runs is force-umounted. The default
+// than this when SweepOrphans runs is released unless an owner is active. The default
 // is generous (30 min) — a normal mkfs.ext4 -d over a ~280 MB
 // debian userland takes seconds; a hung imaged child would surface
 // long before the sweep kicks in. cmd/vmmd overrides this via
@@ -86,9 +86,10 @@ const ParentMountMaxAge = 30 * time.Minute
 // parentMountOpts is the mount-option string passed to `mount -o`.
 // nodev,nosuid,noexec hardens the loopback mount against any
 // binary inside the parent ext4 executing or opening device nodes
-// — defense in depth; the mount is short-lived and read-only, so
+// — defense in depth. noload prevents read-only ext4 journal replay from
+// writing to the measured source. The mount is short-lived and read-only, so
 // the options cost nothing in the staging hot path.
-const parentMountOpts = "loop,ro,nodev,nosuid,noexec"
+const parentMountOpts = "loop,ro,noload,nodev,nosuid,noexec"
 
 // ErrUnknownMountpoint is the typed sentinel UmountParentExt4 returns
 // when the mountpoint isn't in the registry. The gRPC handler lifts
@@ -107,9 +108,15 @@ var ErrNotFound = errors.New("vmmdmount: storage_key not found")
 // memory growth in the face of an imaged that misbehaves and never
 // calls UmountParentExt4.
 type Registry struct {
-	mu      sync.Mutex
-	entries map[string]MountEntry
-	cap     int
+	mu           sync.Mutex
+	entries      map[string]MountEntry
+	cap          int
+	reservations map[*MountLease]bool
+	owners       map[string]*MountLease
+	releasing    map[string]bool
+	retrying     map[string]bool
+	unmounted    map[string]bool
+	cleanup      func(context.Context, string, MountEntry, bool) (bool, error)
 }
 
 // MountEntry is the per-mount record. Exported so the Manager
@@ -157,7 +164,7 @@ type MountEntry struct {
 type MountKind int
 
 const (
-	// MountKindParentExt4 is an `mount -o loop,ro,nodev,nosuid,
+	// MountKindParentExt4 is an `mount -o loop,ro,noload,nodev,nosuid,
 	// noexec` loopback of a StorageBackend-fetched parent-base
 	// ext4 image. SrcPath + StorageKey are set on the entry;
 	// Umount removes the staged source file.
@@ -170,139 +177,48 @@ const (
 	MountKindOverlayParent
 )
 
-// NewRegistry builds an empty registry. cap is the soft cap on
-// concurrent mounts — when a Mount would exceed it, the oldest
-// entry is force-umounted to make room (load-shedding, not
-// back-pressure). Production default cap=DefaultCap (16) matches
-// the fleet-wide imaging parallelism of an idle box; bumped to
-// 64 on builds under load.
+// NewRegistry builds a registry bounded by cap. Production mount owners reserve
+// a slot before staging bytes or mounting and refuse while all slots are busy.
 func NewRegistry(cap int) *Registry {
 	if cap <= 0 {
 		cap = DefaultCap
 	}
-	return &Registry{entries: make(map[string]MountEntry), cap: cap}
+	return &Registry{
+		entries: make(map[string]MountEntry), cap: cap,
+		reservations: map[*MountLease]bool{}, owners: map[string]*MountLease{},
+		releasing: map[string]bool{}, retrying: map[string]bool{}, unmounted: map[string]bool{},
+		cleanup: cleanupRegisteredMount,
+	}
 }
 
-// Umount atomically looks up + umounts + forgets + removes the
-// staged source for `mountpoint` under a single mutex
-// acquisition. Returns:
-//
-//   - (true,  nil)         — entry was found and the umount
-//     syscall + source cleanup succeeded.
-//   - (false, nil)         — entry was not found (idempotent
-//     defer-after-error path; imaged's
-//     UmountParentExt4 wrapper absorbs this).
-//   - (false, err)         — entry was found but umount failed
-//     (e.g. EBUSY); entry is KEPT in the
-//     map so the next sweep can retry.
-//     The caller MUST surface the error —
-//     silently dropping a real umount
-//     failure would leak the loopback mount.
-//
-// This is the single critical section for the umount lifecycle:
-// a concurrent sweep tick + a deferred UmountExt4 from imaged
-// used to race (manager's umount + forget held no lock, so the
-// sweep could umount the same mountpoint first). Now both paths
-// funnel through Umount and the registry stays consistent.
-//
-// Dispatch: MountKind controls which umount syscall runs.
-// MountKindParentExt4 → UmountExt4 + rm SrcPath (the ADR-053
-// loopback path). MountKindOverlayParent → UmountOverlayParent
-// (the DEPLOY-1 parent-ref overlay path; the function already
-// rmdir's the merged dir, so no SrcPath cleanup happens here).
-// Review finding B4: pre-MountKind the registry ran a single
-// `umount` syscall on every entry and only cleaned up SrcPath;
-// MountKindOverlayParent entries had no SrcPath, so the sweep
-// leaked upperdir/workdir staging trees.
-func (r *Registry) Umount(ctx context.Context, mountpoint string) (found bool, err error) {
-	r.mu.Lock()
-	entry, ok := r.entries[mountpoint]
-	if !ok {
-		r.mu.Unlock()
-		return false, nil
-	}
-	delete(r.entries, mountpoint)
-	r.mu.Unlock()
-
-	switch entry.Kind {
-	case MountKindParentExt4:
-		if uerr := UmountExt4(ctx, mountpoint); uerr != nil {
-			// Restore the entry so a retry has a chance — the next
-			// sweep tick (or a future explicit Umount call) will
-			// pick it up. We restore under the lock to keep the map
-			// consistent with the disk state.
-			if !errors.Is(uerr, ErrUnknownMountpoint) {
-				r.mu.Lock()
-				if _, stillMissing := r.entries[mountpoint]; stillMissing {
-					r.entries[mountpoint] = entry
-				}
-				r.mu.Unlock()
-				return false, uerr
-			}
-			// ErrUnknownMountpoint means the kernel has nothing at
-			// the path — entry was already forgotten, no restore
-			// needed.
-		}
-		if entry.SrcPath != "" {
-			if rerr := os.Remove(entry.SrcPath); rerr != nil && !os.IsNotExist(rerr) {
-				// Source file removal failure is non-fatal — the
-				// next sweep (or a manual umount) will retry. Log
-				// via the returned error so the manager can decide.
-				return true, fmt.Errorf("vmmdmount: registry.Umount: rm src %s: %w", entry.SrcPath, rerr)
-			}
-		}
-	case MountKindOverlayParent:
-		// UmountOverlayParent already handles its own merged-dir
-		// cleanup. If it returns ErrUnknownMountpoint, the
-		// overlay is already gone — entry stays forgotten.
-		if uerr := UmountOverlayParent(ctx, mountpoint); uerr != nil {
-			if !errors.Is(uerr, ErrUnknownMountpoint) {
-				r.mu.Lock()
-				if _, stillMissing := r.entries[mountpoint]; stillMissing {
-					r.entries[mountpoint] = entry
-				}
-				r.mu.Unlock()
-				return false, uerr
-			}
-		}
-	default:
-		return false, fmt.Errorf("vmmdmount: registry.Umount: unknown MountKind=%d for %q", entry.Kind, mountpoint)
-	}
-	return true, nil
+// Umount releases an unowned mount and its source. A live owner or concurrent
+// release returns ErrMountBusy. Failed cleanup retains the entry and its phase
+// for retry; only completed cleanup removes ownership.
+func (r *Registry) Umount(ctx context.Context, mountpoint string) (bool, error) {
+	return r.umount(ctx, mountpoint, nil)
 }
 
-// RegisterOrEvict records (mountpoint, kind, storageKey, srcPath)
-// under mu, and if the new size exceeds the cap, force-umounts
-// the oldest entry to make room. Returns the evicted mountpoint
-// (empty when no eviction was needed) so the caller can log it
-// AND honor the eviction by issuing the matching umount syscall
-// (review finding B5: pre-B5 callers discarded the returned
-// mountpoint and the evicted mount stayed live on disk).
-//
-// This is the load-shed path: a misbehaving imaged that never calls
-// UmountParentExt4 cannot grow the map unboundedly because the cap
-// guarantees the oldest entry is dropped on every overflow. A
-// well-behaved imaged never sees the eviction branch because it
-// umounts before the next Mount.
-//
-// kind is the MountKind of the entry being registered. StorageKey
-// + srcPath are set ONLY for MountKindParentExt4 (the loopback
-// path that stages StorageBackend bytes); both are empty for
-// MountKindOverlayParent (the merged dir is owned by
-// UmountOverlayParent's rmdir).
-func (r *Registry) RegisterOrEvict(mountpoint string, kind MountKind, storageKey, srcPath string) (evicted string) {
+// RegisterOrEvict is the legacy registration API. It can evict only an idle
+// unowned entry; the caller must clean the returned mountpoint. Reserved slots,
+// active owners and failed cleanup records receive no eviction exemption.
+// Production mount paths use ReserveMount instead.
+func (r *Registry) RegisterOrEvict(mountpoint string, kind MountKind, storageKey, srcPath string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.entries) >= r.cap {
-		var oldestMP string
+	if r.owners[mountpoint] != nil || r.releasing[mountpoint] || r.retrying[mountpoint] {
+		return "", ErrMountBusy
+	}
+	evicted := ""
+	if _, exists := r.entries[mountpoint]; !exists && len(r.entries)+len(r.reservations) >= r.cap {
 		var oldestAt time.Time
 		for mp, e := range r.entries {
-			if oldestMP == "" || e.MountedAt.Before(oldestAt) {
-				oldestMP = mp
-				oldestAt = e.MountedAt
+			if r.owners[mp] == nil && !r.releasing[mp] && !r.retrying[mp] && (evicted == "" || e.MountedAt.Before(oldestAt)) {
+				evicted, oldestAt = mp, e.MountedAt
 			}
 		}
-		evicted = oldestMP
+		if evicted == "" {
+			return "", ErrMountCapacity
+		}
 	}
 	if evicted != "" {
 		delete(r.entries, evicted)
@@ -313,7 +229,7 @@ func (r *Registry) RegisterOrEvict(mountpoint string, kind MountKind, storageKey
 		SrcPath:    srcPath,
 		MountedAt:  time.Now(),
 	}
-	return evicted
+	return evicted, nil
 }
 
 // Lookup returns the entry for mountpoint, or (zero, false) when
@@ -330,12 +246,14 @@ func (r *Registry) Lookup(mountpoint string) (MountEntry, bool) {
 func (r *Registry) Forget(mountpoint string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.entries, mountpoint)
+	if r.owners[mountpoint] == nil && !r.releasing[mountpoint] && !r.retrying[mountpoint] {
+		delete(r.entries, mountpoint)
+	}
 }
 
 // SweepOrphans walks every entry older than ParentMountMaxAge and
 // force-umounts it via the atomic Registry.Umount (which also
-// removes the staged source file). Returns the count swept. Safe
+// removes the staged source file). Active owners are excluded. Returns the count swept. Safe
 // on an empty registry (returns 0). Entries whose umount fails
 // are kept in the map so the next sweep tick retries — this
 // matches the deferred Umount path (Registry.Umount itself
@@ -345,7 +263,7 @@ func (r *Registry) SweepOrphans(ctx context.Context, log *slog.Logger) int {
 	var stale []string
 	cutoff := time.Now().Add(-ParentMountMaxAge)
 	for mp, e := range r.entries {
-		if e.MountedAt.Before(cutoff) {
+		if r.owners[mp] == nil && !r.releasing[mp] && e.MountedAt.Before(cutoff) {
 			stale = append(stale, mp)
 		}
 	}
@@ -364,7 +282,8 @@ func (r *Registry) SweepOrphans(ctx context.Context, log *slog.Logger) int {
 	return swept
 }
 
-// SweepAll force-umounts every live entry. Called from cmd/vmmd's
+// SweepAll releases idle entries. Active operations retain their leases and
+// release them when their canceled requests unwind. Called from cmd/vmmd's
 // SIGTERM handler so the box doesn't leave dangling mounts or
 // source files in /srv/fc/parent/. Returns the count swept.
 // Empty registry is a no-op.
@@ -372,7 +291,9 @@ func (r *Registry) SweepAll(ctx context.Context, log *slog.Logger) int {
 	r.mu.Lock()
 	mps := make([]string, 0, len(r.entries))
 	for mp := range r.entries {
-		mps = append(mps, mp)
+		if r.owners[mp] == nil && !r.releasing[mp] {
+			mps = append(mps, mp)
+		}
 	}
 	r.mu.Unlock()
 
@@ -401,7 +322,7 @@ func (r *Registry) SweepAll(ctx context.Context, log *slog.Logger) int {
 // mountpoint itself is left in place on Mount error so the caller
 // can surface the path in the error log without re-creating it.
 //
-// Mount options: -o loop,ro,nodev,nosuid,noexec. Read-only so a
+// Mount options: -o loop,ro,noload,nodev,nosuid,noexec. Read-only so a
 // child re-stage cannot corrupt the parent; nodev+nosuid+noexec
 // harden against any binary inside the parent ext4 executing or
 // opening device nodes via the loopback mount.
@@ -429,7 +350,7 @@ func MountExt4ReadOnly(ctx context.Context, src string) (mountpoint string, err 
 	// exec.CommandContext binds the mount to ctx — a cancelled ctx
 	// kills the mount syscall. The mount itself is fast (loopback +
 	// read-only ext4 metadata read), so the ctx is a paranoia belt.
-	cmd := exec.CommandContext(ctx, "mount", "-o", parentMountOpts, src, mp)
+	cmd := exec.CommandContext(ctx, "mount", "-t", "ext4", "-o", parentMountOpts, src, mp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("vmmdmount: MountExt4ReadOnly: mount %s: %w (%s)", parentMountOpts, err, strings.TrimSpace(string(out)))
 	}
@@ -487,11 +408,5 @@ func UmountExt4(ctx context.Context, mountpoint string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("vmmdmount: umount %s: %w (%s)", mountpoint, err, strings.TrimSpace(string(out)))
 	}
-	// rmdir only — the mountpoint should be empty after a successful
-	// umount (mkfs.ext4 -d reads through the mount but writes to
-	// the new ext4 outside the scratch tree). If rmdir fails
-	// (e.g. a debug process left a file), the next sweep will
-	// retry; not a fatal error.
-	_ = os.Remove(mountpoint)
-	return nil
+	return removeReleasedMountpoint(mountpoint)
 }

@@ -4,11 +4,13 @@ package vmmdgrpc
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -32,6 +34,9 @@ func (s *Server) MaterializeVerifiedParentExt4(ctx context.Context, req *vmmdpb.
 	}
 	actual, err := owner.MaterializeVerifiedParentExt4(ctx, expected)
 	s.ops.Observe("MaterializeVerifiedParentExt4", time.Since(start), err)
+	if errors.Is(err, vmmdmount.ErrMountCapacity) {
+		return nil, status.Error(codes.ResourceExhausted, "parent mount capacity exhausted")
+	}
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, "verified parent materialization failed")
 	}

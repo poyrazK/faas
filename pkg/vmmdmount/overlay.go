@@ -265,14 +265,5 @@ func UmountOverlayParent(ctx context.Context, merged string) error {
 		return fmt.Errorf("vmmdmount: UmountOverlayParent: umount %s: %w (%s)",
 			merged, err, strings.TrimSpace(string(out)))
 	}
-	// rmdir the now-empty merged dir so the staging tree
-	// shrinks back. os.Remove on a non-empty dir fails with
-	// ENOTEMPTY — caller can decide whether to retry or sweep.
-	if err := os.Remove(merged); err != nil && !os.IsNotExist(err) {
-		// Surface as a warning; the next sweep tick will
-		// clean up. Don't fail the umount RPC on rmdir
-		// failure — the overlay is gone.
-		return fmt.Errorf("vmmdmount: UmountOverlayParent: rmdir merged: %w", err)
-	}
-	return nil
+	return removeReleasedMountpoint(merged)
 }

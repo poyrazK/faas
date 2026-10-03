@@ -1845,7 +1845,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountParentExt4ReadOnlyResponse{Mountpoint: mp}, nil
 }
@@ -1887,7 +1887,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MaterializeParentExt4Response{}, nil
 }
@@ -1911,7 +1911,7 @@ func (s *Server) UmountParentExt4(ctx context.Context, req *vmmdpb.UmountParentE
 	}
 	if err := s.vmm.UmountParentExt4(ctx, req.GetMountpoint()); err != nil {
 		s.ops.Observe(op, time.Since(start), err)
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.UmountParentExt4Response{}, nil
@@ -1958,7 +1958,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.MountOverlayParentResponse{}, nil
 }
@@ -1989,7 +1989,7 @@ func (s *Server) UmountOverlayParent(ctx context.Context, req *vmmdpb.UmountOver
 			// blocker.
 			return &vmmdpb.UmountOverlayParentResponse{}, nil
 		}
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, parentMountStatus(err)
 	}
 	return &vmmdpb.UmountOverlayParentResponse{}, nil
 }

@@ -39,39 +39,46 @@ func writeVerifiedParentSource(ctx context.Context, dst *os.File, src io.Reader,
 
 // MaterializeVerifiedParentExt4 reports the source identity only after the
 // verified protected file was mounted, copied and released by this owner.
-func (m *Manager) MaterializeVerifiedParentExt4(ctx context.Context, expected imagechain.ParentMaterialization) (imagechain.ParentMaterialization, error) {
+func (m *Manager) MaterializeVerifiedParentExt4(ctx context.Context, expected imagechain.ParentMaterialization) (actual imagechain.ParentMaterialization, err error) {
 	if !expected.Valid() {
-		return imagechain.ParentMaterialization{}, fmt.Errorf("invalid parent materialization")
+		return actual, fmt.Errorf("invalid parent materialization")
 	}
-	mp, err := m.mountParentExt4(ctx, expected.Artifact.StorageKey, &expected.Artifact)
+	if m.parentMounts == nil {
+		return actual, vmmdmount.ErrNotFound
+	}
+	lease, err := m.parentMounts.ReserveMount(ctx)
 	if err != nil {
-		return imagechain.ParentMaterialization{}, err
+		return actual, err
 	}
-	copyErr := vmmdmount.MaterializeParentExt4(ctx, mp, expected.TargetDir)
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
-	defer cancel()
-	cleanupErr := m.cleanupVerifiedParent(cleanupCtx, mp)
-	if err := errors.Join(copyErr, cleanupErr, ctx.Err()); err != nil {
-		return imagechain.ParentMaterialization{}, err
+	defer func() {
+		releaseParentMount(ctx, lease, &err)
+		err = errors.Join(err, ctx.Err())
+		if err != nil {
+			actual = imagechain.ParentMaterialization{}
+		}
+	}()
+	mp, err := m.mountParentExt4(ctx, expected.Artifact.StorageKey, &expected.Artifact, lease)
+	if err != nil {
+		return actual, err
+	}
+	if err := vmmdmount.MaterializeParentExt4(ctx, mp, expected.TargetDir); err != nil {
+		return actual, err
 	}
 	return expected, nil
 }
 
-func (m *Manager) cleanupVerifiedParent(ctx context.Context, mp string) error {
-	entry, ok := m.parentMounts.Lookup(mp)
-	if !ok {
-		return fmt.Errorf("parent materialization mount ownership lost")
-	}
-	if err := m.UmountParentExt4(ctx, mp); err != nil {
+// Cleanup uses an independent bound even when the imaging request is canceled.
+func releaseParentMount(ctx context.Context, lease *vmmdmount.MountLease, result *error) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
+	defer cancel()
+	*result = errors.Join(*result, lease.Release(cleanupCtx))
+}
+
+func cleanupUnregisteredParent(ctx context.Context, mountpoint, source string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
+	defer cancel()
+	if err := vmmdmount.UmountExt4(cleanupCtx, mountpoint); err != nil && !errors.Is(err, vmmdmount.ErrUnknownMountpoint) {
 		return err
 	}
-	for _, name := range []string{entry.SrcPath, mp} {
-		if name == "" {
-			return fmt.Errorf("parent materialization cleanup path missing")
-		}
-		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("parent materialization cleanup: %w", err)
-		}
-	}
-	return ctx.Err()
+	return os.Remove(source)
 }
