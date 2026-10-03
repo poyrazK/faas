@@ -543,6 +543,7 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionWorkflowJobs           map[string]ExecutionWorkflowJob
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -1218,6 +1219,7 @@ func NewMemStore() *MemStore {
 		triggerWorkBindings:             map[string]TriggerWorkBinding{},
 		workCancellations:               map[string]WorkCancellation{},
 		executions:                      map[string]Execution{},
+		executionWorkflowJobs:           map[string]ExecutionWorkflowJob{},
 		executionPayloads:               map[string]executionPayload{},
 		executionArtifactGrants:         map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs: map[string][]string{},
@@ -21255,6 +21257,12 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, delivery := range m.objectStorageBillingDeliveries {
 		if delivery.AccountID == id {
 			delete(m.objectStorageBillingDeliveries, key)
+		}
+	}
+	for workflowID, workflow := range m.executionWorkflowJobs {
+		if workflow.AccountID == id {
+			clear(workflow.SealedPlan)
+			delete(m.executionWorkflowJobs, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

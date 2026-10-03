@@ -2384,6 +2384,45 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/execution-workflows:
+    post:
+      tags: [runs]
+      operationId: createManagedExecutionWorkflow
+      summary: Submit a server-managed Runs DAG.
+      description: |
+        Stores a bounded dependency graph encrypted with the host age identity
+        and admits each step as a separate disposable Run after its dependencies
+        succeed. Independent steps may run in parallel up to the submitted
+        workflow limit and the account's concurrent Run limit. Continuation is
+        owned by the control plane and survives CLI disconnects and apid
+        restarts. Source and input are never returned; the encrypted plan is
+        erased when the workflow reaches a terminal state. Requires
+        `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
+        plane with the host age recipient and identity configured. Each account
+        may have at most 16 active managed workflows; terminal workflows
+        release their encrypted plan and queue slot.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedExecutionWorkflowRequest' }
+      responses:
+        '202':
+          description: Encrypted DAG accepted for control-plane continuation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedExecutionWorkflowResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: This workflow identifier already has a different managed plan for the caller's Runs principal. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/execution-workflows/{workflow_id}:
     get:
       tags: [runs]
@@ -2394,7 +2433,9 @@ paths:
         one caller-generated workflow identifier. Runs-only keys see only
         runs created by their own stable key family; broad credentials retain
         account-wide visibility. Importing an artifact from another key family
-        does not grant access to that family's run metadata. Requires
+        does not grant access to that family's run metadata. A server-managed
+        workflow includes its continuation status and admitted step count; a
+        plan can be visible before its first Run is admitted. Requires
         `apps:read`, `runs:read`, `runs:write`, or `admin`.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -44482,9 +44523,124 @@ components:
       required: [workflow_id, run_count, status_counts, usage]
       properties:
         workflow_id: { type: string, maxLength: 96 }
-        run_count: { type: integer, format: int64, minimum: 1 }
+        run_count: { type: integer, format: int64, minimum: 0 }
         status_counts: { $ref: '#/components/schemas/ExecutionWorkflowStatusCounts' }
         usage: { $ref: '#/components/schemas/ExecutionWorkflowUsage' }
+        managed:
+          type: array
+          description: Managed plans matching the workflow id and visible to this principal. Broad credentials can see plans submitted by multiple key families.
+          items: { $ref: '#/components/schemas/ManagedExecutionWorkflowResponse' }
+
+    CreateManagedExecutionWorkflowRequest:
+      description: |
+        Encrypted, server-managed DAG. Every step runs in its own disposable
+        Run. Independent steps may run in parallel up to max_parallel_steps
+        and the account's concurrent Run limit. The full JSON body must not
+        exceed 4 MiB. An account can have at most 16 active managed workflows.
+      type: object
+      required: [workflow_id, version, steps]
+      additionalProperties: false
+      properties:
+        workflow_id:
+          type: string
+          minLength: 1
+          maxLength: 96
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'
+        version:
+          type: string
+          minLength: 1
+          maxLength: 24
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,23}$'
+        max_parallel_steps:
+          type: integer
+          minimum: 0
+          maximum: 8
+          default: 1
+          description: Maximum number of this workflow's Runs active at once; 0 uses the default of 1.
+        failure_policy:
+          type: string
+          enum: [fail_fast, continue_independent]
+          default: fail_fast
+          description: Stop new admissions on a failed Run, or continue steps independent of failed branches.
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/CreateManagedExecutionWorkflowStep' }
+
+    CreateManagedExecutionWorkflowStep:
+      description: One disposable Run in the DAG and its dependency, result, and artifact handoff rules.
+      type: object
+      required: [label, request]
+      additionalProperties: false
+      properties:
+        label: { type: string, minLength: 1, maxLength: 96 }
+        depends_on:
+          type: array
+          uniqueItems: true
+          maxItems: 16
+          items: { type: string, minLength: 1, maxLength: 96 }
+          description: Earlier step labels that must succeed before this step is admitted.
+        input_from_previous_result:
+          type: boolean
+          default: false
+          description: Use the immediately preceding successful Run's JSON result as this step's input; adds that step as a dependency.
+        include_dependency_results:
+          type: boolean
+          default: false
+          description: Set input to a JSON object keyed by dependency label, with each dependency's terminal status and successful JSON result when available.
+        artifact_inputs:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ManagedExecutionWorkflowArtifactInput' }
+          description: Artifacts from earlier successful steps to stage in this Run's fresh ephemeral files bundle; each producer becomes an implicit dependency.
+        result_schema:
+          description: >-
+            Optional JSON Schema Draft 2020-12 contract for this Run's JSON
+            result. The control plane enforces it before dependents can consume
+            the result. Local fragment references are supported; external
+            resources are not loaded. Each schema is limited to 64 KiB and all
+            schemas in a workflow together are limited to 1 MiB.
+          oneOf:
+            - type: object
+            - type: boolean
+        request:
+          $ref: '#/components/schemas/CreateExecutionRequest'
+          description: Must not include workflow_id, step_label, or artifact_inputs.
+
+    ManagedExecutionWorkflowArtifactInput:
+      description: Select a declared output from an earlier workflow step and stage it at a relative path in this step's ephemeral bundle.
+      type: object
+      required: [from_step, name, path]
+      additionalProperties: false
+      properties:
+        from_step: { type: string, minLength: 1, maxLength: 96 }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized output_files name declared by the producer step.
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized relative destination path in the consumer Run's ephemeral files bundle.
+
+    ManagedExecutionWorkflowResponse:
+      description: |
+        Server-managed workflow lifecycle metadata. Source and input are not
+        returned. `next_step` is the number of steps already admitted as Runs,
+        including parallel admissions.
+      type: object
+      required: [workflow_id, plan_id, status, step_count, next_step, created_at]
+      properties:
+        workflow_id: { type: string, maxLength: 96 }
+        plan_id: { type: string, pattern: '^[0-9a-f]{24}$' }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        step_count: { type: integer, minimum: 1, maximum: 16 }
+        next_step: { type: integer, minimum: 0, maximum: 16 }
+        error: { type: string, maxLength: 2048 }
+        created_at: { type: string, format: date-time }
 
     ExecutionListResponse:
       description: |

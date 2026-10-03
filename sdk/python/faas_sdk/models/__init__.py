@@ -425,6 +425,12 @@ from .create_job_run_request_execution_class import CreateJobRunRequestExecution
 from .create_job_run_request_failure_policy import CreateJobRunRequestFailurePolicy
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
+from .create_managed_execution_workflow_request import CreateManagedExecutionWorkflowRequest
+from .create_managed_execution_workflow_request_failure_policy import CreateManagedExecutionWorkflowRequestFailurePolicy
+from .create_managed_execution_workflow_step import CreateManagedExecutionWorkflowStep
+from .create_managed_execution_workflow_step_result_schema_type_0 import (
+    CreateManagedExecutionWorkflowStepResultSchemaType0,
+)
 from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
 from .create_managed_postgres_binding_request_access import CreateManagedPostgresBindingRequestAccess
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
@@ -1121,6 +1127,9 @@ from .log_query_event_level import LogQueryEventLevel
 from .log_query_event_source import LogQueryEventSource
 from .log_query_event_stream import LogQueryEventStream
 from .magic_link_signup_request import MagicLinkSignupRequest
+from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
+from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
+from .managed_execution_workflow_response_status import ManagedExecutionWorkflowResponseStatus
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -2640,6 +2649,10 @@ __all__ = (
     "CreateJobRunRequestFailurePolicy",
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
+    "CreateManagedExecutionWorkflowRequest",
+    "CreateManagedExecutionWorkflowRequestFailurePolicy",
+    "CreateManagedExecutionWorkflowStep",
+    "CreateManagedExecutionWorkflowStepResultSchemaType0",
     "CreateManagedPostgresBindingRequest",
     "CreateManagedPostgresBindingRequestAccess",
     "CreateManagedPostgresDatabaseRequest",
@@ -3322,6 +3335,9 @@ __all__ = (
     "LogQueryEventSource",
     "LogQueryEventStream",
     "MagicLinkSignupRequest",
+    "ManagedExecutionWorkflowArtifactInput",
+    "ManagedExecutionWorkflowResponse",
+    "ManagedExecutionWorkflowResponseStatus",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",

@@ -222,6 +222,8 @@ export type { CreateIssueIngestTokenRequest } from './models/CreateIssueIngestTo
 export type { CreateJobRequest } from './models/CreateJobRequest.js';
 export type { CreateJobRunRequest } from './models/CreateJobRunRequest.js';
 export type { CreateKeyRequest } from './models/CreateKeyRequest.js';
+export type { CreateManagedExecutionWorkflowRequest } from './models/CreateManagedExecutionWorkflowRequest.js';
+export type { CreateManagedExecutionWorkflowStep } from './models/CreateManagedExecutionWorkflowStep.js';
 export type { CreateManagedPostgresBindingRequest } from './models/CreateManagedPostgresBindingRequest.js';
 export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManagedPostgresDatabaseRequest.js';
 export type { CreateManagedRealtimeEndpointRequest } from './models/CreateManagedRealtimeEndpointRequest.js';
@@ -585,6 +587,8 @@ export type { ListWorkflowStepsResponse } from './models/ListWorkflowStepsRespon
 export type { LogExcerpt } from './models/LogExcerpt.js';
 export type { LogQueryEvent } from './models/LogQueryEvent.js';
 export type { MagicLinkSignupRequest } from './models/MagicLinkSignupRequest.js';
+export type { ManagedExecutionWorkflowArtifactInput } from './models/ManagedExecutionWorkflowArtifactInput.js';
+export type { ManagedExecutionWorkflowResponse } from './models/ManagedExecutionWorkflowResponse.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';

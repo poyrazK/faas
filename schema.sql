@@ -6211,6 +6211,44 @@ CREATE TABLE public.accounts (
 
 
 --
+-- Name: agent_execution_workflows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_execution_workflows (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    runs_principal_id uuid,
+    workflow_id text NOT NULL,
+    plan_id text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    step_count smallint NOT NULL,
+    next_step smallint DEFAULT 0 NOT NULL,
+    sealed_plan bytea,
+    payload_kid text DEFAULT ''::text NOT NULL,
+    lease_token uuid,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    scheduled_for timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT agent_execution_workflows_error_check CHECK ((length(last_error) <= 2048)),
+    CONSTRAINT agent_execution_workflows_finish_check CHECK (((status = ANY (ARRAY['succeeded'::text, 'failed'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT agent_execution_workflows_id_check CHECK (((length(workflow_id) >= 1) AND (length(workflow_id) <= 96))),
+    CONSTRAINT agent_execution_workflows_lease_pair_check CHECK ((((lease_token IS NULL) = (lease_owner IS NULL)) AND ((lease_owner IS NULL) = (lease_expires_at IS NULL)))),
+    CONSTRAINT agent_execution_workflows_next_step_check CHECK (((next_step >= 0) AND (next_step <= step_count))),
+    CONSTRAINT agent_execution_workflows_payload_kid_check CHECK ((((payload_kid = ''::text) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text]))) OR (((length(payload_kid) >= 1) AND (length(payload_kid) <= 255)) AND (status = ANY (ARRAY['queued'::text, 'running'::text]))))),
+    CONSTRAINT agent_execution_workflows_plan_id_check CHECK ((plan_id ~ '^[0-9a-f]{24}$'::text)),
+    CONSTRAINT agent_execution_workflows_plan_retention_check CHECK (((status = ANY (ARRAY['succeeded'::text, 'failed'::text])) = (sealed_plan IS NULL))),
+    CONSTRAINT agent_execution_workflows_sealed_plan_check CHECK (((sealed_plan IS NULL) OR ((octet_length(sealed_plan) >= 1) AND (octet_length(sealed_plan) <= 4259840)))),
+    CONSTRAINT agent_execution_workflows_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))),
+    CONSTRAINT agent_execution_workflows_step_count_check CHECK (((step_count >= 1) AND (step_count <= 16))),
+    CONSTRAINT agent_execution_workflows_updated_check CHECK ((updated_at >= created_at))
+);
+
+
+--
 -- Name: alert_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14881,6 +14919,14 @@ ALTER TABLE ONLY public.accounts
 
 
 --
+-- Name: agent_execution_workflows agent_execution_workflows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_execution_workflows
+    ADD CONSTRAINT agent_execution_workflows_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18544,6 +18590,41 @@ CREATE INDEX accounts_mfa_required_pending_idx ON public.accounts USING btree (i
 --
 
 CREATE INDEX accounts_past_due_idx ON public.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: agent_execution_workflows_account_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_account_active_idx ON public.agent_execution_workflows USING btree (account_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: agent_execution_workflows_account_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_execution_workflows_account_key ON public.agent_execution_workflows USING btree (account_id, workflow_id) WHERE (runs_principal_id IS NULL);
+
+
+--
+-- Name: agent_execution_workflows_account_workflow_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_account_workflow_idx ON public.agent_execution_workflows USING btree (account_id, workflow_id, created_at DESC);
+
+
+--
+-- Name: agent_execution_workflows_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_execution_workflows_claim_idx ON public.agent_execution_workflows USING btree (scheduled_for, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: agent_execution_workflows_principal_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX agent_execution_workflows_principal_key ON public.agent_execution_workflows USING btree (account_id, runs_principal_id, workflow_id) WHERE (runs_principal_id IS NOT NULL);
 
 
 --
@@ -25143,6 +25224,14 @@ ALTER TABLE ONLY public.account_passwords
 
 ALTER TABLE ONLY public.account_spend_snapshot
     ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_execution_workflows agent_execution_workflows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_execution_workflows
+    ADD CONSTRAINT agent_execution_workflows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

@@ -278,6 +278,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"POST /v1/execution-workflows":                                                 "CreateManagedExecutionWorkflow",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops":                    "GetEnvironmentGitOps",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/source":            "CreateEnvironmentGitSource",
 	"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source":           "UpdateEnvironmentGitSource",

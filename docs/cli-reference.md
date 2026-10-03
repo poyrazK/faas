@@ -3348,19 +3348,21 @@ List runs
 
 ### runs workflow
 
-Show workflow status or resume a sequential Runs plan
+Show workflow status or manage an agent-owned Runs plan
 
 `gregale runs workflow <workflow-id>`
 
 #### runs workflow run
 
-Run or resume a sequential disposable Runs plan
+Run, resume, or preview a disposable Runs plan
 
-`gregale runs workflow run --manifest <PLAN.json> [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale runs workflow run --manifest <PLAN.json> [--managed] [--dry-run] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--manifest <PLAN.json>` | JSON workflow plan file | required |
+| `--managed` | continue a bounded Run DAG on the control plane after this client exits |  |
+| `--dry-run` | validate and preview without creating Runs |  |
 | `--poll-interval <D>` | status polling interval |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
 

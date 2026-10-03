@@ -217,6 +217,8 @@ export type { CreateIssueIngestTokenRequest } from './CreateIssueIngestTokenRequ
 export type { CreateJobRequest } from './CreateJobRequest.js';
 export type { CreateJobRunRequest } from './CreateJobRunRequest.js';
 export type { CreateKeyRequest } from './CreateKeyRequest.js';
+export type { CreateManagedExecutionWorkflowRequest } from './CreateManagedExecutionWorkflowRequest.js';
+export type { CreateManagedExecutionWorkflowStep } from './CreateManagedExecutionWorkflowStep.js';
 export type { CreateManagedPostgresBindingRequest } from './CreateManagedPostgresBindingRequest.js';
 export type { CreateManagedPostgresDatabaseRequest } from './CreateManagedPostgresDatabaseRequest.js';
 export type { CreateManagedRealtimeEndpointRequest } from './CreateManagedRealtimeEndpointRequest.js';
@@ -593,6 +595,8 @@ export type { MFARecoverResponse } from './MFARecoverResponse.js';
 export type { MFAVerifyRequest } from './MFAVerifyRequest.js';
 export type { MFAVerifyResponse } from './MFAVerifyResponse.js';
 export type { MagicLinkSignupRequest } from './MagicLinkSignupRequest.js';
+export type { ManagedExecutionWorkflowArtifactInput } from './ManagedExecutionWorkflowArtifactInput.js';
+export type { ManagedExecutionWorkflowResponse } from './ManagedExecutionWorkflowResponse.js';
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';

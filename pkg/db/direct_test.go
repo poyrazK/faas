@@ -1,3 +1,4 @@
+// adr: 493 — environment policy batches retain session locks on the direct pool.
 package db
 
 import (
@@ -171,11 +172,12 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 // client, and nothing fails loudly — so a new pinned Acquire has to be a
 // deliberate decision rather than something a reviewer has to notice.
 var sessionScopedAcquire = map[string]string{
-	"pkg/db/notify_hub.go":       "LISTEN: the hub parks one connection per daemon",
-	"pkg/db/notify.go":           "LISTEN: legacy per-subscriber path",
-	"pkg/db/wait_for.go":         "LISTEN: short-lived per-request wait",
-	"pkg/db/migrate_advisory.go": "session pg_advisory_lock held across statements",
-	"pkg/state/pgstore.go":       "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/db/notify_hub.go":                      "LISTEN: the hub parks one connection per daemon",
+	"pkg/db/notify.go":                          "LISTEN: legacy per-subscriber path",
+	"pkg/db/wait_for.go":                        "LISTEN: short-lived per-request wait",
+	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
+	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
