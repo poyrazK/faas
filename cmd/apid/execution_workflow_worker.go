@@ -238,8 +238,6 @@ func (s *server) driveManagedExecutionWorkflow(ctx context.Context, claim state.
 				if errors.As(err, &permanent) || errors.Is(err, state.ErrExecutionInvalid) ||
 					errors.Is(err, state.ErrExecutionsNotAllowed) || errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable) {
 					message := managedWorkflowSafeFailure(step.Label, err)
-					hardFailure = true
-					stopAdmissions = true
 					if activeRuns > 0 {
 						return s.retryManagedWorkflowClaim(ctx, jobs, claim, startedSteps, managedWorkflowFatalErrorPrefix+message)
 					}
