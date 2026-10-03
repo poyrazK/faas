@@ -1464,13 +1464,16 @@ consumes the verified OCI artifact and avoids reapplying unsigned source bytes.
 The hermetic legacy function seam cannot consume an approved export. After
 conversion, the consumer reloads the application and fresh approval; changed
 approval or a newly required signature blocks this handler's snapshot handoff.
-This recheck is not atomic with the legacy rootfs stamp or later scan/handoff.
-It is not a native boot, restore or promotion authority fence.
+Approved conversion now publishes its distinct source rootfs record and deployment
+metadata atomically under the store fences described below. The post-conversion
+recheck remains additional refusal at this handler boundary; it does not protect
+a later scan/handoff or authorize native boot, restore or promotion. Optional
+unsigned legacy conversion retains its existing rootfs stamp.
 
-The source/function rootfs producer, selected runtime/default base, injected
-runner and guest-init still require durable binding to that retained proof.
-Proof renewal after archive cleanup, atomic final artifact/current-policy
-publication, native consumption and observed standards adoption remain required.
+The source/function producer now binds the selected independent runtime/default
+base, exact injected runner and guest-init, conversion inputs and retained export
+approval as described below. Proof renewal after archive cleanup, source composed
+scan and native consumption, and observed standards adoption remain required.
 The transient export copy does not flatten the shared read-only base, private
 writable main or independent read-only sidecar drives. Public activation remains
 disabled.
@@ -1482,3 +1485,60 @@ changes during conversion and signed malformed OCI refusal. MemStore and real
 PostgreSQL tests preserve scoped history after revocation and erase it with its
 parent. The Go executable payload, injected runner digest and ext4 result are
 fixtures; these checks do not establish native execution or observed adoption.
+
+## Atomic source/function rootfs publication
+
+Approved source conversion passes an explicit immutable binding into both the
+local OCI and function converters. It captures the exact scoped export approval,
+current independent amd64 runtime/default base producer and hash, and a canonical
+hash of the app/deployment conversion inputs before conversion. The intent hash
+covers slug, runtime/type, start command, complete lifecycle manifest, signature
+policy, handler, scope, and deployment overrides. Equivalent JSONB object ordering
+and omitted empty command/dependency defaults hash identically; nil and explicit
+empty listener declarations remain distinct. Plaintext environment and secret
+references are not retained in the producer or exposed as a conversion result.
+
+The normal rootfs builder returns the digest of the exact guest-init byte slice
+it injects, alongside the existing injected runner and complete stored ext4
+identity. Replacing the source guest-init file later cannot change that returned
+digest. The consumer rereads the produced storage object and selected base bytes,
+checks current base configuration and guest-init identity, and then invokes the
+private publication store. It never substitutes a registry verification for a
+source export approval.
+
+Both stores revalidate current owner, source/build claim, completed provenance,
+approved publisher key, deployment stage, unchanged conversion intent and current
+base selection. PostgreSQL uses nonwaiting approval/app/deployment/build, control,
+artifact and base fences. All existing build rows are locked, including queued
+claims, and the deployment's selected build must still match the approved build.
+Deployment locking prevents newly inserted build children from bypassing this
+check. The SQL lock is a private owner fence; the Go store authenticates the actual
+retained P256 payload and signature against the current key.
+
+An immutable source producer, its current selection and deployment rootfs metadata
+are written in one transaction. Storage issues the publication clock; expiry is
+bounded by the retained export approval. Exact current ID retries preserve those
+clocks; changed same-ID inputs or superseded selections cannot be reselected.
+Failed stamps roll back producer and selection. Scoped historical reads check
+owner, source/runtime and stored deployment metadata without granting fresh trust
+after revocation. Live-owner raw mutation and deletion are refused. Parent erasure
+is permitted only after the app is deleted, its grace deadline has elapsed and
+purge has been claimed, or after the deployment has gone; this supports Gregale's
+build-before-deployment purge order without weakening live-owner retention.
+
+Source producer history participates in the runtime-presence downgrade guard.
+Until a distinct source composed-scan/native authority path is implemented, fresh
+runtime bootstrap refuses these records instead of treating them as absent and
+falling back to unsigned handling. This publication does not grant scan, native
+boot/restore/promotion, logging/egress adoption, or rollout acknowledgement. The
+shared read-only base, private writable main, and independent read-only sidecars
+remain separate drives. All native Grype/ext4/KVM/leakcheck and full multiservice
+rollout/recovery acceptance remain pending. Public activation stays disabled.
+
+The private checkpoint has an unresolved merge-policy issue: the two applied
+source-rootfs migration IDs end in `000` milliseconds, which the current
+`scripts/ci/check_migration_version_hygiene.sh` PR gate refuses. Their applied
+sources remain frozen under the append-only rule. This checkpoint is not
+merge-ready; a reviewed resolution of that naming-policy conflict is required
+before a PR, without silently rewriting applied history or weakening default
+missing-ledger duplicate-CREATE refusal.

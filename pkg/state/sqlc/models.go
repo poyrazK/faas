@@ -4522,6 +4522,21 @@ type SnapshotStorageDaily struct {
 	ComputedAt pgtype.Timestamptz
 }
 
+type SourceBuildRootf struct {
+	ID            pgtype.UUID
+	PublicationID pgtype.UUID
+	DeploymentID  pgtype.UUID
+	InputSnapshot []byte
+	InputHash     string
+	PublishedAt   pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
+type SourceBuildRootfsCurrent struct {
+	DeploymentID pgtype.UUID
+	ArtifactID   pgtype.UUID
+}
+
 type StatusIncident struct {
 	ID                   int64
 	Component            string

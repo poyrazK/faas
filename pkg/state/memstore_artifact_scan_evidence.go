@@ -71,6 +71,11 @@ func (m *MemStore) artifactEvidenceOwnerLocked(accountID, appID, depID string) (
 			return dep, nil
 		}
 	}
+	for _, producer := range m.sourceBuildRootfs {
+		if sameStandardUUID(producer.Input.DeploymentID, depID) {
+			return dep, nil
+		}
+	}
 	return Deployment{}, ErrDeploymentArtifactScanEvidenceAbsent
 }
 

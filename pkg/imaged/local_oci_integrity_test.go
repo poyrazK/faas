@@ -255,7 +255,7 @@ func TestLocalOCIIntegrityRefusesBeforeRootfsConversion(t *testing.T) {
 	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeGo124)
 	h.dep.RootfsPath = archive
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
-	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, h.dep, h.acct); err == nil {
+	if err := handler.buildLocalOCIAppLayer(context.Background(), h.app, h.dep, h.acct, nil); err == nil {
 		t.Fatal("container conversion accepted corrupt source build")
 	}
 	for _, runtime := range []string{RuntimeGo124, RuntimeGo124Alpine, RuntimeNode22, RuntimePython312} {

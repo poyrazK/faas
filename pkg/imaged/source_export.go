@@ -47,7 +47,7 @@ func (h *Handler) consumeSourceBuild(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: source publisher approval: %w", err)
 	}
 	if approval == nil {
-		if err := h.convertSourceBuild(ctx, app, dep, acct); err != nil {
+		if err := h.convertSourceBuild(ctx, app, dep, acct, nil); err != nil {
 			return err
 		}
 		return h.recheckSourceApproval(ctx, app, dep, nil)
@@ -60,19 +60,23 @@ func (h *Handler) consumeSourceBuild(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: snapshot approved source export: %w", err)
 	}
 	defer func() { err = errors.Join(err, snapshot.Close()) }()
+	binding, err := h.prepareSourceBuildRootfsBinding(ctx, app, dep, *approval)
+	if err != nil {
+		return err
+	}
 	consumed := dep
 	consumed.RootfsPath = snapshot.Path()
-	if err := h.convertSourceBuild(ctx, app, consumed, acct); err != nil {
+	if err := h.convertSourceBuild(ctx, app, consumed, acct, &binding); err != nil {
 		return err
 	}
 	return h.recheckSourceApproval(ctx, app, dep, approval)
 }
 
-func (h *Handler) convertSourceBuild(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) convertSourceBuild(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
 	if app.Type == state.AppTypeFunction || app.Runtime != "" {
-		return h.buildFunctionLayer(ctx, app, dep, acct)
+		return h.buildFunctionLayer(ctx, app, dep, acct, source)
 	}
-	return h.buildLocalOCIAppLayer(ctx, app, dep, acct)
+	return h.buildLocalOCIAppLayer(ctx, app, dep, acct, source)
 }
 
 func (h *Handler) recheckSourceApproval(ctx context.Context, app state.App, dep state.Deployment, prior *state.BuildExportPublication) error {

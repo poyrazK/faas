@@ -5961,6 +5961,45 @@ SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid 
 SELECT EXISTS(SELECT 1 FROM build_export_publications WHERE account_id=sqlc.arg(account_id)::uuid
  AND app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
 
+-- name: LockSourceBuildRootfs :one
+SELECT lock_source_build_rootfs(sqlc.arg(input)::jsonb)::jsonb AS inputs;
+
+-- name: AuthorizeSourceBuildRootfsInsert :exec
+SELECT set_config('gregale.source_build_rootfs_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertSourceBuildRootfs :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO source_build_rootfs(id,publication_id,deployment_id,input_snapshot,input_hash,published_at,expires_at)
+SELECT sqlc.arg(id)::uuid,p.id,p.deployment_id,sqlc.arg(input_snapshot)::jsonb,sqlc.arg(input_hash)::text,now,p.expires_at
+FROM build_export_publications p CROSS JOIN storage_clock
+WHERE p.id=sqlc.arg(publication_id)::uuid AND p.verified_at<=now AND p.expires_at>now RETURNING source_build_rootfs.*;
+
+-- name: GetSourceBuildRootfsByID :one
+SELECT * FROM source_build_rootfs WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetSourceBuildRootfsPointer :one
+SELECT artifact_id FROM source_build_rootfs_current WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: SelectSourceBuildRootfs :exec
+INSERT INTO source_build_rootfs_current(deployment_id,artifact_id)
+VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(id)::uuid)
+ON CONFLICT(deployment_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id;
+
+-- name: GetCurrentSourceBuildRootfs :one
+SELECT f.* FROM source_build_rootfs_current c JOIN source_build_rootfs f ON f.id=c.artifact_id
+JOIN build_export_publications p ON p.id=f.publication_id AND p.deployment_id=f.deployment_id
+JOIN deployments d ON d.id=f.deployment_id AND d.app_id=p.app_id
+JOIN apps a ON a.id=d.app_id AND a.account_id=p.account_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+ AND a.status<>'deleted' AND f.input_snapshot->>'account_id'=a.account_id::text AND f.input_snapshot->>'app_id'=a.id::text
+ AND f.input_snapshot->>'org_id'=coalesce(a.org_id::text,'') AND f.input_snapshot->>'scope'=d.scope
+ AND f.input_snapshot->>'publication_hash'=p.input_hash AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
+ AND d.kind IN ('tarball','dockerfile','github','preview')
+ AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
+ AND p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+ AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
+ AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes;
+
 -- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
 
@@ -6159,7 +6198,8 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND a.status<>'deleted' AND s.input_snapshot->>'account_id'=a.account_id::text AND s.input_snapshot->>'app_id'=a.id::text;
 
 -- name: GetDeploymentArtifactWorkloads :one
-SELECT d.sidecars, EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)::boolean AS has_registry_producers
+SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';

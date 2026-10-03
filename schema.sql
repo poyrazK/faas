@@ -5386,6 +5386,36 @@ $$;
 
 
 --
+-- Name: lock_source_build_rootfs(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_source_build_rootfs(input jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p build_export_publications%ROWTYPE; a apps%ROWTYPE; d deployments%ROWTYPE; b builds%ROWTYPE;
+BEGIN
+ SELECT * INTO p FROM build_export_publications WHERE id=(input->>'publication_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'source approval missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ SELECT * INTO d FROM deployments WHERE id=p.deployment_id FOR UPDATE NOWAIT;
+ SELECT * INTO a FROM apps WHERE id=p.app_id FOR SHARE NOWAIT;
+ -- Lock queued claims too. Deployment FOR UPDATE blocks new FK children.
+ PERFORM id FROM builds WHERE deployment_id=d.id ORDER BY id FOR SHARE NOWAIT;
+ SELECT * INTO b FROM builds WHERE deployment_id=d.id ORDER BY started_at DESC NULLS LAST,id DESC LIMIT 1 FOR SHARE NOWAIT;
+ IF (d.app_id=a.id AND a.account_id=p.account_id AND a.status<>'deleted'
+  AND p.build_id=b.id AND d.build_id=p.build_id AND p.deployment_id::text=input->>'deployment_id' AND p.app_id::text=input->>'app_id'
+  AND p.account_id::text=input->>'account_id' AND p.input_hash=input->>'publication_hash'
+  AND p.verified_at<=clock_timestamp() AND p.expires_at>clock_timestamp()
+  AND d.status IN ('pending','building','imaging','snapshotting')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'source conversion inputs changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ RETURN jsonb_build_object('intent',source_build_rootfs_intent(a,d),'status',d.status,'checked_at',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'source conversion inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+END;
+$$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6395,6 +6425,66 @@ BEGIN
     RETURNING TRUE INTO flipped;
     RETURN COALESCE(flipped, FALSE);
 END;
+$$;
+
+
+--
+-- Name: source_build_rootfs_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND source_build_rootfs_owner_erasing(OLD.deployment_id) THEN RETURN OLD;END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.source_build_rootfs_insert',true)=NEW.artifact_id::text
+  AND (TG_OP='INSERT' OR NEW.deployment_id=OLD.deployment_id) THEN RETURN NEW;END IF;
+ RAISE EXCEPTION 'source rootfs selection must use private publication' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: source_build_rootfs_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.source_build_rootfs_insert',true)=NEW.id::text THEN RETURN NEW;END IF;
+ IF TG_OP='DELETE' AND source_build_rootfs_owner_erasing(OLD.deployment_id) THEN RETURN OLD;END IF;
+ RAISE EXCEPTION 'source rootfs evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: source_build_rootfs_intent(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_intent(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('slug',a.slug,'type',a.type,'runtime',coalesce(a.runtime,''),'start_command',coalesce(a.start_command,''),
+ 'manifest',a.manifest,'require_signed',a.require_signed,'security_policy',a.security_policy,'handler',coalesce(d.handler,''),
+ 'scope',d.scope,'override_entrypoint',d.override_entrypoint,'override_cmd',d.override_cmd,'override_env',d.override_env,
+ 'override_env_secrets',d.override_env_secrets,'override_port',coalesce(d.override_port,0),'override_healthcheck',d.override_healthcheck,
+ 'override_liveness_probe',d.override_liveness_probe,'override_readiness_probe',d.override_readiness_probe,
+ 'override_main_depends_on',d.override_main_depends_on);
+$$;
+
+
+--
+-- Name: source_build_rootfs_owner_erasing(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_owner_erasing(deployment uuid) RETURNS boolean
+    LANGUAGE sql
+    AS $$
+ SELECT NOT EXISTS(SELECT 1 FROM deployments WHERE id=deployment)
+ OR EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+  WHERE d.id=deployment AND a.status='deleted' AND a.delete_grace_until<=clock_timestamp() AND a.purge_claimed_at IS NOT NULL);
 $$;
 
 
@@ -14135,6 +14225,35 @@ COMMENT ON COLUMN public.snapshot_storage_daily.layer_bytes IS 'Σ overlay stagi
 
 
 --
+-- Name: source_build_rootfs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_build_rootfs (
+    id uuid NOT NULL,
+    publication_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT source_build_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
+    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ''::text) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
+    CONSTRAINT source_build_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT source_build_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: source_build_rootfs_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_build_rootfs_current (
+    deployment_id uuid NOT NULL,
+    artifact_id uuid NOT NULL
+);
+
+
+--
 -- Name: status_incident_updates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18221,6 +18340,30 @@ ALTER TABLE ONLY public.snapshots
 
 
 --
+-- Name: source_build_rootfs_current source_build_rootfs_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_id_deployment_id_key UNIQUE (id, deployment_id);
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: status_incident_updates status_incident_updates_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19411,6 +19554,13 @@ CREATE INDEX billing_usage_deliveries_window_idx ON public.billing_usage_deliver
 --
 
 CREATE INDEX build_export_publications_latest ON public.build_export_publications USING btree (build_id, verified_at DESC, id DESC);
+
+
+--
+-- Name: build_export_publications_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX build_export_publications_scope ON public.build_export_publications USING btree (account_id, app_id, deployment_id);
 
 
 --
@@ -23950,6 +24100,20 @@ CREATE TRIGGER application_standard_snapshot_publication_guard BEFORE INSERT OR 
 
 
 --
+-- Name: source_build_rootfs application_standard_source_rootfs_child; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_source_rootfs_child BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: source_build_rootfs_current application_standard_source_rootfs_current_child; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_source_rootfs_current_child BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: application_standard_operation_targets application_standard_target_intent_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24913,6 +25077,20 @@ CREATE TRIGGER snapshot_stale_after_app_ram_change AFTER UPDATE OF ram_mb ON pub
 --
 
 CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status ON public.deployments FOR EACH ROW WHEN (((new.status = ANY (ARRAY['failed'::text, 'cancelled'::text])) AND (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.snapshot_stale_after_terminal_deployment();
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_private; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_build_rootfs_current_private BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.source_build_rootfs_current_guard();
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_private; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_build_rootfs_private BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.source_build_rootfs_guard();
 
 
 --
@@ -28996,6 +29174,38 @@ ALTER TABLE ONLY public.snapshots
 
 ALTER TABLE ONLY public.snapshots
     ADD CONSTRAINT snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_artifact_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_artifact_id_deployment_id_fkey FOREIGN KEY (artifact_id, deployment_id) REFERENCES public.source_build_rootfs(id, deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_publication_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_publication_id_fkey FOREIGN KEY (publication_id) REFERENCES public.build_export_publications(id) ON DELETE CASCADE;
 
 
 --

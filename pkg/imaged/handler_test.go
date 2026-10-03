@@ -113,6 +113,7 @@ type fakeBuilder struct {
 	buildErr         error
 	buildHook        func()
 	runnerDigest     string
+	guestInitDigest  string
 	omitRunnerDigest bool
 }
 
@@ -141,11 +142,12 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImageKey:       in.StorageKey,
-			ContentBytes:   b.bytesOut,
-			RunnerDigest:   runnerDigest,
-			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
-			ArtifactBytes:  int64(len("fake ext4")),
+			ImageKey:        in.StorageKey,
+			ContentBytes:    b.bytesOut,
+			RunnerDigest:    runnerDigest,
+			GuestInitDigest: b.guestInitDigest,
+			ArtifactDigest:  fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:   int64(len("fake ext4")),
 		}, nil
 	}
 	if in.OutImage != "" {
@@ -156,11 +158,12 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImagePath:      in.OutImage,
-			ContentBytes:   b.bytesOut,
-			RunnerDigest:   runnerDigest,
-			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
-			ArtifactBytes:  int64(len("fake ext4")),
+			ImagePath:       in.OutImage,
+			ContentBytes:    b.bytesOut,
+			RunnerDigest:    runnerDigest,
+			GuestInitDigest: b.guestInitDigest,
+			ArtifactDigest:  fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:   int64(len("fake ext4")),
 		}, nil
 	}
 	return rootfs.BuildResult{ContentBytes: b.bytesOut, RunnerDigest: runnerDigest}, nil
@@ -1435,7 +1438,7 @@ func TestBuildFunctionLayer_OverrideEntrypointWinsOverRuntimeDefault(t *testing.
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
 
-	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 		t.Fatalf("buildFunctionLayer: %v", err)
 	}
 	if len(h.bld.calls) != 1 {
@@ -1985,7 +1988,7 @@ func TestBuildFunctionLayer_Runtimes(t *testing.T) {
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 			tc.wire(handler)
 
-			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 				t.Fatalf("buildFunctionLayer(%s): %v", tc.runtime, err)
 			}
 
@@ -2042,7 +2045,7 @@ func TestBuildFunctionLayer_StampsRunnerDigest(t *testing.T) {
 
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
-	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 		t.Fatalf("buildFunctionLayer: %v", err)
 	}
 
@@ -2061,7 +2064,7 @@ func TestBuildFunctionLayer_MissingRunnerDigestFailsClosed(t *testing.T) {
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
 
-	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil)
 	if err == nil || !strings.Contains(err.Error(), "function runner digest missing") {
 		t.Fatalf("buildFunctionLayer error = %v, want missing digest", err)
 	}
@@ -2111,7 +2114,7 @@ func TestBuildFunctionLayer_MissingRunnerFailsLoud(t *testing.T) {
 			// Intentionally do NOT wire the matching runner path.
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 
-			err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+			err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil)
 			if err == nil {
 				t.Fatal("expected error when function runner path is empty")
 			}

@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1838,7 +1837,7 @@ func (h *Handler) handleDeployment(ctx context.Context, p deploymentChangedPaylo
 		if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 			return err
 		}
-		if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+		if err := h.buildFunctionLayer(ctx, app, dep, acct, nil); err != nil {
 			return err
 		}
 	default:
@@ -2728,7 +2727,7 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 // provides (cmd/imaged wires both env-driven). Fails loud when the matching
 // path is empty — silent omission meant production function deploys were
 // shipping a layer without /usr/local/bin/faas-runner (M8 readiness).
-func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
 	// Stage ownership lives in handleDeployment (for direct image/function
 	// deploys) and handleSnapshotBoot (for builderd handoffs). Direct unit
 	// callers and legacy producers may still enter here before that boundary,
@@ -2946,7 +2945,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 	h.updateBuildProvenanceRunnerDigest(ctx, dep.ID, result.RunnerDigest)
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+	if err := h.publishSourceRootfs(ctx, app, dep, appsKey, result, source); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
@@ -3780,7 +3779,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	switch dep.Kind {
 	case state.DeploymentKindImage:
 		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+			if err := h.buildFunctionLayer(ctx, app, dep, acct, nil); err != nil {
 				return err
 			}
 		} else if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
@@ -3847,12 +3846,12 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 		return nil
 	}
 	if app.Runtime == "" {
-		if _, err := h.EnsureMinimalBase(ctx, runtime.GOARCH, os.Getenv); err != nil {
+		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
 			return fmt.Errorf("imaged: ensure minimal base: %w", err)
 		}
 		return nil
 	}
-	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, runtime.GOARCH, os.Getenv); err != nil {
+	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, oci.ImageArchitecture, os.Getenv); err != nil {
 		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, err)
 	}
 	return nil

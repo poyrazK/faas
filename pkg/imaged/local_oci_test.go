@@ -354,7 +354,7 @@ func TestBuildFunctionLayer_UsesSourceBuildOCIForGoRuntimes(t *testing.T) {
 			h.dep.RootfsPath = archive
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 			tc.wire(handler)
-			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 				t.Fatalf("buildFunctionLayer: %v", err)
 			}
 			if len(h.bld.calls) != 1 {

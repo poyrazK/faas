@@ -448,7 +448,7 @@ func localOCIBlobName(digest string) (string, error) {
 // platform-runtime prefix to feed through the registry two-drive path, so all
 // layers from this content-verified local artifact are applied here. Content
 // verification alone does not establish an approved publisher's identity.
-func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
 	config, layers, cleanup, err := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
 	if err != nil {
 		return fmt.Errorf("imaged: load built OCI image: %w", err)
@@ -497,7 +497,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+	if err := h.publishSourceRootfs(ctx, app, dep, appsKey, result, source); err != nil {
 		return fmt.Errorf("imaged: stamp local OCI rootfs: %w", err)
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {

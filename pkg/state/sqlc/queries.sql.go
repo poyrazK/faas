@@ -695,6 +695,15 @@ func (q *Queries) AuthorizeDeploymentRuntimeScanInsert(ctx context.Context, db D
 	return err
 }
 
+const authorizeSourceBuildRootfsInsert = `-- name: AuthorizeSourceBuildRootfsInsert :exec
+SELECT set_config('gregale.source_build_rootfs_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeSourceBuildRootfsInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeSourceBuildRootfsInsert, id)
+	return err
+}
+
 const bindExclusiveWorkSubmission = `-- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
 VALUES($1::text::uuid,$2::bytea,$3::text::uuid)
@@ -6251,6 +6260,43 @@ func (q *Queries) GetCurrentDeploymentRuntimeScan(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const getCurrentSourceBuildRootfs = `-- name: GetCurrentSourceBuildRootfs :one
+SELECT f.id, f.publication_id, f.deployment_id, f.input_snapshot, f.input_hash, f.published_at, f.expires_at FROM source_build_rootfs_current c JOIN source_build_rootfs f ON f.id=c.artifact_id
+JOIN build_export_publications p ON p.id=f.publication_id AND p.deployment_id=f.deployment_id
+JOIN deployments d ON d.id=f.deployment_id AND d.app_id=p.app_id
+JOIN apps a ON a.id=d.app_id AND a.account_id=p.account_id
+WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND d.id=$3::uuid
+ AND a.status<>'deleted' AND f.input_snapshot->>'account_id'=a.account_id::text AND f.input_snapshot->>'app_id'=a.id::text
+ AND f.input_snapshot->>'org_id'=coalesce(a.org_id::text,'') AND f.input_snapshot->>'scope'=d.scope
+ AND f.input_snapshot->>'publication_hash'=p.input_hash AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
+ AND d.kind IN ('tarball','dockerfile','github','preview')
+ AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
+ AND p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+ AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
+ AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
+`
+
+type GetCurrentSourceBuildRootfsParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) GetCurrentSourceBuildRootfs(ctx context.Context, db DBTX, arg GetCurrentSourceBuildRootfsParams) (SourceBuildRootf, error) {
+	row := db.QueryRow(ctx, getCurrentSourceBuildRootfs, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var i SourceBuildRootf
+	err := row.Scan(
+		&i.ID,
+		&i.PublicationID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -6387,7 +6433,8 @@ func (q *Queries) GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX,
 }
 
 const getDeploymentArtifactWorkloads = `-- name: GetDeploymentArtifactWorkloads :one
-SELECT d.sidecars, EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)::boolean AS has_registry_producers
+SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=$1::uuid AND a.id=$2::uuid
  AND a.account_id=$3::uuid AND a.status<>'deleted'
@@ -7251,6 +7298,36 @@ func (q *Queries) GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetS
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const getSourceBuildRootfsByID = `-- name: GetSourceBuildRootfsByID :one
+SELECT id, publication_id, deployment_id, input_snapshot, input_hash, published_at, expires_at FROM source_build_rootfs WHERE id=$1::uuid
+`
+
+func (q *Queries) GetSourceBuildRootfsByID(ctx context.Context, db DBTX, id pgtype.UUID) (SourceBuildRootf, error) {
+	row := db.QueryRow(ctx, getSourceBuildRootfsByID, id)
+	var i SourceBuildRootf
+	err := row.Scan(
+		&i.ID,
+		&i.PublicationID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getSourceBuildRootfsPointer = `-- name: GetSourceBuildRootfsPointer :one
+SELECT artifact_id FROM source_build_rootfs_current WHERE deployment_id=$1::uuid
+`
+
+func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, getSourceBuildRootfsPointer, deploymentID)
+	var artifact_id pgtype.UUID
+	err := row.Scan(&artifact_id)
+	return artifact_id, err
 }
 
 const getUploadCommitOutcome = `-- name: GetUploadCommitOutcome :one
@@ -8711,6 +8788,41 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.FlagEvidenceJson,
 	)
 	return err
+}
+
+const insertSourceBuildRootfs = `-- name: InsertSourceBuildRootfs :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO source_build_rootfs(id,publication_id,deployment_id,input_snapshot,input_hash,published_at,expires_at)
+SELECT $1::uuid,p.id,p.deployment_id,$2::jsonb,$3::text,now,p.expires_at
+FROM build_export_publications p CROSS JOIN storage_clock
+WHERE p.id=$4::uuid AND p.verified_at<=now AND p.expires_at>now RETURNING source_build_rootfs.id, source_build_rootfs.publication_id, source_build_rootfs.deployment_id, source_build_rootfs.input_snapshot, source_build_rootfs.input_hash, source_build_rootfs.published_at, source_build_rootfs.expires_at
+`
+
+type InsertSourceBuildRootfsParams struct {
+	ID            pgtype.UUID
+	InputSnapshot []byte
+	InputHash     string
+	PublicationID pgtype.UUID
+}
+
+func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg InsertSourceBuildRootfsParams) (SourceBuildRootf, error) {
+	row := db.QueryRow(ctx, insertSourceBuildRootfs,
+		arg.ID,
+		arg.InputSnapshot,
+		arg.InputHash,
+		arg.PublicationID,
+	)
+	var i SourceBuildRootf
+	err := row.Scan(
+		&i.ID,
+		&i.PublicationID,
+		&i.DeploymentID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const insertTriggerDeadLetter = `-- name: InsertTriggerDeadLetter :exec
@@ -15572,6 +15684,17 @@ func (q *Queries) LockSnapshotPublicationApp(ctx context.Context, db DBTX, deplo
 	return a_id, err
 }
 
+const lockSourceBuildRootfs = `-- name: LockSourceBuildRootfs :one
+SELECT lock_source_build_rootfs($1::jsonb)::jsonb AS inputs
+`
+
+func (q *Queries) LockSourceBuildRootfs(ctx context.Context, db DBTX, input []byte) ([]byte, error) {
+	row := db.QueryRow(ctx, lockSourceBuildRootfs, input)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const lockUDPListenerAppOwner = `-- name: LockUDPListenerAppOwner :one
 SELECT account_id::text AS account_id FROM apps
 WHERE id = $1::text::uuid AND status <> 'deleted'
@@ -22316,6 +22439,22 @@ func (q *Queries) SelectPendingFireNowRequestForNode(ctx context.Context, db DBT
 		&i.Status,
 	)
 	return i, err
+}
+
+const selectSourceBuildRootfs = `-- name: SelectSourceBuildRootfs :exec
+INSERT INTO source_build_rootfs_current(deployment_id,artifact_id)
+VALUES($1::uuid,$2::uuid)
+ON CONFLICT(deployment_id) DO UPDATE SET artifact_id=EXCLUDED.artifact_id
+`
+
+type SelectSourceBuildRootfsParams struct {
+	DeploymentID pgtype.UUID
+	ID           pgtype.UUID
+}
+
+func (q *Queries) SelectSourceBuildRootfs(ctx context.Context, db DBTX, arg SelectSourceBuildRootfsParams) error {
+	_, err := db.Exec(ctx, selectSourceBuildRootfs, arg.DeploymentID, arg.ID)
+	return err
 }
 
 const serviceCapacityPlacement = `-- name: ServiceCapacityPlacement :one

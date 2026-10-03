@@ -196,6 +196,8 @@ type BuildResult struct {
 	// runner bytes copied to /usr/local/bin/faas-runner. Empty when no
 	// function runner was injected.
 	RunnerDigest string
+	// GuestInitDigest covers the exact bytes injected into this app layer.
+	GuestInitDigest string
 }
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
@@ -307,7 +309,8 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, err
 		}
 	}
-	if err := InjectGuestInit(staging, in.GuestInitPath); err != nil {
+	guestInitDigest, err := injectGuestInitWithDigest(staging, in.GuestInitPath)
+	if err != nil {
 		return BuildResult{}, err
 	}
 	if err := InjectManifest(staging, in.Manifest); err != nil {
@@ -396,12 +399,13 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	}
 
 	res := BuildResult{
-		SizeMB:         sizeMB,
-		ContentBytes:   stats.ContentBytes,
-		ArtifactDigest: identity.Digest,
-		ArtifactBytes:  identity.Bytes,
-		SBOMKey:        sbomKey,
-		RunnerDigest:   runnerDigest,
+		SizeMB:          sizeMB,
+		ContentBytes:    stats.ContentBytes,
+		ArtifactDigest:  identity.Digest,
+		ArtifactBytes:   identity.Bytes,
+		SBOMKey:         sbomKey,
+		RunnerDigest:    runnerDigest,
+		GuestInitDigest: guestInitDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -697,28 +701,33 @@ func validateWorkloadManifestName(name string) error {
 // InjectGuestInit copies the guest-init binary into staging as /sbin/init (PID 1,
 // spec §4.8), executable.
 func InjectGuestInit(staging, guestInitPath string) error {
+	_, err := injectGuestInitWithDigest(staging, guestInitPath)
+	return err
+}
+
+func injectGuestInitWithDigest(staging, guestInitPath string) (string, error) {
 	if guestInitPath == "" {
-		return fmt.Errorf("rootfs: empty guest-init path")
+		return "", fmt.Errorf("rootfs: empty guest-init path")
 	}
 	data, err := os.ReadFile(guestInitPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: read guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: read guest-init: %w", err)
 	}
 	dst := filepath.Join(staging, "sbin", "init")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	// OCI base images commonly ship /sbin/init as a symlink (for example
 	// Alpine points it at /bin/busybox). Remove the link before writing the
 	// platform PID-1 binary; os.WriteFile follows a symlink and would
 	// overwrite the link target while leaving /sbin/init pointing at it.
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("rootfs: remove existing init: %w", err)
+		return "", fmt.Errorf("rootfs: remove existing init: %w", err)
 	}
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		return fmt.Errorf("rootfs: write guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: write guest-init: %w", err)
 	}
-	return nil
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(data)), nil
 }
 
 // ApplyTarball unpacks a customer source tarball at /app. Archives produced
