@@ -71,6 +71,7 @@ func workflowStepAttemptResponse(a *state.WorkflowStepAttempt) api.WorkflowStepA
 		HTTPStatus: a.HTTPStatus,
 		StartedAt:  a.StartedAt.UTC().Format(time.RFC3339),
 		Error:      a.Error,
+		Effects:    a.Effects,
 	}
 	if a.FinishedAt != nil {
 		finished := a.FinishedAt.UTC().Format(time.RFC3339)
@@ -518,5 +519,52 @@ func (s *server) cancelWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 		}
 	}
 
+	writeJSON(w, http.StatusOK, workflowRunResponse(run))
+}
+
+// retryWorkflowStep resumes a safe failed HTTP step within its existing run.
+func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.WorkflowsAllowed() {
+		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
+		return
+	}
+	if !s.workflowRuntimeEnabled {
+		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
+		return
+	}
+	run, err := s.store.GetWorkflowRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), run.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	retryStore, ok := s.store.(state.WorkflowRetryStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow step retry is unavailable"))
+		return
+	}
+	maxActive := acct.Plan.WorkflowMaxConcurrentRuns()
+	run, active, err := retryStore.RetryWorkflowStep(r.Context(), run.ID, r.PathValue("step"), maxActive)
+	if errors.Is(err, state.ErrWorkflowRunNotFound) {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	if errors.Is(err, state.ErrWorkflowRetryNotAllowed) {
+		api.WriteProblem(w, api.ErrWorkflowStepRetryNotAllowed())
+		return
+	}
+	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxActive, active))
+		return
+	}
+	if err != nil {
+		s.log.Error("retry workflow step failed", "run_id", r.PathValue("id"), "step", r.PathValue("step"), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to retry workflow step"))
+		return
+	}
 	writeJSON(w, http.StatusOK, workflowRunResponse(run))
 }

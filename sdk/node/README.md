@@ -237,6 +237,20 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Transactional operation handlers
+
+For managed HTTP operations, `operationRequestFromHeaders` verifies negotiated
+support and captures the trusted identity with original request bytes.
+`withOperationTransaction(pool, operation, callback)` commits the callback's
+PostgreSQL writes and managed result/webhook intent together. A later attempt
+returns the saved response without repeating committed writes.
+
+Install `operationReceiptSchema` explicitly as the database owner. Use an idle,
+exclusively leased pg-compatible pool connection. Send `response.body` unchanged
+as `application/json`; `response.replayed` identifies receipt recovery. See the
+[transactional handler guide](../../docs/operation-transactions.md) for Express,
+receipt retention, and uncertain commit handling.
+
 ## Idempotency contract
 
 Every mutating call (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key`

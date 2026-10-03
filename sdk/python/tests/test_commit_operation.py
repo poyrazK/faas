@@ -31,7 +31,25 @@ from faas_sdk.models.exclusive_operation_record import ExclusiveOperationRecord
 )
 def test_shared_operation_route_decodes_receipt(fields, expected):
     identity = UUID("7910a14a-6f35-48e9-9a56-a8b11a5bbf37")
-    wire = {"id": str(identity), "state": "completed", "completed_at": "2026-10-01T12:01:00Z", **fields}
+    wire = {
+        "id": str(identity),
+        "state": "completed",
+        "completed_at": "2026-10-01T12:01:00Z",
+        "result": {"order_id": 123},
+        "effects": [
+            {
+                "id": str(identity),
+                "delivery_id": str(identity),
+                "webhook_id": str(identity),
+                "name": "notify",
+                "generation": 1,
+                "type": "order.fulfilled",
+                "status": "dead",
+                "attempt": 2,
+            }
+        ],
+        **fields,
+    }
 
     def respond(request):
         assert request.method == "GET"
@@ -48,3 +66,9 @@ def test_shared_operation_route_decodes_receipt(fields, expected):
     assert result.id == identity
     assert result.state == "completed"
     assert result.completed_at.isoformat() == "2026-10-01T12:01:00+00:00"
+
+    assert result.result == {"order_id": 123}
+    assert len(result.effects) == 1
+    assert result.effects[0].delivery_id == identity
+    assert result.effects[0].status == "dead"
+    assert result.effects[0].attempt == 2

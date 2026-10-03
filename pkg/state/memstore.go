@@ -27,7 +27,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
-	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -142,7 +141,7 @@ type MemStore struct {
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
 	exclusiveKeys               map[string]exclusiveKey
 	exclusiveOperations         map[string]ExclusiveOperation
-	exclusiveEffects            map[string][]exclusivework.Effect
+	exclusiveEffects            map[string][]exclusiveStoredEffect
 	exclusiveNow                func() time.Time
 	exclusiveSubmissions        map[string]string
 	capacityInstanceResources   map[string]capacityResources
@@ -336,10 +335,11 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowRuns         map[string]WorkflowRun
-	workflowSteps        map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowEvents       map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowRuns             map[string]WorkflowRun
+	workflowSteps            map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts     map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents           map[string][]WorkflowEvent // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -1131,6 +1131,7 @@ func NewMemStore() *MemStore {
 		workflowRuns:                    map[string]WorkflowRun{},
 		workflowSteps:                   map[string]map[string]WorkflowStep{},
 		workflowStepAttempts:            map[workflowStepAttemptKey]WorkflowStepAttempt{},
+		workflowOperationEffects:        map[workflowStepAttemptKey][]workflowOperationStoredEffect{},
 		workflowEvents:                  map[string][]WorkflowEvent{},
 		appTasks:                        map[string]AppTask{},
 		fireNowRequests:                 map[string]FireNowRequest{},

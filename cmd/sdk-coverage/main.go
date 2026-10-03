@@ -613,6 +613,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/workflows/runs/{id}":                                            "GetWorkflowRun",
 	"GET /v1/workflows/runs/{id}/steps":                                      "ListWorkflowSteps",
 	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                      "ListWorkflowStepAttempts",
+	"POST /v1/workflows/runs/{id}/steps/{step}/retry":                        "RetryWorkflowStep",
 	"GET /v1/workflows/runs/{id}/callbacks":                                  "ListWorkflowCallbacks",
 	"POST /v1/workflows/runs/{id}/callbacks/{callback_id}":                   "CompleteWorkflowCallback",
 	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    "PutWorkflowCallbackWebhookBinding",

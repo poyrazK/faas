@@ -2130,3 +2130,81 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
+
+
+## Versioned Commit operation routing (ADR-487)
+
+Commit version 2 admits a trusted producer's typed business key and optional
+owner-authorized platform-tenant selector into the existing Operations engine.
+The source fixes its app, queue policy, version and selection authority. Tenant
+selection requires an active same-account tenant and active app surface link.
+Version 1 retains source-wide account queues. Operation admission and the receipt,
+including normalized routing identity, commit atomically. Replay precedes lifecycle
+and version checks; external effects remain at least once. Customer-owned routing
+schema upgrades are explicit. See `docs/gregale-commit.md` for the wire contract
+and the existing operator/native qualification gates.
+
+## Managed operation webhook effects (ADR-488)
+
+Managed HTTP operation handlers may return a negotiated version 1 result envelope
+with up to 32 named webhook effects. The full handler response is bounded to
+1 MiB, each effect payload to 64 KiB, and each business event type to 256 bytes.
+The authenticated operation scope owns the destination; customer deliveries
+require a same-account tenant receiver explicitly subscribed to operation.effect
+and an active app surface link. Completion, effects, and existing webhook ledger
+insertions commit atomically under current ownership, rechecked after receiver
+locks. The signed dispatcher owns at-least-once delivery and rechecks current
+scope before each attempt. Inspection exposes immutable effect/delivery identity
+and current status. Negotiation requires upgraded schedd and internal gateway;
+Commit's existing internal gate and native promotion evidence remain required.
+See `docs/managed-operation-effects.md` for the handler and receiver contracts.
+
+## Transactional operation handler SDK (ADR-489)
+
+Node, Go, and Python SDKs own a customer PostgreSQL READ COMMITTED transaction
+that commits business writes and the complete managed-operation response together.
+The database owner explicitly installs `public.gregale_operation_inbox`; the SDK
+does not install or prune it. A shared operation lock serializes duplicate
+attempts. Receipts verify account/app/customer scope and a SHA-256 fingerprint of
+the original method, request target, and body. Generation changes replay exact
+stored response bytes and effect intent without repeating committed business
+writes. Callback errors roll back both; uncertain commit acknowledgements require
+retrying the same identity. Customer and platform transactions remain separate,
+and callbacks retain responsibility for business constraints and authorization.
+The portable acceptance gate covers PostgreSQL recovery, HTTP process death, and
+all nine cross-language writer/reader pairs. ADR-488 native runtime promotion
+remains required. See `docs/operation-transactions.md` for usage and retention.
+
+## Transactional managed HTTP workflow steps (ADR-490)
+
+Executable workflow steps may opt into the managed operation result protocol
+with `managed_operation: true`. The scheduler derives a stable operation ID
+from the workflow run and step and advances generation per attempt. The
+authenticated gateway checks the active run/attempt and immutable workflow
+definition before stamping the app owner's account identity. Existing Node,
+Go, and Python transaction SDK receipts then replay committed business writes
+and results; workflow dependencies receive the result value. This first slice
+supports account-scoped workflows. A successful result, app-owned explicitly
+subscribed webhook effects, delivery rows, and step/attempt completion commit
+atomically in Gregale. The dispatcher handles signed at-least-once delivery and
+rechecks the active app/account and receiver subscription. Workflow effects do
+not target tenant receivers. The customer's transaction remains separate, so a
+receiver rejected at result acceptance can leave business writes committed
+while the workflow step fails. See
+`docs/adr/490-transactional-workflow-http-steps.md`,
+`docs/managed-operation-effects.md`, and `docs/event-driven.md` for the
+contracts and delivery inspection surface.
+
+## In-place retry of failed workflow steps (ADR-491)
+
+`POST /v1/workflows/runs/{id}/steps/{step}/retry` and
+`gregale workflows retry` resume one terminal failed or dead HTTP step in the same
+run. The store preserves the run ID, definition snapshot, original input, the
+failed step's stored request input, and prior attempt records. It appends the
+next attempt number and reopens skipped `depends_on` descendants. The
+transaction rejects cancellation, active or additional failed steps, completed
+downstream work, wait/handler targets, and exhausted per-app active-run quota.
+Managed-operation retries therefore retain the run/step receipt identity from
+ADR-490; ordinary HTTP delivery remains at least once. See
+`docs/adr/491-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
+the API and CLI contract.

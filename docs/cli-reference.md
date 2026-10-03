@@ -579,12 +579,14 @@ Manage transactional PostgreSQL outbox sources (internal)
 
 Register a fixed app destination
 
-`gregale commit add --name <NAME> --operation-policy <NAME>`
+`gregale commit add --name <NAME> --operation-policy <NAME> [--contract-version <VERSION>] [--allow-tenant-selection]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
-| `--operation-policy <NAME>` | account-scoped queue policy | required |
+| `--operation-policy <NAME>` | managed Operations queue policy | required |
+| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` |
+| `--allow-tenant-selection` | grant version 2 account-owner customer selection |  |
 
 ### commit connection
 
@@ -1742,6 +1744,14 @@ Show details of a workflow run
 ### workflows steps
 
 List steps for a workflow run
+
+### workflows attempts
+
+List attempts and managed effect delivery status for a workflow step
+
+### workflows retry
+
+Retry one safely resumable failed HTTP step
 
 ### workflows cancel
 
@@ -3684,7 +3694,7 @@ gregale operations start-job --policy imports --key '"customer:acme:import"' nig
 
 ### operations get
 
-Inspect operation state and committed result
+Inspect operation state, committed result, and effect delivery status
 
 `gregale operations get [--self] <id>`
 

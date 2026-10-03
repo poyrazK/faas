@@ -3956,9 +3956,14 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
-	ID             string               `json:"id"`
-	AppID          string               `json:"app_id"`
-	AccountID      string               `json:"account_id"`
+	// Host-to-host protocol negotiation, never persisted or guest-authored.
+	OperationResultVersion     int    `json:"-"`
+	ManagedOperationID         string `json:"-"`
+	ManagedOperationGeneration int64  `json:"-"`
+	ManagedOperationAccountID  string `json:"-"`
+	ID                         string `json:"id"`
+	AppID                      string `json:"app_id"`
+	AccountID                  string `json:"account_id"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`

@@ -829,6 +829,16 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
+	} else if inv.ManagedOperationID != "" {
+		req.Header.Set(api.TenantIDHeader, inv.ManagedOperationAccountID)
+		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ManagedOperationID)
+		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ManagedOperationGeneration, 10))
+		if inv.OperationResultVersion == api.ManagedOperationResultVersion {
+			req.Header.Set(api.ManagedOperationResultVersionHeader, "1")
+		}
 	}
 	// The synthetic marker is intentionally attached to this derived request
 	// context so the internal bridge can preserve platform-owned headers.
@@ -1858,6 +1868,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return nil
 		}
 		return fmt.Errorf("workflow step %q not found", stepName)
+	})
+	deps.synth.WithManagedWorkflowOperationIdentity(func(ctx context.Context, appID, runID, stepName string) (string, bool, error) {
+		run, err := pgStore.GetWorkflowRun(ctx, runID)
+		if err != nil || run.AppID != appID {
+			return "", false, errors.New("workflow run is unavailable")
+		}
+		var definition api.WorkflowSpec
+		if err := json.Unmarshal(run.DefinitionSnapshot, &definition); err != nil {
+			return "", false, fmt.Errorf("decode managed workflow definition: %w", err)
+		}
+		enabled := false
+		for _, step := range definition.Steps {
+			if step.Name == stepName {
+				enabled = step.ManagedOperation
+				break
+			}
+		}
+		if !enabled {
+			return "", false, nil
+		}
+		app, err := pgStore.AppByID(ctx, appID)
+		if err != nil || app.AccountID == "" {
+			return "", false, errors.New("workflow application owner is unavailable")
+		}
+		return app.AccountID, true, nil
 	})
 	// Process-local Prometheus registry (spec §12). Constructed here so
 	// every downstream consumer — handler, warm-hint consumer, top-N

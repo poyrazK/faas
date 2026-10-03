@@ -20,7 +20,9 @@ class CommitPostgresTest(unittest.TestCase):
         writer = observer = None
         created = False
         try:
-            admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(database)))
+            admin.execute(
+                sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'").format(sql.Identifier(database))
+            )
             created = True
             writer = psycopg.connect(dsn, dbname=database, connect_timeout=5)
             observer = psycopg.connect(dsn, dbname=database, autocommit=True, connect_timeout=5)
@@ -63,6 +65,25 @@ class CommitPostgresTest(unittest.TestCase):
             writer.rollback()
             self.assertEqual(counts(), (1, 1))
             self.assertEqual(observer.execute("SELECT count(*) FROM business.gregale_outbox").fetchone(), (0,))
+            customer = str(uuid4())
+            routing = {"version": 2, "platform_tenant_id": customer.upper(), "key": "order-5"}
+            writer.execute("INSERT INTO orders VALUES(5)")
+            with writer.cursor() as cursor:
+                routed = insert_commit_event(cursor, "order.created", {"order_id": 5}, routing=routing)
+            self.assertEqual(counts(), (1, 1))
+            writer.commit()
+            self.assertEqual(counts(), (2, 2))
+            self.assertEqual(
+                observer.execute("SELECT routing FROM public.gregale_outbox WHERE event_id=%s", (routed,)).fetchone(),
+                ({**routing, "platform_tenant_id": customer},),
+            )
+            with writer.cursor() as cursor:
+                insert_commit_event(cursor, "order.created", {}, routing=routing)
+            writer.rollback()
+            self.assertEqual(counts(), (2, 2))
+            with writer.cursor() as cursor, self.assertRaises(ValueError):
+                insert_commit_event(cursor, "order.created", {}, routing={"version": 2, "key": None})
+            writer.rollback()
         finally:
             if writer is not None:
                 writer.close()

@@ -9,7 +9,9 @@ import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
  * and `method` remain accepted for the existing HTTP wake executor
  * during the runtime migration. Exactly one of `run`, `path`,
  * `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
- * `wait_for_condition` must be supplied.
+ * `wait_for_condition` must be supplied. Set `managed_operation` on an
+ * executable step to persist its business result transactionally and
+ * replay it safely when the workflow retries after an uncertain response.
  *
  */
 export type WorkflowStepSpec = {
@@ -18,6 +20,10 @@ export type WorkflowStepSpec = {
    * Named platform operation to invoke.
    */
   run?: string;
+  /**
+   * Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must use the transactional operation SDK.
+   */
+  managed_operation?: boolean;
   /**
    * JSON input passed to the named operation.
    */
