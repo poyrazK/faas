@@ -1747,24 +1747,15 @@ List steps for a workflow run
 
 ### workflows attempts
 
-List execution attempts for a workflow step, including managed effect delivery
-status when the step returned webhook effects
+List attempts and managed effect delivery status for a workflow step
+
+### workflows retry
+
+Retry one safely resumable failed HTTP step
 
 ### workflows cancel
 
 Cancel an active workflow run
-
-### workflows retry
-
-Retry a failed or dead HTTP step in the same workflow run when no other failure,
-active step, cancellation, or completed downstream work makes resumption unsafe.
-The step keeps its persisted input and attempt history; skipped dependent steps
-are reopened for normal DAG evaluation. Each manual retry grants one dispatch
-and does not reset the manifest's automatic retry budget.
-
-```sh
-gregale workflows retry <run_id> <step_name>
-```
 
 ### workflows events
 
