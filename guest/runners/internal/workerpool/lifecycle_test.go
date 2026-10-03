@@ -16,6 +16,7 @@ type lifecycleRequest struct {
 	ExitAfterReply  bool   `json:"exit_after_reply"`
 	ExitBeforeReply bool   `json:"exit_before_reply"`
 	DelayMillis     int    `json:"delay_millis"`
+	InvocationDir   string `json:"invocation_dir"`
 }
 
 func lifecyclePool(t *testing.T) *pool {
@@ -150,8 +151,16 @@ func TestPoolDoesNotReplayInvocationAfterInterpreterExit(t *testing.T) {
 	p := lifecyclePool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := p.invoke(ctx, lifecycleRequest{ExitBeforeReply: true}, &testResponse{}); err == nil {
+	auditDir := t.TempDir()
+	if err := p.invoke(ctx, lifecycleRequest{ExitBeforeReply: true, InvocationDir: auditDir}, &testResponse{}); err == nil {
 		t.Fatal("an invocation whose interpreter exited must report an error")
+	}
+	invocations, err := os.ReadDir(auditDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("failed invocation executed %d times, want exactly once", len(invocations))
 	}
 	var got testResponse
 	if err := p.invoke(ctx, lifecycleRequest{Value: "new invocation"}, &got); err != nil {
@@ -202,6 +211,13 @@ func TestWorkerpoolLifecycleHelper(t *testing.T) {
 			os.Exit(0)
 		}
 		count++
+		if request.InvocationDir != "" {
+			// The parent test supplies its own TempDir. Each interpreter
+			// execution leaves one marker, including failed invocations.
+			if _, err := os.MkdirTemp(request.InvocationDir, "invoked-"); err != nil {
+				os.Exit(2)
+			}
+		}
 		if request.ExitBeforeReply {
 			os.Exit(0)
 		}
