@@ -7,9 +7,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.object_bucket_notifications import ObjectBucketNotifications
-from ...models.object_bucket_notifications_request import (
-    ObjectBucketNotificationsRequest,
-)
+from ...models.object_bucket_notifications_request import ObjectBucketNotificationsRequest
 from ...models.problem import Problem
 from ...types import Response
 

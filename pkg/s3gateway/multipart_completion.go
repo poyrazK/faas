@@ -203,5 +203,6 @@ func writeMultipartCompleted(w http.ResponseWriter, req requestContext, u state.
 	if u.CompletionVersionID != "" {
 		w.Header().Set("X-Amz-Version-Id", u.CompletionVersionID)
 	}
+	writeEncryptionHeaders(w.Header(), u.Encryption.Selection)
 	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: u.Key, ETag: etag, UploadID: u.ID})
 }

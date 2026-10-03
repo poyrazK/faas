@@ -309,7 +309,7 @@ func init() {
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
-	"ObjectNotificationTarget": true,
+	"ObjectNotificationTarget":        true,
 	"ObjectWriteConditions":           true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
 	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
@@ -992,6 +992,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
 		filepath.Join(root, "pkg", "api", "object_notifications.go"),

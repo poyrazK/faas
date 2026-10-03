@@ -1219,6 +1219,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/objects/deletions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.createObjectDeletion))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}", s.authLimited(s.requireScope(api.ScopesStorageWriteSurface...)(s.getObjectDeletion)))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeStorageRead, api.ScopeStorageWrite)(s.signBucketObject))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/encryption-capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.getObjectBucketEncryptionCapabilities))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/versioning", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.getObjectBucketVersioning))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/versioning", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.putObjectBucketVersioning))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/lifecycle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.objectBucketLifecycle))))

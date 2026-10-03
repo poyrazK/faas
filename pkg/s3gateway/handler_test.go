@@ -686,7 +686,11 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 			request.Header.Set(test.header, test.value)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusNotImplemented || !strings.Contains(recorder.Body.String(), "NotImplemented") {
+			status, code := http.StatusNotImplemented, "NotImplemented"
+			if test.header == "X-Amz-Server-Side-Encryption" {
+				status, code = http.StatusBadRequest, "InvalidRequest"
+			}
+			if recorder.Code != status || !strings.Contains(recorder.Body.String(), code) {
 				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 			}
 		})

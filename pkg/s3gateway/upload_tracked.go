@@ -32,7 +32,7 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	}(r.Context())
 	ctx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
 	defer cancel()
-	upstream, err := h.gatewayPutRequest(ctx, r, req, key, file, metadata, c.ID)
+	upstream, err := h.gatewayPutRequest(ctx, r, req, key, file, metadata, c)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -73,6 +73,12 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
+	verified, err := objectstorage.VerifyEncryptionAcknowledgment(response.Header, c.Encryption)
+	if err != nil {
+		h.providerError(w, r, req, err, c.Key)
+		return
+	}
+	c.VerifiedEncryption = verified
 	c.Status = "completed"
 	version := response.Header.Get("X-Amz-Version-Id")
 	c.ProviderVersionID = version
@@ -82,6 +88,7 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return
 	}
+	writeEncryptionHeaders(w.Header(), done.Encryption.Selection)
 	w.Header().Set("ETag", done.ETag)
 	if done.VersionID != "" {
 		w.Header().Set("X-Amz-Version-Id", done.VersionID)
@@ -99,16 +106,22 @@ func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTracke
 	return done, err
 }
 
-func (h *Handler) gatewayPutRequest(ctx context.Context, r *http.Request, req requestContext, key string, file *os.File, metadata objectstorage.ObjectMetadata, receipt string) (*http.Request, error) {
+func (h *Handler) gatewayPutRequest(ctx context.Context, r *http.Request, req requestContext, key string, file *os.File, metadata objectstorage.ObjectMetadata, c state.ObjectUploadCompletion) (*http.Request, error) {
 	sign := objectstorage.SignRequest{Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: metadata.ContentType, ExpiresIn: int64(api.ObjectGatewayPutURLTTL.Seconds()), CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition, ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage, Metadata: metadata.Metadata, Tags: metadata.Tags}
 	var signed objectstorage.SignedRequest
 	var err error
-	if receipt != "" {
+	if !c.Encryption.Empty() {
+		signer, ok := req.provider.(objectstorage.ObjectEncryptionProvider)
+		if !ok {
+			return nil, objectstorage.ErrConfiguration
+		}
+		signed, err = signer.PresignEncryptedPut(h.encryptionContext(ctx, req), req.bucket.PhysicalName, sign, writeConditions(r), c.ID, c.Encryption)
+	} else if c.ID != "" {
 		signer, ok := req.provider.(objectstorage.TrackedObjectPresigner)
 		if !ok {
 			return nil, objectstorage.ErrUnsupported
 		}
-		signed, err = signer.PresignTrackedPut(ctx, req.bucket.PhysicalName, sign, writeConditions(r), receipt)
+		signed, err = signer.PresignTrackedPut(ctx, req.bucket.PhysicalName, sign, writeConditions(r), c.ID)
 	} else {
 		signed, err = presignConditionalPut(ctx, req.provider, req.bucket.PhysicalName, sign, writeConditions(r))
 	}
@@ -133,7 +146,7 @@ func (h *Handler) admitGatewayPut(w http.ResponseWriter, r *http.Request, req re
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return nil, state.ObjectUploadCompletion{}, false
 	}
-	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending"}, h.registry.Accounting)
+	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", Encryption: req.encryption.Clone()}, h.registry.Accounting)
 	return st, c, h.writeAdmissionError(w, r, req, err)
 }
 func (h *Handler) dispatchGatewayPut(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {

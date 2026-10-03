@@ -30,7 +30,7 @@ class ObjectWriteReceipt:
     bytes_: int
     content_type: str
     etag: str
-    """ Confirmed ETag; empty until completion. """
+    """Confirmed ETag; empty until completion."""
     status: ObjectWriteReceiptStatus
     created_at: datetime.datetime
     error_code: ObjectWriteReceiptErrorCode | Unset = UNSET

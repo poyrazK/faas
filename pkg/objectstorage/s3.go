@@ -574,6 +574,13 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 	if found != "" {
 		return found, nil
 	}
+	// Recovery only adopts an existing private upload. An enabled-key probe is
+	// required when creating a new upload, never when recovering its identity.
+	if encryption != nil {
+		if err := p.CheckEncryptionKey(ctx, *encryption); err != nil {
+			return "", err
+		}
+	}
 	contentType := r.Metadata.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"

@@ -1706,6 +1706,27 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/encryption-capabilities:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose bucket encryption enrollment is being discovered., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose enrolled encryption options are listed., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketEncryptionCapabilities
+      summary: List enrolled encryption algorithms and owned key references
+      description: Requires storage write scope and the bucket write grant. Returns only the bucket owner's enrolled Gregale key references for explicit S3 PUT, copy and multipart initialization. Discovery makes no provider requests and does not establish key health or effective native permissions. Cache-Control no-store. Available while new storage ingress is disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Enrolled algorithms and owned key references
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectEncryptionCapabilities' }
+        default:
+          description: Access denied or unavailable bucket placement
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/versioning:
     parameters:
       - { name: slug, in: path, required: true, description: App whose bucket configuration is being read or changed., schema: { type: string } }
@@ -24524,6 +24545,13 @@ components:
         public: { type: boolean }
         serve_at: { type: string }
         created_at: { type: string, format: date-time }
+    ObjectEncryptionCapabilities:
+      description: Operator enrollment for this bucket placement. Contains no native key identity, key material or permission assertion.
+      type: object
+      required: [algorithms, key_ids]
+      properties:
+        algorithms: { type: array, uniqueItems: true, items: { type: string, enum: [AES256, 'aws:kms', 'aws:kms:dsse'] } }
+        key_ids: { type: array, uniqueItems: true, maxItems: 256, items: { type: string, maxLength: 512, description: Owned arn:gregale:kms reference accepted by the branded S3 endpoint. } }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.
       type: object

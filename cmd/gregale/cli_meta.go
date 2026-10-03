@@ -314,7 +314,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object tags, versioning, lifecycle rules, deletion receipts and capacity",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption keys, tags, versioning, lifecycle rules, deletion receipts and capacity",
 		Subcommands: []cliSub{{Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 			{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},

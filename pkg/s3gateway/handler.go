@@ -214,12 +214,14 @@ func (h *Handler) releaseSpool(size int64) {
 }
 
 type requestContext struct {
-	requestID  string
-	credential state.ObjectS3Credential
-	bucket     state.ObjectBucket
-	provider   objectstorage.Provider
-	signature  sigV4Request
-	streaming  *awsChunkedReader
+	requestID        string
+	credential       state.ObjectS3Credential
+	bucket           state.ObjectBucket
+	provider         objectstorage.Provider
+	signature        sigV4Request
+	streaming        *awsChunkedReader
+	encryptionConfig objectstorage.EncryptionConfig
+	encryption       objectstorage.ResolvedObjectEncryption
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +293,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.touchCredential(r.Context(), credential.ID)
-	request := requestContext{requestID: requestID, credential: credential, bucket: bucket, provider: backend.Provider, signature: parsed, streaming: streaming}
+	request := requestContext{requestID: requestID, credential: credential, bucket: bucket, provider: backend.Provider, signature: parsed, streaming: streaming, encryptionConfig: backend.Encryption}
 	h.route(w, r, request)
 }
 
@@ -325,6 +327,9 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	}
 	if hasUnsupportedS3Semantics(r) {
 		h.unsupported(w, r, req.requestID)
+		return
+	}
+	if !h.captureEncryption(w, r, &req) {
 		return
 	}
 	if !hasBucket {
@@ -595,6 +600,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		h.performTrackedGatewayPut(w, r, req, key, file, metadata)
 		return
 	}
+	if !req.encryption.Empty() {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
 	h.performLegacyGatewayPut(w, r, req, key, file, metadata)
 }
 
@@ -661,6 +670,10 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	}
 	copier, ok := req.provider.(objectstorage.ObjectCopier)
 	if !ok {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	if !req.encryption.Empty() {
 		h.unsupported(w, r, req.requestID)
 		return
 	}
@@ -756,21 +769,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
 		return
 	}
-	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
-		copyObjectHeaders(w.Header(), response.Header)
-		w.Header().Del("Content-Length")
-		w.WriteHeader(response.StatusCode)
-		return
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		h.providerHTTPError(w, r, req, response.StatusCode, key)
-		return
-	}
-	copyObjectHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	if r.Method == http.MethodGet {
-		_, _ = io.Copy(w, response.Body)
-	}
+	h.writeGatewayRead(w, r, req, key, response)
 }
 
 func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash string, maxBytes int64) ([]byte, error) {
@@ -816,7 +815,7 @@ func hasUnsupportedS3Semantics(r *http.Request) bool {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) && !supportedEncryptionHeader(r, name) {
 			return true
 		}
 	}
@@ -971,4 +970,28 @@ func IsLoopbackAddress(address string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req requestContext, key string, response *http.Response) {
+	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
+		copyObjectHeaders(w.Header(), response.Header)
+		w.Header().Del("Content-Length")
+		w.WriteHeader(response.StatusCode)
+		return
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		h.providerHTTPError(w, r, req, response.StatusCode, key)
+		return
+	}
+	encryption, err := req.encryptionConfig.PublicReadEncryption(req.bucket.AccountID, response.Header)
+	if err != nil {
+		h.providerError(w, r, req, err, key)
+		return
+	}
+	copyObjectHeaders(w.Header(), response.Header)
+	writeEncryptionHeaders(w.Header(), encryption)
+	w.WriteHeader(response.StatusCode)
+	if r.Method == http.MethodGet {
+		_, _ = io.Copy(w, response.Body)
+	}
 }

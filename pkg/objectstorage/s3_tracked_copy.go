@@ -143,6 +143,11 @@ func (p *S3) copyEncryptedObject(ctx context.Context, bucket, receipt string, r 
 	if copyMetadata {
 		in.Expires = source.Expires
 	}
+	if encryption != nil {
+		if err := beforeEncryptionWrite(ctx); err != nil {
+			return CopyObjectResult{}, errors.Join(ErrWriteRejected, err)
+		}
+	}
 	out, err := p.client.CopyObject(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return CopyObjectResult{}, trackedCopyError(err)

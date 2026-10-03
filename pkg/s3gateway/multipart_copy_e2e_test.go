@@ -238,6 +238,10 @@ func newMultipartCopyIntegrationWithProvider(t *testing.T, st multipartCopyInteg
 }
 
 func newMultipartCopyIntegrationWithTransfer(t *testing.T, st multipartCopyIntegrationStore, handler http.Handler, config objectstorage.Config, initialBytes int64, permissions ...string) *multipartCopyIntegration {
+	return newMultipartCopyIntegrationConfigured(t, st, handler, config, initialBytes, nil, permissions...)
+}
+
+func newMultipartCopyIntegrationConfigured(t *testing.T, st multipartCopyIntegrationStore, handler http.Handler, config objectstorage.Config, initialBytes int64, encryption func(string, string) objectstorage.EncryptionConfig, permissions ...string) *multipartCopyIntegration {
 	t.Helper()
 	p := &multipartCopyHTTPProvider{uploads: map[string]map[string]int{}}
 	if handler == nil {
@@ -249,21 +253,24 @@ func newMultipartCopyIntegrationWithTransfer(t *testing.T, st multipartCopyInteg
 	if config.Accounting == nil {
 		config.Accounting = &policy
 	}
-	config.DefaultRegion, config.Defaults = "us-east-1", map[string]string{"us-east-1": "local"}
-	config.Backends = []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: upstream.URL, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}}
-	registry, err := objectstorage.NewRegistry(config, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
-	if err != nil {
-		t.Fatal(err)
-	}
-	backend, err := registry.Default("us-east-1")
-	if err != nil {
-		t.Fatal(err)
-	}
 	acct, err := st.CreateAccount(t.Context(), uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	app, err := st.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "copy-" + uuid.NewString()[:8], Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DefaultRegion, config.Defaults = "us-east-1", map[string]string{"us-east-1": "local"}
+	config.Backends = []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: upstream.URL, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET"}}
+	if encryption != nil {
+		config.Backends[0].Encryption = encryption(acct.ID, upstream.URL)
+	}
+	registry, err := objectstorage.NewRegistry(config, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := registry.Default("us-east-1")
 	if err != nil {
 		t.Fatal(err)
 	}

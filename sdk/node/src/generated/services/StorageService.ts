@@ -20,6 +20,7 @@ import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersio
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
 import type { ObjectDeletion } from '../models/ObjectDeletion.js';
 import type { ObjectDeletionRequest } from '../models/ObjectDeletionRequest.js';
+import type { ObjectEncryptionCapabilities } from '../models/ObjectEncryptionCapabilities.js';
 import type { ObjectLifecycleScan } from '../models/ObjectLifecycleScan.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
@@ -881,6 +882,35 @@ export class StorageService {
         'slug': slug,
         'bucket': bucket,
         'deletion': deletion,
+      },
+    });
+  }
+  /**
+   * List enrolled encryption algorithms and owned key references
+   * Requires storage write scope and the bucket write grant. Returns only the bucket owner's enrolled Gregale key references for explicit S3 PUT, copy and multipart initialization. Discovery makes no provider requests and does not establish key health or effective native permissions. Cache-Control no-store. Available while new storage ingress is disabled.
+   * @returns ObjectEncryptionCapabilities Enrolled algorithms and owned key references
+   * @returns Problem Access denied or unavailable bucket placement
+   * @throws ApiError
+   */
+  public static getObjectBucketEncryptionCapabilities({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket encryption enrollment is being discovered.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose enrolled encryption options are listed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectEncryptionCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption-capabilities',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
       },
     });
   }

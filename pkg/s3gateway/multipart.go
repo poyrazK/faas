@@ -77,57 +77,13 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 	if !h.admit(w, r, req, req.signatureKey(r), 0, false) {
 		return
 	}
-	store, ok := h.publicMultipartStore(w, r, req)
+	upload, store, ok := h.admitPublicMultipart(w, r, req, key)
 	if !ok {
 		return
 	}
-	metadata, metadataErr := objectMetadataFromHeaders(r)
-	if metadataErr != nil {
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
-		return
-	}
-	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
-		ID: uuid.NewString(), AccountID: req.credential.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID,
-		Key: key, ContentType: metadata.ContentType, ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
-		Metadata: state.ObjectMultipartMetadata{
-			CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
-			ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
-			UserMetadata: metadata.Metadata, Tags: metadata.Tags,
-		},
-	}, api.MaxActiveMultipartUploadsPerBucket)
-	if err != nil {
-		h.writeMultipartError(w, r, req, err, "InvalidRequest")
-		return
-	}
 	if upload.State == state.ObjectMultipartInitiating {
-		token := uuid.NewString()
-		claimed, claimErr := store.ClaimObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, upload.ID, token, state.ObjectMultipartInitiating, nil, false)
-		if claimErr != nil {
-			h.writeMultipartError(w, r, req, claimErr, "OperationAborted")
-			return
-		}
-		if !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		providerID, providerErr := req.provider.EnsureMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
-			SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0,
-			Metadata: objectstorage.ObjectMetadata{
-				ContentType: claimed.ContentType, CacheControl: claimed.Metadata.CacheControl,
-				ContentDisposition: claimed.Metadata.ContentDisposition, ContentEncoding: claimed.Metadata.ContentEncoding,
-				ContentLanguage: claimed.Metadata.ContentLanguage, Metadata: claimed.Metadata.UserMetadata, Tags: claimed.Metadata.Tags,
-			},
-		})
-		if providerErr != nil {
-			h.providerError(w, r, req, providerErr, key)
-			return
-		}
-		if err = store.ActivateObjectMultipartUpload(r.Context(), claimed.ID, token, providerID); err != nil {
-			h.writeMultipartError(w, r, req, err, "OperationAborted")
-			return
-		}
-		upload, err = store.GetObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, claimed.ID)
-		if err != nil {
-			h.writeMultipartError(w, r, req, err, "NoSuchUpload")
+		upload, ok = h.activatePublicMultipart(w, r, req, store, upload)
+		if !ok {
 			return
 		}
 	}
@@ -135,6 +91,7 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		h.writeMultipartError(w, r, req, state.ErrConflict, "OperationAborted")
 		return
 	}
+	writeEncryptionHeaders(w.Header(), upload.Encryption.Selection)
 	writeS3XML(w, http.StatusOK, req.requestID, initiateMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, UploadID: upload.ID})
 }
 
@@ -237,6 +194,9 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 	etag := response.Header.Get("ETag")
 	if etag == "" {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	if !h.multipartPartEncryption(w, r, req, upload, response.Header) {
 		return
 	}
 	safeToSettle = true
@@ -466,4 +426,54 @@ func (h *Handler) settleMultipartTransfer(parent context.Context, req requestCon
 	if err := transfers.SettleObjectMultipartPart(ctx, req.bucket.AccountID, uploadID, part, token); err != nil {
 		h.log.Warn("S3 multipart transfer settlement deferred", "request_id", req.requestID)
 	}
+}
+
+func (h *Handler) admitPublicMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key string) (state.ObjectMultipartUpload, state.ObjectMultipartUploadStore, bool) {
+	store, ok := h.publicMultipartStore(w, r, req)
+	if !ok {
+		return state.ObjectMultipartUpload{}, nil, false
+	}
+	metadata, metadataErr := objectMetadataFromHeaders(r)
+	if metadataErr != nil {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return state.ObjectMultipartUpload{}, nil, false
+	}
+	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
+		ID: uuid.NewString(), AccountID: req.credential.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID,
+		Key: key, ContentType: metadata.ContentType, Encryption: req.encryption.Clone(), ExpiresAt: h.now().UTC().Add(publicMultipartTTL),
+		Metadata: state.ObjectMultipartMetadata{
+			CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
+			ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
+			UserMetadata: metadata.Metadata, Tags: metadata.Tags,
+		},
+	}, api.MaxActiveMultipartUploadsPerBucket)
+	if err != nil {
+		h.writeMultipartError(w, r, req, err, "InvalidRequest")
+		return state.ObjectMultipartUpload{}, nil, false
+	}
+	return upload, store, true
+}
+
+func (h *Handler) activatePublicMultipart(w http.ResponseWriter, r *http.Request, req requestContext, store state.ObjectMultipartUploadStore, upload state.ObjectMultipartUpload) (state.ObjectMultipartUpload, bool) {
+	token := uuid.NewString()
+	claimed, claimErr := store.ClaimObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, upload.ID, token, state.ObjectMultipartInitiating, nil, false)
+	if claimErr != nil {
+		h.writeMultipartError(w, r, req, claimErr, "OperationAborted")
+		return state.ObjectMultipartUpload{}, false
+	}
+	providerID, providerErr := h.ensureCapturedMultipart(r.Context(), req, claimed)
+	if providerErr != nil {
+		h.providerError(w, r, req, providerErr, upload.Key)
+		return state.ObjectMultipartUpload{}, false
+	}
+	if err := store.ActivateObjectMultipartUpload(r.Context(), claimed.ID, token, providerID); err != nil {
+		h.writeMultipartError(w, r, req, err, "OperationAborted")
+		return state.ObjectMultipartUpload{}, false
+	}
+	upload, err := store.GetObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, claimed.ID)
+	if err != nil {
+		h.writeMultipartError(w, r, req, err, "NoSuchUpload")
+		return state.ObjectMultipartUpload{}, false
+	}
+	return upload, true
 }

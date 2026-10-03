@@ -623,9 +623,10 @@ create a KMS key or manage its policies. Optional `encryption.kms_endpoint`
 selects the operator's KMS origin and follows the registry's HTTPS policy.
 KMS identity/type validation uses DescribeKey; actual S3 operations enforce
 GenerateDataKey/Decrypt permission. Bounds and strict context validation live
-in `pkg/api/limits.go`. This foundation does not enable customer encryption
-directives or encrypted public provider URLs: durable public configuration,
-admission, metering, response mapping and client support remain in progress.
+in `pkg/api/limits.go`. ADR-414 enables explicit customer encryption on the branded S3 gateway with
+durable admission, metering and owned response mapping. Native encrypted URLs
+remain private. Bucket defaults and encrypted control API upload URLs remain
+in progress.
 See [ADR-412](adr/412-owned-key-bindings-and-native-s3-encryption.md) for the
 implemented provider contract and completion boundary.
 
@@ -1652,6 +1653,33 @@ requests contribute to provider request accounting. Recovery uses captured proof
 after owner and provider reconstruction and can confirm an already written object
 without a new enabled-key probe. Enrollment removal or remapping defers recovery.
 
-This does not enable customer encryption headers or configuration. Public write
-admission, bucket defaults, owned response mapping and clients remain acceptance
-work tracked in `docs/s3-implementation-gaps.md`.
+### Explicit encryption through the S3 gateway
+
+Use `gregale bucket encryption-keys <app> <bucket-id>` or
+`GET /v1/apps/{slug}/buckets/{bucket}/encryption-capabilities` to discover the
+placement's algorithms and your enrolled key references. Discovery requires
+storage write scope and a bucket write grant. It reports enrollment and makes
+no provider requests; each new KMS write validates enabled key identity and the
+native operation enforces its effective permissions.
+
+Set the SDK's `ServerSideEncryption` to `AES256`, `aws:kms` or `aws:kms:dsse`.
+For KMS, set `SSEKMSKeyId` to the returned `arn:gregale:kms:...` reference.
+Ordinary PUT, same-bucket copy and multipart initialization capture this
+selection before dispatch. KMS bucket keys default explicitly to false; a KMS
+request may explicitly enable them. DSSE rejects bucket-key directives. Optional
+`SSEKMSEncryptionContext` accepts canonical base64 of a bounded JSON object of
+unique string keys and string values. The context is metadata, not secret
+storage. Each supplied encryption header must be covered by SigV4.
+
+GET/HEAD, successful writes and multipart completion return Gregale key
+references. Provider key ARNs and private receipt/session/encryption proof never
+enter public responses. Unknown native key identities and ambiguous provider
+acknowledgments fail closed. An uncertain write retains its journal for proof
+recovery and is never repaired by replaying its body. An already created
+multipart upload can recover its identity without a new enabled-key probe.
+
+Do not send cipher directives on reads, individual parts or completion. SSE-C,
+native key references and encryption query directives are unsupported. Bucket
+defaults, control API signed upload brokerage, upload-route encryption, GCS and
+cross-bucket encrypted copy remain acceptance work in
+`docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md).

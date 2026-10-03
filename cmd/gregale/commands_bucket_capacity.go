@@ -9,6 +9,9 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "encryption-keys" {
+		return cmdBucketEncryptionKeys(args[1:])
+	}
 	if len(args) > 0 && args[0] == "notifications" {
 		return cmdBucketNotifications(args[1:])
 	}

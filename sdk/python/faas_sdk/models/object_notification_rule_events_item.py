@@ -27,9 +27,7 @@ OBJECT_NOTIFICATION_RULE_EVENTS_ITEM_VALUES: set[ObjectNotificationRuleEventsIte
 }
 
 
-def check_object_notification_rule_events_item(
-    value: str,
-) -> ObjectNotificationRuleEventsItem:
+def check_object_notification_rule_events_item(value: str) -> ObjectNotificationRuleEventsItem:
     if value in OBJECT_NOTIFICATION_RULE_EVENTS_ITEM_VALUES:
         return value
     raise TypeError(f"Unexpected value {value!r}. Expected one of {OBJECT_NOTIFICATION_RULE_EVENTS_ITEM_VALUES!r}")

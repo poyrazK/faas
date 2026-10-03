@@ -113,7 +113,7 @@ func (p *S3) EnsureEncryptedMultipart(ctx context.Context, bucket string, r Mult
 	if _, err := uuid.Parse(r.SessionID); err != nil || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
-	if err := p.CheckEncryptionKey(ctx, e); err != nil {
+	if err := p.verifyEncryption(e); err != nil {
 		return "", err
 	}
 	return p.ensureMultipartEncrypted(ctx, bucket, r, &e)
@@ -248,12 +248,12 @@ func validEncryptionHeaders(headers http.Header, e *ResolvedObjectEncryption) bo
 		return false
 	}
 	if e.ProviderKeyID == "" {
-		return len(headers.Values("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id")) == 0 && len(headers.Values("X-Amz-Server-Side-Encryption-Bucket-Key-Enabled")) == 0
+		return len(encryptionHeaderValues(headers, "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id")) == 0 && len(encryptionHeaderValues(headers, "X-Amz-Server-Side-Encryption-Bucket-Key-Enabled")) == 0
 	}
 	if !oneEncryptionHeader(headers, "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id", e.ProviderKeyID) {
 		return false
 	}
-	bucket := headers.Values("X-Amz-Server-Side-Encryption-Bucket-Key-Enabled")
+	bucket := encryptionHeaderValues(headers, "X-Amz-Server-Side-Encryption-Bucket-Key-Enabled")
 	if e.Selection.Algorithm == "aws:kms:dsse" {
 		return len(bucket) == 0
 	}
@@ -266,8 +266,20 @@ func validEncryptionHeaders(headers http.Header, e *ResolvedObjectEncryption) bo
 	return len(bucket) == 0 || len(bucket) == 1 && (bucket[0] == "false" || bucket[0] == "true")
 }
 
+// VerifyEncryptionAcknowledgment checks the private native response before a
+// brokered write can settle. A mismatch retains the dispatched recovery intent.
+func VerifyEncryptionAcknowledgment(headers http.Header, e ResolvedObjectEncryption) (api.ObjectEncryption, error) {
+	if e.Empty() {
+		return api.ObjectEncryption{}, nil
+	}
+	if !e.ValidFor(e.AccountID) || !validEncryptionHeaders(headers, &e) {
+		return api.ObjectEncryption{}, ErrUnavailable
+	}
+	return cloneObjectEncryption(e.Selection), nil
+}
+
 func oneEncryptionHeader(headers http.Header, name, value string) bool {
-	values := headers.Values(name)
+	values := encryptionHeaderValues(headers, name)
 	return len(values) == 1 && values[0] == value
 }
 
