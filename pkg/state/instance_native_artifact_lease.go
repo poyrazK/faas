@@ -23,34 +23,28 @@ func standardNativeArtifactRequirements(capture InstanceApplicationStandardAdmis
 	return input.Settings.Signed || enforce, enforce, nil
 }
 
-func standardNativeArtifactDeadline(capture InstanceApplicationStandardAdmission, evidence DeploymentArtifactScanEvidence) (time.Time, error) {
+func standardNativeArtifactDeadline(capture InstanceApplicationStandardAdmission, evidence DeploymentRuntimeScanEvidence) (time.Time, error) {
 	required, enforce, err := standardNativeArtifactRequirements(capture)
 	if err != nil {
 		return time.Time{}, err
 	}
 	if capture.ArtifactInputHash == "" {
-		if required || len(evidence.Components) != 0 {
+		if required || evidence.Scan.ID != "" {
 			return time.Time{}, ErrApplicationStandardRuntimeStale
 		}
 		return time.Time{}, nil // Compatibility only; no producer approval is invented.
 	}
-	inputs, err := deploymentRuntimeArtifactInputs(evidence)
-	if err != nil || inputs.InputHash != capture.ArtifactInputHash {
+	if evidence.Scan.ID == "" || evidence.Scan.Input.Status != "complete" || evidence.Scan.Input.Facts.InputHash != capture.ArtifactInputHash || evidence.CheckedAt.IsZero() || !evidence.ExpiresAt.After(evidence.CheckedAt) || evidence.ExpiresAt.After(evidence.Scan.ExpiresAt) {
 		return time.Time{}, ErrApplicationStandardRuntimeStale
 	}
 	if enforce {
-		for _, scan := range evidence.Components {
-			if standardNativeScanBlocks(scan.Result) {
-				return time.Time{}, ErrApplicationStandardRuntimeStale
-			}
-		}
-		for _, scan := range evidence.Bases {
-			if standardNativeScanBlocks(scan.Result) {
+		for _, view := range evidence.Scan.Input.Reports {
+			if standardNativeScanBlocks(view.Report) {
 				return time.Time{}, ErrApplicationStandardRuntimeStale
 			}
 		}
 	}
-	return inputs.ExpiresAt, nil
+	return evidence.ExpiresAt, nil
 }
 
 func standardNativeScanBlocks(report api.ScanResult) bool {

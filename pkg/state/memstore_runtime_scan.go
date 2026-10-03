@@ -94,6 +94,10 @@ func (m *MemStore) GetFreshDeploymentRuntimeScan(ctx context.Context, accountID,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.freshRuntimeScanLocked(ctx, accountID, appID, depID)
+}
+
+func (m *MemStore) freshRuntimeScanLocked(ctx context.Context, accountID, appID, depID string) (DeploymentRuntimeScanEvidence, error) {
 	if err := ctx.Err(); err != nil {
 		return DeploymentRuntimeScanEvidence{}, err
 	}

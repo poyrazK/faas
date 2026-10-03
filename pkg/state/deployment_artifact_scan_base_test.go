@@ -18,6 +18,10 @@ type artifactScanBaseTestStore interface {
 }
 
 func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
+	return artifactScanBaseFixtureWithSidecar(t, s, false)
+}
+
+func artifactScanBaseFixtureWithSidecar(t *testing.T, s artifactScanBaseTestStore, sidecar bool) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
 	t.Helper()
 	baseInput := baseProducerFixture(t, "base/scan-parent.ext4", "parent")
 	base, err := s.PublishBaseImageProducer(t.Context(), baseInput)
@@ -25,7 +29,23 @@ func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore) (Deploym
 		t.Fatal(err)
 	}
 	full := baseProducerFixture(t, "base/unpublished-scan.ext4", "parent", "app")
-	verification, app, dep := registryVerificationFixtureWithChain(t, s, false, full.ImageChain)
+	verification, app, dep := registryVerificationFixtureWithChain(t, s, sidecar, full.ImageChain)
+	if sidecar {
+		proof, err := s.RecordDeploymentRegistryVerification(t.Context(), verification)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), DeploymentRegistryRootfsInput{ID: uuid.NewString(),
+			RegistryVerificationID: proof.ID, RegistryInputHash: proof.InputHash, AccountID: app.AccountID, OrgID: app.OrgID,
+			AppID: app.ID, DeploymentID: dep.ID, WorkloadName: "metrics", Scope: dep.Scope, Kind: "sidecar-layer",
+			StorageKey: "sidecars/" + dep.ID + "/metrics.ext4", ArtifactDigest: imagechain.Digest([]byte("sidecar output")),
+			ArtifactBytes: 8192, ContentBytes: 8, Layers: full.Layers}); err != nil {
+			t.Fatal(err)
+		}
+		verification.ID, verification.WorkloadName, verification.ImageReference = uuid.NewString(), "", dep.ImageDigest
+		verification.SourceReference = "registry.example/team/service@" + verification.Proof.SubjectDigest
+		verification.SelectedReference = "registry.example/team/service@" + verification.SelectedDigest
+	}
 	signed, err := s.RecordDeploymentRegistryVerification(t.Context(), verification)
 	if err != nil {
 		t.Fatal(err)

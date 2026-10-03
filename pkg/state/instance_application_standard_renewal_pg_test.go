@@ -33,7 +33,7 @@ func TestPgApplicationStandardArtifactRenewalRefusesUnsafe(t *testing.T) {
 
 func TestPgApplicationStandardArtifactRenewalLegacyCapture(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
 	in = publishRenewedStandardScan(t, s, in, "LOW")
 	var restore string
@@ -68,7 +68,7 @@ func TestPgApplicationStandardArtifactRenewalLegacyCapture(t *testing.T) {
 
 func TestPgApplicationStandardArtifactRenewalRawPublication(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
 	in = publishRenewedStandardScan(t, s, in, "LOW")
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)

@@ -33,9 +33,9 @@ func TestPgNativeArtifactMissingSignedProducer(t *testing.T) {
 	s, _ := runtimeCapturePGStore(t)
 	nativeArtifactMissingSignedProducer(t, s)
 }
-func TestPgNativeArtifactBaseDatabaseLease(t *testing.T) {
+func TestPgNativeArtifactComposedDatabaseLease(t *testing.T) {
 	s, _ := runtimeCapturePGStore(t)
-	nativeArtifactBaseDatabaseLease(t, s)
+	nativeArtifactComposedDatabaseLease(t, s)
 }
 func TestPgNativeArtifactPromotionRenewsApproval(t *testing.T) {
 	s, _ := runtimeCapturePGStore(t)
@@ -44,16 +44,13 @@ func TestPgNativeArtifactPromotionRenewsApproval(t *testing.T) {
 
 func TestPgNativeArtifactRawGrantCannotExceedScanLease(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
-	scan, err := s.PublishDeploymentArtifactScan(t.Context(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scan := publishNativeComposedScan(t, s, app, dep, in.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	candidate.ExpiresAtUnixNano = scan.ExpiresAt.UnixNano() + 1
 	raw, _ := json.Marshal(candidate)
-	_, err = pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, candidate.Token, ins.ID, ins.State, raw)
+	_, err := pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, candidate.Token, ins.ID, ins.State, raw)
 	if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("raw grant writer escaped the exclusive artifact ceiling: %v", err)
 	}
@@ -63,7 +60,7 @@ func TestPgNativeArtifactRawGrantCannotExceedScanLease(t *testing.T) {
 	}
 }
 
-func TestPgNativeArtifactRawPublicationRechecksBaseApproval(t *testing.T) {
+func TestPgNativeArtifactRawPublicationRechecksComposedApproval(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
 	in, base, app, dep := artifactScanBaseFixture(t, s)
 	app = manageNativeArtifactApp(t, s, app)
@@ -74,6 +71,7 @@ func TestPgNativeArtifactRawPublicationRechecksBaseApproval(t *testing.T) {
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	composed := publishNativeComposedScan(t, s, app, dep, in.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	grant, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate)
 	if err != nil {
@@ -84,22 +82,24 @@ func TestPgNativeArtifactRawPublicationRechecksBaseApproval(t *testing.T) {
 	if _, err := sqlc.New().RecordInstanceApplicationStandardReceipt(t.Context(), pool, sqlc.RecordInstanceApplicationStandardReceiptParams{Token: mustPgUUID(grant.Token), Receipt: raw}); err != nil {
 		t.Fatal(err)
 	}
-	b.ID, b.Status, b.ScannerName, b.Report, b.Failure = uuid.NewString(), "failed", "", nil, "scanner_unavailable"
-	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
+	failed := composed.Input
+	failed.ID, failed.Status, failed.Reports, failed.Facts.Views, failed.Failure = uuid.NewString(), "failed", nil, nil, "scanner_unavailable"
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), failed); err != nil {
 		t.Fatal(err)
 	}
 	_, err = pool.Exec(t.Context(), `UPDATE instances SET application_standard_boot_token=$2,state='running',netns=$3,host_ip=$4,guest_uid=$5 WHERE id=$1`, ins.ID, grant.Token, receipt.Netns, receipt.HostIP, receipt.LeaseUID)
 	if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
-		t.Fatalf("saved receipt bypassed revoked base approval: %v", err)
+		t.Fatalf("saved receipt bypassed revoked composed approval: %v", err)
 	}
 	assertNativeBootUnpublished(t, s, ins)
 }
 
 func TestPgNativeArtifactShortPrivateScanLease(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	component, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
-	in, hash, err := prepareDeploymentArtifactScan(in)
+	in := nativeComposedScanInput(t, s, app, dep, component.Report)
+	in, hash, err := prepareDeploymentRuntimeScan(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,14 +110,14 @@ func TestPgNativeArtifactShortPrivateScanLease(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	q := sqlc.New()
-	if err := q.AuthorizeDeploymentArtifactScanInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
+	if err := q.AuthorizeDeploymentRuntimeScanInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
 		t.Fatal(err)
 	}
-	row, err := q.InsertDeploymentArtifactScan(t.Context(), tx, sqlc.InsertDeploymentArtifactScanParams{ID: mustPgUUID(in.ID), ProducerID: mustPgUUID(in.RootfsProducerID), InputSnapshot: raw, InputHash: hash, TtlSeconds: 1, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
+	row, err := q.InsertDeploymentRuntimeScan(t.Context(), tx, sqlc.InsertDeploymentRuntimeScanParams{ID: mustPgUUID(in.ID), DeploymentID: mustPgUUID(in.DeploymentID), InputSnapshot: raw, InputHash: hash, PublisherExpiresAt: standardPgTime(time.Now().Add(time.Hour)), TtlSeconds: 1, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.SelectDeploymentArtifactScan(t.Context(), tx, sqlc.SelectDeploymentArtifactScanParams{ID: row.ID, DeploymentID: row.DeploymentID, WorkloadName: row.WorkloadName}); err != nil {
+	if err := q.SelectDeploymentRuntimeScan(t.Context(), tx, sqlc.SelectDeploymentRuntimeScanParams{ID: row.ID, DeploymentID: row.DeploymentID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
@@ -145,7 +145,7 @@ func TestPgNativeArtifactSidecarLease(t *testing.T) {
 
 func TestPgNativeArtifactRawPromotionCannotExceedLease(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	parent, _, deadline := nativeArtifactPausedBaseFixture(t, s)
+	parent, _, deadline := nativeArtifactPausedComposedFixture(t, s)
 	p := promotionTestGrant(t, parent)
 	p.Binding.ExpiresAtUnixNano = deadline.UnixNano() + 1
 	raw, _ := json.Marshal(p.Binding)
@@ -158,7 +158,7 @@ func TestPgNativeArtifactRawPromotionCannotExceedLease(t *testing.T) {
 	}
 }
 
-func TestPgNativeArtifactRawEnforceChecksBaseFindings(t *testing.T) {
+func TestPgNativeArtifactRawEnforceChecksComposedFindings(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
 	in, base, app, dep := artifactScanBaseFixture(t, s)
 	app = manageNativeArtifactApp(t, s, app)
@@ -166,40 +166,45 @@ func TestPgNativeArtifactRawEnforceChecksBaseFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := runtimeArtifactBaseScanInput(in, base)
-	b.Report.Vulnerabilities, b.Report.SeverityCounts = []api.Vulnerability{{ID: "CVE-native-base", Severity: "UNKNOWN"}}, api.SeverityCounts{Unknown: 1}
+	b.Report.Vulnerabilities, b.Report.SeverityCounts = []api.Vulnerability{{ID: "CVE-native-composed", Severity: "UNKNOWN"}}, api.SeverityCounts{Unknown: 1}
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	composed := publishNativeComposedScan(t, s, app, dep, b.Report)
 	policy := api.AppSecurityPolicyEnforce
 	if _, err := s.UpdateApp(t.Context(), app.ID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy}); err != nil {
 		t.Fatal(err)
 	}
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
-	evidence, err := s.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), app.AccountID, app.ID, dep.ID)
+	evidence, err := s.GetFreshDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate.ExpiresAtUnixNano = evidence.ExpiresAt.UnixNano()
+	if evidence.Scan.ID != composed.ID {
+		t.Fatal("composed finding fixture not selected")
+	}
 	raw, _ := json.Marshal(candidate)
 	_, err = pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, candidate.Token, ins.ID, ins.State, raw)
 	if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
-		t.Fatalf("raw native issue ignored base findings: %v", err)
+		t.Fatalf("raw native issue ignored composed findings: %v", err)
 	}
 	if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
-		t.Fatalf("Go native issue ignored base findings: %v", err)
+		t.Fatalf("Go native issue ignored composed findings: %v", err)
 	}
 	assertNativeBootUnpublished(t, s, ins)
 }
 
 func TestPgNativeArtifactClockRecheckedAfterRead(t *testing.T) {
 	s, pool := runtimeCapturePGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
 	deadline := time.Now().UTC().Truncate(time.Microsecond).Add(2 * time.Second)
 	in.Report.ScannerDBBuiltAt = deadline.Add(-api.ApplicationStandardScannerDBMaxAge).Format(time.RFC3339Nano)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
+	publishNativeComposedScan(t, s, app, dep, in.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	candidate.ExpiresAtUnixNano = deadline.UnixNano()
 	// This private clone delays a successful coherent read. No producer or

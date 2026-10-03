@@ -17,6 +17,8 @@ import (
 type nativeArtifactTestStore interface {
 	standardRuntimeCaptureTestStore
 	runtimeArtifactCaptureTestStore
+	DeploymentRuntimeProducerInputStore
+	DeploymentRuntimeScanStore
 }
 
 func manageNativeArtifactApp(t *testing.T, s nativeArtifactTestStore, app App) App {
@@ -59,12 +61,9 @@ func nativeArtifactReceipt(binding runtimeadmission.Binding, paused bool) runtim
 
 func nativeArtifactGrantLease(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
-	scan, err := s.PublishDeploymentArtifactScan(t.Context(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scan := publishNativeComposedScan(t, s, app, dep, in.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	grant, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate)
 	if err != nil || grant.ExpiresAtUnixNano != scan.ExpiresAt.UnixNano() || grant.ExpiresAtUnixNano >= candidate.ExpiresAtUnixNano {
@@ -85,8 +84,17 @@ func nativeArtifactGrantLease(t *testing.T, s nativeArtifactTestStore) {
 
 func nativeArtifactMissingScan(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	_, _, app, dep := artifactScanFixture(t, s, false)
+	in, base, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
+	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishBaseImageScan(t.Context(), runtimeArtifactBaseScanInput(in, base)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetFreshDeploymentRuntimeArtifactInputs(t.Context(), app.AccountID, app.ID, dep.ID); err != nil {
+		t.Fatal(err)
+	}
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("unscanned producer authorized a native boot: %v", err)
@@ -99,7 +107,7 @@ func nativeArtifactEnforceFindings(t *testing.T, newStore func(*testing.T) nativ
 	for _, severity := range []string{"HIGH", "CRITICAL", "UNKNOWN"} {
 		t.Run(severity, func(t *testing.T) {
 			s := newStore(t)
-			in, _, app, dep := artifactScanFixture(t, s, false)
+			in, _, app, dep := nativeArtifactFixture(t, s, false)
 			app = manageNativeArtifactApp(t, s, app)
 			in.Report.Vulnerabilities[0].Severity = severity
 			in.Report.SeverityCounts = api.SeverityCounts{}
@@ -114,6 +122,7 @@ func nativeArtifactEnforceFindings(t *testing.T, newStore func(*testing.T) nativ
 			if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 				t.Fatal(err)
 			}
+			publishNativeComposedScan(t, s, app, dep, in.Report)
 			policy := api.AppSecurityPolicyEnforce
 			if _, err := s.UpdateApp(t.Context(), app.ID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy}); err != nil {
 				t.Fatal(err)
@@ -132,12 +141,13 @@ func nativeArtifactAdvisoryFindings(t *testing.T, newStore func(*testing.T) nati
 	for _, policy := range []api.AppSecurityPolicy{api.AppSecurityPolicyOff, api.AppSecurityPolicyWarn} {
 		t.Run(string(policy), func(t *testing.T) {
 			s := newStore(t)
-			in, _, app, dep := artifactScanFixture(t, s, false)
+			in, _, app, dep := nativeArtifactFixture(t, s, false)
 			app = manageNativeArtifactApp(t, s, app)
 			in.Report.Vulnerabilities[0].Severity, in.Report.SeverityCounts = "HIGH", api.SeverityCounts{High: 1}
 			if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 				t.Fatal(err)
 			}
+			publishNativeComposedScan(t, s, app, dep, in.Report)
 			if _, err := s.UpdateApp(t.Context(), app.ID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy}); err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +175,7 @@ func nativeArtifactMissingSignedProducer(t *testing.T, s standardRuntimeCaptureT
 	}
 }
 
-func nativeArtifactBaseDatabaseLease(t *testing.T, s nativeArtifactTestStore) {
+func nativeArtifactComposedDatabaseLease(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
 	in, base, app, dep := artifactScanBaseFixture(t, s)
 	app = manageNativeArtifactApp(t, s, app)
@@ -178,20 +188,21 @@ func nativeArtifactBaseDatabaseLease(t *testing.T, s nativeArtifactTestStore) {
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	publishNativeComposedScan(t, s, app, dep, b.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	grant, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate)
 	if err != nil || grant.ExpiresAtUnixNano != deadline.UnixNano() {
-		t.Fatalf("native grant outlived the base scanner database: %v", err)
+		t.Fatalf("native grant outlived the composed scanner database: %v", err)
 	}
 	receipt := nativeArtifactReceipt(grant, false)
 	time.Sleep(time.Until(deadline) + 20*time.Millisecond)
 	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, receipt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
-		t.Fatalf("expired base authority published a native receipt: %v", err)
+		t.Fatalf("expired composed authority published a native receipt: %v", err)
 	}
 	assertNativeBootUnpublished(t, s, ins)
 }
 
-func nativeArtifactPausedBaseFixture(t *testing.T, s nativeArtifactTestStore) (runtimeadmission.Receipt, BaseImageScanInput, time.Time) {
+func nativeArtifactPausedComposedFixture(t *testing.T, s nativeArtifactTestStore) (runtimeadmission.Receipt, DeploymentRuntimeScanInput, time.Time) {
 	t.Helper()
 	in, base, app, dep := artifactScanBaseFixture(t, s)
 	app = manageNativeArtifactApp(t, s, app)
@@ -204,6 +215,7 @@ func nativeArtifactPausedBaseFixture(t *testing.T, s nativeArtifactTestStore) (r
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	composed := publishNativeComposedScan(t, s, app, dep, b.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	grant, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, candidate)
 	if err != nil {
@@ -213,31 +225,34 @@ func nativeArtifactPausedBaseFixture(t *testing.T, s nativeArtifactTestStore) (r
 	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateWarm, parent); err != nil {
 		t.Fatal(err)
 	}
-	return parent, b, deadline
+	return parent, composed.Input, deadline
 }
 
 func nativeArtifactPromotionRenewsApproval(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	parent, b, deadline := nativeArtifactPausedBaseFixture(t, s)
+	parent, b, deadline := nativeArtifactPausedComposedFixture(t, s)
 	time.Sleep(time.Until(deadline) + 20*time.Millisecond)
 	if _, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent)); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("paused receipt substituted for fresh artifact approval: %v", err)
 	}
-	b.ID, b.Report.ScannerDBBuiltAt = uuid.NewString(), time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
-	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
+	b.ID = uuid.NewString()
+	for i := range b.Reports {
+		b.Reports[i].Report.ScannerDBBuiltAt = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	}
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
 	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))
 	if err != nil || p.Binding.ExpiresAtUnixNano <= parent.Binding.ExpiresAtUnixNano {
-		t.Fatalf("fresh base approval could not authorize a new promotion: %v", err)
+		t.Fatalf("fresh composed approval could not authorize a new promotion: %v", err)
 	}
 	r := parent
 	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, time.Now().UnixNano()
 	if _, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	b.ID, b.Status, b.ScannerName, b.Report, b.Failure = uuid.NewString(), "failed", "", nil, "scanner_unavailable"
-	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
+	b.ID, b.Status, b.Reports, b.Facts.Views, b.Failure = uuid.NewString(), "failed", nil, nil, "scanner_unavailable"
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r); err != nil {
@@ -247,19 +262,16 @@ func nativeArtifactPromotionRenewsApproval(t *testing.T, s nativeArtifactTestSto
 
 func nativeArtifactSidecarLease(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	side, root, app, dep := artifactScanFixture(t, s, true)
-	mainRoot := completeRuntimeArtifactSidecar(t, s, root, app, dep)
+	main, _, app, dep := nativeArtifactFixture(t, s, true)
 	app = manageNativeArtifactApp(t, s, app)
-	main := cloneDeploymentArtifactScan(DeploymentArtifactScan{Input: side}).Input
-	main.ID, main.WorkloadName, main.RootfsProducerID, main.RootfsInputHash = uuid.NewString(), "", mainRoot.ID, mainRoot.InputHash
-	main.ImageReference, main.ArtifactDigest, main.ArtifactBytes = dep.ImageDigest, mainRoot.Input.ArtifactDigest, mainRoot.Input.ArtifactBytes
-	main.Report.ImageDigest, main.Report.ArtifactDigest = main.ImageReference, main.ArtifactDigest
-	if _, err := s.PublishDeploymentArtifactScan(t.Context(), main); err != nil {
-		t.Fatal(err)
-	}
+	composed := nativeComposedScanInput(t, s, app, dep, main.Report)
 	deadline := time.Now().UTC().Truncate(time.Microsecond).Add(2 * time.Second)
-	side.Report.ScannerDBBuiltAt = deadline.Add(-api.ApplicationStandardScannerDBMaxAge).Format(time.RFC3339Nano)
-	if _, err := s.PublishDeploymentArtifactScan(t.Context(), side); err != nil {
+	for i := range composed.Reports {
+		if composed.Reports[i].WorkloadName == "metrics" {
+			composed.Reports[i].Report.ScannerDBBuiltAt = deadline.Add(-api.ApplicationStandardScannerDBMaxAge).Format(time.RFC3339Nano)
+		}
+	}
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), composed); err != nil {
 		t.Fatal(err)
 	}
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
@@ -288,8 +300,8 @@ func TestMemNativeArtifactAdvisoryFindings(t *testing.T) {
 func TestMemNativeArtifactMissingSignedProducer(t *testing.T) {
 	nativeArtifactMissingSignedProducer(t, NewMemStore())
 }
-func TestMemNativeArtifactBaseDatabaseLease(t *testing.T) {
-	nativeArtifactBaseDatabaseLease(t, NewMemStore())
+func TestMemNativeArtifactComposedDatabaseLease(t *testing.T) {
+	nativeArtifactComposedDatabaseLease(t, NewMemStore())
 }
 func TestMemNativeArtifactPromotionRenewsApproval(t *testing.T) {
 	nativeArtifactPromotionRenewsApproval(t, NewMemStore())

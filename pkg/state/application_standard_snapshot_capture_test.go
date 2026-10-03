@@ -205,6 +205,7 @@ func standardSnapshotRenewedApproval(t *testing.T, s standardSnapshotTestStore) 
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	composed := publishNativeComposedScan(t, s, app, dep, b.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
 	if err != nil {
@@ -244,6 +245,13 @@ func standardSnapshotRenewedApproval(t *testing.T, s standardSnapshotTestStore) 
 	}
 	b.ID, b.Report.ScannerDBBuiltAt = uuid.NewString(), time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
 	if _, err := s.PublishBaseImageScan(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	composed.Input.ID = uuid.NewString()
+	for i := range composed.Input.Reports {
+		composed.Input.Reports[i].Report.ScannerDBBuiltAt = b.Report.ScannerDBBuiltAt
+	}
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), composed.Input); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.IssueApplicationStandardSnapshotCapture(t.Context(), ins.State, req); !errors.Is(err, ErrConflict) {

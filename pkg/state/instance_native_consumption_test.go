@@ -22,6 +22,7 @@ func nativeConsumedInputs(t *testing.T, s nativeArtifactTestStore) (Instance, ru
 	if _, err := s.PublishBaseImageScan(t.Context(), runtimeArtifactBaseScanInput(in, base)); err != nil {
 		t.Fatal(err)
 	}
+	publishNativeComposedScan(t, s, app, dep, in.Report)
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
 	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
 	if err != nil {

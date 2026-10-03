@@ -1121,8 +1121,9 @@ but is not yet called by an automatic runtime-approval worker.
 Runtime-default base binding and source-build publisher evidence remain
 required. Component debugfs extraction has
 not been replaced. Native conversion for unprivileged main-image whiteouts,
-boot/restore/promotion authority, consumer adoption and full onboarding E2E
-also remain pending. Public activation remains disabled.
+consumer adoption and full onboarding E2E also remain pending. Native
+boot/restore/promotion authority is described below. Public activation remains
+disabled.
 
 `TestMetalApplicationStandardRuntimeScanMaterialization` requires explicit
 opt-in, root, the dedicated host marker, native Linux amd64 KVM and a verified
@@ -1145,8 +1146,9 @@ mount behavior, actual Grype execution, KVM boot or leakcheck.
 `DeploymentRuntimeProducerInputStore` supplies the composed scanner with the
 complete current main, declared image-sidecar and explicit base producer set
 without requiring component or base scan records. Its separate result type is
-input evidence; it cannot be substituted for the existing fresh component
-approval getter used by native grants and resident lifecycle publication.
+input evidence; it cannot substitute for a durable composed scan. Native
+grants and resident lifecycle publication require the fresh composed scan
+described below whenever private producer lineage is captured.
 
 The read acquires the existing owner, control, artifact and explicit-base
 fences. It selects the latest scoped publisher signature for each workload,
@@ -1168,8 +1170,9 @@ without extending or rewriting its immutable origin evidence.
 
 `Handler.ScanProducedRuntime` uses this read before materializing the native
 views and again after scanning. It can obtain new scan evidence when component
-scans are missing, failed or expired, while the original approval read still
-refuses those conditions. Actual producer, base and sidecar replacement or
+scans are missing, failed or expired. The separate component evidence read
+still refuses those conditions; native runtime policy consumes the composed
+findings described below. Actual producer, base and sidecar replacement or
 publisher revocation during scanning prevents evidence from returning.
 
 Portable store and handoff fixtures and PostgreSQL storage-clock and lock
@@ -1226,8 +1229,58 @@ Portable materializer/Grype fixtures and real PostgreSQL tests cover facts,
 failure selection, scope, nonwaiting fences, publisher revocation, producer
 replacement, immutable guards and database expiry. They do not prove actual
 native composition, Grype execution, KVM boot or leakcheck. Native
-boot/restore/promotion and resident consumers still use the previous component
-evidence path; requiring durable composed scans there remains pending. The
+boot/restore/promotion and resident consumers now require durable composed
+scans whenever private producer lineage is captured, as described below. The
 approval worker, runtime-default base binding, source-build publisher proof,
 main-image native whiteout conversion, observed adoption and full onboarding
 E2E remain required. Public activation remains disabled.
+
+## Native composed scan authority
+
+Native boot and restore grants, promotion, first runtime receipt publication,
+resident admission renewal and snapshot capture/publication now read the
+selected durable composed scan under the existing owner, control, artifact
+and explicit-base fences. The scan must be complete, current and fresh, with
+its canonical producer identity matching the immutable instance capture.
+Current publisher approval is checked again; Go revalidates its signature
+against the current trusted key. Neither a component report nor a base report
+can replace a missing composed scan.
+
+Enforce policy rejects CRITICAL, HIGH or UNKNOWN findings in any composed
+main or image-sidecar view. Component/base reports remain separate facts. A
+component or base HIGH finding does not override a clean current composed view: a
+base package may have been hidden or removed by the app layer. Advisory
+policy preserves composed findings without using them to reject admission,
+but still requires current composed evidence when producer lineage exists.
+The deadline is bounded by the immutable scan lease, every report's scanner
+database deadline and every current publisher approval expiry. A failed
+selected rescan blocks new authority and first publication through an earlier
+grant. Historical acknowledgment retries do not issue new authority or renew
+clocks.
+
+The PostgreSQL native deadline function uses the same complete source hash,
+byte-exact Go identity hash, view membership, tree/projection versions,
+aggregate bounds and finding counts. Raw SQL grants and publication use that
+function as well as the existing consumed-drive and native protocol guards.
+Its final storage clock rejects authority that expires during a read. The
+new authority migration and its JSON operator-precedence correction are
+append-only; all previously applied migrations remain byte-identical.
+
+This changes the authority read, not the drive architecture or instance
+capture history. The shared read-only base, private writable main layer and
+independent read-only sidecars retain their separate identities. Signed or
+enforcing applications without complete producer lineage remain refused.
+Unbound runtime-default bases and source-build publisher evidence remain
+pending. The existing unsigned off/advisory compatibility path without
+private lineage still cannot claim composed scan or native consumption proof.
+
+Real PostgreSQL and MemStore fixtures cover composed findings, missing scans,
+sidecar database expiry, failed rescans, publisher renewal, consumed receipts,
+snapshot gates and historical recovery. Their reports and native receipts are
+explicit simulations; they do not prove real Grype execution, native mounts,
+KVM boot/restore/promotion or leakcheck. Automatic scan scheduling and
+replacement of the earlier deploy-time component finding gate remain
+required. The current deployment pipeline can still reject a component
+finding before reaching this native authority boundary. Native main-image
+whiteout conversion, observed adoption and full onboarding E2E also remain
+required. Public activation remains disabled.

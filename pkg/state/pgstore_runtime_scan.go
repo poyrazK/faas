@@ -146,6 +146,17 @@ func (s *PgStore) GetFreshDeploymentRuntimeScan(ctx context.Context, accountID, 
 		return DeploymentRuntimeScanEvidence{}, err
 	}
 	defer tx.Rollback(ctx)
+	evidence, err := freshRuntimeScanTx(ctx, tx, accountID, appID, depID)
+	if err != nil {
+		return DeploymentRuntimeScanEvidence{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentRuntimeScanEvidence{}, err
+	}
+	return evidence, nil
+}
+
+func freshRuntimeScanTx(ctx context.Context, tx pgx.Tx, accountID, appID, depID string) (DeploymentRuntimeScanEvidence, error) {
 	current, err := readRuntimeProducerInputsTx(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeScanEvidence{}, err
@@ -162,12 +173,5 @@ func (s *PgStore) GetFreshDeploymentRuntimeScan(ctx context.Context, accountID, 
 		return DeploymentRuntimeScanEvidence{}, errors.Join(ErrApplicationStandardRuntimeStale, err)
 	}
 	current.CheckedAt = now.Time
-	evidence, err := finishRuntimeScanEvidence(value, current)
-	if err != nil {
-		return DeploymentRuntimeScanEvidence{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DeploymentRuntimeScanEvidence{}, err
-	}
-	return evidence, nil
+	return finishRuntimeScanEvidence(value, current)
 }

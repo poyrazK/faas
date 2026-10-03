@@ -38,6 +38,29 @@ func publishRenewedStandardScan(t *testing.T, s nativeArtifactTestStore, input D
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
+	if status == "failed" {
+		inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), in.AccountID, in.AppID, in.DeploymentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		failed, err := NewFailedDeploymentRuntimeScanInput(uuid.NewString(), inputs, "scanner_unavailable")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PublishDeploymentRuntimeScan(t.Context(), failed); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		app, err := s.AppByID(t.Context(), in.AppID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dep, err := s.DeploymentByID(t.Context(), in.DeploymentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		publishNativeComposedScan(t, s, app, dep, in.Report)
+	}
 	return in
 }
 
@@ -74,7 +97,7 @@ func assertRenewalCallerAdmission(t *testing.T, s nativeArtifactTestStore, ins I
 
 func standardArtifactRenewalBeforeBoot(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
 	in = publishRenewedStandardScan(t, s, in, "LOW")
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
@@ -101,7 +124,7 @@ func standardArtifactRenewalBeforeBoot(t *testing.T, s nativeArtifactTestStore) 
 
 func standardArtifactRenewalPromotion(t *testing.T, s nativeArtifactTestStore) {
 	t.Helper()
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := nativeArtifactFixture(t, s, false)
 	app = manageNativeArtifactApp(t, s, app)
 	in = publishRenewedStandardScan(t, s, in, "LOW")
 	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
@@ -159,7 +182,7 @@ func standardArtifactRenewalRefusesUnsafe(t *testing.T, newStore func(*testing.T
 	for _, status := range []string{"failed", "HIGH", "CRITICAL", "UNKNOWN"} {
 		t.Run(status, func(t *testing.T) {
 			s := newStore(t)
-			in, _, app, dep := artifactScanFixture(t, s, false)
+			in, _, app, dep := nativeArtifactFixture(t, s, false)
 			app = manageNativeArtifactApp(t, s, app)
 			policy := api.AppSecurityPolicyEnforce
 			app, err := s.UpdateApp(t.Context(), app.ID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy})
@@ -196,7 +219,7 @@ func TestMemApplicationStandardArtifactRenewalRefusesUnsafe(t *testing.T) {
 
 func TestApplicationStandardStableInputProjection(t *testing.T) {
 	s := NewMemStore()
-	_, _, app, dep := artifactScanFixture(t, s, false)
+	_, _, app, dep := nativeArtifactFixture(t, s, false)
 	_, capture := createRuntimeArtifactCapture(t, s, app, dep)
 	var legacy map[string]json.RawMessage
 	if err := json.Unmarshal(capture.inputs, &legacy); err != nil {

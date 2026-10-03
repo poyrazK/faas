@@ -19,18 +19,10 @@ func lockStandardNativeArtifactInputs(ctx context.Context, tx pgx.Tx, input *nat
 	if historicalRetry {
 		return nil // Reading a committed acknowledgment does not issue authority.
 	}
-	evidence := DeploymentArtifactScanEvidence{}
+	evidence := DeploymentRuntimeScanEvidence{}
 	if capture.ArtifactInputHash != "" {
-		owner, err := readArtifactEvidenceOwner(ctx, tx, capture.AccountID, capture.AppID, capture.DeploymentID)
+		evidence, err = freshRuntimeScanTx(ctx, tx, capture.AccountID, capture.AppID, capture.DeploymentID)
 		if err != nil {
-			return err
-		}
-		var parents []artifactScanParents
-		evidence, parents, err = readArtifactEvidenceComponents(ctx, tx, capture.AccountID, capture.AppID, capture.DeploymentID, owner.Sidecars)
-		if err != nil {
-			return err
-		}
-		if err := finishArtifactEvidenceTransaction(ctx, tx, &evidence, parents); err != nil {
 			return err
 		}
 		input.ClockUnixNano = evidence.CheckedAt.UnixNano()
