@@ -73,6 +73,16 @@ func TestVerifyDeploymentAPIRoutesStopsAfterRequiredRouteFails(t *testing.T) {
 	}
 }
 
+func TestVerifyDeploymentAPIRouteReturnsValidationFailure(t *testing.T) {
+	result, err := (Verifier{}).VerifyDeploymentAPIRoute(context.Background(), "demo", "/v1/{id}", "candidate")
+	if err == nil {
+		t.Fatal("unsafe API route check returned no error")
+	}
+	if result.Status != SmokeFailed || result.ErrorCode != SmokeErrorContractInvalid {
+		t.Fatalf("result=%+v, want failed invalid-contract verdict", result)
+	}
+}
+
 func TestValidateAPIRouteProbeRejectsUnsafeOrStateChangingRoutes(t *testing.T) {
 	for _, probe := range []APIRouteProbe{
 		{Method: "POST", Path: "/v1/charge"},
