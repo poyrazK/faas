@@ -46,6 +46,9 @@ transfer_root="${FAAS_METAL_TRANSFER_ROOT:-}"
 if [[ -n "${transfer_root}" && ! "${transfer_root}" =~ ^/var/tmp/faas-metal-smoke-[A-Za-z0-9._-]+$ ]]; then
   die "transfer root is outside the metal smoke staging namespace"
 fi
+if [[ -n "${transfer_root}" ]]; then
+  mkdir -p -- "${transfer_root}"
+fi
 
 stage_root="/srv/fc/acceptance/metal-${FAAS_METAL_SOURCE_SHA}-${run_id}"
 base_skeleton="${stage_root}/base-skeleton"
@@ -138,7 +141,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${FAAS_METAL_GO}" build \
   -trimpath -buildvcs=false -tags linux -o "${guest_init}" ./guest/init
 
 install -m 0755 "${busybox_path}" "${base_skeleton}/bin/busybox"
-for name in bin/sh bin/ash bin/cat; do
+for name in bin/sh bin/ash bin/cat bin/true; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 # Production app artifacts live beneath drive1's /upper directory. The M0 app
