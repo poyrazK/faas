@@ -4336,3 +4336,53 @@ Reader preparation remains a private seam; the public coordinated capture
 gate is unchanged. Qualified SQL/OID access, export/import, compute metering,
 never-observed creation retirement and the complete configuration/object/
 promotion workflow remain required.
+
+### Private authenticated SQL inventory access (2026-10-03)
+
+The service now borrows an already owned, endpoint/time-pinned reader through a
+synchronous provider callback. Creation/account rollout gates do not disable
+recovery reads. Frozen backend and source identity remain mandatory, and the
+provider deadline is authoritative for the callback. Missing, repeated or
+malformed callback authority, missing OIDs and mismatched PostgreSQL majors are
+rejected. Callback failures cannot be discarded by a successful provider return.
+This seam neither persists connection configuration nor supplies a dataset
+completion receipt.
+
+Neon's implementation uses the exact direct readonly endpoint and minimal
+verify-full connection configuration, with platform-owned read-only and
+pg_catalog startup settings. The identity query explicitly qualifies catalogue
+relations and functions; a caller's search path cannot substitute them. Before
+and after the trusted read it checks an idle, non-busy connection, database,
+current/session role, PostgreSQL major, read-only mode and nonzero database/role
+OIDs. It independently rechecks provider placement around the read and rejects
+changed SQL identity. Connection failures are redacted, and normal, rejected
+and partially established connections close under a bounded cleanup context.
+
+The private APID inventory reader binds the callback to fresh reader/snapshot/
+adopted-capture records and the exact inventory scope. A missing inventory reads
+cluster metadata through the authenticated connection, then seals it under the
+original capture scope and generated fingerprint key. A committed inventory
+reply loss reopens that exact sealed receipt without another SQL/provider read.
+Unavailable readers and wrong-major SQL cannot supply inventory. Cluster
+inventory is still metadata input to export planning, never exported data,
+target readiness or writer-release authority.
+
+Verification: thirty-seven focused APID clone/coordinator contracts pass against
+isolated PostgreSQL 16 (31.662 s, no skips), including two new SQL inventory
+composition contracts. Twenty-nine normal provider/inventory contracts pass
+with no skips: eight service contracts, fifteen Neon HTTP/local SQL contracts
+and six inventory/sealing contracts. Real local SQL exercises identity, OIDs,
+read-only mode, open/closed transactions, private settings and sealed recovery;
+provider metadata is mocked. No successful live Neon SQL connection, remote
+capture acceptance or copied-dataset acceptance is claimed. Independent SQLC
+regeneration matches all thirteen generated files. Normal managedpostgres,
+Neon, inventory and APID builds and provider/focused APID vet pass. The focused
+APID test overlay retains all 449 production files; its versioned-package import
+selection was repaired before the successful run.
+
+Private capture preparation can now read a sealed cluster inventory through
+its owned reader. Public complete clone admission remains closed. Per-database
+export/import, configuration/role/extension/background coverage, temporary
+closed-database admission projection, compute metering, unknown-creation
+retirement and the wider common-point/object/configuration/promotion work remain
+required.

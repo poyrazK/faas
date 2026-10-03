@@ -1,10 +1,10 @@
 -- name: CopyClusterIdentity :one
-SELECT current_setting('server_version_num')::integer AS server_version,
- current_database()::text AS database_name, d.oid AS database_oid,
+SELECT pg_catalog.current_setting('server_version_num')::integer AS server_version,
+ pg_catalog.current_database()::text AS database_name, d.oid AS database_oid,
  current_user::text AS role_name, r.oid AS role_oid, session_user::text AS session_role,
- current_setting('transaction_read_only')::boolean AS read_only,
- current_setting('transaction_isolation')::text AS isolation
-FROM pg_database d, pg_roles r WHERE d.datname=current_database() AND r.rolname=current_user;
+ pg_catalog.current_setting('transaction_read_only')::boolean AS read_only,
+ pg_catalog.current_setting('transaction_isolation')::text AS isolation
+FROM pg_catalog.pg_database d, pg_catalog.pg_roles r WHERE d.datname=pg_catalog.current_database() AND r.rolname=current_user;
 
 -- Include templates, provider/system databases and private maintenance resources.
 -- The later copy plan must explicitly classify every entry instead of hiding it.

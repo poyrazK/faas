@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -84,6 +85,9 @@ type cloneSnapshotProvider struct {
 	loseReaderDelete, readerDeleteReady, readerAbsent       bool
 	beforeReaderCreate                                      func(context.Context, managedpostgres.SnapshotCopyReaderRequest) error
 	beforeReaderDelete                                      func(context.Context, managedpostgres.SnapshotCopyReaderDeletionRequest) error
+	readerSQLConn                                           *pgx.Conn
+	readerSQLIdentity                                       managedpostgres.SnapshotCopyReaderSQLIdentity
+	readerSQLCalls                                          int
 }
 
 func (p *cloneSnapshotProvider) Capabilities() managedpostgres.Capabilities {

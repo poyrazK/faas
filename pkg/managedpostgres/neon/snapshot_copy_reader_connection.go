@@ -53,7 +53,7 @@ func (p *Provider) snapshotCopyReaderConnectionConfig(ctx context.Context, d man
 	if err != nil {
 		return nil, managedpostgres.ErrUnavailable
 	}
-	config.RuntimeParams = map[string]string{"application_name": "gregale-snapshot-copy-reader", "default_transaction_read_only": "on"}
+	config.RuntimeParams = map[string]string{"application_name": "gregale-snapshot-copy-reader", "default_transaction_read_only": "on", "search_path": "pg_catalog"}
 	return config, nil
 }
 

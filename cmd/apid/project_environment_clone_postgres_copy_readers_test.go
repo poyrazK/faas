@@ -172,9 +172,9 @@ func (s *cloneReaderFailureStore) FinishProjectEnvironmentClonePostgresCopyReade
 	return r, err
 }
 
-func cloneReaderWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *cloneReaderFailureStore, *cloneSnapshotProvider, string) {
+func cloneReaderWorkerFixture(t *testing.T, majors ...int) (cloneCoordinatorFixture, *cloneReaderFailureStore, *cloneSnapshotProvider, string) {
 	t.Helper()
-	f, _, p, sourceID := cloneSnapshotRestoreWorkerFixture(t)
+	f, _, p, sourceID := cloneSnapshotRestoreWorkerFixture(t, majors...)
 	var err error
 	f.lease, _, err = f.srv.restoreProjectEnvironmentClonePostgresSnapshots(t.Context(), f.lease)
 	if err != nil {

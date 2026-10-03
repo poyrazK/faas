@@ -260,7 +260,7 @@ func TestSnapshotCopyReaderConnectionUsesExactEndpointAndStripsURIOptions(t *tes
 		t.Fatal(err)
 	}
 	if f.uris != 1 || f.posts != 0 || cfg.Host != f.rows[0].Host || cfg.Port != 5432 || cfg.Database != connectionfence.MaintenanceDatabase || cfg.User != maintenanceSourceRole || cfg.Password != "reader-private-password" ||
-		cfg.TLSConfig == nil || cfg.TLSConfig.InsecureSkipVerify || cfg.TLSConfig.ServerName != cfg.Host || len(cfg.Fallbacks) != 0 || len(cfg.RuntimeParams) != 2 || cfg.RuntimeParams["application_name"] != "gregale-snapshot-copy-reader" || cfg.RuntimeParams["default_transaction_read_only"] != "on" {
+		cfg.TLSConfig == nil || cfg.TLSConfig.InsecureSkipVerify || cfg.TLSConfig.ServerName != cfg.Host || len(cfg.Fallbacks) != 0 || len(cfg.RuntimeParams) != 3 || cfg.RuntimeParams["application_name"] != "gregale-snapshot-copy-reader" || cfg.RuntimeParams["default_transaction_read_only"] != "on" || cfg.RuntimeParams["search_path"] != "pg_catalog" {
 		t.Fatal("connection config crossed direct readonly/identity/TLS boundary")
 	}
 }
