@@ -1,4 +1,4 @@
-# ADR-493: Replay recent managed PostgreSQL usage corrections
+# ADR-501: Replay recent managed PostgreSQL usage corrections
 
 - **Status:** accepted
 - **Date:** 2026-10-03

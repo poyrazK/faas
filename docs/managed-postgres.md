@@ -360,7 +360,7 @@ precedes established coverage. Newer corrections replace values, including zero,
 and older observations cannot overwrite newer readings. Failed replay retains
 prior evidence and is reported as deferred. Coverage freshness does not imply
 provider settlement; older revisions still require explicit reconciliation.
-See [ADR-493](adr/493-managed-postgres-usage-correction-replay.md).
+See [ADR-501](adr/501-managed-postgres-usage-correction-replay.md).
 
 Neon HTTP 429 responses defer further requests through that provider instance
 until `Retry-After` expires (positive seconds or a future HTTP date), with a
