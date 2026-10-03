@@ -6576,6 +6576,9 @@ haveApp:
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
 			// overlap and node RAM/vCPU limits.
+			platformWakeStart = time.Now()
+			platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
 			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
 				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,

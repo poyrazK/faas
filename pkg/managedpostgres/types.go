@@ -338,7 +338,7 @@ func (p UsagePolicy) Validate() error {
 	if !p.Enabled {
 		return nil
 	}
-	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
+	if p.CollectionInterval < time.Minute || !validUsageWindow(p.Window) || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
 		return ErrInvalid
 	}
 	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyStorageByteSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
@@ -348,6 +348,12 @@ func (p UsagePolicy) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// Whole-hour windows partitioning UTC days cannot cross UTC billing months.
+// Neon can also represent their boundaries without rounding the request.
+func validUsageWindow(window time.Duration) bool {
+	return window >= time.Hour && window <= 24*time.Hour && window%time.Hour == 0 && (24*time.Hour)%window == 0
 }
 
 // UsageRecord is one provider observation for one complete window and meter.

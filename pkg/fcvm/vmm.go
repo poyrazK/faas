@@ -2910,7 +2910,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
 				}
 				var moveErr error
-				memBytes, moveErr = moveOut(filepath.Join(root, memName), localPath)
+				memBytes, moveErr = publishLocalSnapshotMemory(filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
