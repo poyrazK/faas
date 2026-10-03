@@ -139,8 +139,8 @@ func TestUsageRecoveryResumesAcrossCollectorRestartAndMonthBoundary(t *testing.T
 			t.Fatalf("sweep %d freshness: %+v", sweep, snapshot)
 		}
 	}
-	if len(provider.usageCalls) != 49 {
-		t.Fatalf("calls = %d, want 49", len(provider.usageCalls))
+	if len(provider.usageCalls) != 51 {
+		t.Fatalf("calls = %d, want 49 recovered windows and 2 corrections", len(provider.usageCalls))
 	}
 	snapshot, err := store.UsageSnapshot(ctx, "account", now)
 	if err != nil || snapshot.ComputeUnitSeconds != 12*60 {

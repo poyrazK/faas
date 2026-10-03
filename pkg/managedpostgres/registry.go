@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -46,6 +47,13 @@ type UsageConfig struct {
 }
 
 func (c UsageConfig) policy() (UsagePolicy, error) {
+	if c.Enabled {
+		for _, seconds := range []int64{c.CollectionIntervalSeconds, c.WindowSeconds, c.StaleAfterSeconds} {
+			if seconds < 0 || seconds > math.MaxInt64/int64(time.Second) {
+				return UsagePolicy{}, errors.New("managed postgres: invalid usage policy duration")
+			}
+		}
+	}
 	policy := UsagePolicy{
 		Enabled:                      c.Enabled,
 		CollectionInterval:           time.Duration(c.CollectionIntervalSeconds) * time.Second,
