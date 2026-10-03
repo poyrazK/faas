@@ -333,11 +333,12 @@ type PGBackend struct {
 	// app-level capacity but this gateway just restarted and missed the
 	// original Admit notification. The narrow hook keeps gateway independent
 	// of pkg/state.
-	liveTargetLoader   func(ctx context.Context, appID string) ([]Target, error)
-	placementLoader    TargetPlacementLoader
-	placementRefreshMu sync.Mutex
-	placementCursor    string
-	placementLast      atomic.Pointer[TargetPlacementRefreshStatus]
+	liveTargetLoader         func(ctx context.Context, appID string) ([]Target, error)
+	placementLoader          TargetPlacementLoader
+	placementRefreshMu       sync.Mutex
+	placementCursor          string
+	placementLast            atomic.Pointer[TargetPlacementRefreshStatus]
+	placementHydrationFences map[string]*placementHydrationFence // active absent-picker reads; tgtMu
 	// deploymentSmokeTargetLoader reads an unpromoted RUNNING candidate for
 	// authenticated verification only. It must not populate the ordinary
 	// picker, whose weights represent customer-routable live deployments.
@@ -527,10 +528,8 @@ func (b *PGBackend) WithClientForApp(fn ClientForAppFunc) *PGBackend {
 	return b
 }
 
-// WithLiveTargetLoader installs the restart-reconciliation hook used when this
-// gateway's process-local picker is empty. A running instance may already
-// exist in Postgres even though this process missed its admission or running
-// notification; production filters the loader to current live deployments.
+// WithLiveTargetLoader retains the legacy slice hook for integrations. The
+// bounded placement/readiness loader takes precedence when both are installed.
 func (b *PGBackend) WithLiveTargetLoader(fn func(context.Context, string) ([]Target, error)) *PGBackend {
 	if b != nil {
 		b.liveTargetLoader = fn
@@ -577,10 +576,12 @@ func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, dep
 // at-capacity, which was too late because the empty-cache path had already
 // started another VM.
 //
-// The replacement is conditional on the cache still being empty after the
-// database read. That preserves a target admitted concurrently while the read
-// was in flight and makes the reconciliation safe with the normal Admit path.
+// The bounded reader fences membership and weight changes during its read.
+// The legacy slice hook only populates a cache that remains empty.
 func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) error {
+	if b != nil && appID != "" && b.placementLoader != nil {
+		return b.hydrateCurrentTargets(ctx, appID)
+	}
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
 	}
@@ -619,10 +620,12 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 // This is the out-of-band counterpart to Admit: service replicas are admitted
 // by schedd's desired-count reconciler, not by a gateway request, so a
 // running-instance notification must publish the new replica for real fan-out.
-// The merge is additive; terminal rows are removed by EvictInstance
-// notifications, and recordTargetLocked makes replays idempotent by instance
-// identity. The same single-flight group coalesces a burst of RUNNING events.
+// Complete bounded snapshots also remove confirmed absent residents. Only the
+// legacy slice hook remains additive. Single-flight coalesces RUNNING bursts.
 func (b *PGBackend) RefreshLiveTargets(ctx context.Context, appID string) error {
+	if b != nil && appID != "" && b.placementLoader != nil {
+		return b.hydrateCurrentTargets(ctx, appID)
+	}
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
 	}
@@ -646,6 +649,14 @@ func (b *PGBackend) RefreshLiveTargets(ctx context.Context, appID string) error 
 // arrive just after the reaper commits PARKED can otherwise race a delayed
 // notification, spend their full budget on the vanished netns, and return 503.
 func (b *PGBackend) ValidateLiveTarget(ctx context.Context, appID, instanceID string) (bool, error) {
+	if b != nil && appID != "" && instanceID != "" && b.placementLoader != nil {
+		old, wasCached := b.cachedTargetPlacement(appID, instanceID)
+		if err := b.hydrateCurrentTargets(ctx, appID); err != nil {
+			return false, err
+		}
+		current, cached := b.cachedTargetPlacement(appID, instanceID)
+		return wasCached && cached && sameTargetPlacement(old, current) && current.routeReady(), nil
+	}
 	if b == nil || appID == "" || instanceID == "" || b.liveTargetLoader == nil {
 		return true, nil
 	}
@@ -1573,6 +1584,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		}
 	}
 	set.add(target)
+	b.markPlacementHydrationChangedLocked(appID)
 	picker.placementGeneration++
 }
 
@@ -1929,6 +1941,10 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 	// (ADR-098); AdmitInstance's typed at-capacity is the
 	// primary signal here.
 	if atCapacity || nodeID == "" || instanceID == "" {
+		if atCapacity && b.placementLoader != nil {
+			err := b.hydrateCurrentTargets(ctx, appID)
+			return "", WakeMethodUnspecified, true, err
+		}
 		if atCapacity && b.liveTargetLoader != nil {
 			targets, loadErr := b.liveTargetLoader(ctx, appID)
 			if loadErr != nil {
@@ -2011,6 +2027,7 @@ func (b *PGBackend) evictTargetLifetime(captured Target, matchWake, matchNode bo
 	}
 	b.tgtMu.Lock()
 	defer b.tgtMu.Unlock()
+	b.markPlacementHydrationChangedLocked(captured.AppID)
 	if b.staleTargets == nil {
 		b.staleTargets = make(map[string]time.Time)
 	}
@@ -2110,6 +2127,7 @@ func (b *PGBackend) RecoverStaleTarget(ctx context.Context, appID, scope string,
 // then re-admit. New code should prefer EvictInstance.
 func (b *PGBackend) EvictTarget(appID string) {
 	b.tgtMu.Lock()
+	b.markPlacementHydrationChangedLocked(appID)
 	delete(b.appsPicker, appID)
 	b.tgtMu.Unlock()
 }
@@ -2153,6 +2171,7 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 	next := buildDeploymentWeights(rows)
 	b.tgtMu.Lock()
 	defer b.tgtMu.Unlock()
+	b.markPlacementHydrationChangedLocked(appID)
 	if len(next) == 0 {
 		delete(b.appsPicker, appID)
 		return nil

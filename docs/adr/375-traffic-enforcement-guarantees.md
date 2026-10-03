@@ -1419,8 +1419,9 @@ worker's query is canceled and joined. Membership transitions, guest execution,
 native networking and deployed fleet recovery remain separate acceptance scopes.
 Repair covers known picker apps. Completely unknown apps and a picker explicitly
 removed by invalidation still depend on normal hydration/lookup paths. The legacy
-live-target loader remains additive and loads historical rows on its existing
-request/notification paths. Large or slow scan backlogs can fail closed at lease
+live-target loader originally remained additive on request/notification paths;
+the request-hydration follow-up below replaces that production wiring.
+Large or slow scan backlogs can fail closed at lease
 expiry. This is bounded convergence from a statement snapshot, not instantaneous
 validation of every dispatched request or termination of already admitted work.
 
@@ -1460,3 +1461,38 @@ tests and customer documentation. VM lifecycle changes require native x86_64
 Linux KVM metal and leak checks before acceptance. Fleet limits need real
 multi-process/store tests. Code and local unit tests alone do not establish
 deployed availability or control-plane HA.
+
+### Request hydration uses current placement and source readers
+
+Normal production restart/request reconciliation, RUNNING-notification refresh,
+idle-aged validation and scheduler at-capacity recovery now use the same bounded
+current-placement reader and complete readiness-configuration/source reader as
+periodic repair. The historical slice loader is removed from production wiring;
+its optional integration hook remains subordinate to the bounded reader.
+An explicit reconciliation can discover a missed second cohort even while
+another cohort is healthy. Current placements do not rewrite traffic weights.
+
+Each app's placement and readiness reads share the existing one-second deadline
+and 128-target completeness bound. Only a complete placement statement may
+remove confirmed absent residents. Missing/partial placement or store failure
+refuses routing while retaining cached capacity. A complete placement with a
+readiness failure can remove confirmed absent entries while keeping discovered
+residents unready. Disabled probes still require an owner-matched configuration.
+
+Concurrent reads for one app coalesce. Each waiter retains its own cancellation;
+a canceled waiter does not wait for another request's read. Caller cancellation
+does not withdraw a shared cached target. Picker pointer and membership/weight
+generation fence existing caches. Reads of an absent picker also retain an active
+fence until completion, so a concurrent create/delete, eviction or weight update
+cannot hide a change by returning the picker to absence. Those fences are removed
+when the read finishes; a picker is published only after a complete snapshot.
+
+Idle validation compares the full cached routing tuple, then the handler reselects
+from current eligible targets within the already admitted deployment and affinity
+scope. Validation errors return 503 before forwarding or wake admission.
+Reconciliation errors also stop the cold/deployment wake path. Warm wire wake
+correlation keeps its existing contract; cached targets retain their wake identity.
+
+The authenticated unpromoted smoke-candidate lookup remains a separate historical
+instance lookup outside ordinary public placement discovery. Complete path,
+deployed load/recovery and native VM/network qualification remain open.

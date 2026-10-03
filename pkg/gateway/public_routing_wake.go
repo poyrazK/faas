@@ -50,7 +50,11 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 			func() bool { return !pickPublicDeployment(h.backend, app.ID, deployment, "").OK },
 			func(wakeCtx context.Context) error {
 				if reconciler, ok := h.backend.(liveTargetReconciler); ok {
-					if err := reconciler.ReconcileLiveTargets(wakeCtx, app.ID); err == nil && pickPublicDeployment(h.backend, app.ID, deployment, "").OK {
+					if err := reconciler.ReconcileLiveTargets(wakeCtx, app.ID); err != nil {
+						h.finishWakePageCycle(wakeCtx, app.ID, "")
+						return err
+					}
+					if pickPublicDeployment(h.backend, app.ID, deployment, "").OK {
 						h.finishWakePageCycle(wakeCtx, app.ID, "")
 						return nil
 					}

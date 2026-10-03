@@ -3760,3 +3760,100 @@ actual restore/migration/pool readiness, networking/firewall, clock/entropy and
 leak evidence require dedicated Linux x86_64 KVM execution. The user confirmed
 no available host; no further host request is needed until availability changes.
 The broad implementation goal remains active.
+
+## Current request hydration and idle validation — 2026-10-03
+
+Normal production request hydration now uses the bounded current-placement and
+scoped readiness readers for reconciliation, refresh, idle validation and
+scheduler at-capacity recovery. This supersedes the historical additive normal
+loader described above. The shared read retains the one-second deadline and
+128-target bound. Complete absence removes an old target; a missing, partial or
+failed placement read retains resident capacity and refuses traffic. Missing or
+failed readiness configuration and unready required sources also refuse traffic.
+An error cannot fall through into forwarding or another wake admission.
+
+Hydration coalesces concurrent reads while each follower can cancel independently.
+Picker pointer/generation checks and temporary absent-picker mutation fences
+prevent an older read from applying over admission, eviction, replacement,
+create-then-delete or weight changes. Explicit reconciliation can discover a
+missed deployment cohort beside a healthy resident without rewriting weights.
+Idle validation compares the complete prior placement tuple, then selects a fresh
+target within the admitted deployment/affinity/version. The existing warm wire
+correlation contract is retained. Readiness snapshots are copied under the cache
+lock; a deterministic regression checks that a returned snapshot cannot alias a
+later readiness withdrawal or mutate the cached gate state.
+
+The actual PostgreSQL fixture has 138 parked historical instances, a foreign-owner
+running instance and one current owner-matched resident at port 9090. Four
+independent caches in one process exercise all four hydration methods through
+the SQLC readers. Missing readiness refuses routing while retaining capacity;
+scoped source recovery restores eligibility. An actual instances-table lock
+exercises bounded SQL timeout and recovery; parking the current row produces
+complete absence and removes it. Scheduler, guest, node and membership transitions
+are fixtures, without deployed or native acceptance inferred from them.
+
+Verification against the corrected 12,555-file executed source freeze:
+
+- All fourteen complete unit packages pass in 242.487 s: 11,483 accepted named
+  results and 1,517 guarded/skipped results. Raw output has 11,530 passes and
+  1,470 skips; 47 all-guarded parent passes are classified as guarded.
+- The additive PostgreSQL selector retains the preceding selector and all
+  fourteen packages, adding hydration coverage: 386 named passes, zero skips,
+  146.335 s. Thirty-six actual database fixture roots account for 59 named
+  results; the other 327 are memory/transport checks.
+- Deduplicated acceptance is 11,539 named passes, with 1,479 guarded results
+  without acceptance. Coverage includes disabled/ready/unready/failed source
+  reads, partial and absent placements, changed placement tuples, cancellation,
+  concurrent cache mutations, retained weights, missed cohorts, readiness snapshot
+  isolation and refusal before forwarding/admission.
+- Lint v2.4.0 checks all fourteen complete packages with tests in 50.637 s:
+  457 raw issues before the existing configured processing, zero reported issues
+  afterward. Linux amd64 vmmd/fcvm lint takes 1.774 s: 67 raw issues before that
+  same existing processing, zero reported afterward. No new exclusion or
+  suppression was introduced.
+- Linux amd64 vmmd and Firecracker metal test binaries compile in 5.093 s and
+  2.151 s. Both have verified ELF x86-64 headers and hashes, and were not
+  executed. Native evidence is compilation only.
+- SQLC v1.31.1 reproduces all four generated files byte for byte. SQL, encoding,
+  quoting and ADR-number gates pass in 28.919 s. The 71 pre-existing ADR-number
+  duplicates remain at baseline. The source PostgreSQL public schema remains
+  empty with fsync, synchronous_commit and full_page_writes enabled.
+
+Whole failed and preliminary runs remain preserved and excluded from current
+acceptance. The unchanged-production baseline exited 1 in 172.832 s with 25 named
+failures, including parents/subtests: current reads were bypassed, stale absence
+remained eligible, incomplete reads still routed and old tuples were validated.
+The first focused repair failed two new expectations that contradicted retained
+deployment weights and established warm wire correlation. Those new fixtures
+were corrected with their assertions retained; existing assertions and bounds
+were unchanged. The next focused PostgreSQL run passed, but is preliminary.
+
+The first complete successful gate run preceded the final review's discovery of
+a mutable readiness snapshot returned outside the cache lock. Its exact frozen
+changed sources, logs, results and binaries are preserved under
+`pre-snapshot-repair/` and excluded from current acceptance. The regression's
+initial launch was refused by storage preflight, without starting a heavy job.
+The snapshot copy was fixed, then the complete unit, additive PostgreSQL, lint,
+Linux compile/lint and static gates above were freshly executed against the
+corrected source. Every frozen source hash and the exact file set were verified.
+
+SSD capacity repeatedly refused launches, with three no-progress turns producing
+a blocked checkpoint before the user resumed the goal and capacity permitted
+the fresh pipeline. The ten-GiB launch preflight and two-GiB phase floor remain.
+No owned cache files, sibling processes/caches or volumes were changed in this
+patch. The existing owned PostgreSQL cluster was restarted and retained; its
+source schema and durability checks remain intact. All owned heavy jobs reached
+terminal receipts before this tracker edit. This tracker is the only post-gate
+source change. No source exclusion, overlay, relaxed assertion/bound, push or PR.
+Source freezes, failures, current final gates, artifacts and local staged/commit
+receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-request-hydration-20261003/`.
+
+All six release requirements remain unchecked. The authenticated unpromoted
+smoke-candidate lookup still reads historical instances separately from ordinary
+public routing. Complete path coverage, deployed fleet/load/restart/outage/recovery,
+customer release and staging qualification remain open. Native VM/probe death,
+actual restore/migration/pool readiness, networking/firewall, clock/entropy and
+leak evidence require dedicated Linux x86_64 KVM execution. The user confirmed
+no available host; no further host request is needed until availability changes.
+The broad implementation goal remains active.

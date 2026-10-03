@@ -4,7 +4,6 @@ package gateway
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"time"
 
@@ -89,31 +88,7 @@ func (b *PGBackend) ReconcileTargetPlacements(ctx context.Context) error {
 		apps = append(apps, captured.app)
 	}
 	started := time.Now()
-	readCtx, cancel := context.WithTimeout(ctx, api.TrafficPlacementReadTimeout)
-	snapshots, err := b.placementLoader(readCtx, apps)
-	var readinessErr error
-	if err == nil {
-		for _, app := range apps {
-			snapshot := snapshots[app]
-			if validPlacementSnapshot(app, snapshot) && b.readinessLoader != nil {
-				targets := make([]Target, 0, len(snapshot.Targets))
-				for _, candidate := range snapshot.Targets {
-					targets = append(targets, candidate.Target)
-				}
-				// A readiness error still permits removal of authoritatively absent
-				// placements. Missing observations keep the remaining residents unready.
-				states, loadErr := b.readinessLoader(readCtx, targets)
-				if loadErr != nil {
-					readinessErr = errors.Join(readinessErr, fmt.Errorf("placement readiness app %s: %w", app, loadErr))
-				} else {
-					snapshot.readiness = states
-				}
-				snapshots[app] = snapshot
-			}
-		}
-		err = readCtx.Err()
-	}
-	cancel()
+	snapshots, err, readinessErr := b.loadPlacementSnapshots(ctx, apps)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -131,11 +106,7 @@ func (b *PGBackend) ReconcileTargetPlacements(ctx context.Context) error {
 		if err != nil || !validPlacementSnapshot(captured.app, snapshot) {
 			status.Succeeded = false
 			status.Unavailable++
-			for _, set := range picker.sets {
-				for i := range set.entries {
-					set.entries[i].PlacementUnavailable = true
-				}
-			}
+			markPlacementUnavailable(picker)
 			continue
 		}
 		status.Removed += b.applyPlacementSnapshotLocked(picker, snapshot, now)

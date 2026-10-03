@@ -6664,16 +6664,13 @@ haveApp:
 		pick = h.pickForRequest(app, preferredInstanceID, versionKey)
 	}
 	if pick.OK && h.warmTargetNeedsValidation(app, pick.Target, time.Now()) {
-		if validator, ok := h.backend.(liveTargetValidator); ok {
-			live, validateErr := validator.ValidateLiveTarget(r.Context(), app.ID, pick.Target.InstanceID)
-			if validateErr != nil {
-				if h.log != nil {
-					h.log.Warn("gateway: validate idle-aged target", "app_id", app.ID,
-						"instance_id", pick.Target.InstanceID, "err", validateErr)
-				}
-			} else if !live {
-				pick = PickResult{}
-			}
+		var validateErr error
+		pick, validateErr = h.validateIdleTargetPick(r, app, pick, exactDeploymentID, preferredInstanceID, versionKey)
+		if validateErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+				"Target validation unavailable", "the gateway could not verify the current target placement"))
+			h.observe(r, rec.status, app.ID, string(app.Plan), cold, Target{})
+			return
 		}
 	}
 	if exactDeployment && !pick.OK {
@@ -8705,6 +8702,8 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					if h.log != nil {
 						h.log.Warn("gateway: live target reconciliation failed", "app_id", appID, "err", reconcileErr)
 					}
+					h.finishWakePageCycle(ctx, appID, "")
+					return reconcileErr
 				} else if h.backend.HealthyCount(appID) > 0 {
 					h.finishWakePageCycle(ctx, appID, "")
 					return nil

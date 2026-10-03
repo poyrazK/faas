@@ -1014,8 +1014,9 @@ Check the placement repair status's read start/completion, checked apps, removal
 unavailable apps and discarded concurrent reads alongside resident count and
 readiness status. A large/slow backlog can exhaust leases and cause conservative
 refusals. Repair discovers starts only for known picker apps; unknown apps and
-explicitly removed pickers use the existing hydration paths. The legacy loader's
-request/notification reads are still additive and include historical rows.
+explicitly removed pickers use bounded current-state hydration. Normal production
+request/notification paths share the placement and readiness readers; the legacy
+slice hook remains available to integrations but is no longer wired in production.
 Local database/cache and startup/shutdown tests establish these boundaries;
 deployed overflow/reconnect, fleet load/recovery, staging and native VM/network
 acceptance remain required.
@@ -1047,3 +1048,26 @@ observations, reader errors/deadline and retained capacity. Legacy optional
 backends without these readers/verifiers do not establish the production
 guarantee. Native probe/VM behavior and deployed fleet/load/recovery/staging
 qualification remain open.
+
+### Current request and notification hydration
+
+Restart/request reconciliation, RUNNING notifications, idle-aged validation and
+scheduler capacity recovery use current RUNNING placements and complete readiness
+sources before eligibility. These reads share the existing one-second deadline
+and 128-target completeness bound; parked history does not consume that bound.
+Verified absent residents are removed. Missing/partial placement or read failures
+refuse routing and retain resident capacity. Readiness failures keep discovered
+residents unready. This can cause a conservative 503 during store outages.
+
+Concurrent admission, eviction, picker replacement and weight changes discard an
+older read. Caller cancellation does not withdraw another request's cached target,
+and a canceled waiter can leave a coalesced read promptly. Idle validation errors
+return 503 before guest delivery or wake. Successful validation reselects a current
+target in the same admitted deployment; it cannot switch a pinned release.
+An explicit reconciliation can discover a missing cohort beside a healthy one,
+while preserving the current traffic weights.
+
+The optional legacy slice hook remains for integrations and is no longer wired
+for these production paths. Authenticated unpromoted smoke-candidate lookup is
+separate and still reads historical instances. Store/cache tests do not establish
+native guest/probe behavior, deployed performance or release readiness.
