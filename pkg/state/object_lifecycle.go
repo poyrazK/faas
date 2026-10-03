@@ -20,6 +20,8 @@ type ObjectLifecycleStore interface {
 	ClaimObjectLifecycleScan(context.Context, string, string) (ObjectLifecycleScan, error)
 	CheckpointObjectLifecycleScan(context.Context, string, string, string, bool) (ObjectLifecycleScan, error)
 	RetryObjectLifecycleScan(context.Context, string, string) error
+	ListObjectLifecycleMultipartUploads(context.Context, string, string) ([]ObjectMultipartUpload, error)
+	CheckpointObjectLifecycleMultipartUpload(context.Context, string, string, ObjectMultipartUpload) (ObjectLifecycleScan, error)
 }
 
 type ObjectLifecyclePolicy struct {
@@ -30,9 +32,9 @@ type ObjectLifecyclePolicy struct {
 
 type ObjectLifecycleScan struct {
 	api.ObjectLifecycleScan
-	AccountID, AppID, Token, LastKey string                    `json:"-"`
-	Rules                            []api.ObjectLifecycleRule `json:"-"`
-	LeaseUntil, RetryAt              time.Time                 `json:"-"`
+	AccountID, AppID, Token, LastKey, LastUploadID string                    `json:"-"`
+	Rules                                          []api.ObjectLifecycleRule `json:"-"`
+	LeaseUntil, RetryAt                            time.Time                 `json:"-"`
 }
 
 func cloneLifecyclePolicy(p ObjectLifecyclePolicy) ObjectLifecyclePolicy {
@@ -64,7 +66,14 @@ func newLifecyclePolicy(b ObjectBucket, now time.Time) ObjectLifecyclePolicy {
 	return ObjectLifecyclePolicy{ObjectBucketLifecycle: api.ObjectBucketLifecycle{BucketID: b.ID, Rules: []api.ObjectLifecycleRule{}, UpdatedAt: now}, AccountID: b.AccountID, AppID: b.AppID, NextScanAt: now}
 }
 func newLifecycleScan(p ObjectLifecyclePolicy, now time.Time) ObjectLifecycleScan {
-	return ObjectLifecycleScan{ObjectLifecycleScan: api.ObjectLifecycleScan{ID: uuid.NewString(), BucketID: p.BucketID, Revision: p.Revision, State: "scanning", CreatedAt: now, UpdatedAt: now}, AccountID: p.AccountID, AppID: p.AppID, Rules: api.CloneObjectLifecycleRules(p.Rules), RetryAt: now}
+	phase := "multipart"
+	for _, r := range p.Rules {
+		if r.Status == "Enabled" && (r.Expiration != nil || r.NoncurrentVersionExpiration != nil) {
+			phase = "objects"
+			break
+		}
+	}
+	return ObjectLifecycleScan{ObjectLifecycleScan: api.ObjectLifecycleScan{ID: uuid.NewString(), BucketID: p.BucketID, Revision: p.Revision, State: "scanning", Phase: phase, CreatedAt: now, UpdatedAt: now}, AccountID: p.AccountID, AppID: p.AppID, Rules: api.CloneObjectLifecycleRules(p.Rules), RetryAt: now}
 }
 func validLifecycleScanLease(j ObjectLifecycleScan, token string, now time.Time) bool {
 	return j.State == "scanning" && token != "" && j.Token == token && j.LeaseUntil.After(now)
@@ -77,11 +86,17 @@ func claimLifecycleScan(j ObjectLifecycleScan, token string, now time.Time) (Obj
 	return j, nil
 }
 func checkpointLifecycleScan(j ObjectLifecycleScan, token, key string, done bool, now time.Time) (ObjectLifecycleScan, error) {
-	if !validLifecycleScanLease(j, token, now) || done && key != j.LastKey || !done && (!validVersionReferenceText(key, api.MaxObjectS3ListTextBytes) || key <= j.LastKey || j.ScannedKeys >= api.MaxObjectStoragePolicyValue) {
+	if j.Phase != "objects" || !validLifecycleScanLease(j, token, now) || done && key != j.LastKey || !done && (!validVersionReferenceText(key, api.MaxObjectS3ListTextBytes) || key <= j.LastKey || j.ScannedKeys >= api.MaxObjectStoragePolicyValue) {
 		return j, ErrConflict
 	}
 	if done {
 		j.State, j.FinishedAt = "completed", &now
+		for _, r := range j.Rules {
+			if r.Status == "Enabled" && r.AbortIncompleteMultipartDays != nil {
+				j.State, j.FinishedAt, j.Phase = "scanning", nil, "multipart"
+				break
+			}
+		}
 	} else {
 		j.LastKey = key
 		j.ScannedKeys++

@@ -47,10 +47,11 @@ type ObjectMultipartUpload struct {
 	CompletionErrorCode             string
 	CompletionETag                  string
 	CompletionVersionID             string
-	CompletionRecoveryCursor        string    `json:"-"`
-	CompletionVersionsObserved      bool      `json:"-"`
-	CompletionDispatched            bool      `json:"-"`
-	PartURLUnsafeUntil              time.Time `json:"-"`
+	CompletionRecoveryCursor        string                          `json:"-"`
+	CompletionVersionsObserved      bool                            `json:"-"`
+	CompletionDispatched            bool                            `json:"-"`
+	PartURLUnsafeUntil              time.Time                       `json:"-"`
+	LifecycleAbort                  ObjectLifecycleMultipartBinding `json:"-"`
 	State                           string
 	ExpiresAt, CreatedAt, UpdatedAt time.Time
 	LeaseToken                      string

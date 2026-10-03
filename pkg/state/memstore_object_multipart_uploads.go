@@ -45,7 +45,7 @@ func (m *MemStore) ReserveObjectMultipartUpload(_ context.Context, upload Object
 	if count >= limit {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	upload.State, upload.CreatedAt, upload.UpdatedAt, upload.RetryAt = ObjectMultipartInitiating, now, now, now
 	upload.Parts = []api.ObjectMultipartCompletedPart{}
 	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
@@ -100,7 +100,7 @@ func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, b
 
 func (m *MemStore) claimObjectMultipartLocked(account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool, conditions api.ObjectWriteConditions) (ObjectMultipartUpload, error) {
 	upload, ok := m.objectMultipartUploads[id]
-	now := time.Now()
+	now := m.clock()
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket {
 		return ObjectMultipartUpload{}, ErrNotFound
 	}
@@ -165,7 +165,7 @@ func (m *MemStore) ActivateObjectMultipartUpload(_ context.Context, id, token, p
 	upload.State, upload.ProviderUploadID = ObjectMultipartActive, providerID
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
-	upload.UpdatedAt, upload.RetryAt = time.Now().UTC(), time.Now().UTC()
+	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -178,7 +178,7 @@ func (m *MemStore) SetObjectMultipartUploadSize(_ context.Context, id, token str
 		return ErrConflict
 	}
 	upload.SizeBytes = size
-	upload.UpdatedAt = time.Now().UTC()
+	upload.UpdatedAt = m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -193,7 +193,7 @@ func (m *MemStore) FinishObjectMultipartUpload(_ context.Context, id, token, nex
 	}
 	upload.State, upload.LeaseToken, upload.LeaseUntil = next, "", time.Time{}
 	upload.AttemptCount, upload.LastErrorCode = 0, ""
-	upload.UpdatedAt, upload.RetryAt = time.Now().UTC(), time.Now().UTC()
+	upload.UpdatedAt, upload.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = upload
 	return nil
 }
@@ -205,7 +205,7 @@ func (m *MemStore) RetryObjectMultipartUpload(_ context.Context, id, token, code
 	if !ok || token == "" || upload.LeaseToken != token || !validObjectMultipartOperation(upload.State) || !validObjectMultipartRetry(code, delay) {
 		return ErrConflict
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	upload.LeaseToken, upload.LeaseUntil = "", time.Time{}
 	upload.LastErrorCode, upload.UpdatedAt, upload.RetryAt = code, now, now.Add(delay)
 	m.objectMultipartUploads[id] = upload
@@ -218,7 +218,7 @@ func (m *MemStore) DueObjectMultipartUploads(_ context.Context, limit int32) ([]
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
+	now := m.clock()
 	rows := make([]ObjectMultipartUpload, 0)
 	for _, upload := range m.objectMultipartUploads {
 		dueOperation := upload.State == ObjectMultipartInitiating || ObjectMultipartIsCompleting(upload.State) || upload.State == ObjectMultipartAborting

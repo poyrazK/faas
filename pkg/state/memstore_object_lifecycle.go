@@ -160,7 +160,7 @@ func (m *MemStore) CheckpointObjectLifecycleScan(_ context.Context, id, token, k
 	j, err := m.mutateLifecycleScanLocked(id, func(j ObjectLifecycleScan) (ObjectLifecycleScan, error) {
 		return checkpointLifecycleScan(j, token, key, done, m.clock())
 	})
-	if err == nil && done {
+	if err == nil && j.State == "completed" {
 		p := m.objectLifecyclePolicies[j.BucketID]
 		p.NextScanAt = m.clock().Add(api.ObjectLifecycleSweepInterval)
 		m.objectLifecyclePolicies[j.BucketID] = p

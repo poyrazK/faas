@@ -18,9 +18,10 @@ type LifecycleExpirationStore interface {
 }
 
 type LifecycleExpirationService struct {
-	Store         LifecycleExpirationStore
-	Provider      Provider
-	BeforeRequest func(context.Context) error
+	Store           LifecycleExpirationStore
+	Provider        Provider
+	BeforeRequest   func(context.Context) error
+	BeforeAdmission func(context.Context) error
 }
 
 var errLifecycleActionsPending = errors.New("lifecycle key has more actions than one step permits")
@@ -60,6 +61,14 @@ func (s LifecycleExpirationService) Step(ctx context.Context, b state.ObjectBuck
 	if active {
 		return j, state.ErrConflict
 	}
+	if j.Phase == "multipart" {
+		return s.multipartStep(ctx, j)
+	}
+	// An abort-only scan created before the phase migration still starts in
+	// objects. Advance it without requiring provider version-list support.
+	if !lifecycleScanHasObjectActions(j.Rules) {
+		return s.Store.CheckpointObjectLifecycleScan(ctx, j.ID, j.Token, j.LastKey, true)
+	}
 	deletion := DeletionService{Store: s.Store, Provider: s.Provider, BeforeRequest: s.BeforeRequest}
 	key, err := lifecycleNextKey(ctx, deletion, b, j.LastKey)
 	if err != nil {
@@ -76,6 +85,32 @@ func (s LifecycleExpirationService) Step(ctx context.Context, b state.ObjectBuck
 		return j, err
 	}
 	return s.Store.CheckpointObjectLifecycleScan(ctx, j.ID, j.Token, key, false)
+}
+
+func lifecycleScanHasObjectActions(rules []api.ObjectLifecycleRule) bool {
+	for _, r := range rules {
+		if r.Status == "Enabled" && (r.Expiration != nil || r.NoncurrentVersionExpiration != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s LifecycleExpirationService) multipartStep(ctx context.Context, j state.ObjectLifecycleScan) (state.ObjectLifecycleScan, error) {
+	rows, err := s.Store.ListObjectLifecycleMultipartUploads(ctx, j.ID, j.Token)
+	if err != nil {
+		return j, err
+	}
+	if s.BeforeAdmission != nil {
+		if err = s.BeforeAdmission(ctx); err != nil {
+			return j, err
+		}
+	}
+	var candidate state.ObjectMultipartUpload
+	if len(rows) > 0 {
+		candidate = rows[0]
+	}
+	return s.Store.CheckpointObjectLifecycleMultipartUpload(ctx, j.ID, j.Token, candidate)
 }
 
 func lifecycleNextKey(ctx context.Context, s DeletionService, b state.ObjectBucket, last string) (string, error) {

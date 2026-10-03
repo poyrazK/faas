@@ -2702,19 +2702,22 @@ type ObjectDeletion struct {
 }
 
 type ObjectLifecycleScan struct {
-	ID          pgtype.UUID
-	BucketID    pgtype.UUID
-	Revision    int64
-	Rules       []byte
-	State       string
-	LastKey     string
-	ScannedKeys int64
-	LeaseToken  string
-	LeaseUntil  pgtype.Timestamptz
-	RetryAt     pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	FinishedAt  pgtype.Timestamptz
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	Revision       int64
+	Rules          []byte
+	State          string
+	LastKey        string
+	ScannedKeys    int64
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Phase          string
+	LastUploadID   pgtype.UUID
+	ScannedUploads int64
 }
 
 type ObjectStorageAccessGrant struct {
@@ -2877,6 +2880,8 @@ type ObjectStorageMultipartUpload struct {
 	CompletionVersionsObserved bool
 	CompletionDispatched       bool
 	PartUrlUnsafeUntil         pgtype.Timestamptz
+	LifecycleScanID            pgtype.UUID
+	LifecycleBinding           []byte
 }
 
 type ObjectStorageRequestMetric struct {

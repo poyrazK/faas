@@ -5379,7 +5379,16 @@ SELECT s.*,b.account_id,b.app_id FROM object_lifecycle_scans s JOIN object_bucke
 SELECT id FROM object_lifecycle_scans WHERE bucket_id=$1 AND state='scanning';
 
 -- name: ObjectLifecycleScanInsert :exec
-INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5,$5);
+INSERT INTO object_lifecycle_scans(id,bucket_id,revision,rules,retry_at,created_at,updated_at,phase) VALUES($1,$2,$3,$4,$5,$5,$5,$6);
 
 -- name: ObjectLifecycleScanSave :exec
-UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9 WHERE id=$1;
+UPDATE object_lifecycle_scans SET state=$2,last_key=$3,scanned_keys=$4,lease_token=$5,lease_until=$6,retry_at=$7,updated_at=$8,finished_at=$9,phase=$10,last_upload_id=$11,scanned_uploads=$12 WHERE id=$1;
+
+-- name: ObjectLifecycleMultipartList :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
+ORDER BY id LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectLifecycleMultipartAdmit :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=$2,updated_at=$2,lifecycle_scan_id=$3,lifecycle_binding=$4
+WHERE id=$1 AND state='active';

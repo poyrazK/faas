@@ -43,7 +43,12 @@ func (s *server) reconcileObjectLifecycle(ctx context.Context, observe func(stri
 			backend.Provider = nil
 		}
 		recorder := s.deletionService(b, backend.Provider).BeforeRequest
-		svc := objectstorage.LifecycleExpirationService{Store: st, Provider: backend.Provider, BeforeRequest: func(ctx context.Context) error {
+		svc := objectstorage.LifecycleExpirationService{Store: st, Provider: backend.Provider, BeforeAdmission: func(ctx context.Context) error {
+			if !s.objectStorageEnabled() {
+				return objectstorage.ErrUnavailable
+			}
+			return ctx.Err()
+		}, BeforeRequest: func(ctx context.Context) error {
 			if !s.objectStorageEnabled() {
 				return objectstorage.ErrUnavailable
 			}
@@ -58,7 +63,7 @@ func (s *server) reconcileObjectLifecycle(ctx context.Context, observe func(stri
 			observe("lifecycle", outcome)
 		}
 		if err == nil && j.State == "completed" {
-			s.audit.Emit(ctx, "object_storage.lifecycle_scan_completed", &b.AccountID, map[string]any{"bucket_id": b.ID, "scan_id": j.ID, "revision": j.Revision, "scanned_keys": j.ScannedKeys})
+			s.audit.Emit(ctx, "object_storage.lifecycle_scan_completed", &b.AccountID, map[string]any{"bucket_id": b.ID, "scan_id": j.ID, "revision": j.Revision, "scanned_keys": j.ScannedKeys, "scanned_uploads": j.ScannedUploads})
 		}
 	}
 	return nil

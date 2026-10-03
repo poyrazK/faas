@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -46,14 +47,37 @@ type ObjectBucketLifecycle struct {
 }
 
 type ObjectLifecycleScan struct {
-	ID          string     `json:"id"`
-	BucketID    string     `json:"bucket_id"`
-	Revision    int64      `json:"revision"`
-	State       string     `json:"state"`
-	ScannedKeys int64      `json:"scanned_keys"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	ID             string     `json:"id"`
+	BucketID       string     `json:"bucket_id"`
+	Revision       int64      `json:"revision"`
+	State          string     `json:"state"`
+	Phase          string     `json:"phase"`
+	ScannedKeys    int64      `json:"scanned_keys"`
+	ScannedUploads int64      `json:"scanned_uploads"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+}
+
+// ObjectLifecycleMultipartAbortRule selects a normalized rule using the
+// original initiation time. The conservative day boundary matches expiration
+// discovery; callers must recheck it while admitting the durable abort.
+func ObjectLifecycleMultipartAbortRule(rules []ObjectLifecycleRule, key string, initiated, now time.Time) (string, error) {
+	valid, err := NormalizeObjectLifecycleRules(rules)
+	if err != nil || key == "" || len(key) > MaxObjectS3ListTextBytes || !validLifecycleText(key) || initiated.IsZero() || initiated.After(now) {
+		return "", ErrInvalidObjectLifecycle
+	}
+	for _, r := range valid {
+		if r.Status != "Enabled" || r.AbortIncompleteMultipartDays == nil || !strings.HasPrefix(key, r.Filter.Prefix) {
+			continue
+		}
+		v := initiated.UTC().AddDate(0, 0, int(*r.AbortIncompleteMultipartDays))
+		deadline := time.Date(v.Year(), v.Month(), v.Day()+1, 0, 0, 0, 0, time.UTC)
+		if !now.Before(deadline) {
+			return r.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // NormalizeObjectLifecycleRules makes a detached, deterministic configuration.

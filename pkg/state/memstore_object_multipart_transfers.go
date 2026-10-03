@@ -34,7 +34,7 @@ func (m *MemStore) SettleObjectMultipartPart(_ context.Context, account, id stri
 
 func (m *MemStore) multipartTransfersPendingLocked(id string) bool {
 	for _, transfer := range m.objectMultipartTransfers[id] {
-		if transfer.token != "" && transfer.unsafeUntil.After(time.Now()) {
+		if transfer.token != "" && transfer.unsafeUntil.After(m.clock()) {
 			return true
 		}
 	}
@@ -84,7 +84,7 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, tok
 	}
 	u.State, u.LeaseToken, u.LeaseUntil = ObjectMultipartAborted, "", time.Time{}
 	u.AttemptCount, u.LastErrorCode = 0, ""
-	u.UpdatedAt, u.RetryAt = time.Now().UTC(), time.Now().UTC()
+	u.UpdatedAt, u.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = u
 	for part, transfer := range m.objectMultipartTransfers[id] {
 		if transfer.tracked {
@@ -108,7 +108,7 @@ func (m *MemStore) RejectObjectMultipartCompletion(_ context.Context, id, token,
 	u.State, u.CompletionErrorCode = ObjectMultipartAborting, code
 	u.LeaseToken, u.LeaseUntil = "", time.Time{}
 	u.AttemptCount, u.LastErrorCode = 0, code
-	u.UpdatedAt, u.RetryAt = time.Now().UTC(), time.Now().UTC()
+	u.UpdatedAt, u.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[id] = u
 	return nil
 }

@@ -8090,8 +8090,11 @@ CREATE TABLE public.object_storage_multipart_uploads (
     completion_versions_observed boolean DEFAULT false NOT NULL,
     completion_dispatched boolean DEFAULT false NOT NULL,
     part_url_unsafe_until timestamp with time zone,
+    lifecycle_scan_id uuid,
+    lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
     CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
     CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
@@ -23655,15 +23658,19 @@ CREATE FUNCTION public.protect_object_lifecycle_scan() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF TG_OP='UPDATE' THEN
-  IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.revision<>OLD.revision
-   OR NEW.rules<>OLD.rules OR NEW.created_at<>OLD.created_at
-   OR NEW.scanned_keys<OLD.scanned_keys OR NEW.scanned_keys>OLD.scanned_keys+1
-   OR (NEW.last_key IS DISTINCT FROM OLD.last_key AND (NEW.last_key COLLATE "C"<=OLD.last_key COLLATE "C" OR NEW.scanned_keys<>OLD.scanned_keys+1))
-   OR (NEW.last_key=OLD.last_key AND NEW.scanned_keys<>OLD.scanned_keys)
-   OR (OLD.state<>'scanning' AND NEW IS DISTINCT FROM OLD) THEN
-    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle scan identity and progress cannot be rewritten';
-  END IF;
+ IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.revision<>OLD.revision
+  OR NEW.rules<>OLD.rules OR NEW.created_at<>OLD.created_at
+  OR NEW.scanned_keys<OLD.scanned_keys OR NEW.scanned_keys>OLD.scanned_keys+1
+  OR (NEW.last_key IS DISTINCT FROM OLD.last_key AND (OLD.phase<>'objects' OR NEW.last_key COLLATE "C"<=OLD.last_key COLLATE "C" OR NEW.scanned_keys<>OLD.scanned_keys+1))
+  OR (NEW.last_key=OLD.last_key AND NEW.scanned_keys<>OLD.scanned_keys)
+  OR NEW.scanned_uploads<OLD.scanned_uploads OR NEW.scanned_uploads>OLD.scanned_uploads+1
+  OR (NEW.last_upload_id IS DISTINCT FROM OLD.last_upload_id AND (OLD.phase<>'multipart' OR NEW.last_upload_id IS NULL OR NEW.last_upload_id<=OLD.last_upload_id OR NEW.scanned_uploads<>OLD.scanned_uploads+1))
+  OR (NEW.last_upload_id IS NOT DISTINCT FROM OLD.last_upload_id AND NEW.scanned_uploads<>OLD.scanned_uploads)
+  OR (NEW.phase<>OLD.phase AND (OLD.phase<>'objects' OR NEW.phase<>'multipart'
+   OR NEW.last_key<>OLD.last_key OR NEW.scanned_keys<>OLD.scanned_keys OR NEW.scanned_uploads<>OLD.scanned_uploads
+   OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(OLD.rules) r WHERE r->>'status'='Enabled' AND r ? 'abort_incomplete_multipart_days')))
+  OR (OLD.state<>'scanning' AND NEW IS DISTINCT FROM OLD) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle scan identity and progress cannot be rewritten';
  END IF;
  RETURN NEW;
 END $$;
@@ -23702,6 +23709,10 @@ CREATE TABLE public.object_lifecycle_scans (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     finished_at timestamp with time zone,
+    phase text DEFAULT 'objects'::text NOT NULL,
+    last_upload_id uuid,
+    scanned_uploads bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT object_lifecycle_multipart_progress CHECK ((((last_upload_id IS NULL) = (scanned_uploads = 0)) AND ((phase = 'multipart'::text) OR (scanned_uploads = 0)))),
     CONSTRAINT object_lifecycle_scans_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_lifecycle_scans_check1 CHECK (((state = 'scanning'::text) = (finished_at IS NULL))),
     CONSTRAINT object_lifecycle_scans_check2 CHECK (((state = 'scanning'::text) OR (lease_until IS NULL))),
@@ -23709,9 +23720,11 @@ CREATE TABLE public.object_lifecycle_scans (
     CONSTRAINT object_lifecycle_scans_check4 CHECK (((finished_at IS NULL) OR (finished_at >= created_at))),
     CONSTRAINT object_lifecycle_scans_last_key_check CHECK ((octet_length(last_key) <= 1024)),
     CONSTRAINT object_lifecycle_scans_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_lifecycle_scans_phase_check CHECK ((phase = ANY (ARRAY['objects'::text, 'multipart'::text]))),
     CONSTRAINT object_lifecycle_scans_revision_check CHECK ((revision > 0)),
     CONSTRAINT object_lifecycle_scans_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 1000)))),
     CONSTRAINT object_lifecycle_scans_scanned_keys_check CHECK ((scanned_keys >= 0)),
+    CONSTRAINT object_lifecycle_scans_scanned_uploads_check CHECK ((scanned_uploads >= 0)),
     CONSTRAINT object_lifecycle_scans_state_check CHECK ((state = ANY (ARRAY['scanning'::text, 'completed'::text, 'cancelled'::text])))
 );
 
@@ -23774,6 +23787,7 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 ALTER TABLE ONLY public.object_lifecycle_scans
     ADD CONSTRAINT object_lifecycle_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
 
 --
 -- Name: fence_object_lifecycle_deletion(); Type: FUNCTION; Schema: public; Owner: -
@@ -23857,3 +23871,80 @@ END $$;
 --
 
 CREATE TRIGGER object_multipart_part_url_deadline_protected BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_part_url_deadline();
+
+
+--
+-- Name: fence_object_lifecycle_multipart(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_lifecycle_multipart() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE aid uuid; allowed boolean;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.lifecycle_scan_id IS NOT NULL OR NEW.lifecycle_binding<>'{}' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission requires an existing active upload';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF OLD.lifecycle_scan_id IS NOT NULL THEN
+  IF NEW.lifecycle_scan_id IS DISTINCT FROM OLD.lifecycle_scan_id OR NEW.lifecycle_binding<>OLD.lifecycle_binding
+   OR NEW.id<>OLD.id OR NEW.account_id<>OLD.account_id OR NEW.app_id<>OLD.app_id OR NEW.bucket_id<>OLD.bucket_id
+   OR NEW.object_key<>OLD.object_key OR NEW.provider_upload_id<>OLD.provider_upload_id OR NEW.created_at<>OLD.created_at THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission identity is immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.lifecycle_scan_id IS NULL THEN RETURN NEW; END IF;
+ IF OLD.state<>'active' OR NEW.state<>'aborting' OR NEW.lease_until IS NOT NULL
+  OR OLD.lease_until>clock_timestamp() OR NEW.provider_upload_id<>OLD.provider_upload_id OR NEW.created_at<>OLD.created_at
+  OR NEW.id<>OLD.id OR NEW.account_id<>OLD.account_id OR NEW.app_id<>OLD.app_id OR NEW.bucket_id<>OLD.bucket_id OR NEW.object_key<>OLD.object_key
+  OR (NEW.lifecycle_binding->>'expected_created_at')::timestamptz<>OLD.created_at THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission requires the unchanged active upload';
+ END IF;
+ -- The store takes these locks before the upload row. Direct SQL callers must
+ -- follow the same bucket/account/upload ordering to avoid deadlocks.
+ SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id AND state='ready' FOR NO KEY UPDATE;
+ IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission requires an owned ready bucket'; END IF;
+ PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+ SELECT EXISTS(
+  SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
+   LATERAL jsonb_array_elements(s.rules) r
+  WHERE s.id=NEW.lifecycle_scan_id AND s.bucket_id=NEW.bucket_id AND s.revision=p.revision AND s.state='scanning' AND s.phase='multipart'
+   AND s.created_at>=NEW.created_at AND (s.last_upload_id IS NULL OR NEW.id>s.last_upload_id)
+   AND s.lease_token=NEW.lifecycle_binding->>'scan_token' AND s.lease_until>clock_timestamp()
+   AND r->>'id'=NEW.lifecycle_binding->>'rule_id' AND r->>'status'='Enabled'
+   AND left(NEW.object_key,char_length(coalesce(r->'filter'->>'prefix','')))=coalesce(r->'filter'->>'prefix','')
+   AND coalesce(r->'filter'->'tags','{}')='{}' AND (r->>'abort_incomplete_multipart_days')::bigint>0
+   -- Compare elapsed UTC days instead of constructing an out-of-range date
+   -- for an otherwise valid large days value.
+   AND (clock_timestamp() AT TIME ZONE 'UTC')::date-(NEW.created_at AT TIME ZONE 'UTC')::date > (r->>'abort_incomplete_multipart_days')::bigint
+ ) INTO allowed;
+ IF NOT allowed THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lifecycle_multipart_fenced',MESSAGE='A live matching lifecycle scan and aged upload are required before admission';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_lifecycle_multipart_discovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_lifecycle_multipart_discovery ON public.object_storage_multipart_uploads USING btree (bucket_id, id) WHERE (state = 'active'::text);
+
+
+--
+-- Name: object_storage_multipart_uploads object_lifecycle_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lifecycle_multipart_fence BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_lifecycle_multipart();
+
+
+--
+-- Name: object_storage_multipart_uploads object_storage_multipart_uploads_lifecycle_scan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_multipart_uploads
+    ADD CONSTRAINT object_storage_multipart_uploads_lifecycle_scan_id_fkey FOREIGN KEY (lifecycle_scan_id) REFERENCES public.object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;

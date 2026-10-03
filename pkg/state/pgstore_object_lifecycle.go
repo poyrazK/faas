@@ -56,7 +56,7 @@ func readLifecycleScan(ctx context.Context, db sqlc.DBTX, id string) (ObjectLife
 	if err != nil {
 		return ObjectLifecycleScan{}, err
 	}
-	j := ObjectLifecycleScan{ObjectLifecycleScan: api.ObjectLifecycleScan{ID: id, BucketID: pgUUIDString(r.BucketID), Revision: r.Revision, State: r.State, ScannedKeys: r.ScannedKeys, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LastKey: r.LastKey, Rules: rules, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time}
+	j := ObjectLifecycleScan{ObjectLifecycleScan: api.ObjectLifecycleScan{ID: id, BucketID: pgUUIDString(r.BucketID), Revision: r.Revision, State: r.State, Phase: r.Phase, ScannedKeys: r.ScannedKeys, ScannedUploads: r.ScannedUploads, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}, AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Token: r.LeaseToken, LastKey: r.LastKey, LastUploadID: pgUUIDString(r.LastUploadID), Rules: rules, LeaseUntil: r.LeaseUntil.Time, RetryAt: r.RetryAt.Time}
 	if r.FinishedAt.Valid {
 		j.FinishedAt = &r.FinishedAt.Time
 	}
@@ -79,7 +79,7 @@ func saveLifecycleScan(ctx context.Context, db sqlc.DBTX, j ObjectLifecycleScan)
 	if j.FinishedAt != nil {
 		finished = objectUsageTime(*j.FinishedAt)
 	}
-	return mapErr(sqlc.New().ObjectLifecycleScanSave(ctx, db, sqlc.ObjectLifecycleScanSaveParams{ID: mustPgUUID(j.ID), State: j.State, LastKey: j.LastKey, ScannedKeys: j.ScannedKeys, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), UpdatedAt: objectUsageTime(j.UpdatedAt), FinishedAt: finished}))
+	return mapErr(sqlc.New().ObjectLifecycleScanSave(ctx, db, sqlc.ObjectLifecycleScanSaveParams{ID: mustPgUUID(j.ID), State: j.State, Phase: j.Phase, LastKey: j.LastKey, ScannedKeys: j.ScannedKeys, LastUploadID: mustPgUUID(j.LastUploadID), ScannedUploads: j.ScannedUploads, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), UpdatedAt: objectUsageTime(j.UpdatedAt), FinishedAt: finished}))
 }
 
 // Bucket then account locks follow the existing storage mutation lock order.
@@ -198,7 +198,7 @@ func (s *PgStore) StartObjectLifecycleScan(ctx context.Context, account, app, bu
 		if err != nil {
 			return p, fmt.Errorf("encode lifecycle scan rules: %w", err)
 		}
-		return p, mapErr(sqlc.New().ObjectLifecycleScanInsert(ctx, tx, sqlc.ObjectLifecycleScanInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(bucket), Revision: j.Revision, Rules: raw, RetryAt: objectUsageTime(now)}))
+		return p, mapErr(sqlc.New().ObjectLifecycleScanInsert(ctx, tx, sqlc.ObjectLifecycleScanInsertParams{ID: mustPgUUID(j.ID), BucketID: mustPgUUID(bucket), Revision: j.Revision, Rules: raw, RetryAt: objectUsageTime(now), Phase: j.Phase}))
 	})
 	return j, err
 }

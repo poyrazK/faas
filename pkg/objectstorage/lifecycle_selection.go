@@ -88,14 +88,12 @@ func lifecycleDayDeadline(base time.Time, days int32) time.Time {
 }
 
 func LifecycleMultipartAbortDue(rules []api.ObjectLifecycleRule, key string, initiated, now time.Time) (LifecycleDecision, error) {
-	valid, err := api.NormalizeObjectLifecycleRules(rules)
-	if err != nil || !ValidKey(key) || initiated.IsZero() || initiated.After(now) {
+	id, err := api.ObjectLifecycleMultipartAbortRule(rules, key, initiated, now)
+	if err != nil {
 		return LifecycleDecision{}, ErrInvalid
 	}
-	for _, r := range valid {
-		if r.Status == "Enabled" && r.AbortIncompleteMultipartDays != nil && lifecycleFilterMatches(r.Filter, key, nil) && !now.Before(lifecycleDayDeadline(initiated, *r.AbortIncompleteMultipartDays)) {
-			return LifecycleDecision{Kind: "abort_multipart", RuleID: r.ID}, nil
-		}
+	if id != "" {
+		return LifecycleDecision{Kind: "abort_multipart", RuleID: id}, nil
 	}
 	return LifecycleDecision{}, nil
 }

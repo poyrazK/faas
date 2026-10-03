@@ -7855,6 +7855,7 @@ const (
 	MaxObjectLifecycleTokenBytes             = 128
 	ObjectLifecycleBatch                     = 32
 	ObjectLifecycleDiscoveryPageSize   int32 = 1
+	ObjectLifecycleMultipartPageSize   int32 = 32
 	ObjectLifecycleActionsPerStep            = 32
 	ObjectLifecycleLease                     = 2 * time.Minute
 	ObjectLifecycleWorkerTimeout             = 30 * time.Second

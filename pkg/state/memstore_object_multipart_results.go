@@ -15,7 +15,7 @@ func (m *MemStore) DispatchObjectMultipartCompletion(_ context.Context, u Object
 		return ErrConflict
 	}
 	old.CompletionDispatched = true
-	old.UpdatedAt = time.Now().UTC()
+	old.UpdatedAt = m.clock().UTC()
 	m.objectMultipartUploads[u.ID] = old
 	return nil
 }
@@ -39,7 +39,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	old.CompletionVersionsObserved = old.CompletionVersionsObserved || result.VersionsObserved || result.ProviderVersionID != "" && result.ProviderVersionID != "null"
 	old.State, old.LeaseToken, old.LeaseUntil = ObjectMultipartCompleted, "", time.Time{}
 	old.AttemptCount, old.LastErrorCode = 0, ""
-	old.UpdatedAt, old.RetryAt = time.Now().UTC(), time.Now().UTC()
+	old.UpdatedAt, old.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[u.ID] = old
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
 	return old, nil
@@ -58,7 +58,7 @@ func (m *MemStore) RetryObjectMultipartCompletion(_ context.Context, u ObjectMul
 	old.CompletionRecoveryCursor = result.RecoveryCursor
 	old.CompletionVersionsObserved = old.CompletionVersionsObserved || result.VersionsObserved
 	old.LeaseToken, old.LeaseUntil = "", time.Time{}
-	old.LastErrorCode, old.UpdatedAt, old.RetryAt = code, time.Now().UTC(), time.Now().UTC().Add(delay)
+	old.LastErrorCode, old.UpdatedAt, old.RetryAt = code, m.clock().UTC(), m.clock().UTC().Add(delay)
 	m.objectMultipartUploads[u.ID] = old
 	return nil
 }
@@ -75,7 +75,7 @@ func (m *MemStore) RejectObjectMultipartCompletionResult(_ context.Context, u Ob
 	old.State, old.CompletionErrorCode = ObjectMultipartAborting, code
 	old.LeaseToken, old.LeaseUntil = "", time.Time{}
 	old.AttemptCount, old.LastErrorCode = 0, code
-	old.UpdatedAt, old.RetryAt = time.Now().UTC(), time.Now().UTC()
+	old.UpdatedAt, old.RetryAt = m.clock().UTC(), m.clock().UTC()
 	m.objectMultipartUploads[u.ID] = old
 	return nil
 }

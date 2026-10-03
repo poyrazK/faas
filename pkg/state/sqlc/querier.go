@@ -987,6 +987,8 @@ type Querier interface {
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
+	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
 	ObjectLifecyclePolicyGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectLifecyclePolicyGetRow, error)
 	ObjectLifecyclePolicySave(ctx context.Context, db DBTX, arg ObjectLifecyclePolicySaveParams) error

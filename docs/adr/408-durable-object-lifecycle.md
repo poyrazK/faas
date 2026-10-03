@@ -21,9 +21,9 @@ Transitions and unsupported directives must fail explicitly.
 The foundation supplies internal validated rules, eligibility calculations,
 and memory/PostgreSQL scan persistence. The expiration service now binds actions
 to the deletion journal and dispatches through the existing S3 adapter. A durable
-expiration worker is wired into apid's recovery loop. Customer
-surfaces and rule-driven multipart cleanup remain required
-before this ADR becomes Accepted. A completed scan records discovery progress;
+expiration worker and rule-driven multipart admission are wired into apid's
+recovery loop. Customer surfaces remain required before this ADR becomes
+Accepted. A completed scan records discovery progress;
 it is never proof of deletion or reclaimed capacity.
 
 Scans snapshot normalized rules and their revision. Only one scan per bucket
@@ -74,6 +74,33 @@ dispatch. Deletion acknowledgments never
 refund storage; verified complete inventories remain authoritative. Multipart
 cleanup must reuse existing durable abort and completion fences.
 
+Scans persist object and multipart phases separately. Mixed policies finish
+object discovery before advancing to multipart discovery; abort-only policies
+start with multipart discovery without listing provider versions. Older
+abort-only scans advance their initial object phase without provider requests.
+Multipart discovery reads at most 32 owned active sessions in UUID order,
+excluding sessions created after the scan's immutable start time. Each step
+admits or skips one session and commits its cursor in the same transaction.
+An empty phase completes discovery, even when admitted aborts still need
+provider recovery. Initiating sessions which become active behind the cursor
+are eligible for a subsequent sweep.
+
+Admission rechecks the live scan lease, current policy revision, prefix, age
+and exact owned session, native upload ID and original session creation time.
+It atomically changes an eligible active session to aborting and stores an
+immutable private scan/rule/identity binding. Completion admitted first wins;
+late part admission and URL publication fail once lifecycle admits the abort.
+Neither admission nor discovery completion releases quota. Existing multipart
+recovery owns abort, drain and verification, independently of later rule removal
+or disabled S3 ingress. Lifecycle manages Gregale-owned sessions; discovery of
+provider-only orphan uploads remains outside this scan.
+
+PostgreSQL completion dispatch, finish, retry and rejection all lock bucket,
+then account, then upload, matching lifecycle/configuration/inventory ordering.
+A deterministic contested-bucket regression reproduced a deadlock in all four
+paths before this correction. Memory multipart operations share the store clock
+with lifecycle admission and recovery.
+
 Fixed-size control-plane multipart signing also participates in the abort
 fence, with a five-minute default URL lifetime and a fifteen-minute maximum.
 Before publishing a provider URL, atomically recheck its owned session,
@@ -98,7 +125,8 @@ proof and reclamation remain separate outstanding work.
 
 All limits live in pkg/api/limits.go: 1,000 rules, 255 Unicode characters per
 ID, a 5 MiB normalized document, ten portable tags, up to 100 retained newer
-noncurrent versions, a 32-policy batch, one key and 32 new actions per step,
+noncurrent versions, a 32-policy batch, one key and 32 new object actions per step,
+a 32-session multipart discovery page and one session checkpoint per step,
 two-minute leases, 30-second operations and retries, five-second claim release,
 and hourly sweeps. Rules and pointer/map fields are detached at
 every memory-store boundary. PostgreSQL guards immutable scan identity,
@@ -170,6 +198,24 @@ temporary disk use while retaining all checks. All four SQLC files match isolate
 generation, and the three changed schema sections match a fresh full migration
 run. Formatting, encoding, shell quoting, ADR uniqueness, runbook SQL and Git
 whitespace checks passed. Real provider tests were excluded as requested.
+
+Rule-driven multipart acceptance passed local memory/PostgreSQL race tests for
+tenant and immutable-identity checks, competing admission, bounded discovery,
+the scan cutoff, completion winning admission and durable mixed-phase progress.
+S3 SDK initiation and part writes through the gateway feed PostgreSQL lifecycle
+admission and the existing S3 HTTP abort executor. Tests reconstruct the owner
+between steps, remove rules, disable new ingress, lose both initial abort
+responses, retain quota while parts remain, verify NoSuchUpload and replay
+terminal history without another provider request. Migration acceptance covers
+an existing object-phase scan, admission/identity/progress guards, recovery after
+rule replacement, refusal to erase history and empty rollback/reapply. The four
+deterministic completion lock regressions pass after reproducing deadlocks
+before the fix. Existing multipart, lifecycle worker and daemon regressions
+passed; repaired test fixtures have separate final acceptance logs. Go 1.25.13
+race checks and pinned golangci-lint 2.4.0 passed with zero changed-line issues.
+SQLC's four files match isolated generation and seven changed schema sections
+match the fully migrated PostgreSQL schema. Customer routes and clients remain
+open; no real provider was used.
 
 Protocol references:
 [Lifecycle configuration elements](https://docs.aws.amazon.com/AmazonS3/latest/userguide/intro-lifecycle-rules.html),

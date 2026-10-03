@@ -18,7 +18,7 @@ func (m *MemStore) AdmitObjectMultipartPart(_ context.Context, account, bucket, 
 }
 
 func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	if !validMultipartCapacityUpload(m.objectMultipartUploads[id], account, bucket, false, now) || part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
@@ -82,7 +82,7 @@ func (m *MemStore) AdmitObjectMultipartCompletion(_ context.Context, account, bu
 }
 
 func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key string, size int64, p api.ObjectStoragePolicy, writeID string) error {
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	upload := m.objectMultipartUploads[id]
 	if !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {
 		return ErrConflict

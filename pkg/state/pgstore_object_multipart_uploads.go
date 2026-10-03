@@ -33,6 +33,11 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 	if err := json.Unmarshal(row.CompletionParts, &upload.Parts); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
+	if row.LifecycleScanID.Valid {
+		if err := json.Unmarshal(row.LifecycleBinding, &upload.LifecycleAbort); err != nil {
+			return ObjectMultipartUpload{}, err
+		}
+	}
 	if upload.Parts == nil {
 		upload.Parts = []api.ObjectMultipartCompletedPart{}
 	}
