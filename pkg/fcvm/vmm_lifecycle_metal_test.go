@@ -1,5 +1,6 @@
 //go:build metal
 
+// adr: 138
 // Lifecycle failure taxonomy metal tests (M-2 commit 11, ADR-138).
 //
 // Each test boots a real firecracker guest whose /init is shaped to
