@@ -92,7 +92,7 @@ func (m *Manager) resolveBackingFile(key string) (string, error) {
 	}
 	path, local, err := resolver.LocalPath(key)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolve %q: %v", ErrSnapshotBackingUnverified, key, err)
+		return "", fmt.Errorf("%w: resolve %q: %w", ErrSnapshotBackingUnverified, key, err)
 	}
 	if !local {
 		return "", fmt.Errorf("%w: %q is not cached locally", ErrSnapshotBackingUnverified, key)
@@ -105,7 +105,7 @@ func (m *Manager) resolveBackingFile(key string) (string, error) {
 func (m *Manager) fileDigest(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("%w: stat %s: %v", ErrSnapshotBackingUnverified, path, err)
+		return "", fmt.Errorf("%w: stat %s: %w", ErrSnapshotBackingUnverified, path, err)
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -121,12 +121,12 @@ func (m *Manager) fileDigest(path string) (string, error) {
 
 	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("%w: open %s: %v", ErrSnapshotBackingUnverified, path, err)
+		return "", fmt.Errorf("%w: open %s: %w", ErrSnapshotBackingUnverified, path, err)
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("%w: hash %s: %v", ErrSnapshotBackingUnverified, path, err)
+		return "", fmt.Errorf("%w: hash %s: %w", ErrSnapshotBackingUnverified, path, err)
 	}
 	digest := "sha256:" + hex.EncodeToString(h.Sum(nil))
 	m.backingMu.Lock()
@@ -248,7 +248,7 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	}
 	rc, err := m.storage.Get(ctx, key)
 	if err != nil {
-		return fmt.Errorf("%w: read %s: %v", ErrSnapshotBackingUnverified, key, err)
+		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
 	}
 	var recorded BackingIdentity
 	decodeErr := json.NewDecoder(io.LimitReader(rc, 4096)).Decode(&recorded)

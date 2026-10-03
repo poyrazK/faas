@@ -24,7 +24,7 @@ type backingFixture struct {
 	dir          string
 }
 
-func newBackingFixture(t *testing.T) backingFixture {
+func newBackingFixture(ctx context.Context, t *testing.T) backingFixture {
 	t.Helper()
 	dir := t.TempDir()
 	kernel := filepath.Join(dir, "vmlinux")
@@ -41,7 +41,7 @@ func newBackingFixture(t *testing.T) backingFixture {
 	}
 	// A storage-backed Manager also enforces the base scan gate (#299).
 	clean := []byte(`{"image":"test","findings":{"CRITICAL":0}}`)
-	if err := backend.Put(context.Background(), wire.ScanKeyForBaseKey(base), bytes.NewReader(clean)); err != nil {
+	if err := backend.Put(ctx, wire.ScanKeyForBaseKey(base), bytes.NewReader(clean)); err != nil {
 		t.Fatal(err)
 	}
 	vmm := &fakeVMM{}
@@ -66,18 +66,18 @@ func replaceFile(t *testing.T, path, content string) {
 	}
 }
 
-func (f backingFixture) capture(t *testing.T, memKey string) *Snapshot {
+func (f backingFixture) capture(ctx context.Context, t *testing.T, memKey string) *Snapshot {
 	t.Helper()
 	f.m.rememberInstanceBacking("i", f.base)
-	f.m.writeSnapshotBacking(context.Background(), "i", memKey)
+	f.m.writeSnapshotBacking(ctx, "i", memKey)
 	return &Snapshot{FCVersion: testFCVersion, StorageKey: memKey, VMStatePath: "/snap/state"}
 }
 
 func TestVerifySnapshotBacking(t *testing.T) {
 	ctx := context.Background()
 	t.Run("same images restore", func(t *testing.T) {
-		f := newBackingFixture(t)
-		snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
+		f := newBackingFixture(ctx, t)
+		snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
 		if err := f.m.verifySnapshotBacking(ctx, snap, f.base); err != nil {
 			t.Fatalf("verify = %v, want nil", err)
 		}
@@ -85,24 +85,24 @@ func TestVerifySnapshotBacking(t *testing.T) {
 	t.Run("identical content under a new inode restores", func(t *testing.T) {
 		// Identity is content, so another node's copy of the same image
 		// (or a refresh that re-downloads identical bytes) still restores.
-		f := newBackingFixture(t)
-		snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
+		f := newBackingFixture(ctx, t)
+		snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
 		replaceFile(t, f.base, "base-layout-a")
 		if err := f.m.verifySnapshotBacking(ctx, snap, f.base); err != nil {
 			t.Fatalf("verify = %v, want nil", err)
 		}
 	})
 	t.Run("replaced base is refused", func(t *testing.T) {
-		f := newBackingFixture(t)
-		snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
+		f := newBackingFixture(ctx, t)
+		snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
 		replaceFile(t, f.base, "base-layout-b")
 		if err := f.m.verifySnapshotBacking(ctx, snap, f.base); !errors.Is(err, ErrSnapshotBackingChanged) {
 			t.Fatalf("verify = %v, want ErrSnapshotBackingChanged", err)
 		}
 	})
 	t.Run("replaced kernel is refused", func(t *testing.T) {
-		f := newBackingFixture(t)
-		snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
+		f := newBackingFixture(ctx, t)
+		snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
 		replaceFile(t, f.kernel, "kernel-v2")
 		if err := f.m.verifySnapshotBacking(ctx, snap, f.base); !errors.Is(err, ErrSnapshotBackingChanged) {
 			t.Fatalf("verify = %v, want ErrSnapshotBackingChanged", err)
@@ -110,14 +110,14 @@ func TestVerifySnapshotBacking(t *testing.T) {
 	})
 	t.Run("capture without identity is refused", func(t *testing.T) {
 		// Every snapshot taken before ADR-510 looks like this.
-		f := newBackingFixture(t)
+		f := newBackingFixture(ctx, t)
 		snap := &Snapshot{FCVersion: testFCVersion, StorageKey: "snap/d1/captures/legacy/v2/mem"}
 		if err := f.m.verifySnapshotBacking(ctx, snap, f.base); !errors.Is(err, ErrSnapshotBackingUnverified) {
 			t.Fatalf("verify = %v, want ErrSnapshotBackingUnverified", err)
 		}
 	})
 	t.Run("corrupt identity is refused", func(t *testing.T) {
-		f := newBackingFixture(t)
+		f := newBackingFixture(ctx, t)
 		if err := f.m.storage.Put(ctx, "snap/d1/captures/c1/v2/backing", bytes.NewReader([]byte(`{"version":1}`))); err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +137,8 @@ func TestVerifySnapshotBacking(t *testing.T) {
 // The digest memo is keyed by (device, inode, size), never mtime: the cache's
 // LRU touch rewrites mtime on every read and must not force a re-hash.
 func TestFileDigestMemoIgnoresMtimeButNotReplacement(t *testing.T) {
-	f := newBackingFixture(t)
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
 	first, err := f.m.fileDigest(f.base)
 	if err != nil {
 		t.Fatal(err)
@@ -160,10 +161,11 @@ func TestFileDigestMemoIgnoresMtimeButNotReplacement(t *testing.T) {
 // what corrupts the guest. The wake cold-boots instead (schedd then marks the
 // snapshot stale because the completed method is cold_boot).
 func TestWakeRefusesRestoreOntoChangedBase(t *testing.T) {
-	f := newBackingFixture(t)
-	snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
+	snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
 	replaceFile(t, f.base, "base-layout-b")
-	inst, err := f.m.Wake(context.Background(), WakeRequest{
+	inst, err := f.m.Wake(ctx, WakeRequest{
 		Instance: "restore-A", BaseKey: f.base, LayerKey: filepath.Join(f.dir, "layer.ext4"),
 		VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby, Snapshot: snap,
 	})
@@ -181,9 +183,10 @@ func TestWakeRefusesRestoreOntoChangedBase(t *testing.T) {
 }
 
 func TestWakeRestoresOntoUnchangedBase(t *testing.T) {
-	f := newBackingFixture(t)
-	snap := f.capture(t, "snap/d1/captures/c1/v2/mem")
-	inst, err := f.m.Wake(context.Background(), WakeRequest{
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
+	snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
+	inst, err := f.m.Wake(ctx, WakeRequest{
 		Instance: "restore-A", BaseKey: f.base, LayerKey: filepath.Join(f.dir, "layer.ext4"),
 		VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby, Snapshot: snap,
 	})
@@ -198,9 +201,10 @@ func TestWakeRestoresOntoUnchangedBase(t *testing.T) {
 // vmmd primes digests at startup so the first restore does not hash the
 // base in its wake path.
 func TestPrimeBackingDigestsIdentifiesKernelAndConfiguredBases(t *testing.T) {
-	f := newBackingFixture(t)
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
 	f.m.WithBaseGenerations(map[string]string{f.base: "ghcr.io/example/runner@sha256:1"})
-	f.m.PrimeBackingDigests(context.Background())
+	f.m.PrimeBackingDigests(ctx)
 	f.m.backingMu.Lock()
 	primed := len(f.m.backingDigests)
 	f.m.backingMu.Unlock()
