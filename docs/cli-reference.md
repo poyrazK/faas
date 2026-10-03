@@ -579,12 +579,14 @@ Manage transactional PostgreSQL outbox sources (internal)
 
 Register a fixed app destination
 
-`gregale commit add --name <NAME> --operation-policy <NAME>`
+`gregale commit add --name <NAME> --operation-policy <NAME> [--contract-version <VERSION>] [--allow-tenant-selection]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
-| `--operation-policy <NAME>` | account-scoped queue policy | required |
+| `--operation-policy <NAME>` | managed Operations queue policy | required |
+| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` |
+| `--allow-tenant-selection` | grant version 2 account-owner customer selection |  |
 
 ### commit connection
 
@@ -1743,9 +1745,26 @@ Show details of a workflow run
 
 List steps for a workflow run
 
+### workflows attempts
+
+List execution attempts for a workflow step, including managed effect delivery
+status when the step returned webhook effects
+
 ### workflows cancel
 
 Cancel an active workflow run
+
+### workflows retry
+
+Retry a failed or dead HTTP step in the same workflow run when no other failure,
+active step, cancellation, or completed downstream work makes resumption unsafe.
+The step keeps its persisted input and attempt history; skipped dependent steps
+are reopened for normal DAG evaluation. Each manual retry grants one dispatch
+and does not reset the manifest's automatic retry budget.
+
+```sh
+gregale workflows retry <run_id> <step_name>
+```
 
 ### workflows events
 
@@ -3610,7 +3629,7 @@ gregale operations start-job --policy imports --key '"customer:acme:import"' nig
 
 ### operations get
 
-Inspect operation state and committed result
+Inspect operation state, committed result, and effect delivery status
 
 `gregale operations get [--self] <id>`
 

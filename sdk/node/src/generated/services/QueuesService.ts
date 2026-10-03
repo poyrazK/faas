@@ -7,6 +7,7 @@ import type { CommitBlockedEventsResponse } from '../models/CommitBlockedEventsR
 import type { CommitEventRequest } from '../models/CommitEventRequest.js';
 import type { CommitReceiptResponse } from '../models/CommitReceiptResponse.js';
 import type { CommitSourceResponse } from '../models/CommitSourceResponse.js';
+import type { CreateCommitSourceRequest } from '../models/CreateCommitSourceRequest.js';
 import type { CreateQueueBindingRequest } from '../models/CreateQueueBindingRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsResponse.js';
@@ -245,13 +246,7 @@ export class QueuesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-    requestBody: {
-      name: string;
-      /**
-       * Active account-scoped queue policy containing this application. The source application and policy are immutable.
-       */
-      operation_policy: string;
-    },
+    requestBody: CreateCommitSourceRequest,
   }): CancelablePromise<CommitSourceResponse> {
     return __request(OpenAPI, {
       method: 'POST',

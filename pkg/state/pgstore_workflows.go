@@ -9,6 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const workflowRunSelectCols = `id, app_id, workflow_name, status, current_step, input, output,
@@ -516,6 +519,98 @@ func (s *PgStore) CancelWorkflowRun(ctx context.Context, id, reason string) (*Wo
 	return run, nil
 }
 
+// RetryWorkflowStep requeues one failed HTTP step in the existing workflow
+// run. The run and step rows are locked before eligibility is checked, then
+// the per-app admission lock serializes the active-run quota transition.
+func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive int) (*WorkflowRun, int, error) {
+	if maxActive < 1 {
+		return nil, 0, ErrWorkflowRunQuotaExceeded
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pgstore: begin workflow step retry: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	queries := sqlc.New()
+	lockedRun, err := queries.LockWorkflowRunForManualRetry(ctx, tx, runID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, ErrWorkflowRunNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("pgstore: lock workflow run for retry: %w", err)
+	}
+	lockedSteps, err := queries.LockWorkflowStepsForManualRetry(ctx, tx, runID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pgstore: lock workflow steps for retry: %w", err)
+	}
+	stepViews := make([]*WorkflowStep, 0, len(lockedSteps))
+	for _, row := range lockedSteps {
+		stepViews = append(stepViews, &WorkflowStep{StepName: row.StepName, Status: row.Status, Attempt: int(row.Attempt), Error: workflowPGTextPtr(row.Error)})
+	}
+	runView := workflowRunFromSQLC(lockedRun)
+	reopen, err := workflowRetryPlan(runView, stepName, stepViews)
+	if err != nil {
+		return nil, 0, err
+	}
+	appID := pgUUIDString(lockedRun.AppID)
+	if err := queries.LockWorkflowRetryAdmission(ctx, tx, appID); err != nil {
+		return nil, 0, fmt.Errorf("pgstore: lock workflow retry quota: %w", err)
+	}
+	activeCount, err := queries.CountActiveWorkflowRunsForRetry(ctx, tx, appID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pgstore: count active workflow runs for retry: %w", err)
+	}
+	active := int(activeCount)
+	if active >= maxActive {
+		return nil, active, ErrWorkflowRunQuotaExceeded
+	}
+	changed, err := queries.RequeueFailedWorkflowStepForRetry(ctx, tx, sqlc.RequeueFailedWorkflowStepForRetryParams{RunID: runID, StepName: stepName})
+	if err != nil || changed != 1 {
+		if err != nil {
+			return nil, active, fmt.Errorf("pgstore: requeue failed workflow step: %w", err)
+		}
+		return nil, active, ErrWorkflowRetryNotAllowed
+	}
+	changed, err = queries.ReopenSkippedWorkflowStepsForRetry(ctx, tx, sqlc.ReopenSkippedWorkflowStepsForRetryParams{RunID: runID, StepNames: reopen})
+	if err != nil || changed != int64(len(reopen)) {
+		if err != nil {
+			return nil, active, fmt.Errorf("pgstore: reopen skipped workflow steps: %w", err)
+		}
+		return nil, active, ErrWorkflowRetryNotAllowed
+	}
+	updated, err := queries.RequeueWorkflowRunForRetry(ctx, tx, sqlc.RequeueWorkflowRunForRetryParams{RunID: runID, StepName: stepName})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, active, ErrWorkflowRetryNotAllowed
+	}
+	if err != nil {
+		return nil, active, fmt.Errorf("pgstore: requeue workflow run: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, active, fmt.Errorf("pgstore: commit workflow step retry: %w", err)
+	}
+	return workflowRunFromSQLC(updated), active + 1, nil
+}
+
+func workflowRunFromSQLC(row sqlc.WorkflowRun) *WorkflowRun {
+	return &WorkflowRun{
+		ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), WorkflowName: row.WorkflowName,
+		Status: row.Status, CurrentStep: workflowPGTextPtr(row.CurrentStep),
+		Input: cloneWorkflowJSON(row.Input), Output: cloneWorkflowJSON(row.Output),
+		DefinitionSnapshot: cloneWorkflowJSON(row.DefinitionSnapshot),
+		ScheduledFor:       timestamptzToTime(row.ScheduledFor), StartedAt: timestamptzToTimePtr(row.StartedAt),
+		FinishedAt: timestamptzToTimePtr(row.FinishedAt), LastError: workflowPGTextPtr(row.LastError),
+		CreatedAt: timestamptzToTime(row.CreatedAt), UpdatedAt: timestamptzToTime(row.UpdatedAt),
+	}
+}
+
+func workflowPGTextPtr(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
 func (s *PgStore) CountActiveRunsByApp(ctx context.Context, appID string) (int, error) {
 	query := `
 		SELECT count(*) FROM workflow_runs
@@ -641,7 +736,33 @@ func (s *PgStore) GetWorkflowStepAttempts(ctx context.Context, runID, stepName s
 		}
 		attempts = append(attempts, &attempt)
 	}
-	return attempts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(attempts) == 0 {
+		return attempts, nil
+	}
+	effects, err := sqlc.New().ListWorkflowOperationEffects(ctx, s.pool, sqlc.ListWorkflowOperationEffectsParams{RunID: runID, StepName: stepName})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: get workflow operation effects: %w", err)
+	}
+	byAttempt := make(map[int]*WorkflowStepAttempt, len(attempts))
+	for _, attempt := range attempts {
+		byAttempt[attempt.Attempt] = attempt
+	}
+	for _, effect := range effects {
+		attempt := byAttempt[int(effect.Generation)]
+		if attempt == nil {
+			continue
+		}
+		attempt.Effects = append(attempt.Effects, api.OperationEffectRecord{
+			ID: effect.ID, Name: effect.Name, Generation: effect.Generation,
+			WebhookID: effect.WebhookID, DeliveryID: effect.DeliveryID, Type: effect.Type,
+			Status: effect.Status, Attempt: int(effect.Attempt), LastError: effect.LastError,
+		})
+	}
+	return attempts, nil
 }
 
 // StartWorkflowStep persists the resolved input with the running transition.

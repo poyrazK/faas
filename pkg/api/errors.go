@@ -1809,6 +1809,7 @@ const (
 	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
 	CodeWorkflowStepNotFound            = "workflow_step_not_found"
 	CodeWorkflowRunNotFound             = "workflow_run_not_found"
+	CodeWorkflowStepRetryNotAllowed     = "workflow_step_retry_not_allowed"
 	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound           = "workflow_event_not_found"
 	CodeWorkflowNotRunning              = "workflow_not_running"
@@ -1919,6 +1920,7 @@ func StatusForCode(code string) int {
 	// since the StatusForCode fallback returns 422 generically).
 	case CodeDatabaseCutoverFenced, CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
@@ -3845,6 +3847,13 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+// ErrWorkflowStepRetryNotAllowed marks a retry request that cannot safely
+// resume the run's current DAG state.
+func ErrWorkflowStepRetryNotAllowed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowStepRetryNotAllowed,
+		"Workflow step cannot be retried", "retry requires a terminal failed or dead HTTP step with no other active, failed, or dead steps and no completed downstream work.")
 }
 
 func ErrWorkflowCallbackClosed() *Problem {

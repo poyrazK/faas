@@ -24,13 +24,18 @@ class WorkflowStepSpec:
     and `method` remain accepted for the existing HTTP wake executor
     during the runtime migration. Exactly one of `run`, `path`,
     `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
-    `wait_for_condition` must be supplied.
+    `wait_for_condition` must be supplied. Set `managed_operation` on an
+    executable step to persist its business result transactionally and
+    replay it safely when the workflow retries after an uncertain response.
 
     """
 
     name: str
     run: str | Unset = UNSET
     """Named platform operation to invoke."""
+    managed_operation: bool | Unset = UNSET
+    """Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
+    use the transactional operation SDK."""
     input_: bool | float | list[Any] | None | str | Unset | WorkflowStepSpecInputType0 = UNSET
     """JSON input passed to the named operation."""
     path: str | Unset = UNSET
@@ -62,6 +67,8 @@ class WorkflowStepSpec:
         name = self.name
 
         run = self.run
+
+        managed_operation = self.managed_operation
 
         input_: bool | dict[str, Any] | float | list[Any] | None | str | Unset
         if isinstance(self.input_, Unset):
@@ -117,6 +124,8 @@ class WorkflowStepSpec:
         )
         if run is not UNSET:
             field_dict["run"] = run
+        if managed_operation is not UNSET:
+            field_dict["managed_operation"] = managed_operation
         if input_ is not UNSET:
             field_dict["input"] = input_
         if path is not UNSET:
@@ -154,6 +163,8 @@ class WorkflowStepSpec:
         name = d.pop("name")
 
         run = d.pop("run", UNSET)
+
+        managed_operation = d.pop("managed_operation", UNSET)
 
         def _parse_input_(data: object) -> bool | float | list[Any] | None | str | Unset | WorkflowStepSpecInputType0:
             if data is None:
@@ -230,6 +241,7 @@ class WorkflowStepSpec:
         workflow_step_spec = cls(
             name=name,
             run=run,
+            managed_operation=managed_operation,
             input_=input_,
             path=path,
             method=method,

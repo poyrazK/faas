@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.commit_source_response import CommitSourceResponse
-from ...models.create_commit_source_body import CreateCommitSourceBody
+from ...models.create_commit_source_request import CreateCommitSourceRequest
 from ...models.problem import Problem
 from ...types import Response
 
@@ -15,7 +15,7 @@ from ...types import Response
 def _get_kwargs(
     slug: str,
     *,
-    body: CreateCommitSourceBody,
+    body: CreateCommitSourceRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -93,13 +93,14 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateCommitSourceBody,
+    body: CreateCommitSourceRequest,
 ) -> Response[CommitSourceResponse | Problem]:
     """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
-        body (CreateCommitSourceBody):
+        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
+            app operation policy and routing contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,13 +126,14 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateCommitSourceBody,
+    body: CreateCommitSourceRequest,
 ) -> CommitSourceResponse | Problem | None:
     """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
-        body (CreateCommitSourceBody):
+        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
+            app operation policy and routing contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,13 +154,14 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateCommitSourceBody,
+    body: CreateCommitSourceRequest,
 ) -> Response[CommitSourceResponse | Problem]:
     """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
-        body (CreateCommitSourceBody):
+        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
+            app operation policy and routing contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,13 +185,14 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateCommitSourceBody,
+    body: CreateCommitSourceRequest,
 ) -> CommitSourceResponse | Problem | None:
     """Bind an internal PostgreSQL outbox source to managed Operations.
 
     Args:
         slug (str):
-        body (CreateCommitSourceBody):
+        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
+            app operation policy and routing contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

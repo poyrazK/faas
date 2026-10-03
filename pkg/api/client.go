@@ -7071,6 +7071,14 @@ func (c *Client) CancelWorkflowRun(ctx context.Context, runID string) (WorkflowR
 	return resp, err
 }
 
+// RetryWorkflowStep retries one safe failed HTTP step inside its existing run.
+func (c *Client) RetryWorkflowStep(ctx context.Context, runID, stepName string) (WorkflowRunResponse, error) {
+	var resp WorkflowRunResponse
+	path := "/v1/workflows/runs/" + url.PathEscape(runID) + "/steps/" + url.PathEscape(stepName) + "/retry"
+	err := c.do(ctx, "POST", path, nil, &resp)
+	return resp, err
+}
+
 // --- ADR-202 custom application metrics ---------------------------------
 //
 // Method names come from cmd/sdk-coverage's explicit alias map rather than

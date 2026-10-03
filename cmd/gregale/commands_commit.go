@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdCommit(args []string) int {
@@ -27,7 +28,9 @@ func cmdCommit(args []string) int {
 	flags, positional := splitArgsForFlags(args[1:])
 	fs := newFlagSet("commit "+args[0], flag.ContinueOnError)
 	name := fs.String("name", "", "unique account source name")
-	operationPolicy := fs.String("operation-policy", "", "account-scoped queue policy for managed Operations")
+	operationPolicy := fs.String("operation-policy", "", "queue policy for managed Operations")
+	contractVersion := fs.Int("contract-version", 1, "immutable source contract version (1 or 2)")
+	allowTenant := fs.Bool("allow-tenant-selection", false, "grant a version 2 source account-owner authority to select linked customers")
 	file := fs.String("file", "", "file containing PostgreSQL connection URL (never print it)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -36,7 +39,16 @@ func cmdCommit(args []string) int {
 		return 1
 	}
 	verb := args[0]
-	if verb != "add" && *operationPolicy != "" {
+	if (*contractVersion != 1 && *contractVersion != 2) || (*allowTenant && *contractVersion != 2) {
+		return 1
+	}
+	sourceFlags := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "operation-policy" || f.Name == "contract-version" || f.Name == "allow-tenant-selection" {
+			sourceFlags = true
+		}
+	})
+	if verb != "add" && sourceFlags {
 		return 1
 	}
 	switch verb {
@@ -75,7 +87,7 @@ func cmdCommit(args []string) int {
 	var result any
 	switch verb {
 	case "add":
-		result, err = client.CreateCommitSource(ctx, positional[0], *name, *operationPolicy)
+		result, err = client.CreateCommitSourceWithOptions(ctx, positional[0], api.CreateCommitSourceRequest{Name: *name, OperationPolicy: *operationPolicy, ContractVersion: *contractVersion, AllowTenantSelection: *allowTenant})
 	case "pause", "resume":
 		result, err = client.SetCommitSourceEnabled(ctx, positional[0], verb == "resume")
 	case "blocked":

@@ -210,6 +210,53 @@ export class WorkflowsService {
     });
   }
   /**
+   * Retry one failed or dead HTTP step in its existing workflow run.
+   * Requeues the same run and preserves the failed step's persisted input
+   * and attempt history. Only terminal failed or dead HTTP steps are eligible. The
+   * request conflicts if another step is active, failed, or dead, a downstream
+   * step already succeeded, or the run was cancelled. Skipped dependent
+   * steps are reopened so ordinary DAG evaluation can continue. Each manual
+   * retry grants one new dispatch and does not reset the manifest's
+   * automatic retry budget.
+   *
+   * @returns WorkflowRunResponse The workflow run has been requeued at the requested step.
+   * @throws ApiError
+   */
+  public static retryWorkflowStep({
+    id,
+    step,
+  }: {
+    /**
+     * Workflow run whose failed step should be retried.
+     */
+    id: string,
+    /**
+     * Failed HTTP step to resume in the existing run.
+     */
+    step: string,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/workflows/runs/{id}/steps/{step}/retry',
+      path: {
+        'id': id,
+        'step': step,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `The account plan does not include workflows.`,
+        403: `The account has reached its concurrent workflow run limit.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        409: `The run or step is not in a state that can be safely retried.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * List callback handles for a workflow run.
    * Callback IDs identify waits but are not bearer credentials; completion requires account authorization.
    * @returns ListWorkflowCallbacksResponse Callback handles from the run's snapshotted definition.

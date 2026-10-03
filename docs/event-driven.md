@@ -55,6 +55,48 @@ Executable steps receive an `Idempotency-Key` of
 separate `X-Faas-Workflow-Attempt` header increments. Deduplicate external
 side effects on that key. Delivery is still at least once, not exactly once.
 
+### Transactional HTTP workflow steps
+
+Set `managed_operation: true` on an executable step to make retries replay the
+same customer-database transaction result:
+
+```yaml
+- name: reserve
+  run: reserve_order
+  managed_operation: true
+  retry:
+    max_attempts: 3
+    backoff: exponential
+```
+
+The handler must use the managed-operation transaction wrapper described in
+[`operation-transactions.md`](operation-transactions.md). Gregale assigns one
+stable operation ID to the run and step, and advances the operation generation
+with each workflow attempt. The wrapper commits the business writes and saved
+result together. If Gregale retries after losing the HTTP response, the wrapper
+replays the saved result without repeating those writes. The workflow stores
+the result value as step output, so dependent steps receive the business result
+rather than the protocol envelope. The resolved step input is also persisted
+before dispatch, keeping the request fingerprint stable across retries.
+
+The wrapper may also return named webhook effects. Before the step is marked
+succeeded, Gregale verifies that each `webhook_id` is an enabled webhook owned
+by the workflow app and explicitly subscribed to `operation.effect`. It then
+records the effect, queues its signed delivery, and completes the step in one
+platform transaction. Delivery uses the ordinary at-least-once webhook
+dispatcher. Register the receiver under `POST /v1/apps/{slug}/webhooks`; tenant
+receivers are not supported for workflow effects. See
+[`managed-operation-effects.md`](managed-operation-effects.md) for the handler
+envelope and event payload.
+
+The customer database commit and Gregale's result/effect transaction are
+separate. If a receiver is disabled or invalid when Gregale accepts the result,
+the workflow step fails after the business transaction has committed. Configure
+the receiver before dispatch and make business writes safe to reconcile by the
+stable operation ID. Inspect delivery status with
+`gregale workflows attempts <run_id> <step_name>`; each attempt includes its
+effect and delivery IDs, status, retries, and last error.
+
 ### Recover from a failed step
 
 Use `on_failure` to run a compensating or notification handler after a step has
@@ -111,6 +153,25 @@ The equivalent read-only API is
 `GET /v1/workflows/runs/{id}/steps/{step}/attempts`. Attempt history stores
 metadata, not request or response bodies; timer and callback waits do not
 create executor-attempt records.
+
+For a terminal run with one failed or dead HTTP step, retry that step in place:
+
+```bash
+gregale workflows retry RUN_ID STEP_NAME
+```
+
+This preserves the run ID, definition snapshot, resolved input, and existing
+attempt history. Gregale appends a new attempt and reopens skipped
+`depends_on` descendants so the scheduler can continue the DAG. The retry is
+rejected if another step is active, failed, or dead; a downstream step already
+succeeded; the target is a wait or failure-handler step; or the run was
+cancelled. A managed-operation handler keeps the same run/step operation ID,
+so its transaction SDK can replay a receipt already committed before a lost
+response. Each manual retry grants one new dispatch and does not reset the
+manifest's automatic retry budget; after another terminal failure, you can
+request another manual attempt. Ordinary HTTP handlers still need their own
+idempotency because delivery remains at least once. The API is
+`POST /v1/workflows/runs/{id}/steps/{step}/retry`.
 
 The timer
 starts only when its dependencies succeed. It is stored in the workflow

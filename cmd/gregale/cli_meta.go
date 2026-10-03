@@ -434,7 +434,7 @@ var cliCommands = []cliCommand{
 	{
 		Name: "commit", DocSlug: "commit", Short: "Manage transactional PostgreSQL outbox sources (internal)",
 		Subcommands: []cliSub{
-			{Name: "add", Short: "Register a fixed app destination", Flags: []cliFlag{{Name: "name", Short: "account source name", Req: true, Value: "NAME"}, {Name: "operation-policy", Short: "account-scoped queue policy", Req: true, Value: "NAME"}}},
+			{Name: "add", Short: "Register a fixed app destination", Flags: []cliFlag{{Name: "name", Short: "account source name", Req: true, Value: "NAME"}, {Name: "operation-policy", Short: "managed Operations queue policy", Req: true, Value: "NAME"}, {Name: "contract-version", Short: "immutable source contract version (default 1)", Value: "VERSION", ClosedSet: []string{"1", "2"}}, {Name: "allow-tenant-selection", Short: "grant version 2 account-owner customer selection"}}},
 			{Name: "connection", Short: "Seal database credentials from a file", Flags: []cliFlag{{Name: "file", Short: "connection URL file", Req: true, Value: "PATH"}}},
 			{Name: "pause", Short: "Pause new acceptance"},
 			{Name: "resume", Short: "Resume new acceptance"},
@@ -939,6 +939,8 @@ var cliCommands = []cliCommand{
 			{Name: "run", Short: "Trigger a new workflow run"},
 			{Name: "status", Short: "Show details of a workflow run"},
 			{Name: "steps", Short: "List steps for a workflow run"},
+			{Name: "attempts", Short: "List attempts and managed effect delivery status for a workflow step"},
+			{Name: "retry", Short: "Retry one safely resumable failed HTTP step"},
 			{Name: "cancel", Short: "Cancel an active workflow run"},
 			{Name: "events", Short: "Send external event to a workflow run"},
 		},
@@ -1849,7 +1851,7 @@ var cliCommands = []cliCommand{
 				{Name: "tasks", Value: "N", Short: "number of Job tasks (default 1; omit with --run-file)"},
 				{Name: "run-file", Value: "FILE", Short: "JSON CreateJobRunRequest"},
 			}, Examples: []string{"gregale operations start-job --policy imports --key '\"customer:acme:import\"' nightly-import"}},
-			{Name: "get", Short: "Inspect operation state and committed result", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
+			{Name: "get", Short: "Inspect operation state, committed result, and effect delivery status", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
 			{Name: "wait", Short: "Wait for a terminal operation state", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}, {Name: "timeout", Value: "DURATION", Short: "stop waiting after this duration"}, {Name: "interval", Value: "DURATION", Short: "time between status checks"}}},
 			{Name: "cancel", Short: "Request cancellation of pending or active work", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
 		},

@@ -56,6 +56,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 491 | [In-place retry of a failed workflow step](491-in-place-workflow-step-retry.md) | accepted | Retry a failed step within its existing run while preserving attempt history and managed operation identity |
+| 490 | [Transactional managed HTTP workflow steps](490-transactional-workflow-http-steps.md) | accepted | Reuse customer transaction receipts and durably deliver workflow operation effects |
+| 489 | [Transactional operation handler SDK](489-transactional-operation-handler-sdk.md) | accepted for implementation | Node, Go, and Python helpers atomically save customer PostgreSQL writes, replay receipts, and webhook intent |
+| 488 | [Managed operation results with durable webhook effects](488-managed-operation-webhook-effects.md) | accepted for implementation; promotion requires runtime qualification | Atomically fence managed HTTP completion with receiver-scoped durable webhook delivery |
+| 487 | [Versioned business-key and customer routing for Commit](487-commit-customer-routing.md) | accepted; operator qualification only | Versioned customer-scoped business keys route unrelated Commit work independently and serialize matching work |
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
