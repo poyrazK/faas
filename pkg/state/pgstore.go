@@ -409,9 +409,10 @@ func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error)
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
-		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
+		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id,
+		        runs_principal_id
 		 from api_keys where key_sha256 = $1`, hash)
-	return scanAPIKey(row)
+	return scanAPIKeyWithRunsPrincipal(row)
 }
 
 // AuthenticateKey resolves a bearer token to its account + key. It is
@@ -763,17 +764,30 @@ func (s *PgStore) AuthenticateKey(ctx context.Context, hash []byte) (Account, AP
 // PR 6 org_id: every SELECT/RETURNING reads the full twelve
 // columns.
 func scanAPIKey(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, false)
+}
+
+func scanAPIKeyWithRunsPrincipal(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, true)
+}
+
+func scanAPIKeyProjection(row pgx.Row, withRunsPrincipal bool) (APIKey, error) {
 	var (
-		k         APIKey
-		hashBytes []byte
-		expiresAt pgtype.Timestamptz
-		revokedAt pgtype.Timestamptz
-		rotated   *string
-		createdIP *string
-		parent    *string
+		k             APIKey
+		hashBytes     []byte
+		expiresAt     pgtype.Timestamptz
+		revokedAt     pgtype.Timestamptz
+		rotated       *string
+		createdIP     *string
+		parent        *string
+		runsPrincipal pgtype.UUID
 	)
-	if err := row.Scan(&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
-		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent); err != nil {
+	dest := []any{&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
+		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent}
+	if withRunsPrincipal {
+		dest = append(dest, &runsPrincipal)
+	}
+	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, ErrNotFound
 		}
@@ -793,6 +807,9 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 		k.CreatedIP = *createdIP
 	}
 	k.ParentKeyID = parent
+	if withRunsPrincipal {
+		k.RunsPrincipalID = pgUUIDString(runsPrincipal)
+	}
 	return k, nil
 }
 
@@ -7734,6 +7751,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 	}
 
+	snapshot, err := pgLockCanaryRouteSnapshot(ctx, tx, id)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		   from deployments where id = $1 for update`, id))
@@ -7797,6 +7819,42 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if params.RequireCanaryStageElapsed && (dep.CanaryStepStartedAt == nil ||
 		now.Sub(*dep.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
+	}
+
+	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params); err != nil {
+		var blocked *RouteGateBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit blocked canary check request: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+
+	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+		var blocked *RouteHealthBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit held canary health evidence: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+	if err := stampRouteHealthAudit(&params); err != nil {
+		return Deployment{}, 0, err
+	}
+	// A telemetry query must not carry an expired worker lease into a traffic write.
+	transitionClock, err := (&sqlc.Queries{}).RouteHealthClock(ctx, tx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("read canary transition clock after health checks: %w", err)
+	}
+	now = transitionClock.Time
+	if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
+		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+	}
+
+	if err := stampRouteGateAudit(&params); err != nil {
+		return Deployment{}, 0, err
 	}
 
 	newStep := params.ExpectedStep + 1
@@ -8481,6 +8539,22 @@ func (s *PgStore) AbortCanaryOnExpiredWorkerLease(ctx context.Context, appID, de
 }
 
 func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration) (Deployment, int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, deploymentID, expectedPredecessorID, action, reason, emergencyGrace, nil)
+	if err != nil {
+		return updated, auditID, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
+	}
+	return updated, auditID, nil
+}
+
+func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit) (Deployment, int64, error) {
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8493,11 +8567,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	// the recovery itself. Normalize once, here.
 	reason = normalizeRolloutReason(reason)
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
 	if emergencyGrace != nil {
 		var expiresAt time.Time
 		if err := tx.QueryRow(ctx, `select expires_at from safe_release_worker_lease where singleton = true for update`).Scan(&expiresAt); err != nil {
@@ -8516,12 +8585,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			return Deployment{}, 0, ErrSafeReleaseLeaseNotExpired
 		}
 	}
-	if deploymentID != "" {
+	{
 		// Deployment creation already serializes on the app row. Taking the
 		// same lock prevents a new release from changing the candidate or its
 		// predecessor between the health decision and this transaction.
-		var lockedAppID string
-		if err := tx.QueryRow(ctx, `select id from apps where id = $1 for update`, appID).Scan(&lockedAppID); err != nil {
+		if _, err := (&sqlc.Queries{}).LockCanaryRouteGateApp(ctx, tx, appID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Deployment{}, 0, ErrNotFound
 			}
@@ -8554,6 +8622,26 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	}
 	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
 		return dep, 0, ErrRolloutStateInvalid
+	}
+	if action != "abort" && dep.CanaryTotalSteps > 0 {
+		owner, err := (&sqlc.Queries{}).ReadCanaryRouteGateOwner(ctx, tx, dep.ID)
+		if err != nil {
+			return dep, 0, routePolicyReadError(err)
+		}
+		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+			return dep, 0, err
+		}
+		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+			return dep, 0, err
+		}
 	}
 	if emergencyGrace != nil {
 		rolloutState := NormalizeRolloutState(dep.RolloutState)
@@ -8680,9 +8768,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, dep.ID))
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort readback: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort commit: %w", err)
 		}
 		return updated, auditID, nil
 	}
@@ -8884,6 +8969,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
+	var auditAccountID *uuid.UUID
+	if auditOverride != nil {
+		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
+		auditAccountID = auditOverride.AccountID
+	}
 	var auditID int64
 	if err := tx.QueryRow(ctx,
 		`insert into deployment_audit
@@ -8891,7 +8981,7 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
 		 returning id`,
 		dep.ID,
-		nil, // account_id is nullable; actor records the operator or APID fallback
+		auditAccountID, // nullable for existing operator and emergency recoveries
 		string(auditKind),
 		actor,
 		now,
@@ -8922,9 +9012,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyDeploymentChanged, string(payload)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: emergency recovery notify deployment changed: %w", err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
 	}
 	return updated, auditID, nil
 }
@@ -11308,6 +11395,19 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	failed, err := setDeploymentFailedTx(ctx, tx, id, code, message)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
+}
+
+// setDeploymentFailedTx keeps the existing failure side effects in the
+// caller's transaction, including when hosting evidence must commit with it.
+func setDeploymentFailedTx(ctx context.Context, tx pgx.Tx, id, code, message string) (Deployment, error) {
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -11331,9 +11431,6 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", code); err != nil {
-		return Deployment{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
 	return failed, nil
@@ -30929,7 +31026,8 @@ const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+       admission_failure_reason, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -30996,7 +31094,8 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete,
+		&r.AdmissionFailureReason, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -31333,21 +31432,23 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
 		    body_hash, source_body_hash, schema_hash, source_schema_hash,
-		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+		    admission_failure_reason, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-		    $16, $17, $18, $19, $20, $21, $22
+		    $16, $17, $18, $19, $20, $21, $22, $23
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete,
+		r.AdmissionFailureReason, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -31365,7 +31466,7 @@ func (s *PgStore) ListMirrorResults(ctx context.Context, ruleID string, since ti
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2
 		order by completed_at desc
-		limit $3`,
+		limit case when $3 > 0 then $3 else null end`,
 		ruleID, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("state: list mirror_invocation_results for rule %s: %w", ruleID, err)
@@ -31399,6 +31500,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
 			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_timeout' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_rejected' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_error' then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -31410,7 +31514,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount,
+		&s2.SchedulerAdmissionTimeoutCount, &s2.SchedulerAdmissionRejectedCount, &s2.SchedulerAdmissionErrorCount,
+		&meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {

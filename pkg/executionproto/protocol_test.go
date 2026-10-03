@@ -107,6 +107,85 @@ func TestClientExecuteWithOutputDeliversFramesBeforeTerminal(t *testing.T) {
 	_ = host.Close()
 }
 
+func TestClientServeBrokerCarriesBoundedRequestAndResponseAlongsideOutput(t *testing.T) {
+	host, guest := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	const integrationID = "11111111-1111-4111-8111-111111111111"
+	outputSeen := make(chan struct{})
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- ServeWithBroker(ctx, guest, func(ctx context.Context, _ Request, stdout, _ *OutputWriter, broker OutboundBroker) (Result, error) {
+			writeDone := make(chan error, 1)
+			go func() { _, err := stdout.Write([]byte("while broker waits\n")); writeDone <- err }()
+			response, err := broker.Call(ctx, OutboundRequest{IntegrationID: integrationID, Method: "POST", Path: "/v1/jobs", Body: []byte(`{"name":"agent"}`)})
+			if err != nil {
+				return Result{}, err
+			}
+			if err := <-writeDone; err != nil {
+				return Result{}, err
+			}
+			if response.Status != 201 || string(response.Body) != `{"id":"job-1"}` || response.Headers["content-type"] != "application/json" {
+				return Result{}, errors.New("unexpected outbound response")
+			}
+			return Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"created":true}`)}, nil
+		})
+	}()
+	client, err := NewClient(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ExecuteWithOutputAndBroker(ctx, testRequest(), func(_ context.Context, stream string, chunk []byte) error {
+		if stream != "stdout" || string(chunk) != "while broker waits\n" {
+			t.Errorf("output frame = %q:%q", stream, chunk)
+		}
+		close(outputSeen)
+		return nil
+	}, func(ctx context.Context, request OutboundRequest) (OutboundResponse, error) {
+		if request.IntegrationID != integrationID || request.Method != "POST" || request.Path != "/v1/jobs" || string(request.Body) != `{"name":"agent"}` || request.ID == 0 {
+			return OutboundResponse{}, errors.New("unexpected outbound request")
+		}
+		select {
+		case <-outputSeen:
+		case <-ctx.Done():
+			return OutboundResponse{}, ctx.Err()
+		}
+		return OutboundResponse{ID: request.ID, Status: 201, Headers: map[string]string{"content-type": "application/json"}, Body: []byte(`{"id":"job-1"}`)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.Result) != `{"created":true}` || string(result.Stdout) != "while broker waits\n" {
+		t.Fatalf("execution result = %+v", result)
+	}
+	if err := <-serveDone; err != nil {
+		t.Fatal(err)
+	}
+	_ = host.Close()
+}
+
+func TestOutboundBrokerValidationRejectsUnsafeInputs(t *testing.T) {
+	valid := OutboundRequest{ID: 1, IntegrationID: "11111111-1111-4111-8111-111111111111", Method: "GET", Path: "/v1/items"}
+	for name, mutate := range map[string]func(*OutboundRequest){
+		"absolute URL":       func(r *OutboundRequest) { r.Path = "https://provider.example/v1/items" },
+		"authority path":     func(r *OutboundRequest) { r.Path = "//provider.example/v1/items" },
+		"unsupported method": func(r *OutboundRequest) { r.Method = "CONNECT" },
+		"non-JSON request":   func(r *OutboundRequest) { r.Body = []byte("not-json") },
+		"oversized request":  func(r *OutboundRequest) { r.Body = make([]byte, MaxOutboundBodyBytes+1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := valid
+			mutate(&request)
+			if err := request.Validate(); err == nil {
+				t.Fatal("invalid outbound request was accepted")
+			}
+		})
+	}
+	if err := (OutboundResponse{ID: 1, Status: 200, Headers: map[string]string{"set-cookie": "sid=secret"}}).Validate(); err == nil {
+		t.Fatal("unsafe response header was accepted")
+	}
+}
+
 func TestClientExecuteWithOutputStopsOnReceiverError(t *testing.T) {
 	host, guest := net.Pipe()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

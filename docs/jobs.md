@@ -47,7 +47,7 @@ running them elsewhere; flexible start windows and deadlines still apply.
 Pausing the region's `accepting_new_apps` policy blocks new regional job
 definitions while existing definitions remain usable. This feature is internal
 pending native fleet qualification; compute placement does not imply regional
-storage or control-plane independence. See [ADR-427](adr/427-regional-managed-jobs.md).
+storage or control-plane independence. See [ADR-468](adr/468-regional-managed-jobs.md).
 
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2

@@ -103,6 +103,97 @@ func TestVariantAllocationVectorsAndDecisions(t *testing.T) {
 	}
 }
 
+func TestSubjectAllocationVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/subject_allocation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []struct {
+		Seed          string `json:"seed"`
+		Key           string `json:"key"`
+		Customer      string `json:"customer"`
+		Subject       string `json:"subject"`
+		Bucket        int    `json:"bucket"`
+		VariantBucket int    `json:"variant_bucket"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors {
+		if got := SubjectBucket(vector.Seed, vector.Key, vector.Customer, vector.Subject); got != vector.Bucket {
+			t.Fatalf("subject %s/%s rollout bucket %d != %d", vector.Customer, vector.Subject, got, vector.Bucket)
+		}
+		if got := SubjectVariantBucket(vector.Seed, vector.Key, vector.Customer, vector.Subject); got != vector.VariantBucket {
+			t.Fatalf("subject %s/%s variant bucket %d != %d", vector.Customer, vector.Subject, got, vector.VariantBucket)
+		}
+	}
+}
+
+func TestSubjectTargetingIsTenantScopedAndSticky(t *testing.T) {
+	rollout := 6000
+	bundle := Bundle{Version: 4, Config: Config{Flags: []Flag{{Key: "new-export", Enabled: true, Default: false, Seed: "subject-seed", Rules: []Rule{{
+		ID: "pilot-users", Customers: []string{"customer-a"}, Rollout: &rollout, RolloutUnit: "subject", Value: true,
+	}}}}}}
+	if err := Validate(bundle.Config); err != nil {
+		t.Fatal(err)
+	}
+	first := EvaluateForSubject(bundle, "new-export", "customer-a", "user-17", false)
+	repeat := EvaluateForSubject(bundle, "new-export", "customer-a", "user-17", false)
+	if first.Value != repeat.Value || first.Bucket == nil || repeat.Bucket == nil || *first.Bucket != *repeat.Bucket {
+		t.Fatalf("subject allocation changed across evaluations: first=%+v repeat=%+v", first, repeat)
+	}
+	if other := SubjectBucket("subject-seed", "new-export", "customer-b", "user-17"); *first.Bucket == other {
+		t.Fatalf("subject allocation did not include the tenant: same bucket %d", other)
+	}
+	missing := Evaluate(bundle, "new-export", "customer-a", false)
+	if missing.Reason != "subject_missing" || missing.Value != false {
+		t.Fatalf("missing subject did not safely use the default: %+v", missing)
+	}
+}
+
+func TestSubjectExactTargetAndVariantAssignment(t *testing.T) {
+	bundle := Bundle{Version: 5, Config: Config{Flags: []Flag{{Key: "checkout", Type: "variant", Enabled: true, Default: "control", Seed: "seed", Variants: []FlagVariant{{Key: "control", Weight: 5000}, {Key: "treatment", Weight: 5000}}, Rules: []Rule{{
+		ID: "selected-user", Group: "internal", Subjects: []string{"user-17"},
+	}}}}, Groups: map[string][]string{"internal": {"customer-a"}}}}
+	if err := Validate(bundle.Config); err != nil {
+		t.Fatal(err)
+	}
+	matched := EvaluateVariantForSubject(bundle, "checkout", "customer-a", "user-17", "control")
+	if matched.Reason != "rule_match" || matched.RuleID != "selected-user" || matched.Bucket == nil || *matched.Bucket != SubjectVariantBucket("seed", "checkout", "customer-a", "user-17") {
+		t.Fatalf("unexpected subject variant: %+v", matched)
+	}
+	if got := EvaluateVariantForSubject(bundle, "checkout", "customer-a", "user-18", "control"); got.RuleID != "" || got.Reason != "default" {
+		t.Fatalf("unselected subject matched: %+v", got)
+	}
+}
+
+func TestSubjectRuleValidation(t *testing.T) {
+	base := Config{Flags: []Flag{{Key: "new-export", Enabled: true, Default: false, Seed: "seed", Rules: []Rule{{ID: "pilot", Customers: []string{"customer-a"}, Subjects: []string{"user-17"}, Value: true}}}}}
+	if err := Validate(base); err != nil {
+		t.Fatalf("valid subject targeting: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"tenant constraint required", func(c *Config) { c.Flags[0].Rules[0].Customers = nil }},
+		{"rollout unit requires rollout", func(c *Config) { c.Flags[0].Rules[0].RolloutUnit = "subject" }},
+		{"unknown rollout unit", func(c *Config) { c.Flags[0].Rules[0].RolloutUnit = "user"; c.Flags[0].Rules[0].Rollout = intPtr(1000) }},
+		{"empty subject list", func(c *Config) { c.Flags[0].Rules[0].Subjects = []string{} }},
+		{"invalid subject", func(c *Config) { c.Flags[0].Rules[0].Subjects = []string{"user with space"} }},
+		{"duplicate subject", func(c *Config) { c.Flags[0].Rules[0].Subjects = []string{"user-17", "user-17"} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := cloneConfig(base)
+			test.mutate(&config)
+			if err := Validate(config); err == nil {
+				t.Fatal("invalid subject rule accepted")
+			}
+		})
+	}
+}
+
 func TestVariantValidationAndExplicitTargeting(t *testing.T) {
 	config := Config{Flags: []Flag{{Key: "checkout", Type: "variant", Enabled: true, Default: "old", Seed: "seed", Variants: []FlagVariant{{Key: "old", Weight: 7000}, {Key: "new", Weight: 3000}}, Rules: []Rule{{ID: "customer", Customers: []string{"customer"}, Value: "new"}}}}}
 	if err := Validate(config); err != nil {

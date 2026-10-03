@@ -28,17 +28,29 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 	// otherwise clients would advertise a feature whose first request returns
 	// 501/503.
 	for i := range capabilities.Capabilities {
+		available := true
 		switch capabilities.Capabilities[i].Key {
 		case "openapi-contract-preview":
-			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && api.ApiContractDiffEnabled()
+			available = api.ApiContractDiffEnabled()
 		case disposableRunsCapabilityKey:
-			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
+			available = s.executionAPIEnabled
 		case "object-storage":
-			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageProvisioningReady()
+			available = s.objectStorageProvisioningReady()
 		case "github-deploys":
-			available := s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
-			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && available
+			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
 		}
+		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
 	writeJSON(w, http.StatusOK, capabilities)
+}
+
+// Plan restrictions take precedence when both gates deny access. Runtime
+// readiness describes the existing installation gate, not a health guarantee.
+func applyCapabilityRuntimeAvailability(capability *api.CapabilityStatus, available bool) {
+	if !capability.Enabled || available {
+		return
+	}
+	capability.Enabled = false
+	capability.UnavailableReason = api.CapabilityUnavailableRuntime
+	capability.UnavailableDetail = "This feature is not available on this Gregale installation right now. Contact support for availability."
 }

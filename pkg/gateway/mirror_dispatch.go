@@ -9,7 +9,7 @@
 // classified (status_diff / schema_diff / body_diff / crashed / incomplete)
 // via pkg/gateway/mirror_redact.go::CompareMirrorResponses and the
 // outcome is exposed via the gateway_mirror_dispatched_total
-// metric.
+// metric, including failures to reach the shared slot authority.
 //
 // Detached-ctx discipline (ADR-098): the goroutine derives its
 // own bounded context with a MirrorMaxLifetimeSeconds timeout so
@@ -40,13 +40,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
 )
 
 // MirrorRoundTripper (issue #72 / ADR-124 PR-A3) is the seam the
@@ -65,6 +68,14 @@ type mirrorResultStore interface {
 	InsertMirrorResult(context.Context, state.MirrorInvocationResult) error
 }
 
+// mirrorSlotLeaseStore is the shared concurrency coordinator. The gateway
+// fails closed for the shadow request if the shared authority is unavailable;
+// the source response has already completed and is unaffected.
+type mirrorSlotLeaseStore interface {
+	TryAcquireMirrorSlotLease(ctx context.Context, ruleID string, limit int, ttl time.Duration) (leaseID string, acquired bool, err error)
+	ReleaseMirrorSlotLease(ctx context.Context, ruleID, leaseID string) error
+}
+
 // mirrorInstanceParker is implemented by the production PGBackend. A mirror
 // instance is excluded from normal idle reaping, so dispatch must release it
 // even when forwarding or comparison fails.
@@ -72,7 +83,11 @@ type mirrorInstanceParker interface {
 	ParkMirrorInstance(context.Context, string, string, string) error
 }
 
-const mirrorParkTimeout = 35 * time.Second
+const (
+	mirrorParkTimeout        = 35 * time.Second
+	mirrorSlotLeaseTTL       = 2 * time.Minute
+	mirrorSlotReleaseTimeout = 5 * time.Second
+)
 
 // defaultMirrorRoundTripper (issue #72 / ADR-124 PR-A3) uses
 // http.Client.Do against the target URL. The mirror VM's
@@ -159,16 +174,22 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	ctx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(parentCtx)), timeout)
 	defer cancel()
 
-	// 0. Per-rule concurrent mirror-VM cap (PR-A3 code-review fix #3).
-	// Acquired BEFORE backend.ScheduleMirror so a cap-at-max goroutine
-	// never burns a schedd wake on a request we're about to drop. The
-	// slot is released on goroutine completion (the defer below) so
-	// the cap reflects "VMs in flight" through round-trip complete —
-	// not "admit attempts", which would under-count by orders of
-	// magnitude (a cold-boot + 50ms serve takes ~10x the admit
-	// window). The release runs even on the error path so a failed
-	// round-trip / build doesn't leak the slot.
-	if !h.tryAcquireMirrorSlot(rule.ID) {
+	// 0. Per-rule concurrent mirror-VM cap. The production lease is shared
+	// across gateway replicas and expires after the bounded dispatch + park
+	// envelope if a gateway process exits. Acquire before scheduling so a
+	// saturated rule never burns a schedd wake. Release runs after the park
+	// defer below, covering the full shadow-VM lifecycle.
+	releaseSlot, acquired, slotErr := h.acquireMirrorSlot(ctx, rule.ID)
+	if slotErr != nil {
+		if h.metrics != nil {
+			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "slot_store_error")
+		}
+		if h.log != nil {
+			h.log.Warn("mirror: shared slot reservation failed", "rule_id", rule.ID, "app_id", rule.AppID, "err", slotErr)
+		}
+		return
+	}
+	if !acquired {
 		if h.metrics != nil {
 			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, "cap_at_max")
 		}
@@ -176,10 +197,15 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: cap at max", "rule_id", rule.ID, "app_id", rule.AppID,
 				"source_instance_id", sourceInstanceID)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, "", requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, "", requestID, 0, nil, 0, sourceCapture, state.MirrorAdmissionFailureRejected)
 		return
 	}
-	defer h.releaseMirrorSlot(rule.ID)
+	releaseSlotAfterReturn := true
+	defer func() {
+		if releaseSlotAfterReturn {
+			releaseSlot(ctx)
+		}
+	}()
 	// 1. Schedule the mirror VM and retain its complete forwarding target.
 	// Production implements MirrorTargetBackend so the request is delivered to
 	// the admitted shadow instance, including its node and runtime port. Legacy
@@ -216,6 +242,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			// Code too (PR-A3 code-review #5 fix).
 			resultLabel = "cap_at_max"
 		}
+		admissionFailure := classifyMirrorAdmissionFailure(err)
 		if h.metrics != nil {
 			h.metrics.ObserveMirrorDispatched(rule.AppID, rule.ID, resultLabel)
 		}
@@ -223,11 +250,18 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 			h.log.Warn("mirror: schedule failed", "rule_id", rule.ID, "app_id", rule.AppID,
 				"err", err.Error(), "result", resultLabel, "source_instance_id", sourceInstanceID)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture, admissionFailure)
 		return
 	}
 	if instanceID != "" {
-		defer h.parkMirrorInstance(parentCtx, rule.AppID, instanceID)
+		defer func() {
+			if !h.parkMirrorInstance(parentCtx, rule.AppID, instanceID) && h.mirrorSlotLeaseStore != nil {
+				// Keep the fleet-wide permit until its expiry. Schedd's
+				// orphan reaper needs time to reclaim a VM that could not
+				// be parked by this gateway.
+				releaseSlotAfterReturn = false
+			}
+		}()
 	}
 
 	// 2. Build the mirror request. We pass sourceBody directly (NOT
@@ -244,7 +278,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: build request failed", "rule_id", rule.ID, "err", buildErr.Error())
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, 0, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 	applyMirrorTargetIdentity(mirrorReq, mirrorTarget, rule.AppID)
@@ -274,7 +308,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: round-trip failed", "rule_id", rule.ID, "err", err.Error())
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -287,7 +321,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		if h.log != nil {
 			h.log.Warn("mirror: response body read failed", "rule_id", rule.ID, "err", readErr)
 		}
-		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture)
+		h.compareAndPersistMirror(ctx, rule, sourceInstanceID, instanceID, requestID, 0, nil, latency, sourceCapture, state.MirrorAdmissionFailureNone)
 		return
 	}
 
@@ -295,7 +329,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	// durable ledger row. This wait happens only in the detached goroutine.
 	statusDiff, _, bodyDiff, crashed := h.compareAndPersistMirror(
 		ctx, rule, sourceInstanceID, instanceID, requestID,
-		resp.StatusCode, mirrorBody, latency, sourceCapture, mirrorTruncated,
+		resp.StatusCode, mirrorBody, latency, sourceCapture, state.MirrorAdmissionFailureNone, mirrorTruncated,
 	)
 
 	// 5. Metric.
@@ -316,21 +350,25 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 	}
 }
 
-func (h *Handler) parkMirrorInstance(parentCtx context.Context, appID, instanceID string) {
+func (h *Handler) parkMirrorInstance(parentCtx context.Context, appID, instanceID string) bool {
 	parker, ok := h.backend.(mirrorInstanceParker)
 	if !ok {
 		if h.log != nil {
 			h.log.Error("mirror: backend cannot park admitted instance", "app_id", appID, "instance_id", instanceID)
 		}
-		return
+		return false
 	}
 	// Dispatch's five-second deadline may already have expired. Give the
 	// scheduler's snapshot/park RPC a fresh, bounded cleanup deadline.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), mirrorParkTimeout)
 	defer cancel()
-	if err := parker.ParkMirrorInstance(ctx, appID, instanceID, traceIDForTelemetry(parentCtx)); err != nil && h.log != nil {
-		h.log.Error("mirror: park admitted instance failed", "app_id", appID, "instance_id", instanceID, "err", err)
+	if err := parker.ParkMirrorInstance(ctx, appID, instanceID, traceIDForTelemetry(parentCtx)); err != nil {
+		if h.log != nil {
+			h.log.Error("mirror: park admitted instance failed", "app_id", appID, "instance_id", instanceID, "err", err)
+		}
+		return false
 	}
+	return true
 }
 
 // compareAndPersistMirror joins the asynchronous v2 result with the actual v1
@@ -345,30 +383,39 @@ func (h *Handler) compareAndPersistMirror(
 	mirrorBody []byte,
 	mirrorLatency time.Duration,
 	sourceCapture *mirrorSourceCapture,
+	admissionFailure state.MirrorAdmissionFailureReason,
 	mirrorTruncated ...bool,
 ) (statusDiff, schemaDiff, bodyDiff, crashed bool) {
 	source, sourceOK := sourceCapture.wait(ctx)
 	truncated := len(mirrorTruncated) > 0 && mirrorTruncated[0]
 	comparison := CompareMirrorResponses(source.StatusCode, source.Body, !sourceOK || source.Truncated, mirrorStatus, mirrorBody, truncated, rule.IncludeBody)
 	statusDiff, schemaDiff, bodyDiff, crashed = comparison.StatusDiff, comparison.SchemaDiff, comparison.BodyDiff, comparison.Crashed
+	if admissionFailure != state.MirrorAdmissionFailureNone {
+		// The scheduler did not return an admitted target, so no guest
+		// response exists to compare. Persist the admission outcome as an
+		// inconclusive comparison rather than a crash or response diff.
+		statusDiff, schemaDiff, bodyDiff, crashed = false, false, false, false
+		comparison.Incomplete = true
+	}
 
 	result := state.MirrorInvocationResult{
-		MirrorRuleID:         rule.ID,
-		AccountID:            rule.AccountID,
-		AppID:                rule.AppID,
-		SourceDeploymentID:   rule.SourceDeploymentID,
-		MirrorDeploymentID:   rule.MirrorDeploymentID,
-		InstanceID:           instanceID,
-		SourceInstanceID:     sourceInstanceID,
-		StatusCode:           mirrorStatus,
-		LatencyMs:            mirrorDurationMilliseconds(mirrorLatency),
-		StatusDiff:           statusDiff,
-		SchemaDiff:           schemaDiff,
-		BodyDiff:             bodyDiff,
-		Crashed:              crashed,
-		ComparisonIncomplete: comparison.Incomplete,
-		RequestID:            requestID,
-		CompletedAt:          time.Now().UTC(),
+		MirrorRuleID:           rule.ID,
+		AccountID:              rule.AccountID,
+		AppID:                  rule.AppID,
+		SourceDeploymentID:     rule.SourceDeploymentID,
+		MirrorDeploymentID:     rule.MirrorDeploymentID,
+		InstanceID:             instanceID,
+		SourceInstanceID:       sourceInstanceID,
+		StatusCode:             mirrorStatus,
+		LatencyMs:              mirrorDurationMilliseconds(mirrorLatency),
+		StatusDiff:             statusDiff,
+		SchemaDiff:             schemaDiff,
+		BodyDiff:               bodyDiff,
+		Crashed:                crashed,
+		ComparisonIncomplete:   comparison.Incomplete,
+		AdmissionFailureReason: admissionFailure,
+		RequestID:              requestID,
+		CompletedAt:            time.Now().UTC(),
 	}
 	if len(comparison.MirrorSchemaHash) > 0 {
 		result.SchemaHash = append([]byte(nil), comparison.MirrorSchemaHash...)
@@ -499,6 +546,31 @@ func isCapAtMaxCode(err error) bool {
 		return prob.Code == api.CodeMirrorSlotAtCapacity
 	}
 	return false
+}
+
+// classifyMirrorAdmissionFailure keeps scheduler outcomes out of the guest
+// crash signal. Mirror admission can fail before any VM exists, and a timeout
+// is ambiguous about whether schedd created a row before the caller deadline;
+// schedd owns cleanup for any late boot it accepted.
+func classifyMirrorAdmissionFailure(err error) state.MirrorAdmissionFailureReason {
+	if err == nil {
+		return state.MirrorAdmissionFailureNone
+	}
+	if errors.Is(err, sched.ErrMirrorSlotAtCapacity) || isCapAtMaxCode(err) {
+		return state.MirrorAdmissionFailureRejected
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) && problem != nil {
+		switch problem.Code {
+		case api.CodePlanLimitConcur, api.CodeCapacity, api.CodeServiceRecoveryCapacity,
+			api.CodeAdmissionRefused:
+			return state.MirrorAdmissionFailureRejected
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || grpcerr.IsCode(err, codes.DeadlineExceeded) {
+		return state.MirrorAdmissionFailureTimeout
+	}
+	return state.MirrorAdmissionFailureError
 }
 
 // buildMirrorRequest (issue #72 / ADR-124 PR-A3, code-review
@@ -696,6 +768,41 @@ func (h *Handler) tryAcquireMirrorSlot(ruleID string) bool {
 		return false
 	}
 	return true
+}
+
+// acquireMirrorSlot prefers the shared lease authority when configured and
+// falls back to the process-local counter for test/development handlers. The
+// returned release callback is idempotent and uses a detached cleanup context
+// because it runs after the mirror's five-second request context may expire.
+func (h *Handler) acquireMirrorSlot(ctx context.Context, ruleID string) (func(context.Context), bool, error) {
+	if h == nil {
+		return nil, false, nil
+	}
+	cap := h.MirrorMaxConcurrentPerRule
+	if cap <= 0 {
+		cap = api.MirrorMaxConcurrentPerRule
+	}
+	if h.mirrorSlotLeaseStore == nil {
+		if !h.tryAcquireMirrorSlot(ruleID) {
+			return nil, false, nil
+		}
+		return func(context.Context) { h.releaseMirrorSlot(ruleID) }, true, nil
+	}
+	leaseID, acquired, err := h.mirrorSlotLeaseStore.TryAcquireMirrorSlotLease(ctx, ruleID, int(cap), mirrorSlotLeaseTTL)
+	if err != nil || !acquired {
+		return nil, acquired, err
+	}
+	var once sync.Once
+	release := func(releaseCtx context.Context) {
+		once.Do(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(releaseCtx), mirrorSlotReleaseTimeout)
+			defer cancel()
+			if err := h.mirrorSlotLeaseStore.ReleaseMirrorSlotLease(cleanupCtx, ruleID, leaseID); err != nil && h.log != nil {
+				h.log.Error("mirror: release shared slot reservation failed", "rule_id", ruleID, "lease_id", leaseID, "err", err)
+			}
+		})
+	}
+	return release, true, nil
 }
 
 // releaseMirrorSlot (issue #72 / ADR-133 / ADR-125 PR-A3

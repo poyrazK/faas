@@ -233,6 +233,30 @@ func TestPg_RotateAPIKey_GraceSetsOldKeyToGrace(t *testing.T) {
 	}
 }
 
+func TestPg_RotateAPIKey_PreservesRunsPrincipal(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID := createAccount(t, s, ctx, pgTestEmail(t))
+	oldHash, newHash := []byte("runs-key-old"), []byte("runs-key-new")
+	old, err := s.CreateAPIKeyWithExpiry(ctx, acctID, oldHash, "agent", []string{"runs:read", "runs:write"}, nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKeyWithExpiry: %v", err)
+	}
+	before, err := s.APIKeyByHash(ctx, oldHash)
+	if err != nil || before.RunsPrincipalID == "" {
+		t.Fatalf("APIKeyByHash before rotation = %+v, %v", before, err)
+	}
+	if _, _, err := s.RotateAPIKey(ctx, acctID, old.ID, newHash, "agent-next", time.Hour); err != nil {
+		t.Fatalf("RotateAPIKey: %v", err)
+	}
+	after, err := s.APIKeyByHash(ctx, newHash)
+	if err != nil {
+		t.Fatalf("APIKeyByHash after rotation: %v", err)
+	}
+	if after.RunsPrincipalID != before.RunsPrincipalID {
+		t.Fatalf("Runs principal changed across rotation: before=%q after=%q", before.RunsPrincipalID, after.RunsPrincipalID)
+	}
+}
+
 func TestPg_RotateAPIKey_AtomicRotationFlipsOldKeyToRevoked(t *testing.T) {
 	s, ctx := pgStore(t)
 	acctID := createAccount(t, s, ctx, pgTestEmail(t))

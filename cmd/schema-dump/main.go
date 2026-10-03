@@ -178,5 +178,7 @@ func stripNoise(in []byte) []byte {
 	for _, re := range pgDumpNoise {
 		out = re.ReplaceAll(out, nil)
 	}
-	return out
+	// Removing the final banner leaves blank lines at EOF; keep generated
+	// snapshots compatible with the repository's whitespace checks.
+	return append(bytes.TrimRight(out, "\n"), '\n')
 }

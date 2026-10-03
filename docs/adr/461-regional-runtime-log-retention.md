@@ -2,7 +2,7 @@
 
 Status: Accepted; internal rollout pending native qualification
 Date: 2026-10-02
-Extends ADR-434. Local backlog policy is superseded by ADR-462.
+Extends ADR-474. Local backlog policy is superseded by ADR-462.
 
 ## Context
 
@@ -74,5 +74,5 @@ replay and late publisher refusal. PostgreSQL tests also exercise direct SQL gua
 and publication failure while holding an app lock with a two-connection pool.
 Collector tests cover unavailable regions, delete/metadata retries, inclusive UTC
 boundaries, unknown-object preservation and in-flight publisher ordering. Native
-KVM archive publication/readback and lifecycle acceptance remain required by ADR-434;
+KVM archive publication/readback and lifecycle acceptance remain required by ADR-474;
 portable tests do not qualify regional admission.

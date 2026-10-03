@@ -18,6 +18,19 @@ For CI, create a scoped project or organization token and expose it as `FAAS_TOK
 Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
 
+For a Runs-only agent, mint an account key with `runs:write` instead of the
+default full-access `admin` key:
+
+```sh
+gregale keys add agent-runner --scopes runs:write
+```
+
+`runs:read` can inspect the Runs capability contract, receipts, and event
+streams. `runs:write` can submit and cancel runs and includes those read
+permissions so an agent can follow its work. Existing `apps:read` keys retain
+Runs read access, and existing `deploy:write` keys retain submit/cancel access.
+Both scopes remain account-wide; they do not bind a key to an individual run.
+
 Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
 ## Dashboard OAuth and PKCE

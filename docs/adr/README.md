@@ -13,9 +13,11 @@ and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
 `make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+any **newly** duplicated number. The 72 numbers already duplicated on `main` are
 frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
+the gate holds that set and stops it growing. Do not add a line for a collision
+introduced by this PR; refresh the baseline from `main` when `main` independently
+gains duplicate ADR numbers.
 
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
@@ -54,6 +56,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
+| 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
+| 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
+| 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
 | 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
@@ -70,6 +77,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
 | 393 | [Managed exclusive operations](393-managed-exclusive-operations.md) | implementation in progress | Account and trusted customer scope, explicit contention modes, durable ownership generations, lease recovery, and stale-owner fencing |
 | 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |
+| 430 | [Managed PostgreSQL Commit outbox](430-managed-postgresql-commit-outbox.md) | accepted; gated | Customer transaction outbox → managed relay → atomic durable HTTP operation receipt; at-least-once delivery with consumer-owned deduplication |
 | 374 | [Application-keyed background work policies](374-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
 | 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
 | 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
@@ -313,6 +321,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
+| 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -391,8 +400,8 @@ note instead of the banner.
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
-concurrently). The log above already contains several such pairs (157, 158, 167,
-168). A renumber plus a CI uniqueness gate is worth its own PR.
+concurrently). The log above also has duplicate pairs 157, 158, 167, and 168.
+A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Object-storage binding decisions
 
@@ -407,9 +416,42 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+- [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
 ## Managed service recovery decisions
 
 - [ADR-420: continuous service recovery](420-continuous-service-recovery.md) — periodic desired-capacity reconciliation with durable claims and retry deadlines
 - [ADR-421: continuous app ownership recovery](421-continuous-app-ownership-recovery.md) — paged periodic ownership transfer with node-health fencing
 - [ADR-422: bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) — durable admission protection for one-host recovery
+
+## API hosting verification decisions
+
+- [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
+- [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
+
+## Route review and release protection
+
+- [ADR-435: Read-only preview route change reports](435-preview-route-change-reports.md)
+- [ADR-436: Customer-owned route requirements in preview reports](436-route-requirements.md)
+- [ADR-437: Read-only route policy patch planning](437-route-policy-plans.md)
+- [ADR-438: Transactional application of reviewed route policy plans](438-transactional-route-policy-apply.md)
+- [ADR-439: Static FastAPI route impact between Git source revisions](439-static-fastapi-route-impact.md)
+- [ADR-440: Function references and semantic source changes for route impact](440-function-level-route-impact.md)
+- [ADR-441: Source impact joins and priorities in preview reviews](441-source-impact-preview-reviews.md)
+- [ADR-442: Directional request compatibility in preview reports](442-request-input-compatibility.md)
+- [ADR-443: Validation bounds and nullable request unions](443-request-validation-compatibility.md)
+- [ADR-444: Captured route authentication comparison](444-declared-route-security-comparison.md)
+- [ADR-445: Preview route-family policy coverage](445-preview-route-family-policy-coverage.md)
+- [ADR-446: Route-group policy plans and captured impact](446-route-group-policy-planning.md)
+- [ADR-447: Opt-in route-group budget consolidation](447-route-group-budget-consolidation.md)
+- [ADR-448: Saved app route requirements and snapshot checks](448-saved-route-requirements.md)
+- [ADR-449: Durable automatic route checks and freshness](449-automatic-route-checks.md)
+- [ADR-450: Opt-in route safety gates for canary advancement](450-canary-route-safety-gates.md)
+- [ADR-451: Continuous route policy checks and safety transition events](451-continuous-route-policy-monitoring.md)
+- [ADR-452: Repair plans bound to saved route intent](452-saved-route-policy-repairs.md)
+- [ADR-453: Retained route checks and finding regressions](453-route-finding-history.md)
+- [ADR-454: Observed route health gates for canary progression](454-observed-route-canary-health.md)
+- [ADR-455: Critical route p95 latency budgets during canaries](455-critical-route-canary-latency.md)
+- [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
+- [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
+- [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)

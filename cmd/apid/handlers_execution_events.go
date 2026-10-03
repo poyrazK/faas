@@ -24,6 +24,11 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 	if !s.requireExecutionAPI(w) {
 		return
 	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
+		return
+	}
 	eventStore, ok := s.store.(state.ExecutionEventStore)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented,
@@ -42,6 +47,9 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 		api.WriteProblem(w, api.ErrInternal("could not load execution"))
+		return
+	}
+	if !requireExecutionOwnership(w, s, access, row) {
 		return
 	}
 	after, problem := executionEventCursor(r)

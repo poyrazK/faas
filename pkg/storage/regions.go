@@ -48,7 +48,7 @@ func (r *RegionRouter) validate(key string) error {
 	}
 	id, _, err := region.SplitArtifactKey(key)
 	if err != nil {
-		return fmt.Errorf("%w: %s", ErrInvalidKey, err)
+		return fmt.Errorf("%w: %w", ErrInvalidKey, err)
 	}
 	if id != "" && r.routes[id] == nil {
 		return fmt.Errorf("storage: region %q: %w", id, ErrRegionNotConfigured)
@@ -142,7 +142,7 @@ func (r *RegionRouter) List(ctx context.Context, prefix string) ([]string, error
 	}
 	id, relative, err := region.SplitArtifactKey(prefix)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidKey, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidKey, err)
 	}
 	backend, namespace := r.legacy, ""
 	if id != "" {

@@ -49,7 +49,7 @@ func TestUDPIngressMetal(t *testing.T) {
 	t.Setenv("FAAS_UDPD_ENABLED", "1")
 	t.Setenv("FAAS_UDPD_BIND_HOST", "127.0.0.1")
 	t.Setenv("FAAS_UDPD_ALLOWED_SOURCE_CIDRS", "127.0.0.0/8")
-	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic)
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd|e2etest.GatewaydPublic)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanPro)

@@ -708,6 +708,30 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
@@ -3240,8 +3264,10 @@ type AdvanceCanaryRequest struct {
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	Deployment  DeploymentResponse   `json:"deployment"`
+	AuditID     string               `json:"audit_id"`
+	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for
@@ -3327,23 +3353,26 @@ type MirrorRuleListResponse struct {
 // server-side via SQL aggregates (COUNT / SUM / p99_cont) — the
 // client never iterates the ledger. MeanLatencyDiffMs /
 // P99LatencyDiffMs are *signed* (mirror_ms − source_ms; positive
-// = mirror is slower). CrashCount counts the rows where the
-// mirror VM exited abnormally before producing a response (the
-// customer's source request still succeeded). WindowSeconds is
-// the parsed window in seconds so the CLI can render "last 1h"
-// without parsing the query string.
+// = mirror is slower). CrashCount counts missing or 5xx responses
+// after admission; scheduler admission failures are incomplete
+// comparisons and are exposed through their own reason counts.
+// WindowSeconds is the parsed window in seconds so the CLI can
+// render "last 1h" without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations          int64   `json:"total_invocations"`
-	ChangedResponseCount      int64   `json:"changed_response_count"`
-	ChangedResponsePct        float64 `json:"changed_response_percent"`
-	StatusDiffCount           int64   `json:"status_diff_count"`
-	SchemaDiffCount           int64   `json:"schema_diff_count"`
-	BodyDiffCount             int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
-	CrashCount                int64   `json:"crash_count"`
-	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
-	WindowSeconds             int     `json:"window_seconds"`
+	TotalInvocations                int64   `json:"total_invocations"`
+	ChangedResponseCount            int64   `json:"changed_response_count"`
+	ChangedResponsePct              float64 `json:"changed_response_percent"`
+	StatusDiffCount                 int64   `json:"status_diff_count"`
+	SchemaDiffCount                 int64   `json:"schema_diff_count"`
+	BodyDiffCount                   int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs               int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs                int64   `json:"p99_latency_diff_ms"`
+	CrashCount                      int64   `json:"crash_count"`
+	IncompleteComparisonCount       int64   `json:"incomplete_comparison_count"`
+	SchedulerAdmissionTimeoutCount  int64   `json:"scheduler_admission_timeout_count"`
+	SchedulerAdmissionRejectedCount int64   `json:"scheduler_admission_rejected_count"`
+	SchedulerAdmissionErrorCount    int64   `json:"scheduler_admission_error_count"`
+	WindowSeconds                   int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -3495,6 +3524,10 @@ type CapabilityStatus struct {
 	DocsURL     string             `json:"docs_url"`
 	Acceptance  string             `json:"acceptance"`
 	Enabled     bool               `json:"enabled"`
+	// UnavailableReason is a stable code for automation. Both explanation
+	// fields are omitted when enabled; older servers may omit them entirely.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped response from
@@ -5448,7 +5481,8 @@ type ListCronRunsResponse struct {
 // poll the row's status (future GET /v1/cron-fire-now-requests/{id})
 // or to correlate the audit-event stream (`cron.fired.manually`)
 // back to their request. Status starts at "pending" — terminal
-// values are "succeeded" or "failed".
+// values are "succeeded" or "failed". Managed exclusive command crons set
+// OperationID on acceptance and TaskID once their owned AppTask is created.
 type FireCronResponse struct {
 	RequestID string `json:"request_id"`
 	CronID    string `json:"cron_id"`
@@ -5464,7 +5498,7 @@ type FireCronResponse struct {
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
 // consumer populates FinishedAt + Error and either InvocationID (legacy HTTP
-// crons), OperationID (managed exclusive HTTP crons), or TaskID.
+// crons), OperationID (managed exclusive HTTP or command crons), or TaskID.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -11462,6 +11496,7 @@ type ScheduleOccurrenceResponse struct {
 	Status               string                     `json:"status"`
 	Reason               string                     `json:"reason,omitempty"`
 	BlockingOccurrenceID string                     `json:"blocking_occurrence_id,omitempty"`
+	ExclusiveOperationID string                     `json:"exclusive_operation_id,omitempty"`
 	JobRunID             string                     `json:"job_run_id,omitempty"`
 	InvocationID         string                     `json:"invocation_id,omitempty"`
 	AppTaskID            string                     `json:"app_task_id,omitempty"`

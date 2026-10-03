@@ -55,7 +55,7 @@ func cmdRegistry(args []string) int {
 	case subRm:
 		return cmdRegistryRm(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown registry subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown registry subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

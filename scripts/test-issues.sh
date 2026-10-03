@@ -16,7 +16,7 @@ npm run test:build --prefix sdk/node
 node --test sdk/node/dist-test/test/issues.test.js
 node --test tests/issues-smoke/run.test.mjs
 PYTHONPATH=sdk/python python3 -m pytest -q sdk/python/tests/test_issues.py
-FAAS_REPLAY_CHECK_VERSIONS=20260930100000001 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./migrations -run '^TestNewMigrationsAreReplaySafe$'
+FAAS_REPLAY_CHECK_VERSIONS=20260930100000001,20261001175404001 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./migrations -run '^TestNewMigrationsAreReplaySafe$'
 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/issues ./cmd/apid -run '^TestIssue'
 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/api ./pkg/productcap ./cmd/gregale ./pkg/dashboard
 go run ./cmd/sdk-coverage

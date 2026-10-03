@@ -92,7 +92,7 @@ func cmdCors(args []string) int {
 	case "show":
 		return cmdCorsShow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown cors subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown cors subcommand %q\n", args[0])
 	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
 		maybeSuggestSub(sug)
 	}

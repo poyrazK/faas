@@ -10,6 +10,8 @@ import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
+import type { InjectScenarioTestChaosRequest } from '../models/InjectScenarioTestChaosRequest.js';
+import type { InjectScenarioTestChaosResponse } from '../models/InjectScenarioTestChaosResponse.js';
 import type { ListDevBridgesResponse } from '../models/ListDevBridgesResponse.js';
 import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
 import type { RegisterScenarioTestRequest } from '../models/RegisterScenarioTestRequest.js';
@@ -291,7 +293,7 @@ export class DevService {
     requestBody,
   }: {
     /**
-     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     * Lowercase hexadecimal ID shared only by sessions in this test run.
      */
     runId: string,
     requestBody: RegisterScenarioTestRequest,
@@ -321,7 +323,7 @@ export class DevService {
     runId,
   }: {
     /**
-     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     * Lowercase hexadecimal ID shared only by sessions in this test run.
      */
     runId: string,
   }): CancelablePromise<void> {
@@ -335,6 +337,37 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Install a bounded request-level fault plan for an isolated scenario run.
+   * Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
+   * @returns InjectScenarioTestChaosResponse Fault plan installed.
+   * @throws ApiError
+   */
+  public static injectScenarioTestChaos({
+    runId,
+    requestBody,
+  }: {
+    /**
+     * Random lowercase hexadecimal identity shared by the run's developer sessions.
+     */
+    runId: string,
+    requestBody: InjectScenarioTestChaosRequest,
+  }): CancelablePromise<InjectScenarioTestChaosResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/dev/test-runs/{run_id}/chaos',
+      path: {
+        'run_id': runId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -144,14 +145,22 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 		return ExecutionRestoreRequest{}, fmt.Errorf("sched: resolve execution snapshot: %w", err)
 	}
 
+	outboundIntegrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(claim.OutboundIntegrationIDs)
+	if normalizeErr != nil {
+		return ExecutionRestoreRequest{}, fmt.Errorf("%w: outbound integration intent is invalid", ErrExecutionClaimInvalid)
+	}
 	request := ExecutionRestoreRequest{
 		Profile: shape.Profile,
 		ID:      claim.ID, AccountID: claim.AccountID, NodeID: r.nodeID,
 		Plan: account.Plan, Runtime: claim.Runtime, NetworkMode: claim.NetworkMode,
 		Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
-		KernelKey: artifacts.KernelKey, BaseKey: artifacts.BaseKey, LayerKey: artifacts.LayerKey,
+		OutboundIntegrationIDs: outboundIntegrationIDs,
+		KernelKey:              artifacts.KernelKey, BaseKey: artifacts.BaseKey, LayerKey: artifacts.LayerKey,
 		VcpuCount: api.VCPUPerPlan[account.Plan], MemSizeMiB: claim.Limits.MemoryMB,
 		CPUMillicores: claim.Limits.CPUMillicores,
+	}
+	if len(outboundIntegrationIDs) > 0 && claim.LeaseToken != nil {
+		request.LeaseToken = *claim.LeaseToken
 	}
 	if plan.Mode == RuntimeSnapshotRestore && plan.Snapshot != nil {
 		request.Snapshot = SnapshotRef{
@@ -174,6 +183,18 @@ func validateExecutionClaimEnvelope(claim state.ExecutionClaim) error {
 	}
 	if claim.DeadlineAt.IsZero() {
 		return fmt.Errorf("%w: deadline is required", ErrExecutionClaimInvalid)
+	}
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(claim.OutboundIntegrationIDs)
+	if err != nil {
+		return fmt.Errorf("%w: outbound integration intent is invalid", ErrExecutionClaimInvalid)
+	}
+	if len(integrationIDs) > 0 {
+		if claim.LeaseToken == nil {
+			return fmt.Errorf("%w: outbound integration intent requires an execution lease", ErrExecutionClaimInvalid)
+		}
+		if _, err := uuid.Parse(*claim.LeaseToken); err != nil {
+			return fmt.Errorf("%w: execution lease token is invalid", ErrExecutionClaimInvalid)
+		}
 	}
 	return nil
 }

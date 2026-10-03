@@ -1,10 +1,12 @@
 // Package workloadidentity mints the short-lived identity assertions that
-// running applications use with cloud workload-identity federation.
+// running applications use with cloud workload-identity federation and that
+// Gregale host services use to identify an active disposable Run.
 //
 // This is deliberately separate from pkg/oidc: that package implements the
 // customer-controlled CI deploy exchange and returns opaque fp_oidc_ bearer
-// keys. Workload identity assertions are platform-issued JWTs whose subject is
-// a running app instance and whose audience is selected by the application.
+// keys. App assertions identify a running app instance and use an audience
+// selected by that app. Execution assertions identify a scheduler-owned Run
+// lease and are host-to-host capability material.
 package workloadidentity
 
 import (
@@ -22,6 +24,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/uuid"
 )
 
 const (
@@ -47,12 +50,29 @@ type Claims struct {
 	InstanceID string `json:"instance_id"`
 }
 
+// ExecutionClaims is the host-to-host identity for a claimed disposable Run.
+// LeaseToken fences an assertion to the scheduler's current execution lease;
+// callers must keep it out of guest payloads and guest-visible metadata.
+type ExecutionClaims struct {
+	jwt.Claims
+	AccountID   string `json:"account_id"`
+	ExecutionID string `json:"execution_id"`
+	LeaseToken  string `json:"lease_token"`
+}
+
 // Token is the response returned to the guest metadata proxy.
 type Token struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int64  `json:"expires_in"`
 }
+
+// ExecutionToken is host-to-host capability material. Its JWT is private so
+// this type cannot accidentally serialize into a guest-facing JSON response.
+// Use BearerValue only when setting the internal outbound identity header.
+type ExecutionToken struct{ jwt string }
+
+func (t ExecutionToken) BearerValue() string { return t.jwt }
 
 // Signer mints RS256 assertions and publishes the corresponding public JWKS.
 // It is safe for concurrent use: jose's signer is immutable after creation.
@@ -133,6 +153,60 @@ func (s *Signer) Mint(now time.Time, accountID, appID, instanceID, audience stri
 		return Token{}, fmt.Errorf("workload identity: serialize token: %w", err)
 	}
 	return Token{AccessToken: raw, TokenType: "Bearer", ExpiresIn: int64(s.ttl / time.Second)}, nil
+}
+
+// MintExecution creates a short-lived assertion for a claimed disposable Run.
+// Unlike Mint, this subject is an execution and is never a guest-facing
+// workload identity. The outbound broker uses the lease token to reject stale
+// VMs after a claim is completed, cancelled, or reclaimed.
+func (s *Signer) MintExecution(now time.Time, accountID, executionID, leaseToken, audience string) (ExecutionToken, error) {
+	if s == nil || s.signer == nil {
+		return ExecutionToken{}, errors.New("workload identity: signer is not configured")
+	}
+	if accountID == "" || executionID == "" || leaseToken == "" {
+		return ExecutionToken{}, errors.New("workload identity: account_id, execution_id, and lease_token are required")
+	}
+	if _, err := uuid.Parse(accountID); err != nil {
+		return ExecutionToken{}, errors.New("workload identity: account_id is invalid")
+	}
+	if _, err := uuid.Parse(executionID); err != nil {
+		return ExecutionToken{}, errors.New("workload identity: execution_id is invalid")
+	}
+	if _, err := uuid.Parse(leaseToken); err != nil {
+		return ExecutionToken{}, errors.New("workload identity: lease_token is invalid")
+	}
+	if err := validateAudience(audience); err != nil {
+		return ExecutionToken{}, err
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ttl := s.ttl
+	if ttl > DefaultTokenTTL {
+		ttl = DefaultTokenTTL
+	}
+	expires := now.Add(ttl)
+	var jtiBytes [16]byte
+	if _, err := rand.Read(jtiBytes[:]); err != nil {
+		return ExecutionToken{}, fmt.Errorf("workload identity: generate jti: %w", err)
+	}
+	claims := ExecutionClaims{
+		Claims: jwt.Claims{
+			Issuer:    s.issuer,
+			Subject:   "execution:" + executionID,
+			Audience:  jwt.Audience{audience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			Expiry:    jwt.NewNumericDate(expires),
+			NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
+			ID:        hex.EncodeToString(jtiBytes[:]),
+		},
+		AccountID: accountID, ExecutionID: executionID, LeaseToken: leaseToken,
+	}
+	raw, err := jwt.Signed(s.signer).Claims(claims).Serialize()
+	if err != nil {
+		return ExecutionToken{}, fmt.Errorf("workload identity: serialize execution token: %w", err)
+	}
+	return ExecutionToken{jwt: raw}, nil
 }
 
 // JWKS returns the public key set suitable for an OIDC discovery endpoint.

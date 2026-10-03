@@ -135,7 +135,8 @@ type JailerVMM struct {
 	// process has exited. Manager owns the lifecycle decision; the
 	// VMM only reports the reaped child. Kept outside the VMM
 	// interface so injected VMMs remain source-compatible.
-	processExitSink func(instance string, exitCode int)
+	processExitSink        func(instance string, exitCode int)
+	processExitAttemptSink func(instance string, generation uint64, exitCode int)
 	// materialisedTmp tracks tmp files materializeFromStorage created for
 	// each instance so Kill/DestroyWithExport can Remove them on teardown.
 	// Without this, the tmp files (in /tmp) outlive the chroot and leak
@@ -508,6 +509,17 @@ func (v *JailerVMM) WithLogEvictionCallback(cb func(instance string, line logbuf
 func (v *JailerVMM) WithProcessExitSink(cb func(instance string, exitCode int)) *JailerVMM {
 	v.mu.Lock()
 	v.processExitSink = cb
+	v.processExitAttemptSink = nil
+	v.mu.Unlock()
+	return v
+}
+
+// WithProcessExitAttemptSink includes the process attempt in each notification,
+// so a late exit cannot terminate a replacement VM with the same instance ID.
+func (v *JailerVMM) WithProcessExitAttemptSink(cb func(string, uint64, int)) *JailerVMM {
+	v.mu.Lock()
+	v.processExitAttemptSink = cb
+	v.processExitSink = nil
 	v.mu.Unlock()
 	return v
 }
@@ -4649,6 +4661,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			exitCode = state.ExitCode()
 		}
 		var sink func(string, int)
+		var attemptSink func(string, uint64, int)
 		v.mu.Lock()
 		rec.exitCode = exitCode
 		// Remove the process from the liveness source of truth as
@@ -4658,12 +4671,15 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 			delete(v.proc, l.Instance)
 			if !rec.isBuilder {
 				sink = v.processExitSink
+				attemptSink = v.processExitAttemptSink
 			}
 		}
 		rec.exited = true
 		close(rec.done)
 		v.mu.Unlock()
-		if sink != nil {
+		if attemptSink != nil {
+			attemptSink(l.Instance, l.processGeneration, exitCode)
+		} else if sink != nil {
 			sink(l.Instance, exitCode)
 		}
 	}()
@@ -6357,7 +6373,8 @@ func moveOut(src, dst string) (int64, error) {
 }
 
 // materializeFromStorage pulls the bytes for key via the configured
-// StorageBackend and writes them into a fresh tmp file. Returns the
+// StorageBackend and retains its immutable file or copies the stream into a
+// fresh tmp file. Returns the
 // absolute path the caller should substitute into MemPath. The tmp
 // path is registered against instanceID so Kill / DestroyWithExport
 // Remove it during teardown; without the registration the file
@@ -6388,6 +6405,13 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
+	if linker, ok := rc.(storage.LocalFileLinker); ok {
+		if path, linked, err := v.retainStorageFile(instanceID, linker); err != nil {
+			return "", fmt.Errorf("vmm: retain %q: %w", key, err)
+		} else if linked {
+			return path, nil
+		}
+	}
 	tmp, err := os.CreateTemp("", "faas-snap-*.bin")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
@@ -6404,6 +6428,30 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	}
 	v.trackMaterialised(instanceID, tmpPath)
 	return tmpPath, nil
+}
+
+// retainStorageFile gives a file-backed Get result an instance-owned name.
+// Never borrow its cache path: eviction or refresh can remove/replace it after
+// Get returns. An inode-verified hardlink survives those operations and is
+// swept alongside ordinary materializations. Link errors (including EXDEV)
+// retain the existing streaming fallback without another remote fetch.
+func (v *JailerVMM) retainStorageFile(instanceID string, linker storage.LocalFileLinker) (string, bool, error) {
+	reserved, err := os.CreateTemp("", "faas-snap-*.bin")
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = os.Remove(reserved.Name()) }()
+	if err := reserved.Close(); err != nil {
+		return "", false, err
+	}
+	// Link to a fresh sibling instead of unlinking/reopening the reservation.
+	// LinkTo must not overwrite a destination, including a competing file.
+	path := reserved.Name() + ".linked"
+	if err := linker.LinkTo(path); err != nil {
+		return "", false, nil
+	}
+	v.trackMaterialised(instanceID, path)
+	return path, true, nil
 }
 
 // restoreSourceFromStorage resolves a restore input without copying when the

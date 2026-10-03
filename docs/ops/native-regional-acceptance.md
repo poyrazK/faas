@@ -3,7 +3,7 @@
 Run `make native-regional-acceptance` against a dedicated fleet running the
 candidate apid, schedd, vmmd, imaged and builderd with the current migrations.
 This is a qualification gate for the shared-control-plane placement contract
-in ADR-424, ADR-427 and ADR-460. Independent regional control planes, geographic
+in ADR-465, ADR-468 and ADR-460. Independent regional control planes, geographic
 ingress and data residency remain separate milestones.
 
 Use a dedicated acceptance API with `regional_compute_enabled = true` and

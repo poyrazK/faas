@@ -14,7 +14,7 @@ export type FlagDecision = {
   type?: 'boolean' | 'variant';
   config_version: number;
   rule_id?: string;
-  reason: 'flag_missing' | 'default' | 'disabled' | 'customer_missing' | 'rule_match' | 'configuration_stale' | 'type_mismatch';
+  reason: 'flag_missing' | 'default' | 'disabled' | 'customer_missing' | 'subject_missing' | 'rule_match' | 'configuration_stale' | 'type_mismatch';
   /**
    * Boolean rollout bucket or weighted variant assignment bucket.
    */

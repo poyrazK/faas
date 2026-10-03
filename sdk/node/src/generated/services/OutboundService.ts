@@ -13,6 +13,7 @@ import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutO
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
 import type { PutOutboundRequestPolicyRequest } from '../models/PutOutboundRequestPolicyRequest.js';
+import type { PutOutboundRunsBindingRequest } from '../models/PutOutboundRunsBindingRequest.js';
 import type { UpdateOutboundBindingPolicyRequest } from '../models/UpdateOutboundBindingPolicyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -194,6 +195,42 @@ export class OutboundService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Grant or revoke use of a managed integration by stateless Runs.
+   * Requires MFA and deploy-write scope. Grants are separate from app bindings and require an enabled integration with a configured managed credential and at least one allowed route. Run tool calls are available only after the Runs broker is enabled for the deployment.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundIntegrationRunsBinding({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the account-owned integration whose Runs access is changing.
+     */
+    integration: string,
+    requestBody: PutOutboundRunsBindingRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/runs',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Integration is missing a managed credential or allowed route.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

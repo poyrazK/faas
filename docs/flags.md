@@ -3,7 +3,8 @@
 Gregale Flags releases already deployed application behavior to selected platform
 customers without a new deployment. The initial operator qualification supports boolean flags,
 named string variants, explicit customer lists, owner-managed customer groups,
-sticky weighted allocation and percentage rollout, versioned configuration,
+authenticated application subject targeting, sticky weighted allocation and
+customer- or subject-level percentage rollout, versioned configuration,
 rollback, a decision inspector, Node, Python and Go runtime SDKs, and request
 cohort evidence. Business
 logic must explicitly check a flag. Flags do not grant
@@ -62,8 +63,60 @@ customers; `10000` means all. Allocation hashes the stable environment flag seed
 flag key and verified customer ID. Increasing the percentage retains the original
 cohort. Variant assignment uses a separate stable hash, so rollout eligibility does
 not skew the configured variant weights. Everyone within the same customer receives
-the same allocation. Anonymous requests never match customer rules. Flags with no
-matching rule use `default`.
+the same allocation unless a rule opts into subject allocation. Anonymous requests
+never match customer rules. Flags with no matching rule use `default`.
+
+## Target authenticated application users
+
+Use `subjects` for a bounded list of opaque, stable user IDs supplied by the
+application after it authenticates the user. Every subject rule must also have a
+`customers` or `group` constraint, so a user ID is always scoped to a verified
+Gregale tenant. Do not pass an unverified request parameter, email address, or
+display name as the subject. Subject IDs are used to evaluate the rule, but the raw
+ID is not stored in request evidence or decision propagation.
+
+```json
+{
+  "key": "new-export",
+  "enabled": true,
+  "default": false,
+  "rules": [{
+    "id": "named-pilot-users",
+    "customers": ["11111111-1111-4111-8111-111111111111"],
+    "subjects": ["user-17", "user-42"],
+    "value": true
+  }]
+}
+```
+
+Set `rollout_unit` to `subject` when percentage eligibility should be stable per
+authenticated user rather than shared by all users in a customer. The rule still
+needs a tenant constraint. The rollout and variant buckets then include both the
+verified customer and subject ID; the same user keeps its cohort across requests,
+while another customer with the same local user ID receives an independent cohort.
+
+```json
+{
+  "key": "export-pipeline",
+  "type": "variant",
+  "enabled": true,
+  "default": "legacy",
+  "variants": [
+    { "key": "legacy", "weight": 5000 },
+    { "key": "new", "weight": 5000 }
+  ],
+  "rules": [{
+    "id": "customer-user-rollout",
+    "group": "pilot-customers",
+    "rollout": 1000,
+    "rollout_unit": "subject"
+  }]
+}
+```
+
+Subject-targeted configurations require SDK capability `subject-targeting-v1`.
+The runtime endpoint returns `426 flags_sdk_capability_required` to older SDKs
+instead of allowing them to evaluate a user-specific rule as a customer-wide rule.
 
 Variant flags use a string `default`, a `variants` list whose integer weights total
 10000 basis points, and targeting rules. A matching rule without `value` assigns a
@@ -115,6 +168,19 @@ async function handle(request: Request): Promise<Response> {
     return response;
   });
 }
+```
+
+After authenticating the application user, scope its opaque ID around the checks
+that depend on that user:
+
+```ts
+return flags.runRequest(request.headers, async () => {
+  const actor = await authenticate(request);
+  return flags.withSubject(actor.stableId, async () => {
+    const decision = flags.boolean('new-export', false);
+    return decision.value ? exportV2(request) : exportV1(request);
+  });
+});
 ```
 
 For a multivariate behavior, call `variant()` and branch on the returned string:
@@ -173,6 +239,17 @@ async def handle_request():
         ...
 ~~~
 
+After authenticating the application user, use its opaque stable ID for
+user-specific checks:
+
+~~~python
+async def handle_request(request):
+    actor = await authenticate(request)
+    async with flags.for_subject(actor.stable_id):
+        decision = flags.boolean("new-export", False)
+        return await export_v2(request) if decision.value else await export_v1(request)
+~~~
+
 Use the asynchronous HTTPX transport to forward only explicitly used decisions
 to managed services. For queued work, put flags.propagation_header() in the
 message's flag_context field, following the Node example below. Close the flags
@@ -211,6 +288,17 @@ if err := flags.Start(ctx); err != nil {
 defer flags.Close()
 
 app := flags.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    actor, err := authenticate(r)
+    if err != nil {
+        http.Error(w, "unauthorized", http.StatusUnauthorized)
+        return
+    }
+    subjectContext, err := flags.WithSubject(r.Context(), actor.StableID)
+    if err != nil {
+        http.Error(w, "flag subject unavailable", http.StatusInternalServerError)
+        return
+    }
+    r = r.WithContext(subjectContext)
     decision, err := flags.Boolean(r.Context(), "new-export", false)
     if err != nil {
         http.Error(w, "flag context unavailable", http.StatusInternalServerError)
@@ -327,6 +415,7 @@ gregale flags outcomes --project exports --key new-export --customer-id 11111111
 gregale flags outcomes --project exports --key new-export --rule-id selected-customers --config-version 4 --since 6h
 gregale flags history --project exports
 gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --version 1
+gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --subject-id user-17
 gregale flags inspect --project exports --key future-export --fallback-variant legacy
 gregale flags rollback --project exports --expected-version 2 --version 1
 ```
@@ -335,8 +424,9 @@ An explanation contains value, matched rule ID, configuration version, source,
 and the allocation bucket when a percentage or weighted variant rule matched.
 Variant decisions identify their type and show a separate rollout eligibility
 bucket when both percentage eligibility and weighted allocation apply. Inspector
-simulations do not record exposure. Historical versions remain available; rollback publishes
-a new version. History returns up to 100 versions; continue using
+subject simulations require a verified `--customer-id` and use the same
+tenant-scoped allocation as the SDK. Simulations do not record exposure.
+Historical versions remain available; rollback publishes a new version. History returns up to 100 versions; continue using
 `--before-version` with the oldest version returned.
 
 Request evidence reports gateway-attributed customer identity alongside status,

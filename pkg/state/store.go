@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -362,6 +363,9 @@ type CanaryAdvanceParams struct {
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
 	Audit                     DeploymentAudit
+	RouteCheckFingerprint     RouteCheckFingerprinter
+	RouteGateDecision         *api.RouteGateDecision
+	RouteHealthDecision       *api.RouteHealthDecision
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -376,6 +380,14 @@ type CanaryAdvancer interface {
 // type-assert before persisting a hosting receipt.
 type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
+// DeploymentHostingFailureStore commits a failed hosting verdict with the
+// deployment's terminal status, stage, traffic and outcome activity. Only a
+// snapshotting candidate can transition; terminal rows are unchanged. changed
+// tells the caller whether it owns the post-commit notification.
+type DeploymentHostingFailureStore interface {
+	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
 }
 
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
@@ -1849,6 +1861,8 @@ type Store interface {
 	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
+	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
 	// PruneScenarioTestMembers removes abandoned namespaces only after every

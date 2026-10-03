@@ -473,18 +473,17 @@ func TestManPages_LintWithMandoc(t *testing.T) {
 	}
 }
 
-func TestMan_CommandPage_ContainsFlagsSection(t *testing.T) {
+func TestMan_RegistryDocumentsRequiredLeafFlags(t *testing.T) {
 	c, ok := lookupCliCommand("registry")
 	if !ok {
 		t.Fatalf("registry not in manifest")
 	}
 	var buf bytes.Buffer
 	renderManCommand(&buf, c)
-	if !strings.Contains(buf.String(), ".SH FLAGS") {
-		t.Errorf("man registry: missing FLAGS section")
-	}
-	if !strings.Contains(buf.String(), "--app") {
-		t.Errorf("man registry: missing --app flag")
+	for _, want := range []string{"gregale registry list --app <slug>", "gregale registry rm --app <slug> --registry <host>"} {
+		if !strings.Contains(buf.String(), escapeRoff(want)) {
+			t.Errorf("man registry missing required leaf syntax %q: %s", want, buf.String())
+		}
 	}
 }
 
@@ -618,7 +617,7 @@ printf 'org=%s\n' "${COMPREPLY[*]}"
 	if err != nil {
 		t.Fatalf("bash completion failed: %v\noutput: %s", err, string(out))
 	}
-	want := "app=alpha\napp-sub=scale security\ncanary=beta\norg=acme\n"
+	want := "app=alpha\napp-sub=scale security static-egress-ip\ncanary=beta\norg=acme\n"
 	if got := string(out); got != want {
 		t.Fatalf("completion output = %q, want %q", got, want)
 	}

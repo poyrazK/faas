@@ -174,6 +174,33 @@ func TestNewRoutedVmmdExecutionBackendPinsNodeAndInstance(t *testing.T) {
 	}
 }
 
+func TestRoutedVmmdExecutionBackendSelectsBrokerForGrantedIntegrations(t *testing.T) {
+	router := &recordingRoutedExecutionVMM{}
+	backend := NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
+		return "return true", json.RawMessage("null"), nil
+	})
+	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+		ID: "exec-broker", NodeID: "node-a", Plan: api.PlanPro, Runtime: api.ExecutionRuntimeNode22,
+		NetworkMode: api.ExecutionNetworkNone, Limits: api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
+		OutboundIntegrationIDs: []string{"11111111-1111-4111-8111-111111111111"},
+	})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	streaming, ok := session.(interface {
+		ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
+	})
+	if !ok {
+		t.Fatal("restored session does not expose live output")
+	}
+	if _, err := streaming.ExecuteWithOutput(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error { return nil }); err != nil {
+		t.Fatalf("ExecuteWithOutput: %v", err)
+	}
+	if router.brokerCalls != 1 || !router.outboundEnabled {
+		t.Fatalf("broker route count/enable flag = %d/%t", router.brokerCalls, router.outboundEnabled)
+	}
+}
+
 type recordingExecutionTransport struct {
 	request      executionproto.Request
 	result       executionproto.Result
@@ -200,6 +227,8 @@ func (t *fallbackExecutionTransport) Destroy(context.Context) error { return nil
 
 type recordingRoutedExecutionVMM struct {
 	restoreNode, executeNode, destroyNode, instance string
+	brokerCalls                                     int
+	outboundEnabled                                 bool
 }
 
 func (r *recordingRoutedExecutionVMM) RestoreExecution(_ context.Context, nodeID string, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
@@ -209,6 +238,13 @@ func (r *recordingRoutedExecutionVMM) RestoreExecution(_ context.Context, nodeID
 
 func (r *recordingRoutedExecutionVMM) ExecuteExecution(_ context.Context, nodeID, instance string, _ executionproto.Request) (executionproto.Result, error) {
 	r.executeNode, r.instance = nodeID, instance
+	return executionproto.Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage("null")}, nil
+}
+
+func (r *recordingRoutedExecutionVMM) ExecuteExecutionWithBroker(_ context.Context, nodeID, instance string, request executionproto.Request, _ executionproto.OutputReceiver) (executionproto.Result, error) {
+	r.executeNode, r.instance = nodeID, instance
+	r.brokerCalls++
+	r.outboundEnabled = request.OutboundEnabled
 	return executionproto.Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage("null")}, nil
 }
 

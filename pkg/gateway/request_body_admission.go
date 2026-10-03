@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -43,6 +45,15 @@ func (b *admittedFileBody) Close() error {
 // deadline. The app execution budget is stamped only after this function and
 // platform wake/capacity selection have completed.
 func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
+	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if app.AppProtocol == api.AppProtocolGRPC && mediaErr == nil &&
+		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+")) {
+		// Native gRPC exchanges messages before request EOF. Existing plan and
+		// edge readers enforce size limits incrementally; this body cannot be
+		// spooled or made replayable before dispatch. ADR-428.
+		_ = http.NewResponseController(w).EnableFullDuplex()
+		return false
+	}
 	limit := app.Plan.MaxRequestBodyBytes()
 	allowance := app.Plan.RequestUploadTimeout()
 	if r.ContentLength >= 0 && r.ContentLength <= limit {

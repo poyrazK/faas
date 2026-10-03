@@ -120,6 +120,8 @@ return the terminal receipt in one call:
 
 ```go
 receipt, err := c.Run(ctx, faas.CreateExecutionRequest{
+    WorkflowID: "incident-42",
+    StepLabel:  "collect logs",
     Runtime: faas.ExecutionRuntimeNode22,
     Source:  "console.log('hello')",
 }, faas.RunOptions{
@@ -130,6 +132,12 @@ receipt, err := c.Run(ctx, faas.CreateExecutionRequest{
         return nil
     },
 })
+
+summary, err := c.GetExecutionWorkflow(ctx, "incident-42")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(summary.StatusCounts, summary.Usage)
 ```
 
 For long-lived consumers, call `c.WatchExecution` directly and repeatedly

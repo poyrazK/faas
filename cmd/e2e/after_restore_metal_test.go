@@ -122,7 +122,7 @@ func TestAfterRestoreMetal(t *testing.T) {
 			} else if !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("read previous snapshot: %v", err)
 			}
-			if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusAccepted {
+			if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 				t.Fatalf("park: status=%d body=%s", status, body)
 			}
 			snapshotID = waitAfterRestoreSnapshot(t, store, depID, previousID)

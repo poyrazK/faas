@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/uuid"
 )
 
 func TestMintAndVerify(t *testing.T) {
@@ -44,6 +45,41 @@ func TestMintAndVerify(t *testing.T) {
 	}
 	if got := signer.JWKS().Keys[0].KeyID; got != "kid-1" {
 		t.Fatalf("JWKS kid = %q", got)
+	}
+}
+
+func TestMintExecutionUsesDistinctClaimsAndCapsLifetime(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := NewSigner(key, DefaultIssuer, "kid-1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	accountID, executionID, leaseToken := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	tok, err := signer.MintExecution(now, accountID, executionID, leaseToken, "gregale:outbound:integration-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.BearerValue() == "" {
+		t.Fatal("execution token is empty")
+	}
+	parsed, err := jwt.ParseSigned(tok.BearerValue(), []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims ExecutionClaims
+	if err := parsed.Claims(&key.PublicKey, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if claims.Subject != "execution:"+executionID || claims.AccountID != accountID || claims.ExecutionID != executionID || claims.LeaseToken != leaseToken ||
+		claims.Expiry.Time() != now.Add(DefaultTokenTTL) || claims.Audience[0] != "gregale:outbound:integration-1" {
+		t.Fatalf("execution claims = %+v", claims)
+	}
+	if _, err := signer.MintExecution(now, "not-an-account-uuid", executionID, leaseToken, "gregale:outbound:integration-1"); err == nil {
+		t.Fatal("accepted a non-UUID account ID")
 	}
 }
 

@@ -68,6 +68,46 @@ func TestCmdCapabilitiesJSONOutput(t *testing.T) {
 	if got.Plan != string(api.PlanFree) || got.RegistryVersion != catalog.Version {
 		t.Fatalf("unexpected response: %+v", got)
 	}
+	for _, capability := range got.Capabilities {
+		if capability.Key == "object-storage" && (capability.Enabled || capability.UnavailableReason != api.CapabilityUnavailablePlan || capability.UnavailableDetail == "") {
+			t.Fatalf("JSON output lost the plan explanation: %+v", capability)
+		}
+	}
+}
+
+func TestCmdCapabilitiesExplainsUnavailableFeaturesAndSupportsOlderServers(t *testing.T) {
+	resetJSONOutput()
+	response := api.CapabilitiesResponse{
+		RegistryVersion: 1,
+		Plan:            "free",
+		Capabilities: []api.CapabilityStatus{
+			{Key: "object-storage", UnavailableReason: api.CapabilityUnavailablePlan, UnavailableDetail: "Not included in your current plan."},
+			{Key: "github-deploys", UnavailableReason: api.CapabilityUnavailableRuntime, UnavailableDetail: "Contact support for availability."},
+			{Key: "legacy-feature"},
+		},
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authedFakeAPI(t, string(body), 200)
+	var out bytes.Buffer
+	previous := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = previous })
+	if code := cmdCapabilities(nil); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, text := range []string{"Not included in your current plan.", "Contact support for availability.", "legacy-feature"} {
+		if !strings.Contains(out.String(), text) {
+			t.Errorf("human output missing %q:\n%s", text, out.String())
+		}
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "legacy-feature") && !strings.HasSuffix(line, "unavailable") {
+			t.Errorf("legacy row lost its fallback: %s", line)
+		}
+	}
 }
 
 func TestCmdCapabilitiesRejectsPositionals(t *testing.T) {

@@ -17,6 +17,8 @@ from faas_sdk import (
     evaluate_flag,
     evaluate_variant,
     flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
     flag_variant_bucket,
     validate_bundle,
 )
@@ -88,6 +90,16 @@ def test_cross_language_allocation_vectors():
         vectors = json.loads((repo_root / "pkg" / "flags" / "testdata" / name).read_text())
         for vector in vectors:
             assert evaluator(vector["seed"], vector["key"], vector["customer"]) == vector["bucket"]
+    vectors = json.loads((repo_root / "pkg" / "flags" / "testdata" / "subject_allocation.json").read_text())
+    for vector in vectors:
+        assert (
+            flag_subject_bucket(vector["seed"], vector["key"], vector["customer"], vector["subject"])
+            == vector["bucket"]
+        )
+        assert (
+            flag_subject_variant_bucket(vector["seed"], vector["key"], vector["customer"], vector["subject"])
+            == vector["variant_bucket"]
+        )
 
 
 def test_evaluation_matches_targeting_and_explanation_contract():
@@ -108,6 +120,34 @@ def test_evaluation_matches_targeting_and_explanation_contract():
     assert evaluate_variant(bundle, "checkout", CUSTOMER, "control") == variant
 
 
+def test_subject_targeting_is_tenant_scoped_sticky_and_explainable():
+    bundle = make_bundle()
+    bundle["flags"][0]["seed"] = "stable"
+    bundle["flags"][0]["rules"] = [
+        {
+            "id": "pilot-users",
+            "customers": [CUSTOMER],
+            "rollout": 5000,
+            "rollout_unit": "subject",
+            "value": True,
+        }
+    ]
+    first = evaluate_flag(bundle, "export", CUSTOMER, False, "user-17")
+    second = evaluate_flag(bundle, "export", CUSTOMER, False, "user-18")
+    assert first.value is False and first.reason == "default"
+    assert flag_subject_bucket("stable", "export", CUSTOMER, "user-17") == 5974
+    assert second.value is True and second.bucket == 2986
+    assert evaluate_flag(bundle, "export", CUSTOMER, False).reason == "subject_missing"
+    assert flag_subject_bucket("stable", "export", CUSTOMER, "user-17") != flag_subject_bucket(
+        "stable", "export", "00000000-0000-0000-0000-000000000004", "user-17"
+    )
+    bundle["flags"][1]["rules"] = [{"id": "exact-users", "customers": [CUSTOMER], "subjects": ["user-17"]}]
+    assert evaluate_variant(bundle, "checkout", CUSTOMER, "control", "user-17").bucket == flag_subject_variant_bucket(
+        "checkout-seed", "checkout", CUSTOMER, "user-17"
+    )
+    assert evaluate_variant(bundle, "checkout", CUSTOMER, "control", "user-18").reason == "default"
+
+
 def test_validation_rejects_ambiguous_type_and_boolean_rollout():
     bundle = make_bundle()
     bad_type = {**bundle, "flags": [{**bundle["flags"][0], "type": None}]}
@@ -125,6 +165,16 @@ def test_validation_rejects_ambiguous_type_and_boolean_rollout():
     with pytest.raises(ValueError, match="Invalid Flags rule"):
         validate_bundle(bad_rollout)
 
+    for invalid_rule in (
+        {"id": "pilot", "subjects": ["user-17"], "value": True},
+        {"id": "pilot", "customers": [CUSTOMER], "subjects": [], "value": True},
+        {"id": "pilot", "customers": [CUSTOMER], "subjects": ["user with space"], "value": True},
+        {"id": "pilot", "customers": [CUSTOMER], "rollout_unit": "subject", "value": True},
+    ):
+        bad = {**bundle, "flags": [{**bundle["flags"][0], "rules": [invalid_rule]}]}
+        with pytest.raises(ValueError, match="Invalid Flags rule"):
+            validate_bundle(bad)
+
 
 def flags_client(bundle_state: dict, calls: list[httpx.Request], *, now=None):
     offline = {"value": False}
@@ -137,6 +187,7 @@ def flags_client(bundle_state: dict, calls: list[httpx.Request], *, now=None):
                 raise httpx.ConnectError("offline", request=request)
             return httpx.Response(200, json={"access_token": "workload-token"})
         assert request.headers["authorization"] == "Bearer workload-token"
+        assert request.headers["x-faas-flags-capabilities"] == "subject-targeting-v1"
         if offline["value"]:
             raise httpx.ConnectError("offline", request=request)
         return httpx.Response(200, json=bundle_state["value"])
@@ -199,6 +250,39 @@ async def test_request_snapshot_evidence_refresh_and_stale_fallback():
             assert stale.reason == "configuration_stale"
             assert stale.config_version == 3
         assert len(calls) >= 7
+    finally:
+        await close_flags(flags, client)
+
+
+@pytest.mark.asyncio
+async def test_subject_context_is_bound_after_auth_and_not_written_to_evidence():
+    config = make_bundle()
+    config["flags"][0]["rules"] = [
+        {
+            "id": "pilot-user",
+            "customers": [CUSTOMER],
+            "subjects": ["user-17"],
+            "value": True,
+        }
+    ]
+    calls: list[httpx.Request] = []
+    flags, client, _ = flags_client({"value": config}, calls)
+    try:
+        await flags.refresh()
+        async with flags.run_request({GREGALE_FLAG_CONTEXT_HEADER: CUSTOMER}):
+            with pytest.raises(ValueError, match="Invalid opaque subject ID"):
+                async with flags.for_subject("user with space"):
+                    pass
+            # The application authenticates the user before entering this scope.
+            async with flags.for_subject("user-17"):
+                decision = flags.boolean("export", False)
+                assert decision.value is True and decision.rule_id == "pilot-user"
+                flags.used("export")
+            evidence = flags.response_evidence()
+            assert b"user-17" not in decode_b64url(evidence)
+        with pytest.raises(RuntimeError, match="require run_request"):
+            async with flags.for_subject("user-17"):
+                pass
     finally:
         await close_flags(flags, client)
 

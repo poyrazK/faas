@@ -35,12 +35,22 @@ func (c *Client) ProjectFlagVersions(ctx context.Context, project, environment s
 	return out, err
 }
 func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, key, customer string, version int64, fallbackVariants ...string) (json.RawMessage, error) {
+	return c.InspectProjectFlagForSubject(ctx, project, environment, key, customer, "", version, fallbackVariants...)
+}
+
+// InspectProjectFlagForSubject simulates a decision for one authenticated
+// application subject inside a verified platform customer.
+func (c *Client) InspectProjectFlagForSubject(ctx context.Context, project, environment, key, customer, subject string, version int64, fallbackVariants ...string) (json.RawMessage, error) {
 	var out json.RawMessage
 	var fallbackVariant string
 	if len(fallbackVariants) > 0 {
 		fallbackVariant = fallbackVariants[0]
 	}
-	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", map[string]any{"customer_id": customer, "version": version, "fallback": false, "fallback_variant": fallbackVariant}, &out)
+	body := map[string]any{"customer_id": customer, "version": version, "fallback": false, "fallback_variant": fallbackVariant}
+	if subject != "" {
+		body["subject_id"] = subject
+	}
+	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", body, &out)
 	return out, err
 }
 func (c *Client) RollbackProjectFlags(ctx context.Context, project, environment string, expected, version int64) (json.RawMessage, error) {

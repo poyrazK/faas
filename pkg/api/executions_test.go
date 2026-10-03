@@ -88,6 +88,55 @@ func TestCreateExecutionRequestResolveDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeExecutionIntegrationIDs(t *testing.T) {
+	first := "00000000-0000-4000-8000-000000000001"
+	second := "00000000-0000-4000-8000-000000000002"
+	got, err := NormalizeExecutionIntegrationIDs([]string{strings.ToUpper(second), first})
+	if err != nil {
+		t.Fatalf("NormalizeExecutionIntegrationIDs: %v", err)
+	}
+	if strings.Join(got, ",") != first+","+second {
+		t.Fatalf("normalized IDs = %v, want sorted canonical UUIDs", got)
+	}
+	for _, ids := range [][]string{
+		{"not-a-uuid"},
+		{first, strings.ToUpper(first)},
+		make([]string, ExecutionIntegrationMaxIDs+1),
+	} {
+		if _, err := NormalizeExecutionIntegrationIDs(ids); err == nil {
+			t.Errorf("NormalizeExecutionIntegrationIDs(%v) succeeded, want error", ids)
+		}
+	}
+	if got, err := NormalizeExecutionIntegrationIDs(nil); err != nil || got != nil {
+		t.Fatalf("empty IDs = %v, %v; want nil, nil", got, err)
+	}
+}
+
+func TestExecutionWorkflowMetadataValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		workflowID string
+		stepLabel  string
+		wantErr    bool
+	}{
+		{name: "omitted"},
+		{name: "workflow only", workflowID: "agent-flow:step-1"},
+		{name: "unicode label", workflowID: "flow-1", stepLabel: "résumé analysis"},
+		{name: "step without workflow", stepLabel: "analyze", wantErr: true},
+		{name: "workflow path separator", workflowID: "../other", wantErr: true},
+		{name: "workflow over limit", workflowID: strings.Repeat("a", ExecutionWorkflowIDMaxBytes+1), wantErr: true},
+		{name: "label contains newline", workflowID: "flow-1", stepLabel: "line one\nline two", wantErr: true},
+		{name: "label over limit", workflowID: "flow-1", stepLabel: strings.Repeat("x", ExecutionStepLabelMaxBytes+1), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateExecutionWorkflowMetadata(tc.workflowID, tc.stepLabel)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateExecutionWorkflowMetadata() error = %v, wantErr %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestCreateExecutionRequestResolveBundle(t *testing.T) {
 	req := CreateExecutionRequest{
 		Runtime:    ExecutionRuntimeNode24,

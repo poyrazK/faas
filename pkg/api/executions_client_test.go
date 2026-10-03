@@ -55,6 +55,37 @@ func TestExecutionClientLifecycle(t *testing.T) {
 	}
 }
 
+func TestExecutionWorkflowClientMethods(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/executions":
+			if r.URL.Query().Get("workflow_id") != "agent-flow:42" || r.URL.Query().Get("status") != string(ExecutionStatusRunning) {
+				t.Fatalf("workflow list query = %v", r.URL.Query())
+			}
+			_, _ = w.Write([]byte(`{"executions":[],"limit":10,"offset":0,"next_offset":-1}`))
+		case "/v1/execution-workflows/agent-flow:42":
+			_, _ = w.Write([]byte(`{"workflow_id":"agent-flow:42","run_count":1,"status_counts":{"queued":0,"restoring":0,"running":1,"succeeded":0,"failed":0,"timed_out":0,"out_of_memory":0,"cancelled":0},"usage":{"wall_time_ms":0,"cpu_time_ms":0,"peak_memory_mb":0,"output_bytes":0}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "token")
+	if _, err := c.ListExecutionsForWorkflow(context.Background(), "agent-flow:42", 10, 0, ExecutionStatusRunning); err != nil {
+		t.Fatalf("ListExecutionsForWorkflow: %v", err)
+	}
+	summary, err := c.GetExecutionWorkflow(context.Background(), "agent-flow:42")
+	if err != nil || summary.RunCount != 1 || summary.StatusCounts.Running != 1 {
+		t.Fatalf("GetExecutionWorkflow = %+v, %v", summary, err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("workflow calls = %v", calls)
+	}
+}
+
 func TestStreamExecutionUsesCursorAndSSEAccept(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/executions/exec-1/events" || r.URL.Query().Get("after") != "7" {

@@ -659,6 +659,40 @@ func TestCmdDeployment_HostingReceiptRendered(t *testing.T) {
 	}
 }
 
+// adr: 433 — route reachability must not be rendered as endpoint health.
+func TestCmdDeployment_RouteReceiptRendered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			ID: "0123456789abcdef0123456789abcdef", AppID: "app", Status: "succeeded",
+			APIHostingReceipt: json.RawMessage(`{
+                "schema_version":1,"deployment_id":"candidate","app_id":"app",
+                "profile":{"version":"v1","port":8080},"source":{},"artifact":{},
+                "smoke":{"status":"verified","verification":"route_connectivity",
+                  "authentication":"platform_challenge","path":"/","status_code":404}
+            }`),
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{"route_connectivity", "platform_challenge", "route_path:", "route_status:", "404", "endpoint health and anonymous access are not verified"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %s", want, out)
+		}
+	}
+	if strings.Contains(out, "health_status:") {
+		t.Fatalf("connectivity claimed endpoint health: %s", out)
+	}
+}
+
 // --- --before forwarding ----------------------------------------------------
 
 // TestCmdDeployments_BeforeCursorForwarding pins URL-safe cursor forwarding.

@@ -24,7 +24,7 @@ func cmdUploadCache(args []string) int {
 	case "cleanup":
 		return cmdUploadCacheCleanup(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown upload-cache subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown upload-cache subcommand %q\n", args[0])
 		return 1
 	}
 }

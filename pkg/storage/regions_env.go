@@ -32,7 +32,7 @@ func regionalRoutesFromEnv(ctx context.Context) (map[string]StorageBackend, erro
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // Operator-controlled routing path; provisioned configuration may be a symlink.
 	if err != nil {
 		return nil, fmt.Errorf("storage: regional routing file: %w", err)
 	}
@@ -133,7 +133,7 @@ func regionalCredential(name string) (string, error) {
 		return "", nil
 	}
 	for i, c := range name {
-		if !(c >= 'A' && c <= 'Z' || c == '_' || i > 0 && c >= '0' && c <= '9') {
+		if (c < 'A' || c > 'Z') && c != '_' && (i == 0 || c < '0' || c > '9') {
 			return "", fmt.Errorf("invalid regional credential environment variable name")
 		}
 	}

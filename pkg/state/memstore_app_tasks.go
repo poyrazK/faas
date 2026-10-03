@@ -2,11 +2,13 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -207,13 +209,16 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 	} else if workpolicy.DeadlineMissed(deadline, evaluatedAt) {
 		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
 	}
-	if status == "queued" && policy.Overlap != "allow" {
+	if status == "queued" && (policy.Overlap != "allow" || (options.ExclusiveAdmission != nil && cron.SkipIfRunning)) {
 		for _, active := range m.appTasks {
 			if active.CronID != cronID || active.Status.Terminal() {
 				continue
 			}
+			if options.ExclusiveAdmission != nil && active.ExclusiveOperationID != "" {
+				continue
+			}
 			blocker = active.OccurrenceID
-			if policy.Overlap == "replace" {
+			if policy.Overlap == "replace" && options.ExclusiveAdmission == nil {
 				return AppTask{}, ScheduleOccurrence{}, false, nil
 			}
 			status, reason = "skipped_overlap", "an earlier task for this cron is still active"
@@ -235,6 +240,29 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 			return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
 		}
 	}
+	var exclusiveOperationID string
+	var exclusiveTx *exclusiveMemoryTx
+	if status == "queued" && options.ExclusiveAdmission != nil {
+		admission := *options.ExclusiveAdmission
+		if err := validateExclusiveCommandCronAdmission(admission, app.AccountID, cron.AppID, cronID); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrInvalidArgument
+		}
+		exclusiveTx = m.exclusiveMemoryTxLocked()
+		operation, joined, admitErr := admitExclusiveTransaction(exclusiveTx, admission)
+		if errors.Is(admitErr, exclusivework.ErrBusy) {
+			status, reason = "skipped_overlap", "managed operation lane is busy under the configured contention policy"
+			exclusiveTx = nil
+		} else if admitErr != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: admit scheduled command cron operation: %w", admitErr)
+		} else {
+			exclusiveOperationID = operation.ID
+			if joined {
+				status, reason = "coalesced", "joined an equivalent active managed operation"
+			} else {
+				status = "pending"
+			}
+		}
+	}
 	cron.LastFiredAt = scheduledFor
 	m.crons[cronID] = cron
 	occurrence := ScheduleOccurrence{
@@ -242,11 +270,20 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 		ScheduleRevision: cron.ScheduleRevision, ScheduledFor: scheduledFor,
 		StartDeadlineAt: deadline, SchedulePolicy: *workpolicy.Clone(policy),
 		Status: status, Reason: reason, BlockingOccurrenceID: blocker,
-		CreatedAt: evaluatedAt, UpdatedAt: evaluatedAt,
+		ExclusiveOperationID: exclusiveOperationID,
+		CreatedAt:            evaluatedAt, UpdatedAt: evaluatedAt,
 	}
 	if status != "queued" {
 		m.scheduleOccurrences[occurrence.ID] = occurrence
-		return AppTask{}, cloneScheduleOccurrence(occurrence), false, nil
+		if exclusiveTx != nil {
+			m.commitExclusiveMemoryTxLocked(exclusiveTx)
+		}
+		return AppTask{}, cloneScheduleOccurrence(occurrence), exclusiveOperationID != "" && status == "pending", nil
+	}
+	if exclusiveOperationID != "" {
+		m.scheduleOccurrences[occurrence.ID] = occurrence
+		m.commitExclusiveMemoryTxLocked(exclusiveTx)
+		return AppTask{}, cloneScheduleOccurrence(occurrence), true, nil
 	}
 	task := AppTask{
 		FailureRules: workpolicy.Clone(cron.FailureRules), OccurrenceID: occurrence.ID,
@@ -264,6 +301,187 @@ func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronI
 	m.scheduleOccurrences[occurrence.ID] = occurrence
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), cloneScheduleOccurrence(occurrence), true, nil
+}
+
+// CreateExclusiveCommandCronAppTask materializes the saved command only while
+// the supplied operation generation is current. The occurrence or fire-now
+// receipt is linked to the task under the same MemStore lock.
+func (m *MemStore) CreateExclusiveCommandCronAppTask(_ context.Context, accountID, appID, operationID string, generation int64, expectedCronID string, createdAt time.Time) (AppTask, error) {
+	if accountID == "" || appID == "" || operationID == "" || expectedCronID == "" || generation <= 0 || createdAt.IsZero() {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	createdAt = createdAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureAppTasksLocked()
+	probe := AppTask{AccountID: accountID, AppID: appID, ExclusiveOperationID: operationID, ExclusiveGeneration: generation}
+	if !m.appTaskExclusiveCurrentLocked(probe, createdAt) {
+		return AppTask{}, exclusivework.ErrStaleOwner
+	}
+	for _, existing := range m.appTasks {
+		if existing.ExclusiveOperationID == operationID && existing.ExclusiveGeneration == generation {
+			return cloneAppTask(existing), nil
+		}
+	}
+
+	var occurrence *ScheduleOccurrence
+	for id, candidate := range m.scheduleOccurrences {
+		if candidate.ExclusiveOperationID != operationID || candidate.Status == "coalesced" {
+			continue
+		}
+		if occurrence == nil || candidate.CreatedAt.Before(occurrence.CreatedAt) ||
+			(candidate.CreatedAt.Equal(occurrence.CreatedAt) && id < occurrence.ID) {
+			copyOccurrence := candidate
+			occurrence = &copyOccurrence
+		}
+	}
+	cronID := ""
+	if occurrence != nil {
+		cronID = occurrence.CronID
+	} else {
+		for _, request := range m.fireNowRequests {
+			if request.OperationID != nil && *request.OperationID == operationID {
+				cronID = request.CronID
+				break
+			}
+		}
+	}
+	if cronID == "" || cronID != expectedCronID {
+		return AppTask{}, ErrNotFound
+	}
+	cron, ok := m.crons[cronID]
+	if !ok || cron.AppID != appID {
+		return AppTask{}, ErrNotFound
+	}
+	if !cron.Enabled {
+		return AppTask{}, ErrAppTaskCronDisabled
+	}
+	if cron.SuspendedReason != "" {
+		return AppTask{}, ErrAppTaskCronSuspended
+	}
+	if len(cron.Command) == 0 {
+		return AppTask{}, ErrAppTaskInvalid
+	}
+	if cron.SkipIfRunning {
+		for _, active := range m.appTasks {
+			if active.CronID == cron.ID && active.ExclusiveOperationID == "" &&
+				(active.Status == AppTaskQueued || active.Status == AppTaskRestoring || active.Status == AppTaskRunning) {
+				return AppTask{}, ErrAppTaskCronOverlap
+			}
+		}
+	}
+	app, ok := m.apps[appID]
+	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
+		return AppTask{}, ErrNotFound
+	}
+	var deployment Deployment
+	for _, candidate := range m.deployments {
+		if candidate.AppID != appID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+			continue
+		}
+		if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
+			((candidate.TrafficPercent > 0) == (deployment.TrafficPercent > 0) && candidate.CreatedAt.After(deployment.CreatedAt)) {
+			deployment = candidate
+		}
+	}
+	if deployment.ID == "" {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
+	task := AppTask{
+		ID: uuid.NewString(), AccountID: accountID, AppID: appID, DeploymentID: deployment.ID,
+		ExclusiveOperationID: operationID, ExclusiveGeneration: generation,
+		CronID: cronID, Kind: AppTaskKindCron, Command: append([]string(nil), cron.Command...),
+		CommandShell: cron.CommandShell, DeploymentScope: normalizedDeploymentScope(deployment.Scope),
+		ArtifactKey: deployment.RootfsKey, ImageDigest: deployment.ImageDigest, Status: AppTaskQueued,
+		TimeoutSeconds: cron.CommandTimeoutSeconds, MaxOutputBytes: cron.CommandMaxOutputBytes,
+		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
+		CreatedAt: createdAt, UpdatedAt: createdAt,
+	}
+	if occurrence != nil {
+		task.OccurrenceID = occurrence.ID
+		task.ScheduledFor = cloneAppTaskTimePtr(&occurrence.ScheduledFor)
+		task.StartDeadlineAt = cloneAppTaskTimePtr(occurrence.StartDeadlineAt)
+		task.FailureRules = workpolicy.Clone(cron.FailureRules)
+		occurrence.AppTaskID = task.ID
+		occurrence.Status = "queued"
+		occurrence.Reason = ""
+		occurrence.FinishedAt = nil
+		occurrence.UpdatedAt = createdAt
+		m.scheduleOccurrences[occurrence.ID] = *occurrence
+	}
+	m.appTasks[task.ID] = task
+	for id, request := range m.fireNowRequests {
+		if request.OperationID != nil && *request.OperationID == operationID {
+			request.TaskID = &task.ID
+			m.fireNowRequests[id] = request
+		}
+	}
+	return cloneAppTask(task), nil
+}
+
+// AdmitExclusiveCommandCronFireNow couples operation acceptance to the
+// fire-now request receipt so a retry cannot enqueue a second command run.
+func (m *MemStore) AdmitExclusiveCommandCronFireNow(_ context.Context, requestID string, firedAt time.Time, admission ExclusiveAdmission) (ExclusiveOperation, bool, error) {
+	if requestID == "" || firedAt.IsZero() {
+		return ExclusiveOperation{}, false, ErrAppTaskInvalid
+	}
+	firedAt = firedAt.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	request, ok := m.fireNowRequests[requestID]
+	if !ok || request.Status != FireNowStatusRunning {
+		return ExclusiveOperation{}, false, ErrFireNowRequestNotFound
+	}
+	cron, ok := m.crons[request.CronID]
+	if !ok {
+		return ExclusiveOperation{}, false, ErrNotFound
+	}
+	if !cron.Enabled {
+		return ExclusiveOperation{}, false, ErrAppTaskCronDisabled
+	}
+	if cron.SuspendedReason != "" {
+		return ExclusiveOperation{}, false, ErrAppTaskCronSuspended
+	}
+	if len(cron.Command) == 0 || validateExclusiveCommandCronAdmission(admission, request.AccountID, cron.AppID, cron.ID) != nil {
+		return ExclusiveOperation{}, false, ErrAppTaskInvalid
+	}
+	app, ok := m.apps[cron.AppID]
+	if !ok || app.AccountID != request.AccountID || app.Status == AppDeleted {
+		return ExclusiveOperation{}, false, ErrNotFound
+	}
+	deploymentAvailable := false
+	for _, deployment := range m.deployments {
+		if deployment.AppID == app.ID && deployment.Status == DeployLive && deployment.RootfsKey != "" && deployment.ImageDigest != "" {
+			deploymentAvailable = true
+			break
+		}
+	}
+	if !deploymentAvailable {
+		return ExclusiveOperation{}, false, ErrAppTaskDeploymentUnavailable
+	}
+	ownerTx := m.exclusiveMemoryTxLocked()
+	operation, joined, err := admitExclusiveTransaction(ownerTx, admission)
+	if err != nil {
+		return ExclusiveOperation{}, false, err
+	}
+	if cron.SkipIfRunning {
+		for _, task := range m.appTasks {
+			if task.CronID == cron.ID && task.ExclusiveOperationID == "" &&
+				(task.Status == AppTaskQueued || task.Status == AppTaskRestoring || task.Status == AppTaskRunning) {
+				return ExclusiveOperation{}, false, ErrAppTaskCronOverlap
+			}
+		}
+	}
+	finishedAt := firedAt
+	if ownerNow, nowErr := ownerTx.now(); nowErr == nil {
+		finishedAt = ownerNow
+	}
+	request.Status = FireNowStatusSucceeded
+	request.OperationID = &operation.ID
+	request.FinishedAt = &finishedAt
+	m.fireNowRequests[requestID] = request
+	m.commitExclusiveMemoryTxLocked(ownerTx)
+	return cloneExclusiveOperation(operation), joined, nil
 }
 
 // CreateManualCronAppTaskForFireNow queues a command cron without changing

@@ -54,6 +54,10 @@ import (
 // recorder's enqueue boundary (RecordFromObserve) so a publisher
 // collapse never has to reason about zero.
 type RequestTelemetryRow struct {
+	// preserveExact is set only for an authoritatively resolved scenario
+	// target. It retains per-request time/instance evidence without changing
+	// ordinary production aggregation or the bounded ring (ADR-429).
+	preserveExact    bool
 	FlagEvidenceJSON string
 	// EventID identifies the collapsed usage increment represented by this
 	// row. It is generated once at the recorder boundary and retained through
@@ -86,8 +90,10 @@ type RequestTelemetryRow struct {
 	// Set only for anonymous traffic on an authoritative tenant surface.
 	PlatformTenantSurfaceID              string
 	PlatformTenantJWTAuthorizationRuleID string
-	// UsageOutboxed prevents the debugger's collapsed row from writing a
-	// second financial increment when its original requests are in the outbox.
+	// UsageOutboxed suppresses the debugger's legacy financial increment when
+	// usage is in the outbox or this is deliberately nonfinancial evidence
+	// (rejected admissions and internal dependency observations). It is not
+	// itself proof that an outbox write occurred.
 	UsageOutboxed bool
 	// These dimensions are normalized at the edge. Raw User-Agent, referrer
 	// URLs, and IP addresses never enter this row or the gRPC payload.

@@ -177,7 +177,7 @@ func (s *server) renderAppMirrors(w http.ResponseWriter, r *http.Request, log *s
 					if comparableInvocations > 0 {
 						changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(comparableInvocations)
 					}
-					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), ChangedResponseCount: int64(summary.ChangedResponseCount), ChangedResponsePct: changedPercent, StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), IncompleteComparisonCount: int64(summary.IncompleteComparisonCount), WindowLabel: "last 1h"}
+					item.Summary = dashboard.MirrorSummaryPageItem{TotalInvocations: int64(summary.TotalInvocations), ChangedResponseCount: int64(summary.ChangedResponseCount), ChangedResponsePct: changedPercent, StatusDiffCount: int64(summary.StatusDiffCount), SchemaDiffCount: int64(summary.SchemaDiffCount), BodyDiffCount: int64(summary.BodyDiffCount), MeanLatencyDiffMs: int64(summary.MeanLatencyDiffMs), P99LatencyDiffMs: int64(summary.P99LatencyDiffMs), CrashCount: int64(summary.CrashCount), IncompleteComparisonCount: int64(summary.IncompleteComparisonCount), SchedulerAdmissionTimeoutCount: int64(summary.SchedulerAdmissionTimeoutCount), SchedulerAdmissionRejectedCount: int64(summary.SchedulerAdmissionRejectedCount), SchedulerAdmissionErrorCount: int64(summary.SchedulerAdmissionErrorCount), WindowLabel: "last 1h"}
 				}
 				data.Rules = append(data.Rules, item)
 			}

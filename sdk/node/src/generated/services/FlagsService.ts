@@ -445,19 +445,30 @@ export class FlagsService {
   }
   /**
    * Read the live workload’s project-environment flag bundle.
-   * Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope.
+   * Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld from older clients that do not advertise it.
    * @returns FlagsBundle Runtime configuration for the authenticated workload environment.
    * @throws ApiError
    */
-  public static getRuntimeFlags(): CancelablePromise<FlagsBundle> {
+  public static getRuntimeFlags({
+    xFaasFlagsCapabilities,
+  }: {
+    /**
+     * Comma-separated optional runtime SDK capabilities. Subject-aware SDKs advertise subject-targeting-v1.
+     */
+    xFaasFlagsCapabilities?: string,
+  }): CancelablePromise<FlagsBundle> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/runtime/flags',
+      headers: {
+        'X-Faas-Flags-Capabilities': xFaasFlagsCapabilities,
+      },
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        426: `Runtime SDK does not support a capability used by the current flag bundle.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

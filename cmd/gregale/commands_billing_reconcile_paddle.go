@@ -54,7 +54,7 @@ const billingSubReconcilePaddleOverage = "reconcile-paddle-overage"
 // distinguish "you forgot to migrate" from "the apid is down".
 func cmdBillingReconcilePaddleOverage(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale billing reconcile-paddle-overage\n")
+		printCommandValidation(os.Stderr, "usage: gregale billing reconcile-paddle-overage\n")
 		return 1
 	}
 	client, err := authedClient()

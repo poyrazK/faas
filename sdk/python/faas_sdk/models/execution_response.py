@@ -26,9 +26,11 @@ T = TypeVar("T", bound="ExecutionResponse")
 
 @_attrs_define
 class ExecutionResponse:
-    """Account-scoped disposable execution receipt. Source and input are
-    intentionally omitted. A terminal response is written only after the
-    execution VM has been destroyed.
+    """Disposable execution receipt. Runs-only keys can read only receipts
+    created by their key family; broad credentials retain account-wide
+    access. Source and input are intentionally omitted. A terminal response is written only after the
+    execution VM has been destroyed. Optional workflow metadata is echoed
+    as a grouping aid and remains subject to the same ownership boundary.
 
     """
 
@@ -44,6 +46,10 @@ class ExecutionResponse:
     """Scheduler-pinned base image digest, recorded before dispatch of a dependency profile."""
     packages: ExecutionResponsePackages | Unset = UNSET
     """Immutable versions declared by the selected profile and verified by its guest before caller code runs."""
+    workflow_id: str | Unset = UNSET
+    """Caller-generated workflow grouping id"""
+    step_label: str | Unset = UNSET
+    """Optional step label"""
     artifacts: list[ExecutionArtifact] | Unset = UNSET
     """Selected output files, present only after successful execution and VM teardown."""
     result: Any | Unset = UNSET
@@ -82,6 +88,10 @@ class ExecutionResponse:
         packages: dict[str, Any] | Unset = UNSET
         if not isinstance(self.packages, Unset):
             packages = self.packages.to_dict()
+
+        workflow_id = self.workflow_id
+
+        step_label = self.step_label
 
         artifacts: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.artifacts, Unset):
@@ -152,6 +162,10 @@ class ExecutionResponse:
             field_dict["runtime_image_digest"] = runtime_image_digest
         if packages is not UNSET:
             field_dict["packages"] = packages
+        if workflow_id is not UNSET:
+            field_dict["workflow_id"] = workflow_id
+        if step_label is not UNSET:
+            field_dict["step_label"] = step_label
         if artifacts is not UNSET:
             field_dict["artifacts"] = artifacts
         if result is not UNSET:
@@ -209,6 +223,10 @@ class ExecutionResponse:
             packages = UNSET
         else:
             packages = ExecutionResponsePackages.from_dict(_packages)
+
+        workflow_id = d.pop("workflow_id", UNSET)
+
+        step_label = d.pop("step_label", UNSET)
 
         _artifacts = d.pop("artifacts", UNSET)
         artifacts: list[ExecutionArtifact] | Unset = UNSET
@@ -312,6 +330,8 @@ class ExecutionResponse:
             profile=profile,
             runtime_image_digest=runtime_image_digest,
             packages=packages,
+            workflow_id=workflow_id,
+            step_label=step_label,
             artifacts=artifacts,
             result=result,
             stdout=stdout,

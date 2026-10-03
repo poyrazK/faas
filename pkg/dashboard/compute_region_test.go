@@ -1,4 +1,4 @@
-// ADR-424: app reads display the stored immutable compute-region choice.
+// ADR-465: app reads display the stored immutable compute-region choice.
 package dashboard_test
 
 import (

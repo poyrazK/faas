@@ -7,7 +7,7 @@ remains required before rollout.
 
 ## Context
 
-ADR-431 moves source archives from apid to regional builders. A completed build
+ADR-472 moves source archives from apid to regional builders. A completed build
 still handed imaged a producer-local absolute path, and recovery polling selected
 only that producer. Losing the builder host after success could strand an otherwise
 valid deployment. The runtime rootfs fields subsequently change during image
@@ -78,7 +78,7 @@ both an app and a Go function. PostgreSQL tests cover completion rollback,
 descriptor constraints, recovery selection and migration replay.
 
 `TestNativeRegionalBuildExportAcceptance` is a guarded test for the dedicated
-three-worker fleet described in ADR-425. It additionally requires
+three-worker fleet described in ADR-466. It additionally requires
 `FAAS_REGION_SOURCE_TARBALL`, a known-good HTTP app archive for that fleet. The
 test pauses regional image consumers and the peer builder, uploads through apid,
 captures the producer's successful export, stops its builderd/vmmd and removes

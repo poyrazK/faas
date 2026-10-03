@@ -18,6 +18,7 @@ export type ScheduleOccurrenceResponse = {
   work_decision?: WorkDecision;
   outcome_code?: string;
   blocking_occurrence_id?: string;
+  exclusive_operation_id?: string;
   job_run_id?: string;
   invocation_id?: string;
   app_task_id?: string;

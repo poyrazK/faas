@@ -19,7 +19,7 @@
 # be blocked by them. Kill/unmount happens before this in reap_test_microvms.
 reap_stale_jails() {
   local root="${1:?jail root required}" d
-  for d in "${root}"/firecracker-v*/*/; do
+  for d in "${root}"/firecracker/*/ "${root}"/firecracker-v*/*/; do
     [[ -d "${d}" ]] || continue
     rm -rf "${d}" 2>/dev/null || true
   done
@@ -55,12 +55,15 @@ reap_stale_jails() {
 reap_test_microvms() {
   local reaped=0 ns m c d
 
+  # Jailer renames the executable to /firecracker inside the chroot. Match
+  # the process name as well as legacy versioned names, never command-line
+  # substrings (which can match the runner or an inspection command).
   while IFS= read -r pid; do
     [[ -n "${pid}" ]] || continue
     kill -TERM "${pid}" 2>/dev/null && reaped=$((reaped + 1)) || true
-  done < <(pgrep -f 'firecracker-v[0-9]' 2>/dev/null)
+  done < <(pgrep -x 'firecracker(-v[0-9].*)?' 2>/dev/null)
   [[ "${reaped}" -eq 0 ]] || sleep 3
-  pkill -KILL -f 'firecracker-v[0-9]' 2>/dev/null || true
+  pkill -KILL -x 'firecracker(-v[0-9].*)?' 2>/dev/null || true
 
   while IFS= read -r ns; do
     [[ -n "${ns}" ]] || continue
@@ -72,7 +75,9 @@ reap_test_microvms() {
   while IFS= read -r m; do
     [[ -n "${m}" ]] || continue
     umount -l "${m}" 2>/dev/null || true
-  done < <(awk '/firecracker-v[0-9]/{print $2}' /proc/mounts | sort -r)
+  done < <(awk -v root="${FAAS_E2E_JAIL_ROOT:-/srv/fc/jail}" \
+    'index($2, root "/firecracker/") == 1 || index($2, root "/firecracker-v") == 1 {print $2}' \
+    /proc/mounts | sort -r)
 
   reap_stale_jails "${FAAS_E2E_JAIL_ROOT:-/srv/fc/jail}"
 

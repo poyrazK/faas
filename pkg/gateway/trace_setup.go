@@ -109,6 +109,9 @@ func InstallTracePipeline(ctx context.Context, name, version string, log *slog.L
 // daemon's wire.OpsMetrics prefix (gatewayd_public for gatewayd-public).
 func InstallTracePipelineWithRegistry(ctx context.Context, name, version string, log *slog.Logger, reg prometheus.Registerer, metricPrefix string) (*TraceSetup, error) {
 	ring := buildRingFromEnv()
+	if err := registerTraceRingMetrics(reg, metricPrefix, ring); err != nil {
+		return nil, fmt.Errorf("trace_setup: register retention metrics: %w", err)
+	}
 
 	// W3C TraceContext + Baggage propagators (canonical OTel
 	// default). otelgrpc / otelhttp pick these up via

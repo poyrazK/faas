@@ -1,11 +1,11 @@
 # Regional runtime artifact routing
 
 Builder claims enforce an app's persisted region regardless of cache affinity
-settings (ADR-430). Configure regional builderd and vmmd with the same registered
+settings (ADR-471). Configure regional builderd and vmmd with the same registered
 compute-node identity and drain outstanding builds before upgrading. Cancellation
 and timeout VM cleanup stays with the claim owner, including while that node is
 draining. Source uploads and retries persist regional object references
-(ADR-431). Builderd fetches the committed reference and verifies size and hash
+(ADR-472). Builderd fetches the committed reference and verifies size and hash
 before VM dispatch. Build exports are published before claim-fenced completion
 and consumed by an active imaged worker in the same region (ADR-460), even after
 the producer's local file is lost. The full source-to-runtime flow still needs
@@ -86,9 +86,9 @@ materializing peer. API reads validate both build identity and placement, requir
 an explicit route, and return unavailable for historical global references until
 republished. Failed scan/upload retries preserve an existing reference. App
 cleanup deletes the full regional key through the configured artifact backend.
-A downgrade refuses while regional references remain. See ADR-433.
+A downgrade refuses while regional references remain. See ADR-473.
 
-Runtime log archives share those routes (ADR-434). Gatewayd-internal loads
+Runtime log archives share those routes (ADR-474). Gatewayd-internal loads
 `storage.env` and then its private cache override in
 `/etc/faas/gatewayd-internal-storage.env`. Ansible installs that override with
 `FAAS_STORAGE_CACHE_DIR=/var/lib/faas/gatewayd-internal-artifacts`; install it

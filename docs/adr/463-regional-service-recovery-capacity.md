@@ -3,11 +3,11 @@
 - **Status:** accepted; fleet enable requires native qualification
 - **Date:** 2026-10-02
 - **Milestone:** Multi-region compute placement
-- **Related:** ADR-422, ADR-424, ADR-425, ADR-426
+- **Related:** ADR-422, ADR-465, ADR-466, ADR-467
 
 ## Problem
 
-ADR-422 counts recovery slots across the fleet. ADR-424 pins a selected app to
+ADR-422 counts recovery slots across the fleet. ADR-465 pins a selected app to
 one compute region. Capacity in a different region cannot recover that app.
 Unrestricted legacy apps complicate the certificate: their healthy replicas
 stay on their current hosts during recovery, and accepting pending legacy

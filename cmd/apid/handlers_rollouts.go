@@ -108,7 +108,13 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// (6) Atomic-tx recovery.
 	updated, auditID, err := s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
 	if err != nil {
+		var routeBlocked *state.RouteGateBlockedError
+		var healthBlocked *state.RouteHealthBlockedError
 		switch {
+		case errors.As(err, &healthBlocked):
+			s.routeHealthError(w, err)
+		case errors.As(err, &routeBlocked):
+			s.canaryRouteGateError(w, err)
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no active rollout for this app")
 		case errors.Is(err, state.ErrInvalidRecoverAction):

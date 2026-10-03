@@ -56,6 +56,9 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		AmbientCapabilities: []string{""}, // explicit empty body: "no caps elevated"
 
 		Environment: []daemonunit.KV{
+			// Leave 128 MiB outside Go's soft limit for cgroup-charged stacks,
+			// sockets and runtime/kernel overhead. Retention is separately bounded.
+			{Key: "GOMEMLIMIT", Value: "384MiB"},
 			{Key: "FAAS_OBJECT_STORAGE_CONFIG", Value: "/etc/faas/object-storage.json"},
 			// The socket unit owns the public bind (127.0.0.1:8080 behind
 			// Caddy). Declare it explicitly: the node-name drop-in puts the

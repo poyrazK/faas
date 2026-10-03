@@ -41,8 +41,8 @@ check does not close the check-to-use race.
 
 ## Integration and acceptance
 
-Manual async calls, deployment-attached AppTasks, manual Job runs, HTTP cron,
-recurring Job schedules, and verified inbound webhooks enter one admission
+Manual async calls, deployment-attached AppTasks, manual Job runs, HTTP and
+command crons, recurring Job schedules, and verified inbound webhooks enter one admission
 path. Queue/inbox and broker adapters use the same ownership store. Job and
 AppTask adapters carry ownership generations into durable result transitions.
 Inspection exposes authorized receipts and ownership status,

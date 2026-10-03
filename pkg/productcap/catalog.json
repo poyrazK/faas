@@ -207,6 +207,17 @@
       "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
     },
     {
+      "id": "gregale-commit",
+      "name": "Gregale Commit",
+      "category": "async",
+      "description": "Connect a committed PostgreSQL outbox event to durable Gregale work through a managed polling relay.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/gregale-commit",
+      "operator_flag": "FAAS_COMMIT_RELAY_ENABLED",
+      "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation"
+    },
+    {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",
@@ -255,6 +266,20 @@
       "docs_url": "/docs/managed-postgres",
       "operator_flag": "FAAS_MANAGED_POSTGRES_CONFIG",
       "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"
+    },
+    {
+      "id": "mcp-hosting",
+      "name": "MCP hosting",
+      "category": "runtime",
+      "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics and verified tool discovery.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"
     },
     {
       "id": "object-storage",
@@ -338,7 +363,7 @@
       "description": "Keep apps, project workloads, managed jobs, recovery, and migration inside their selected compute regions. The control plane and managed data remain shared.",
       "maturity": "internal",
       "plans": [],
-      "docs_url": "/docs/adr/424-regional-compute-placement",
+      "docs_url": "/docs/adr/465-regional-compute-placement",
       "operator_flag": "regional_compute_enabled",
       "acceptance_test": "pkg/sched/compute_region_test.go::TestComputeRegionClaimAndRecovery"
     },

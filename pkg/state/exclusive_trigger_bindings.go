@@ -75,9 +75,6 @@ func (s *MemStore) UpsertExclusiveTriggerBinding(ctx context.Context, in Exclusi
 		if !ok {
 			return ExclusiveTriggerBinding{}, ErrNotFound
 		}
-		if len(cron.Command) > 0 || cron.SkipIfRunning {
-			return ExclusiveTriggerBinding{}, ErrInvalidArgument
-		}
 		in.AppID = cron.AppID
 	case "inbound_webhook":
 		endpoint, ok := s.inboundWebhookEndpoints[in.TriggerID]
@@ -251,11 +248,7 @@ func (s *PgStore) UpsertExclusiveTriggerBinding(ctx context.Context, in Exclusiv
 	}
 	switch in.Source {
 	case "cron":
-		var eligible bool
-		err = tx.QueryRow(ctx, `SELECT a.account_id::text, c.app_id::text, cardinality(c.command)=0 AND NOT c.skip_if_running FROM crons c JOIN apps a ON a.id=c.app_id WHERE c.id=$1 AND a.account_id=$2 AND a.status <> 'deleted'`, in.TriggerID, in.AccountID).Scan(&in.AccountID, &in.AppID, &eligible)
-		if err == nil && !eligible {
-			return ExclusiveTriggerBinding{}, ErrInvalidArgument
-		}
+		err = tx.QueryRow(ctx, `SELECT a.account_id::text, c.app_id::text FROM crons c JOIN apps a ON a.id=c.app_id WHERE c.id=$1 AND a.account_id=$2 AND a.status <> 'deleted'`, in.TriggerID, in.AccountID).Scan(&in.AccountID, &in.AppID)
 	case "inbound_webhook":
 		err = tx.QueryRow(ctx, `SELECT account_id::text, app_id::text FROM inbound_webhook_endpoints WHERE id=$1 AND account_id=$2`, in.TriggerID, in.AccountID).Scan(&in.AccountID, &in.AppID)
 	case "broker":

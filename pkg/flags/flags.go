@@ -1,4 +1,4 @@
-// Package flags evaluates immutable customer-scoped feature configuration.
+// Package flags evaluates immutable tenant-scoped feature configuration.
 // Flags control deployed application behavior, never authorization or entitlement.
 package flags
 
@@ -17,8 +17,15 @@ type Rule struct {
 	ID        string   `json:"id"`
 	Customers []string `json:"customers,omitempty"`
 	Group     string   `json:"group,omitempty"`
-	// Rollout is basis points (0..10000) of eligible customers. Nil is 100%.
+	// Subjects are opaque application subject IDs, matched only after the
+	// customer/group constraint has selected the tenant.
+	Subjects []string `json:"subjects,omitempty"`
+	// Rollout is basis points (0..10000) of eligible customers, or subjects
+	// when RolloutUnit is "subject". Nil is 100%.
 	Rollout *int `json:"rollout,omitempty"`
+	// RolloutUnit selects stable allocation per tenant subject instead of per
+	// customer. Omitted preserves the historical customer allocation.
+	RolloutUnit string `json:"rollout_unit,omitempty"`
 	// Progression pins a boolean true rollout to one of a finite set of
 	// percentage stages. Only the management API advances CurrentStage.
 	Progression *ProgressiveRollout `json:"progression,omitempty"`
@@ -95,9 +102,42 @@ func VariantBucket(seed, key, customer string) int {
 	return int(binary.BigEndian.Uint32(h[:4]) % 10000)
 }
 
+// SubjectBucket is a stable percentage-allocation bucket scoped to both the
+// verified customer and an application-authenticated subject.
+func SubjectBucket(seed, key, customer, subject string) int {
+	h := sha256.Sum256([]byte(seed + "\x00" + key + "\x00subject\x00" + customer + "\x00" + subject))
+	return int(binary.BigEndian.Uint32(h[:4]) % 10000)
+}
+
+// SubjectVariantBucket uses a separate domain for per-subject variant weights.
+func SubjectVariantBucket(seed, key, customer, subject string) int {
+	h := sha256.Sum256([]byte(seed + "\x00" + key + "\x00variant\x00subject\x00" + customer + "\x00" + subject))
+	return int(binary.BigEndian.Uint32(h[:4]) % 10000)
+}
+
+// ValidSubjectID accepts bounded printable ASCII opaque IDs. Applications
+// should pass an internal stable ID, never an email address or display name.
+func ValidSubjectID(value string) bool {
+	if len(value) == 0 || len(value) > api.FlagsMaxSubjectIDBytes {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b < 0x21 || b > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // Evaluate performs no I/O and requires customer identity supplied by trusted
 // application middleware. Anonymous contexts never match targeting rules.
 func Evaluate(b Bundle, key, customer string, fallback bool) Decision {
+	return EvaluateForSubject(b, key, customer, "", fallback)
+}
+
+// EvaluateForSubject evaluates using an application-authenticated subject ID.
+// Customer identity remains the platform-verified tenant boundary.
+func EvaluateForSubject(b Bundle, key, customer, subject string, fallback bool) Decision {
 	d := Decision{Flag: key, Value: fallback, ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
@@ -107,15 +147,21 @@ func Evaluate(b Bundle, key, customer string, fallback bool) Decision {
 			d.Reason = "type_mismatch"
 			return d
 		}
-		return evaluateFlag(b, f, customer, fallback)
+		return evaluateFlag(b, f, customer, subject, fallback)
 	}
 	return d
 }
 
-// EvaluateVariant evaluates a named variant, using fallback when the flag is
-// missing or has a different type. Variant values are deterministic
-// for each customer and use the same immutable server-owned flag seed.
+// EvaluateVariant evaluates a named variant by customer, using fallback when
+// the flag is missing or has a different type. Use EvaluateVariantForSubject
+// for application-authenticated per-subject evaluation.
 func EvaluateVariant(b Bundle, key, customer, fallback string) Decision {
+	return EvaluateVariantForSubject(b, key, customer, "", fallback)
+}
+
+// EvaluateVariantForSubject evaluates a named variant for an authenticated
+// application subject within the platform-verified customer.
+func EvaluateVariantForSubject(b Bundle, key, customer, subject, fallback string) Decision {
 	d := Decision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
@@ -125,7 +171,7 @@ func EvaluateVariant(b Bundle, key, customer, fallback string) Decision {
 			d.Reason = "type_mismatch"
 			return d
 		}
-		return evaluateFlag(b, f, customer, fallback)
+		return evaluateFlag(b, f, customer, subject, fallback)
 	}
 	return d
 }
@@ -137,7 +183,7 @@ func flagType(f Flag) string {
 	return f.Type
 }
 
-func evaluateFlag(b Bundle, f Flag, customer string, fallback any) Decision {
+func evaluateFlag(b Bundle, f Flag, customer, subject string, fallback any) Decision {
 	typ := flagType(f)
 	d := Decision{Flag: f.Key, Value: fallback, ConfigVersion: b.Version, Reason: "type_mismatch", Source: "fallback"}
 	if typ == "variant" {
@@ -179,6 +225,10 @@ func evaluateFlag(b Bundle, f Flag, customer string, fallback any) Decision {
 		d.Reason = "customer_missing"
 		return d
 	}
+	if !ValidSubjectID(subject) {
+		subject = ""
+	}
+	subjectMissing := false
 	for _, r := range f.Rules {
 		if len(r.Customers) > 0 && !slices.Contains(r.Customers, customer) {
 			continue
@@ -186,8 +236,19 @@ func evaluateFlag(b Bundle, f Flag, customer string, fallback any) Decision {
 		if r.Group != "" && !slices.Contains(b.Groups[r.Group], customer) {
 			continue
 		}
+		subjectScoped := len(r.Subjects) > 0 || r.RolloutUnit == "subject"
+		if subjectScoped && subject == "" {
+			subjectMissing = true
+			continue
+		}
+		if len(r.Subjects) > 0 && !slices.Contains(r.Subjects, subject) {
+			continue
+		}
 		if r.Rollout != nil {
 			bucket := Bucket(f.Seed, f.Key, customer)
+			if r.RolloutUnit == "subject" {
+				bucket = SubjectBucket(f.Seed, f.Key, customer, subject)
+			}
 			if bucket >= *r.Rollout {
 				continue
 			}
@@ -214,11 +275,17 @@ func evaluateFlag(b Bundle, f Flag, customer string, fallback any) Decision {
 			d.Value = value
 		} else {
 			bucket := VariantBucket(f.Seed, f.Key, customer)
+			if subjectScoped {
+				bucket = SubjectVariantBucket(f.Seed, f.Key, customer, subject)
+			}
 			d.Bucket = &bucket
 			d.Value = chooseVariant(f.Variants, bucket)
 		}
 		d.RuleID, d.Reason = r.ID, "rule_match"
 		return d
+	}
+	if subjectMissing {
+		d.Reason = "subject_missing"
 	}
 	return d
 }
@@ -296,8 +363,23 @@ func Validate(c Config) error {
 				return fmt.Errorf("invalid or duplicate rule ID")
 			}
 			ids[r.ID] = true
+			if r.Subjects != nil && len(r.Subjects) == 0 {
+				return fmt.Errorf("subject targeting requires at least one subject")
+			}
 			if err := validateCustomers(r.Customers); err != nil {
 				return err
+			}
+			if err := validateSubjects(r.Subjects); err != nil {
+				return err
+			}
+			if r.RolloutUnit != "" && r.RolloutUnit != "customer" && r.RolloutUnit != "subject" {
+				return fmt.Errorf("invalid rollout_unit")
+			}
+			if r.RolloutUnit != "" && r.Rollout == nil {
+				return fmt.Errorf("rollout_unit requires a rollout percentage")
+			}
+			if (len(r.Subjects) > 0 || r.RolloutUnit == "subject") && len(r.Customers) == 0 && r.Group == "" {
+				return fmt.Errorf("subject targeting requires a customer or group constraint")
 			}
 			if r.Group != "" {
 				if _, ok := c.Groups[r.Group]; !ok {
@@ -328,7 +410,7 @@ func Validate(c Config) error {
 					return fmt.Errorf("invalid progressive rollout evidence thresholds")
 				}
 			}
-			if len(r.Customers) == 0 && r.Group == "" && r.Rollout == nil {
+			if len(r.Customers) == 0 && r.Group == "" && len(r.Subjects) == 0 && r.Rollout == nil {
 				return fmt.Errorf("rule requires customer, group, or rollout targeting")
 			}
 			if typ == "boolean" {
@@ -347,6 +429,21 @@ func Validate(c Config) error {
 	}
 	return nil
 }
+
+func validateSubjects(ids []string) error {
+	if len(ids) > api.FlagsMaxSubjects {
+		return fmt.Errorf("subject limit exceeded")
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !ValidSubjectID(id) || seen[id] {
+			return fmt.Errorf("invalid or duplicate subject identity")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
 func validateCustomers(ids []string) error {
 	if len(ids) > api.FlagsMaxCustomers {
 		return fmt.Errorf("customer limit exceeded")

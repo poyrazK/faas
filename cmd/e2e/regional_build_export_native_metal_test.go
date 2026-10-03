@@ -51,7 +51,7 @@ func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 	store := state.NewPgStore(pool)
 	client := api.NewClient(required("FAAS_REGION_API_URL"), required("FAAS_REGION_API_TOKEN"))
 	sourcePath := required("FAAS_REGION_SOURCE_TARBALL")
-	source, err := os.Open(sourcePath)
+	source, err := os.Open(sourcePath) //nolint:forbidigo // Operator-supplied acceptance archive; the descriptor is checked below.
 	if err != nil {
 		t.Fatal(err)
 	}

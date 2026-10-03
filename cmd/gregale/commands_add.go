@@ -66,7 +66,7 @@ func cmdAdd(args []string) int {
 	case "bucket":
 		return cmdAddBucket(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown add resource %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
 		return 1
 	}
 }

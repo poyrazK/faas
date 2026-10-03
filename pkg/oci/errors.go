@@ -43,7 +43,8 @@ var ErrImageEgressDenied = errors.New("oci: egress denied by policy")
 // ErrImageManifestInvalid is wrapped into the error returned from
 // manifest readers when content fails digest/schema validation or
 // cannot be resolved to a compatible single-
-// platform Manifest. The two-drive build path requires a flat
+// platform Manifest, or when full-rootfs startup prerequisites fail. The
+// two-drive build path requires a flat
 // per-platform manifest to compute the above-base layer list
 // (see pkg/imaged/handler.go::aboveBaseLayers).
 var ErrImageManifestInvalid = errors.New("oci: manifest invalid")

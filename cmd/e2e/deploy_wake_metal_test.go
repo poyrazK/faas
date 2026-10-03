@@ -145,7 +145,7 @@ func TestDeployWakeMetal(t *testing.T) {
 	// local fakeregistry was never reachable. Fixed by apid emitting
 	// the full ref — see cmd/apid/handlers.go createDeployment.)
 
-	var firstInstanceID string
+	var lastWakeInstanceID string
 
 	// -- 1. deploy-then-parked -------------------------------------------------
 	t.Run("deploy-then-parked", func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestDeployWakeMetal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no running instance after wake: %v", err)
 		}
-		firstInstanceID = ins[0].ID
+		lastWakeInstanceID = ins[0].ID
 
 		// M8 §14: the wake-latency histogram must observe the cold wake
 		// (Part A's first-byte RoundTripper — see pkg/gateway/wake_timing.go).
@@ -251,7 +251,7 @@ func TestDeployWakeMetal(t *testing.T) {
 			// reaper tick=10s, worst case is ~20s; allow 30s for slack.
 			parkStart := time.Now()
 			parkCtx, parkCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 25*time.Second); err != nil {
+			if _, err := e2etest.WaitForAppParked(parkCtx, t, pool, appID, 25*time.Second); err != nil {
 				parkCancel()
 				t.Fatalf("cycle %d: did not park within 25s (reaper lagging?): %v", i, err)
 			}
@@ -271,10 +271,12 @@ func TestDeployWakeMetal(t *testing.T) {
 			// not-ready (handler.go:212), which is exactly the parked→wake
 			// transition we just exercised.
 			runCtx, runCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if _, err := e2etest.WaitForInstanceState(runCtx, t, pool, appID, state.StateRunning, 10*time.Second); err != nil {
+			running, err := e2etest.WaitForInstanceState(runCtx, t, pool, appID, state.StateRunning, 10*time.Second)
+			if err != nil {
 				runCancel()
 				t.Fatalf("cycle %d: did not reach running after wake: %v", i, err)
 			}
+			lastWakeInstanceID = running[0].ID
 			runCancel()
 		}
 		t.Logf("loop completed in %v (%d cycles)", time.Since(loopStart), cycles)
@@ -347,15 +349,15 @@ func TestDeployWakeMetal(t *testing.T) {
 		// against that dialed-down value, not the original Hobby 60s.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 25*time.Second)
+		ins, err := e2etest.WaitForAppParked(ctx, t, pool, appID, 25*time.Second)
 		if err != nil {
 			t.Fatalf("instance did not re-park: %v", err)
 		}
 		if len(ins) == 0 {
 			t.Fatal("no instances after re-park")
 		}
-		if ins[0].ID != firstInstanceID {
-			t.Errorf("re-park created a new instance %s; should reuse %s", ins[0].ID, firstInstanceID)
+		if ins[0].ID != lastWakeInstanceID {
+			t.Errorf("re-park created a new instance %s; should reuse %s", ins[0].ID, lastWakeInstanceID)
 		}
 	})
 
@@ -374,8 +376,8 @@ func TestDeployWakeMetal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no running instance after 2nd wake: %v", err)
 		}
-		if ins[0].ID == firstInstanceID {
-			t.Errorf("second wake reused instance %s; should be a fresh instance", firstInstanceID)
+		if ins[0].ID == lastWakeInstanceID {
+			t.Errorf("second wake reused instance %s; should be a fresh instance", lastWakeInstanceID)
 		}
 	})
 }

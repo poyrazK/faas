@@ -14,8 +14,8 @@ package e2etest
 // 60-minute ceiling with nine wedged builds in flight.
 //
 // A healthy build writes output continuously. A wedged one goes silent. So
-// the wait watches three signals — deployment status, build status and the
-// size of the build log — and fails as soon as none of them has changed for
+// the wait watches deployment status, build status, the host build log and
+// the exact builder guest's serial console, and fails when none changes for
 // stallWindow, printing the log tail so the report says WHERE it stopped. An
 // absolute ceiling remains as a backstop for a build that is still writing
 // but pathologically slow.
@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,9 +59,10 @@ const DefaultBuildCeiling = api.BuildTimeoutSeconds * time.Second
 // buildSignature is everything a poll can observe about a source deployment.
 // Two equal signatures mean nothing has happened in between.
 type buildSignature struct {
-	deployment state.DeploymentStatus
-	build      state.BuildStatus
-	logBytes   int64
+	deployment   state.DeploymentStatus
+	build        state.BuildStatus
+	logBytes     int64
+	consoleBytes int64
 }
 
 // progressTracker decides whether a sequence of observations shows progress.
@@ -157,14 +159,14 @@ func WaitForSourceDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deplo
 		}
 
 		now := time.Now()
-		sig := buildSignature{deployment: dep.Status, build: build.Status, logBytes: buildLogSize(dep, build)}
+		sig := sourceBuildSignature(dep, build, GuestConsoleDir)
 		switch perr := tracker.observe(now, sig); {
 		case errors.Is(perr, errBuildStalled):
-			return dep, build, fmt.Errorf("%w: no progress for %s (deployment=%s build=%s log=%d bytes)%s",
-				errBuildStalled, tracker.silentFor(now).Round(time.Second), dep.Status, build.Status, sig.logBytes, buildLogTail(dep, build))
+			return dep, build, fmt.Errorf("%w: no progress for %s (deployment=%s build=%s log=%d bytes console=%d bytes)%s",
+				errBuildStalled, tracker.silentFor(now).Round(time.Second), dep.Status, build.Status, sig.logBytes, sig.consoleBytes, buildLogTail(dep, build))
 		case errors.Is(perr, errBuildCeiling):
-			return dep, build, fmt.Errorf("%w: still not live after %s (deployment=%s build=%s log=%d bytes)%s",
-				errBuildCeiling, ceiling, dep.Status, build.Status, sig.logBytes, buildLogTail(dep, build))
+			return dep, build, fmt.Errorf("%w: still not live after %s (deployment=%s build=%s log=%d bytes console=%d bytes)%s",
+				errBuildCeiling, ceiling, dep.Status, build.Status, sig.logBytes, sig.consoleBytes, buildLogTail(dep, build))
 		}
 
 		select {
@@ -182,6 +184,29 @@ func WaitForSourceDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deplo
 		case <-poll.C:
 		}
 	}
+}
+
+func sourceBuildSignature(dep state.Deployment, build state.Build, consoleDir string) buildSignature {
+	return buildSignature{
+		deployment: dep.Status, build: build.Status,
+		logBytes: buildLogSize(dep, build), consoleBytes: buildConsoleSize(build, consoleDir),
+	}
+}
+
+// BuildKit output reaches vmmd's console during the solve and cache export;
+// builderd mirrors its tail only after completion. Watching only the host log
+// falsely stalled active builds on the internal node. Stat only this build's
+// console, never another VM or a symlink. A missing console keeps the portable
+// gate's host-log behavior. Silence and total deadlines stay fixed.
+func buildConsoleSize(build state.Build, consoleDir string) int64 {
+	if build.Status != state.BuildRunning || build.ID == "" || build.ID == "." || build.ID == ".." || filepath.Base(build.ID) != build.ID {
+		return 0
+	}
+	info, err := os.Lstat(filepath.Join(consoleDir, "vm-build-"+build.ID+".console"))
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	return info.Size()
 }
 
 // buildLogPath is where builderd streams the build log on this host.

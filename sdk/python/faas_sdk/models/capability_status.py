@@ -8,13 +8,21 @@ from attrs import field as _attrs_field
 
 from ..models.capability_status_maturity import CapabilityStatusMaturity, check_capability_status_maturity
 from ..models.capability_status_plans_item import CapabilityStatusPlansItem, check_capability_status_plans_item
+from ..models.capability_status_unavailable_reason import (
+    CapabilityStatusUnavailableReason,
+    check_capability_status_unavailable_reason,
+)
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CapabilityStatus")
 
 
 @_attrs_define
 class CapabilityStatus:
-    """Customer-visible capability with the account plan gate resolved."""
+    """Customer-visible capability with account entitlement and existing runtime availability gates resolved. Internal
+    capabilities are omitted.
+
+    """
 
     key: str
     name: str
@@ -26,7 +34,14 @@ class CapabilityStatus:
     acceptance: str
     """Stable acceptance-test handle for this capability."""
     enabled: bool
-    """Whether the calling account may use the capability under its current plan."""
+    """Whether the calling account is entitled and the capability passes its existing runtime availability gate.
+    This is not a fleet health guarantee."""
+    unavailable_reason: CapabilityStatusUnavailableReason | Unset = UNSET
+    """Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted
+    when enabled; older servers may omit it."""
+    unavailable_detail: str | Unset = UNSET
+    """Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason
+    for automation. Omitted when enabled; older servers may omit it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +66,12 @@ class CapabilityStatus:
 
         enabled = self.enabled
 
+        unavailable_reason: str | Unset = UNSET
+        if not isinstance(self.unavailable_reason, Unset):
+            unavailable_reason = self.unavailable_reason
+
+        unavailable_detail = self.unavailable_detail
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +87,10 @@ class CapabilityStatus:
                 "enabled": enabled,
             }
         )
+        if unavailable_reason is not UNSET:
+            field_dict["unavailable_reason"] = unavailable_reason
+        if unavailable_detail is not UNSET:
+            field_dict["unavailable_detail"] = unavailable_detail
 
         return field_dict
 
@@ -95,6 +120,15 @@ class CapabilityStatus:
 
         enabled = d.pop("enabled")
 
+        _unavailable_reason = d.pop("unavailable_reason", UNSET)
+        unavailable_reason: CapabilityStatusUnavailableReason | Unset
+        if isinstance(_unavailable_reason, Unset):
+            unavailable_reason = UNSET
+        else:
+            unavailable_reason = check_capability_status_unavailable_reason(_unavailable_reason)
+
+        unavailable_detail = d.pop("unavailable_detail", UNSET)
+
         capability_status = cls(
             key=key,
             name=name,
@@ -105,6 +139,8 @@ class CapabilityStatus:
             docs_url=docs_url,
             acceptance=acceptance,
             enabled=enabled,
+            unavailable_reason=unavailable_reason,
+            unavailable_detail=unavailable_detail,
         )
 
         capability_status.additional_properties = d

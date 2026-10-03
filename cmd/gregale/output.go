@@ -259,6 +259,23 @@ func RenderRelevantLogs(w io.Writer, logs []api.LogExcerpt) {
 // invocation that reaches the same legacy PrintUsage call site.
 var jsonUsageHelp bool
 
+// printCommandValidation preserves legacy human diagnostics while emitting one
+// structured Problem for invalid invocations in machine-readable mode.
+func printCommandValidation(w io.Writer, format string, args ...any) {
+	if !jsonOutput || jsonUsageHelp {
+		_, _ = fmt.Fprintf(w, format, args...)
+		return
+	}
+	_ = writeJSONProblemTo(w, api.Problem{
+		Type:    docsSiteURL + "/errors/invalid-request",
+		Title:   "Invalid command usage",
+		Status:  400,
+		Code:    api.CodeValidation,
+		Detail:  strings.TrimSpace(fmt.Sprintf(format, args...)),
+		DocsURL: docsURLForTopic("cli"),
+	})
+}
+
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
 // pointing at a live public docs route. Always plain (no glyphs) — usage
 // lines go to stderr on bad argv and customers grep them; the glyph would

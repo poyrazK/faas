@@ -25,7 +25,7 @@ func cmdJobsRegistry(args []string) int {
 	case subRm:
 		return cmdJobsRegistryRm(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown jobs registry subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown jobs registry subcommand %q\n", args[0])
 		return 1
 	}
 }

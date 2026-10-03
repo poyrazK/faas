@@ -100,7 +100,7 @@ func cmdJobs(args []string) int {
 	case "registry":
 		return cmdJobsRegistry(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown jobs subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

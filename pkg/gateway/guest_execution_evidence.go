@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/flags"
 )
 
@@ -173,7 +174,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 			return
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
+	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), apihostingreceipt.ServedResponseHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(name), "Sec-WebSocket-Protocol") {
@@ -236,6 +237,8 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	}
 	resp.Header.Del(api.RevisionHeader)
 	resp.Header.Del(api.ReleaseHeader)
+	resp.Header.Del(api.DeploymentIDHeader)
+	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
 	ctx := context.Background()
 	if resp.Request != nil {
 		ctx = resp.Request.Context()

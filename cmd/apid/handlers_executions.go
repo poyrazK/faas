@@ -50,6 +50,8 @@ func requireExecutionEntitlement(w http.ResponseWriter, acct state.Account) bool
 // source and input never enter this projection.
 func executionResponse(row state.Execution) api.ExecutionResponse {
 	resp := api.ExecutionResponse{
+		WorkflowID:         row.WorkflowID,
+		StepLabel:          row.StepLabel,
 		Profile:            row.Profile.Normalized(),
 		RuntimeImageDigest: row.RuntimeImageDigest,
 		Packages:           executionprofiles.Packages(row.Profile),
@@ -109,6 +111,11 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 	if !s.requireExecutionAPI(w) {
 		return
 	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
+		return
+	}
 
 	var request api.CreateExecutionRequest
 	if err := decodeJSONSized(r, &request, api.ExecutionSealedPayloadMaxBytes); err != nil {
@@ -120,9 +127,28 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation("invalid execution request body"))
 		return
 	}
+	if err := api.ValidateExecutionWorkflowMetadata(request.WorkflowID, request.StepLabel); err != nil {
+		api.WriteProblem(w, api.NewProblem(
+			http.StatusUnprocessableEntity,
+			api.CodeExecutionPayloadInvalid,
+			"Invalid workflow metadata",
+			err.Error(),
+		))
+		return
+	}
+	artifactGrants, problem := s.resolveExecutionArtifactInputs(r.Context(), acct, access, &request)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	resolved, problem := request.Resolve(acct.Plan)
 	if problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(request.IntegrationIDs)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("integration_ids must contain at most 25 distinct UUIDs"))
 		return
 	}
 
@@ -155,19 +181,32 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 
 	admittedAt := time.Now().UTC()
 	params := state.CreateExecutionParams{
-		AccountID:     acct.ID,
-		Request:       resolved,
-		SourceBytes:   resolved.SourceBytes(),
-		InputBytes:    len(resolved.Input),
-		AdmittedAt:    admittedAt,
-		DeadlineAt:    admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
-		SealedPayload: sealed,
-		PayloadKID:    recipient.String(),
+		AccountID:              acct.ID,
+		WorkflowID:             request.WorkflowID,
+		StepLabel:              request.StepLabel,
+		OutboundIntegrationIDs: integrationIDs,
+		RunsPrincipalID:        access.principal,
+		Request:                resolved,
+		SourceBytes:            resolved.SourceBytes(),
+		InputBytes:             len(resolved.Input),
+		AdmittedAt:             admittedAt,
+		DeadlineAt:             admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload:          sealed,
+		PayloadKID:             recipient.String(),
+	}
+	for _, grant := range artifactGrants {
+		params.ArtifactGrantRedemptions = append(params.ArtifactGrantRedemptions, state.ExecutionArtifactGrantRedemption{
+			GrantID: grant.ID, TokenHash: grant.TokenHash,
+		})
 	}
 	row, err := s.store.CreateExecution(r.Context(), params)
 	if err != nil {
 		s.writeExecutionCreateError(w, acct, err)
 		return
+	}
+	s.auditExecutionRequest(r, acct.ID, "execution.created", row)
+	for _, grant := range artifactGrants {
+		s.auditExecutionArtifactGrant(r, acct.ID, "execution.artifact_grant_redeemed", grant, row.ID)
 	}
 	writeJSON(w, http.StatusAccepted, executionResponse(row))
 }
@@ -177,6 +216,11 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 // not skip matching rows hidden behind other execution states.
 func (s *server) listExecutions(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.requireExecutionAPI(w) {
+		return
+	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
 		return
 	}
 	limitProblem, limit := api.ParseLimit(r.URL.Query().Get("limit"), 50, 200, "executions")
@@ -209,18 +253,50 @@ func (s *server) listExecutions(w http.ResponseWriter, r *http.Request, acct sta
 		))
 		return
 	}
+	workflowID := r.URL.Query().Get("workflow_id")
+	hasWorkflowID := r.URL.Query().Has("workflow_id")
+	if hasWorkflowID {
+		if err := api.ValidateExecutionWorkflowMetadata(workflowID, ""); err != nil {
+			api.WriteProblem(w, api.ErrValidation(err.Error()))
+			return
+		}
+	}
 
 	var (
 		rows       []state.Execution
 		statusRows func(limit, offset int) ([]state.Execution, error)
 		err        error
 	)
-	if status == "" {
+	principalStore, principalStoreOK := s.store.(state.ExecutionPrincipalListStore)
+	if !access.broad && !hasWorkflowID && !principalStoreOK {
+		api.WriteProblem(w, api.ErrCapacity("this store cannot enforce Run ownership filters"))
+		return
+	}
+	if hasWorkflowID {
+		workflowStore, ok := s.store.(state.ExecutionWorkflowStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("this store cannot enforce workflow ownership filters"))
+			return
+		}
 		statusRows = func(pageLimit, pageOffset int) ([]state.Execution, error) {
+			var principalID *string
+			if !access.broad {
+				principalID = access.principal
+			}
+			return workflowStore.ListExecutionsByWorkflow(r.Context(), acct.ID, workflowID, principalID, status, pageLimit, pageOffset)
+		}
+	} else if status == "" {
+		statusRows = func(pageLimit, pageOffset int) ([]state.Execution, error) {
+			if !access.broad {
+				return principalStore.ListExecutionsByPrincipal(r.Context(), acct.ID, access.principalID, pageLimit, pageOffset)
+			}
 			return s.store.ListExecutions(r.Context(), acct.ID, pageLimit, pageOffset)
 		}
 	} else {
 		statusRows = func(pageLimit, pageOffset int) ([]state.Execution, error) {
+			if !access.broad {
+				return principalStore.ListExecutionsByPrincipalStatus(r.Context(), acct.ID, access.principalID, status, pageLimit, pageOffset)
+			}
 			return s.store.ListExecutionsByStatus(r.Context(), acct.ID, status, pageLimit, pageOffset)
 		}
 	}
@@ -258,6 +334,25 @@ func (s *server) listExecutions(w http.ResponseWriter, r *http.Request, acct sta
 
 func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Account, err error) {
 	switch {
+	case errors.Is(err, state.ErrExecutionArtifactGrantUnavailable):
+		api.WriteProblem(w, artifactGrantUnavailableProblem())
+		return
+	case errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable):
+		api.WriteProblem(w, api.NewProblem(
+			http.StatusUnprocessableEntity,
+			api.CodeExecutionPayloadInvalid,
+			"Requested integration unavailable",
+			"one or more requested integrations are not active, credentialed, and explicitly enabled for Runs",
+		))
+		return
+	case errors.Is(err, state.ErrExecutionWorkflowStepExists):
+		api.WriteProblem(w, api.NewProblem(
+			http.StatusConflict,
+			api.CodeExecutionWorkflowStepExists,
+			"Workflow step already submitted",
+			"this agent workflow step already has a Run receipt; read the existing workflow before retrying",
+		))
+		return
 	case errors.Is(err, state.ErrExecutionsNotAllowed):
 		api.WriteProblem(w, api.ErrExecutionsNotAllowed(acct.Plan))
 		return
@@ -288,6 +383,11 @@ func (s *server) getExecution(w http.ResponseWriter, r *http.Request, acct state
 	if !s.requireExecutionAPI(w) {
 		return
 	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		s.notFound(w, "no such execution")
@@ -300,6 +400,9 @@ func (s *server) getExecution(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load execution"))
+		return
+	}
+	if !requireExecutionOwnership(w, s, access, row) {
 		return
 	}
 	writeJSON(w, http.StatusOK, executionResponse(row))
@@ -316,12 +419,29 @@ func (s *server) cancelExecution(w http.ResponseWriter, r *http.Request, acct st
 	if !s.requireExecutionAPI(w) {
 		return
 	}
+	access, accessProblem := executionAccessForRequest(r)
+	if accessProblem != nil {
+		writeExecutionAccessError(w, accessProblem)
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		s.notFound(w, "no such execution")
 		return
 	}
-	row, err := s.store.RequestExecutionCancellation(r.Context(), acct.ID, id, time.Now().UTC())
+	row, err := s.store.ExecutionByID(r.Context(), acct.ID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such execution")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load execution"))
+		return
+	}
+	if !requireExecutionOwnership(w, s, access, row) {
+		return
+	}
+	row, err = s.store.RequestExecutionCancellation(r.Context(), acct.ID, id, time.Now().UTC())
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "no such execution")
 		return
@@ -330,5 +450,6 @@ func (s *server) cancelExecution(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("could not cancel execution"))
 		return
 	}
+	s.auditExecutionRequest(r, acct.ID, "execution.cancel_requested", row)
 	writeJSON(w, http.StatusAccepted, executionResponse(row))
 }

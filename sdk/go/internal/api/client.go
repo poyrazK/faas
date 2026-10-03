@@ -223,7 +223,20 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	limit := int64(4 << 20)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = routeCheckHistoryEntryMaxBytes
+		}
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if readErr != nil {
+		return fmt.Errorf("read API response: %w", readErr)
+	}
+	if int64(len(data)) > limit {
+		return fmt.Errorf("API response exceeded %d-byte limit", limit)
+	}
 	if !success(resp) {
 		var p Problem
 		if json.Unmarshal(data, &p) == nil && p.Code != "" {

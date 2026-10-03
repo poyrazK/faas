@@ -45,6 +45,7 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimExecution: %v", err)
 	}
+	claim.OutboundIntegrationIDs = []string{"11111111-1111-4111-8111-111111111111"}
 
 	artifacts := StaticExecutionRuntimeArtifacts{
 		api.ExecutionRuntimeNode22: {
@@ -90,6 +91,10 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 	}
 	if got.VcpuCount != 2 || got.MemSizeMiB != 128 || got.CPUMillicores != 250 {
 		t.Fatalf("machine shape = %+v", got)
+	}
+	if claim.LeaseToken == nil || got.LeaseToken != *claim.LeaseToken || len(got.OutboundIntegrationIDs) != 1 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
 	}
 	if !got.Snapshot.Networkless || got.Snapshot.StorageKey != "execution-snapshots/node22-amd64/mem" ||
 		got.Snapshot.VMStateStorageKey != "execution-snapshots/node22-amd64/vmstate" || got.Snapshot.FCVersion != "1.10.0" {

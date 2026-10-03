@@ -634,8 +634,9 @@ type IncrementRequestTelemetryRequest struct {
 	// anonymous, unlinked, and pre-upgrade gateway requests. This is an
 	// attribution snapshot, not a hint to infer from current consumer links.
 	PlatformTenantId string `protobuf:"bytes,29,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`
-	// The same request's financial event was fsynced to the dedicated outbox.
-	// New receivers skip their legacy ledger write for this debugger row.
+	// Suppress the legacy financial increment for this debugger row: its usage
+	// was outboxed, or it is deliberately nonfinancial evidence (ADR-429).
+	// This bit alone does not attest an outbox append.
 	UsageOutboxed bool `protobuf:"varint,30,opt,name=usage_outboxed,json=usageOutboxed,proto3" json:"usage_outboxed,omitempty"`
 	// guest_cpu_time_ms — per-invocation child-process user+system CPU time
 	// measured by a Linux one-shot function runner. See resource-usage flag.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
 func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
@@ -38,6 +39,25 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	}}, nil)
 	if good.Code != http.StatusNoContent {
 		t.Fatalf("register: %d %s", good.Code, good.Body.String())
+	}
+	chaosPath := path + "/chaos"
+	installed := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
+		DurationMS: 30_000,
+		Rules:      []api.ScenarioTestChaosRule{{From: "api", To: "worker", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503, Seed: 17}},
+	}, nil)
+	if installed.Code != http.StatusOK {
+		t.Fatalf("install chaos plan: %d %s", installed.Code, installed.Body.String())
+	}
+	var chaosReceipt api.InjectScenarioTestChaosResponse
+	if err := json.Unmarshal(installed.Body.Bytes(), &chaosReceipt); err != nil || chaosReceipt.RulesInstalled != 1 || chaosReceipt.ExpiresAt.IsZero() {
+		t.Fatalf("chaos receipt = (%+v, %v)", chaosReceipt, err)
+	}
+	invalidPlan := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
+		DurationMS: 30_000,
+		Rules:      []api.ScenarioTestChaosRule{{From: "api", To: "production", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503}},
+	}, nil)
+	if invalidPlan.Code != http.StatusBadRequest {
+		t.Fatalf("unregistered chaos target: %d %s", invalidPlan.Code, invalidPlan.Body.String())
 	}
 	if rec := e.do(t, "DELETE", path, nil, nil); rec.Code != http.StatusConflict {
 		t.Fatalf("active deletion status = %d", rec.Code)

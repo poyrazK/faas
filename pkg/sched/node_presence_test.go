@@ -101,11 +101,16 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 	engine.now = func() time.Time { return time.Unix(0, f.clock.Load()) }
 	var ins state.Instance
 	if service {
+		// Use the production submission path and finish bootstrap notifications
+		// before advancing fake time; no recovery callback may escape the fixture.
+		loop := NewLoop(nil, engine, testLog()).WithClock(engine.now)
+		t.Cleanup(loop.workPool().drain)
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
 		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
 		}
 		engine.convergeServiceReplicas(ctx, dep.ID)
+		loop.workPool().drain()
 		rows, err := store.ListInstancesForApp(ctx, app.ID)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("seed replicas=%v err=%v", rows, err)

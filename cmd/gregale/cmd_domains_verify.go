@@ -30,7 +30,7 @@ import (
 // JSON mode emits the CustomDomainResponse, including `verified`.
 func cmdDomainsVerify(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains verify <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains verify <domain>\n")
 		return 1
 	}
 	domain := args[0]
@@ -67,7 +67,7 @@ func cmdDomainsVerify(args []string) int {
 // retry.
 func cmdDomainsShow(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains show <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains show <domain>\n")
 		return 1
 	}
 	domain := args[0]
@@ -93,7 +93,7 @@ func cmdDomainsShow(args []string) int {
 // TLS dial; it is safe for scripts and remains useful during an outage.
 func cmdDomainsStatus(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains status\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains status\n")
 		return 1
 	}
 	client, err := authedClient()

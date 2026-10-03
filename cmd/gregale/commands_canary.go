@@ -27,7 +27,7 @@ func cmdCanary(args []string) int {
 	case "simulate":
 		return cmdCanarySimulate(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown canary subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown canary subcommand %q\n", args[0])
 		return 1
 	}
 }

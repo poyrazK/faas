@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { CapabilityStatus } from './CapabilityStatus.js';
 /**
- * Account-scoped capability registry and resolved plan entitlements.
+ * Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
  */
 export type CapabilitiesResponse = {
   /**

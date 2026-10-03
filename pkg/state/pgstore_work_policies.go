@@ -11,7 +11,8 @@ import (
 
 const scheduleOccurrenceSelectCols = `id::text, account_id::text, coalesce(cron_id::text,''), coalesce(job_id::text,''),
        schedule_revision, scheduled_for, start_deadline_at, schedule_policy, status, reason,
-       coalesce(blocking_occurrence_id::text,''), coalesce(invocation_id::text,''), coalesce(app_task_id::text,''),
+       coalesce(blocking_occurrence_id::text,''), coalesce(exclusive_operation_id::text,''),
+       coalesce(invocation_id::text,''), coalesce(app_task_id::text,''),
        coalesce(job_run_id::text,''), started_at, finished_at, created_at, updated_at, work_decision, outcome_code`
 
 func scanScheduleOccurrence(row interface{ Scan(...any) error }) (ScheduleOccurrence, error) {
@@ -20,7 +21,7 @@ func scanScheduleOccurrence(row interface{ Scan(...any) error }) (ScheduleOccurr
 	var deadline, started, finished pgtype.Timestamptz
 	if err := row.Scan(&o.ID, &o.AccountID, &o.CronID, &o.JobID, &o.ScheduleRevision,
 		&o.ScheduledFor, &deadline, &policy, &o.Status, &o.Reason,
-		&o.BlockingOccurrenceID, &o.InvocationID, &o.AppTaskID, &o.JobRunID,
+		&o.BlockingOccurrenceID, &o.ExclusiveOperationID, &o.InvocationID, &o.AppTaskID, &o.JobRunID,
 		&started, &finished, &o.CreatedAt, &o.UpdatedAt, &workDecision, &o.OutcomeCode); err != nil {
 		return ScheduleOccurrence{}, err
 	}

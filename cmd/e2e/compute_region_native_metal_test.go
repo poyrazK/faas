@@ -26,7 +26,7 @@ import (
 // Ordinary metal runs skip it unless the explicit dedicated-fleet opt-in is set.
 func TestNativeComputeRegionAcceptance(t *testing.T) {
 	if os.Getenv("FAAS_REGION_ACCEPTANCE_CONFIRM") != "native-x86" {
-		t.Skip("requires dedicated native regional fleet; see ADR-425")
+		t.Skip("requires dedicated native regional fleet; see ADR-466")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Fatal("regional acceptance must run on native Linux x86_64")

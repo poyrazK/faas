@@ -86,6 +86,75 @@ func TestMemStoreExecutionAdmissionIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMemStoreAgentWorkflowStepAdmissionRejectsDuplicateReceipt(t *testing.T) {
+	store := NewMemStore()
+	account := executionTestAccount(t, store, "workflow-step-idempotency")
+	principalA := "00000000-0000-4000-8000-000000000001"
+	principalB := "00000000-0000-4000-8000-000000000002"
+	base := time.Now().UTC().Add(time.Second)
+	params := executionTestParams(t, account.ID, base, 0, "first-payload")
+	params.WorkflowID = "agent-workflow"
+	params.StepLabel = "gwf:0123456789abcdef01234567:inspect"
+	params.RunsPrincipalID = &principalA
+	if _, err := store.CreateExecution(context.Background(), params); err != nil {
+		t.Fatalf("CreateExecution(first step): %v", err)
+	}
+	duplicate := executionTestParams(t, account.ID, base.Add(time.Millisecond), 0, "second-payload")
+	duplicate.WorkflowID = params.WorkflowID
+	duplicate.StepLabel = params.StepLabel
+	duplicate.RunsPrincipalID = &principalA
+	if _, err := store.CreateExecution(context.Background(), duplicate); !errors.Is(err, ErrExecutionWorkflowStepExists) {
+		t.Fatalf("CreateExecution(duplicate step) = %v, want workflow step conflict", err)
+	}
+	otherPrincipal := executionTestParams(t, account.ID, base.Add(2*time.Millisecond), 0, "other-agent-payload")
+	otherPrincipal.WorkflowID = params.WorkflowID
+	otherPrincipal.StepLabel = params.StepLabel
+	otherPrincipal.RunsPrincipalID = &principalB
+	if _, err := store.CreateExecution(context.Background(), otherPrincipal); err != nil {
+		t.Fatalf("CreateExecution(other key family step): %v", err)
+	}
+}
+
+func TestMemStoreExecutionOutboundIntegrationsAreGrantedAndClaimed(t *testing.T) {
+	store, ctx, account, _ := memOutboundFixture(t)
+	offer := memCustomerOutboundOffer(account.ID, "agent-api")
+	createdOffer, err := store.CreateOutboundIntegration(ctx, offer)
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, createdOffer.ID, []byte("sealed-provider-credential")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	base := time.Now().UTC().Add(time.Second)
+	params := executionTestParams(t, account.ID, base, 0, "sealed-run")
+	params.OutboundIntegrationIDs = []string{createdOffer.ID}
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, ErrExecutionOutboundIntegrationUnavailable) {
+		t.Fatalf("CreateExecution without Runs grant = %v, want unavailable", err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, createdOffer.ID, true); err != nil {
+		t.Fatalf("SetOutboundIntegrationRunsEnabled: %v", err)
+	}
+	if _, err := store.CreateExecution(ctx, params); err != nil {
+		t.Fatalf("CreateExecution with granted integration: %v", err)
+	}
+	claim, err := store.ClaimExecution(ctx, "integration-claim", base.Add(time.Millisecond), time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimExecution: %v", err)
+	}
+	if len(claim.OutboundIntegrationIDs) != 1 || claim.OutboundIntegrationIDs[0] != createdOffer.ID {
+		t.Fatalf("claim integration IDs = %v, want [%s]", claim.OutboundIntegrationIDs, createdOffer.ID)
+	}
+
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, createdOffer.ID, false); err != nil {
+		t.Fatalf("revoke Runs grant: %v", err)
+	}
+	params = executionTestParams(t, account.ID, base.Add(2*time.Millisecond), 0, "sealed-run-2")
+	params.OutboundIntegrationIDs = []string{createdOffer.ID}
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, ErrExecutionOutboundIntegrationUnavailable) {
+		t.Fatalf("CreateExecution after grant revocation = %v, want unavailable", err)
+	}
+}
+
 func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	store := NewMemStore()
 	account := executionTestAccount(t, store, "lifecycle")

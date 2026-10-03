@@ -17,9 +17,35 @@ package e2etest
 // health probe dialling the wrong address.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestVMMDEnv_SelectsBuiltHarnessBridges(t *testing.T) {
+	previous := currentHarness
+	t.Cleanup(func() { currentHarness = previous })
+	currentHarness = &Harness{BinDir: t.TempDir()}
+	env := vmmdEnv("postgres:///faas_e2e", "/tmp/vmmd.toml", "/tmp/s/schedd.sock")
+	for _, bridge := range []struct{ env, binary string }{
+		{"FAAS_VMMD_STREAM_BRIDGE_PATH", "vmmd-stream-bridge"},
+		{"FAAS_VMMD_RAW_BRIDGE_PATH", "vmmd-raw-bridge"},
+		{"FAAS_VMMD_TCP_BRIDGE_PATH", "vmmd-tcp-bridge"},
+		{"FAAS_VMMD_UDP_BRIDGE_PATH", "vmmd-udp-bridge"},
+	} {
+		got, ok := envValue(t, env, bridge.env)
+		if want := filepath.Join(currentHarness.BinDir, bridge.binary); !ok || got != want {
+			t.Fatalf("%s = %q, %v; want built harness bridge %q", bridge.env, got, ok, want)
+		}
+		built := false
+		for _, name := range DaemonBinaries {
+			built = built || name == bridge.binary
+		}
+		if !built {
+			t.Fatalf("selected bridge %s is not built by EnsureSharedBinaries", bridge.binary)
+		}
+	}
+}
 
 func envValue(t *testing.T, env []string, name string) (string, bool) {
 	t.Helper()

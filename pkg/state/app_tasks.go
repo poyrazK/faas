@@ -195,6 +195,32 @@ type ScheduledCronOccurrenceStore interface {
 	CreateScheduledCronAppTaskOccurrence(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions) (AppTask, ScheduleOccurrence, bool, error)
 }
 
+// ExclusiveCommandCronTaskStore materializes the command task only after the
+// operation worker has acquired its current fencing generation.
+type ExclusiveCommandCronTaskStore interface {
+	CreateExclusiveCommandCronAppTask(ctx context.Context, accountID, appID, operationID string, generation int64, cronID string, createdAt time.Time) (AppTask, error)
+}
+
+// ExclusiveCommandCronFireNowStore atomically admits a command fire-now into
+// its operation lane and stamps the durable request receipt with that operation.
+type ExclusiveCommandCronFireNowStore interface {
+	AdmitExclusiveCommandCronFireNow(ctx context.Context, requestID string, firedAt time.Time, admission ExclusiveAdmission) (ExclusiveOperation, bool, error)
+}
+
+func validateExclusiveCommandCronAdmission(admission ExclusiveAdmission, accountID, appID, cronID string) error {
+	if admission.AccountID != accountID || admission.AppID != appID || admission.JobID != "" || cronID == "" {
+		return ErrInvalidArgument
+	}
+	var request struct {
+		Kind   string `json:"kind"`
+		CronID string `json:"cron_id"`
+	}
+	if json.Unmarshal(admission.Request, &request) != nil || request.Kind != "command_cron" || request.CronID != cronID {
+		return ErrInvalidArgument
+	}
+	return nil
+}
+
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)

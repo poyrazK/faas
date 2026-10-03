@@ -40,7 +40,7 @@ func cmdOperations(args []string) int {
 	case "cancel":
 		return cmdOperationCancel(args[1:])
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "unknown operations command %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown operations command %q\n", args[0])
 		return 1
 	}
 }
@@ -346,10 +346,12 @@ func cmdOperationUnbindTrigger(args []string) int {
 
 func cmdOperationPolicy(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale operations policy <list|upsert>", "operations")
+		PrintUsage(os.Stderr, "usage: gregale operations policy <list|upsert|retire>", "operations")
 		return 1
 	}
 	switch args[0] {
+	case "retire":
+		return cmdOperationPolicyRetire(args[1:])
 	case "list":
 		fs := newFlagSet("operations policy list", flag.ContinueOnError)
 		if err := fs.Parse(args[1:]); err != nil {
@@ -410,9 +412,30 @@ func cmdOperationPolicy(args []string) int {
 		_, _ = fmt.Fprintf(os.Stdout, "Saved operation policy %s (revision %d).\n", row.Policy.Name, row.Revision)
 		return 0
 	default:
-		_, _ = fmt.Fprintf(os.Stderr, "unknown operation policy command %q\n", args[0])
+		printCommandValidation(os.Stderr, "unknown operation policy command %q\n", args[0])
 		return 1
 	}
+}
+
+func cmdOperationPolicyRetire(args []string) int {
+	fs := newFlagSet("operations policy retire", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale operations policy retire <name>", "operations")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	row, err := client.RetireExclusiveWorkPolicy(context.Background(), fs.Arg(0))
+	if err != nil {
+		return printErr("Could not retire operation policy", err)
+	}
+	if jsonOutput {
+		return writeJSONStdout(row)
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "Retired operation policy %s (revision %d). Ownership history is preserved.\n", row.Policy.Name, row.Revision)
+	return 0
 }
 
 func cmdOperationStart(args []string) int {
@@ -667,7 +690,7 @@ func cmdOperationCancel(args []string) int {
 }
 
 func writeJSONStdout(value any) int {
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(osStdout)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(value); err != nil {
 		_, _ = fmt.Fprintln(osStderr, err)

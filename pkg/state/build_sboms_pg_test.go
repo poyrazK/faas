@@ -3,18 +3,17 @@
 package state_test
 
 import (
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestPgRegionalBuildSBOMs(t *testing.T) {
-	testRegionalBuildSBOMs(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+	testRegionalBuildSBOMs(t, state.NewPgStore(openMigratedRegionalPool(t)))
 }
 
 func TestPgRegionalBuildSBOMDirectWriteGuards(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	s := state.NewPgStore(pool)
 	app, dep, build, _ := seedRegionalSBOM(t, s)
 	for _, bad := range []string{region.BuildSBOMKey("", build.ID), region.BuildSBOMKey("us-sbom", build.ID), region.BuildSBOMKey(app.ComputeRegion, app.ID)} {

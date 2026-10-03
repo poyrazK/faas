@@ -17,7 +17,7 @@ T = TypeVar("T", bound="CapabilitiesResponse")
 
 @_attrs_define
 class CapabilitiesResponse:
-    """Account-scoped capability registry and resolved plan entitlements."""
+    """Account-scoped capability registry with resolved entitlement and existing runtime availability gates."""
 
     registry_version: int
     """Version of the embedded product capability catalog."""

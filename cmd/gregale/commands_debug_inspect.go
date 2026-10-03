@@ -57,7 +57,7 @@ func cmdDebugRequestsInspect(args []string) int {
 	} else {
 		options, optionErr := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, "", 1)
 		if optionErr != nil {
-			fmt.Fprintln(os.Stderr, optionErr)
+			printCommandValidation(os.Stderr, "%v\n", optionErr)
 			return 1
 		}
 		list, listErr := client.ListAppDebugRequestsWithOptions(ctx, slug, options)

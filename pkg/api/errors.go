@@ -1068,6 +1068,9 @@ const (
 	// re-read the deployment on its next tick; it must never retry the
 	// traffic write against a stale step.
 	CodeCanaryStepConflict = "canary_step_conflict"
+	// Route enforcement blocks traffic advancement until current evidence passes.
+	CodeRouteGateBlocked   = "route_gate_blocked"
+	CodeRouteHealthBlocked = "route_health_blocked"
 	// CodeTrafficPercentSumInvalid (issue #556) is a 409
 	// (Conflict) for the defensive backstop: post-write
 	// Σ(traffic_percent WHERE status='live') != 100. In
@@ -1728,14 +1731,15 @@ const (
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
 	// Disposable one-shot executions (ADR-171).
-	CodeExecutionsNotAllowed     = "executions_not_allowed"
-	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
-	CodeExecutionSourceInvalid   = "execution_source_invalid"
-	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
-	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
-	CodeExecutionLimitInvalid    = "execution_limit_invalid"
-	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
-	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+	CodeExecutionsNotAllowed        = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid     = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid      = "execution_source_invalid"
+	CodeExecutionPayloadInvalid     = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge    = "execution_payload_too_large"
+	CodeExecutionLimitInvalid       = "execution_limit_invalid"
+	CodeExecutionLimitExceeded      = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid     = "execution_network_invalid"
+	CodeExecutionWorkflowStepExists = "execution_workflow_step_exists"
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
@@ -1918,7 +1922,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2283,6 +2287,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case CodeExecutionWorkflowStepExists:
+		return http.StatusConflict
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying

@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/conformance"
 )
 
 func TestPgRegionalBuildDirectWriteGuards(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	store := state.NewPgStore(pool)
 	fx := conformance.Seed(t, store)
 	region := "eu-builder"

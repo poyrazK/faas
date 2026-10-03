@@ -61,7 +61,7 @@ func TestTCPIngressMetal(t *testing.T) {
 	t.Setenv("FAAS_TCPD_BIND_HOST", "127.0.0.1")
 	t.Setenv("FAAS_TCPD_REFRESH_INTERVAL", "50ms")
 	certificateDirectory := t.TempDir()
-	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic, "FAAS_TCPD_TLS_CERT_DIR="+certificateDirectory)
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd|e2etest.GatewaydPublic, "FAAS_TCPD_TLS_CERT_DIR="+certificateDirectory)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanPro)

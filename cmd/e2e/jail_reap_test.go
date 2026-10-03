@@ -51,8 +51,8 @@ func TestRunnerReapsStaleJailsBeforePreflightLeakcheck(t *testing.T) {
 // two that blocked run 35206846279 were app instances.
 func TestReapStaleJailsRemovesAppInstanceChroots(t *testing.T) {
 	lib := readCIScript(t, "native-e2e-reap.sh")
-	if !regexp.MustCompile(`for d in "\$\{root\}"/firecracker-v\*/\*/; do`).MatchString(lib) {
-		t.Error("reap_stale_jails does not iterate every chroot under firecracker-v*/; " +
+	if !regexp.MustCompile(`for d in "\$\{root\}"/firecracker/\*/ "\$\{root\}"/firecracker-v\*/\*/; do`).MatchString(lib) {
+		t.Error("reap_stale_jails does not iterate every unversioned and versioned chroot; " +
 			"app-instance chroots would be left for the pre-flight leakcheck to refuse")
 	}
 	if regexp.MustCompile(`firecracker-v\*/build-\*/`).MatchString(lib) {

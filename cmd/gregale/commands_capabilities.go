@@ -35,6 +35,8 @@ func cmdCapabilities(args []string) int {
 		status := "unavailable"
 		if capability.Enabled {
 			status = "available"
+		} else if capability.UnavailableDetail != "" {
+			status += ": " + capability.UnavailableDetail
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-25s %-10s %-21s %s\n", capability.Key, capability.Maturity, strings.Join(capability.Plans, ","), status)
 	}

@@ -1,0 +1,94 @@
+name: MCP caller catalog check
+
+on:
+  workflow_call:
+    inputs:
+      gregale-ref:
+        description: Reviewed full commit SHA in poyrazK/faas containing --strict-catalog
+        required: true
+        type: string
+      endpoint-url:
+        description: Candidate MCP endpoint to discover without tool execution
+        required: true
+        type: string
+      baseline:
+        description: Caller repository path to this role's reviewed contract snapshot
+        required: true
+        type: string
+      baseline-ref:
+        description: Full baseline commit SHA; defaults to the PR base or caller commit
+        default: ''
+        type: string
+      legacy:
+        description: Capture the stateless 2025-11-25 protocol instead of 2026-07-28
+        default: false
+        type: boolean
+      strict-catalog:
+        description: Require review for newly visible tools as well as existing contract checks
+        default: true
+        type: boolean
+      receipt-name:
+        description: Unique artifact name for this role and protocol
+        default: mcp-catalog-receipt
+        type: string
+    secrets:
+      endpoint-token:
+        description: Client token with the same permissions used for this role's baseline
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate pinned refs and baseline path
+        env:
+          GREG_MCP_REF: ${{ inputs.gregale-ref }}
+          GREG_MCP_BASE_REF: ${{ inputs.baseline-ref || github.event.pull_request.base.sha || github.sha }}
+          GREG_MCP_BASELINE: ${{ inputs.baseline }}
+        shell: bash
+        run: |
+          [[ "$GREG_MCP_REF" =~ ^[0-9a-fA-F]{40}$ ]] || exit 1
+          [[ "$GREG_MCP_BASE_REF" =~ ^[0-9a-fA-F]{40}$ ]] || exit 1
+          [[ -n "$GREG_MCP_BASELINE" && "$GREG_MCP_BASELINE" != /* ]] || exit 1
+          case "/$GREG_MCP_BASELINE/" in
+            */../*) exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          repository: poyrazK/faas
+          ref: ${{ inputs.gregale-ref }}
+          path: gregale-source
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gregale-source/go.mod
+          cache-dependency-path: gregale-source/go.sum
+      - name: Build the pinned CLI
+        working-directory: gregale-source
+        run: go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.baseline-ref || github.event.pull_request.base.sha || github.sha }}
+          path: caller-baseline
+          persist-credentials: false
+      - name: Capture and compare this caller's catalog
+        env:
+          GREG_MCP_ENDPOINT: ${{ inputs.endpoint-url }}
+          GREG_MCP_BASELINE: ${{ inputs.baseline }}
+          GREG_MCP_LEGACY: ${{ inputs.legacy }}
+          GREG_MCP_STRICT: ${{ inputs.strict-catalog }}
+          GREG_MCP_ENDPOINT_TOKEN: ${{ secrets.endpoint-token }}
+        shell: bash
+        run: bash gregale-source/scripts/ci/mcp-catalog-check.sh "$RUNNER_TEMP/gregale"
+      - name: Preserve catalog evidence even when the gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.receipt-name }}
+          path: ${{ runner.temp }}/mcp-catalog-receipt
+          if-no-files-found: ignore
+          retention-days: 7

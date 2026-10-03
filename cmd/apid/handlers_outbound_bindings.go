@@ -24,6 +24,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AllowedMethods:       append([]string{}, offer.AllowedMethods...),
 		AllowedPathPrefixes:  append([]string{}, offer.AllowedPathPrefixes...),
 		Enabled:              offer.Enabled,
+		RunsEnabled:          offer.RunsEnabled,
 		CredentialSource:     offer.CredentialSource,
 		CredentialConfigured: offer.CredentialConfigured,
 		OwnerKind:            offer.OwnerKind,
@@ -162,6 +163,36 @@ func (s *server) putOutboundRequestPolicy(w http.ResponseWriter, r *http.Request
 		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Request policy exceeds the account plan ceiling")
 	case err != nil:
 		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_policy_unavailable", "Outbound request policy could not be updated")
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *server) putOutboundRunsBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID := r.PathValue("integration")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "Integration ID must be a UUID")
+		return
+	}
+	var req api.PutOutboundRunsBindingRequest
+	if err := decodeJSONSized(r, &req, 2<<10); err != nil || req.Enabled == nil {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, "A Runs binding decision is required")
+		return
+	}
+	store, ok := s.store.(state.OutboundRunsGrantStore)
+	if !ok {
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_binding_unavailable", "Runs integration bindings are unavailable")
+		return
+	}
+	err := store.SetOutboundIntegrationRunsEnabled(r.Context(), acct.ID, integrationID, *req.Enabled)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "customer managed integration not found")
+	case errors.Is(err, state.ErrInvalidArgument):
+		outboundBindingProblem(w, http.StatusConflict, "outbound_runs_binding_ineligible", "Configure the managed credential and an allowed route before granting Runs access")
+	case err != nil:
+		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_binding_unavailable", "Runs integration binding could not be updated")
 	default:
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)

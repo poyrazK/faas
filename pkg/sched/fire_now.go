@@ -191,9 +191,9 @@ func (l *Loop) requeueFireNowOnOwnerChange(ctx context.Context, req state.FireNo
 }
 
 // processCommandCronFireNow queues a deployment-attached task for a manual
-// fire. The state store atomically writes the task and marks the fire-now
-// request succeeded with its task id; the task itself runs through the
-// existing app-task coordinator and command-cron retry lifecycle.
+// fire. Managed command crons atomically admit an operation and record its ID
+// on the fire-now receipt; the operation worker links the AppTask when it is
+// materialized. Unbound crons keep the direct task-creation path.
 func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowRequest, cron state.Cron) {
 	elapsed := time.Since(req.RequestedAt).Seconds()
 	resultLabel := fireNowResultLabelFailed
@@ -234,6 +234,44 @@ func (l *Loop) processCommandCronFireNow(ctx context.Context, req state.FireNowR
 	}
 	if !account.Active() {
 		markFailed(ErrAccountSuspended)
+		return
+	}
+	binding, bound, bindingErr := l.exclusiveCronBinding(ctx, cron, account.ID)
+	if bindingErr != nil {
+		markFailed(bindingErr)
+		return
+	}
+	if bound {
+		admissions, ok := l.engine.Store().(state.ExclusiveCommandCronFireNowStore)
+		if !ok {
+			markFailed(errors.New("managed command-cron admission is unavailable"))
+			return
+		}
+		admission, err := exclusiveCommandCronAdmission(binding, cron, account.ID, exclusiveCronManualIdempotencyKey(req.ID))
+		if err != nil {
+			markFailed(err)
+			return
+		}
+		operation, joined, err := admissions.AdmitExclusiveCommandCronFireNow(ctx, req.ID, l.now(), admission)
+		if l.ops != nil {
+			l.ops.ObserveExclusiveOperationAdmission("cron", exclusiveAdmissionOutcome(err, joined, operation.Replayed))
+		}
+		if err != nil {
+			if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+				if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
+					if _, suspendErr := suspender.SuspendCronsForApp(ctx, cron.AppID, state.CronSuspendedNoLiveDeployment); suspendErr != nil {
+						l.log.Warn("sched: fire_now: suspend managed command cron without live deployment", "cron_id", cron.ID, "err", suspendErr)
+					}
+				}
+			}
+			l.emitCommandCronFired(ctx, cron, account.ID, l.now(), "err", "", TriggerManual)
+			markFailed(err)
+			return
+		}
+		l.emitCommandCronFired(ctx, cron, account.ID, l.now(), "ok", "", TriggerManual, operation.ID)
+		l.log.Info("sched: fire_now: command cron operation admitted",
+			"request_id", req.ID, "cron_id", cron.ID, "operation_id", operation.ID, "joined", joined)
+		resultLabel = fireNowResultLabelSucceeded
 		return
 	}
 	taskStore, ok := l.engine.Store().(state.AppTaskStore)

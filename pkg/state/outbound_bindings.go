@@ -27,6 +27,7 @@ type OutboundIntegrationOffer struct {
 	AllowedMethods       []string
 	AllowedPathPrefixes  []string
 	Enabled              bool
+	RunsEnabled          bool
 	DailyRequestLimit    *int64
 	CredentialSource     string
 	CredentialConfigured bool
@@ -80,6 +81,12 @@ type OutboundBindingStore interface {
 	GetOutboundBindingUsage(context.Context, string, string, string) (OutboundBindingUsage, error)
 	SetOutboundCredential(context.Context, string, string, []byte) error
 	DeleteOutboundCredential(context.Context, string, string) error
+}
+
+// OutboundRunsGrantStore manages account-owned grants for future stateless
+// Run calls. Run grants remain independent of existing app bindings.
+type OutboundRunsGrantStore interface {
+	SetOutboundIntegrationRunsEnabled(context.Context, string, string, bool) error
 }
 
 func validateCustomerOutboundIntegration(offer OutboundIntegrationOffer) error {

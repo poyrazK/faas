@@ -8,6 +8,10 @@ import (
 
 var _ ExclusiveWorkStore = (*MemStore)(nil)
 
+func (s *MemStore) RetireExclusiveWorkPolicy(ctx context.Context, account, name string) (ExclusiveWorkPolicy, error) {
+	return retireExclusivePolicy(ctx, s.exclusiveAtomic, account, name)
+}
+
 func (s *MemStore) UpsertExclusiveWorkPolicy(ctx context.Context, a string, p exclusivework.Policy) (ExclusiveWorkPolicy, error) {
 	return upsertExclusivePolicy(ctx, s.exclusiveAtomic, a, p)
 }

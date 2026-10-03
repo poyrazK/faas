@@ -106,6 +106,9 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 	results := make([]testValidationResult, 0, len(names))
 	for _, name := range names {
 		scenario := scenarios[name]
+		if scenario.Chaos != nil && engine != "real-vm" {
+			return nil, fmt.Errorf("scenario %q declares chaos rules, which require the real-vm engine", name)
+		}
 		source := scenario.Source
 		if source == "" {
 			source = "."

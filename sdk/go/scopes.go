@@ -42,6 +42,8 @@ const (
 	ScopeSecretsRead       = api.ScopeSecretsRead
 	ScopeSecretsWrite      = api.ScopeSecretsWrite
 	ScopeUsageRead         = api.ScopeUsageRead
+	ScopeRunsRead          = api.ScopeRunsRead
+	ScopeRunsWrite         = api.ScopeRunsWrite
 	ScopeDelayedTasksRead  = api.ScopeDelayedTasksRead
 	ScopeDelayedTasksWrite = api.ScopeDelayedTasksWrite
 )

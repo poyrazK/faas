@@ -14,6 +14,17 @@ import (
 	"time"
 )
 
+func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
+	config := flags.Config{Flags: []flags.Flag{{Key: "export", Rules: []flags.Rule{{ID: "pilot-user", Subjects: []string{"user-17"}}}}}}
+	if featureFlagConfigRequiresSubjectTargeting(config) {
+		t.Fatal("disabled subject flag required a new SDK capability")
+	}
+	config.Flags[0].Enabled = true
+	if !featureFlagConfigRequiresSubjectTargeting(config) {
+		t.Fatal("enabled subject flag did not require the SDK capability")
+	}
+}
+
 func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	e.s.featureFlagsEnabled = true
@@ -34,6 +45,7 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	cfg := flags.Config{Groups: map[string][]string{"internal": ids[:1]}, Flags: []flags.Flag{
 		{Key: "export", Enabled: true, Rules: []flags.Rule{{ID: "selected", Customers: ids[:3], Value: true}}},
 		{Key: "checkout", Type: "variant", Enabled: true, Default: "legacy", Variants: []flags.FlagVariant{{Key: "legacy", Weight: 5000}, {Key: "new", Weight: 5000}}, Rules: []flags.Rule{{ID: "selected-customer", Customers: ids[:1], Value: "new"}}},
+		{Key: "actor-release", Enabled: true, Default: false, Rules: []flags.Rule{{ID: "pilot-user", Customers: ids[:1], Subjects: []string{"user-17"}, Value: true}}},
 	}}
 	path := "/v1/projects/flags/environments/production/flags"
 	zero := int64(0)
@@ -58,6 +70,23 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	var variantDecision flags.Decision
 	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &variantDecision) != nil || variantDecision.Type != "variant" || variantDecision.Value != "new" || variantDecision.RuleID != "selected-customer" {
 		t.Fatalf("variant inspect: %d %s %+v", res.Code, res.Body.String(), variantDecision)
+	}
+	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user-17"}, nil)
+	var subjectDecision flags.Decision
+	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &subjectDecision) != nil || subjectDecision.Value != true || subjectDecision.RuleID != "pilot-user" {
+		t.Fatalf("subject inspect: %d %s %+v", res.Code, res.Body.String(), subjectDecision)
+	}
+	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
+	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &subjectDecision) != nil || subjectDecision.Reason != "subject_missing" || subjectDecision.Value != false {
+		t.Fatalf("missing-subject inspect: %d %s %+v", res.Code, res.Body.String(), subjectDecision)
+	}
+	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{SubjectID: "user-17"}, nil)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("subject inspect without customer=%d %s", res.Code, res.Body.String())
+	}
+	res = e.do(t, http.MethodPost, path+"/actor-release/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], SubjectID: "user with space"}, nil)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid subject inspect=%d %s", res.Code, res.Body.String())
 	}
 	saved.Flags[0].Enabled = false
 	one := int64(1)
@@ -139,18 +168,42 @@ func TestFeatureFlagsRuntimeWorkloadScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	customer, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "runtime-subject", "Runtime Subject", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := e.store.ProjectEnvironmentBySlug(ctx, e.acct.ID, project.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{
+		Scope:           state.FeatureFlagScope{AccountID: e.acct.ID, ProjectID: project.ID, EnvironmentID: env.ID},
+		ExpectedVersion: 0, Actor: e.acct.ID,
+		Config: flags.Config{Groups: map[string][]string{}, Flags: []flags.Flag{{Key: "export", Enabled: true, Default: false, Rules: []flags.Rule{{
+			ID: "pilot-user", Customers: []string{customer.ID}, Subjects: []string{"user-18"}, Value: true,
+		}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	res := e.do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{"Authorization": "Bearer " + token.AccessToken})
+	if res.Code != http.StatusUpgradeRequired {
+		t.Fatalf("legacy SDK received subject-targeted bundle: %d %s", res.Code, res.Body.String())
+	}
+	res = e.do(t, http.MethodGet, "/v1/runtime/flags?environment=foreign", nil, map[string]string{
+		"Authorization":               "Bearer " + token.AccessToken,
+		api.FlagSDKCapabilitiesHeader: api.FlagSDKSubjectTargetingCapability,
+	})
 	if res.Code != 200 {
 		t.Fatalf("runtime: %d %s", res.Code, res.Body.String())
 	}
 	var bundle flags.Bundle
 	_ = json.Unmarshal(res.Body.Bytes(), &bundle)
-	env, err := e.store.ProjectEnvironmentBySlug(ctx, e.acct.ID, project.ID, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if bundle.EnvironmentID != env.ID {
 		t.Fatal(bundle)
+	}
+	if len(bundle.Flags) != 1 || len(bundle.Flags[0].Rules) != 1 || len(bundle.Flags[0].Rules[0].Subjects) != 1 || bundle.Flags[0].Rules[0].Subjects[0] != "user-18" {
+		t.Fatalf("runtime bundle lost subject targeting: %+v", bundle.Flags)
 	}
 	foreign, _ := signer.Mint(time.Now(), e.acct.ID, app.ID, instance.ID, "sts.amazonaws.com")
 	res = e.do(t, http.MethodGet, "/v1/runtime/flags", nil, map[string]string{"Authorization": "Bearer " + foreign.AccessToken})

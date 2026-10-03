@@ -27,7 +27,7 @@ Host-specific release validation remains:
 - [ ] Native KVM stale-snapshot acceptance
       (`TestExclusiveOperationFencesRestoredKVMOwnerMetal`), metal checks, and leakcheck.
 
-Progress note: manual app, Job, and AppTask submissions, HTTP cron/fire-now,
+Progress note: manual app, Job, and AppTask submissions, HTTP and command cron/fire-now,
 recurring Job schedules, signature-verified Stripe webhooks, and in-platform
 queue plus external broker triggers share the operation admission and worker
 path. Job schedule occurrences use stable retry identity before the schedule

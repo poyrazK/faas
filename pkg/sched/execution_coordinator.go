@@ -70,6 +70,11 @@ type ExecutionRestoreRequest struct {
 	NetworkMode api.ExecutionNetworkMode
 	Limits      api.ResolvedExecutionLimits
 	DeadlineAt  time.Time
+	// LeaseToken and OutboundIntegrationIDs are host-only broker metadata.
+	// They are forwarded to vmmd only when this execution has an outbound
+	// integration grant and are never copied into the guest request or manifest.
+	LeaseToken             string   `json:"-"`
+	OutboundIntegrationIDs []string `json:"-"`
 	// Machine fields are resolved by the scheduler from the immutable runtime
 	// snapshot catalog. They are payload-free and are forwarded only to vmmd's
 	// dedicated RestoreExecution RPC.
@@ -391,6 +396,10 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		Profile: claim.Profile.Normalized(),
 		ID:      claim.ID, AccountID: claim.AccountID, Runtime: claim.Runtime,
 		NetworkMode: claim.NetworkMode, Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
+		OutboundIntegrationIDs: append([]string(nil), claim.OutboundIntegrationIDs...),
+	}
+	if len(claim.OutboundIntegrationIDs) != 0 && claim.LeaseToken != nil {
+		request.LeaseToken = *claim.LeaseToken
 	}
 	restoreStarted := c.now()
 	var resolveErr error

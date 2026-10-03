@@ -102,6 +102,8 @@ def sync_detailed(
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
     Source, input, host paths, and VM internals are never included.
+    Runs-only keys can stream only receipts created by their own key family.
+    Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -146,6 +148,8 @@ def sync(
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
     Source, input, host paths, and VM internals are never included.
+    Runs-only keys can stream only receipts created by their own key family.
+    Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -185,6 +189,8 @@ async def asyncio_detailed(
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
     Source, input, host paths, and VM internals are never included.
+    Runs-only keys can stream only receipts created by their own key family.
+    Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -227,6 +233,8 @@ async def asyncio(
     `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
     stderr, and terminal events and closes after the terminal event.
     Source, input, host paths, and VM internals are never included.
+    Runs-only keys can stream only receipts created by their own key family.
+    Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):

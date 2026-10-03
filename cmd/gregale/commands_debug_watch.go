@@ -66,7 +66,7 @@ func cmdDebugRequestsWatch(args []string) int {
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
-		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 200")
+		printCommandValidation(os.Stderr, "--limit must be between 1 and 200\n")
 		return 1
 	}
 	if err := validateDebugWatchInterval(*interval); err != nil {
@@ -74,7 +74,7 @@ func cmdDebugRequestsWatch(args []string) int {
 	}
 	options, err := debugTelemetryOptionsFromFlags(*since, *route, *deploymentID, *status, *coldBoot, *consumerID, *minLatencyMS, "", *limit)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printCommandValidation(os.Stderr, "%v\n", err)
 		return 1
 	}
 	client, err := authedClient()

@@ -31,7 +31,7 @@ func cmdBillingPaymentMethod(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale billing payment-method [--print|--no-open]\n")
+		printCommandValidation(os.Stderr, "usage: gregale billing payment-method [--print|--no-open]\n")
 		return 1
 	}
 

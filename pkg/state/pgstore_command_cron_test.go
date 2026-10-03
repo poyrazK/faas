@@ -1,11 +1,13 @@
 package state_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -338,6 +340,91 @@ func TestPgManualCommandCronFireNowQueuesTaskWithoutMovingCursor(t *testing.T) {
 	runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, "")
 	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
 		t.Fatalf("command cron runs = %+v, %v; want exactly one task", runs, err)
+	}
+}
+
+func TestPgExclusiveCommandCronAdmissionLinksOccurrenceAndFireNow(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID, deploymentID := seedLiveDeploy(t, store, ctx, "exclusive-command-cron-"+uuid.NewString(), "exclusive-command-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/exclusive-command.ext4", "apps/exclusive-command/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/synchronize", "--incremental"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	owners := state.ExclusiveWorkStore(store)
+	if _, err := owners.UpsertExclusiveWorkPolicy(ctx, accountID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{appID}, Contention: "join_existing",
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatalf("UpsertExclusiveWorkPolicy: %v", err)
+	}
+	if _, err := store.UpsertExclusiveTriggerBinding(ctx, state.ExclusiveTriggerBinding{
+		Source: "cron", TriggerID: cron.ID, AccountID: accountID, PolicyName: "crm-sync",
+		Key: json.RawMessage(`"customer:acme:crm-sync"`), EquivalenceKey: "sync",
+	}); err != nil {
+		t.Fatalf("UpsertExclusiveTriggerBinding(command cron): %v", err)
+	}
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	requestPayload, _ := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		CronID string `json:"cron_id"`
+	}{Kind: "command_cron", CronID: cron.ID})
+	admission := state.ExclusiveAdmission{
+		AccountID: accountID, AppID: appID, PolicyName: "crm-sync",
+		Key: json.RawMessage(`"customer:acme:crm-sync"`), Request: requestPayload,
+		EquivalenceKey: "sync", IdempotencyKey: "command-cron:" + cron.ID + ":" + firedAt.Format(time.RFC3339Nano),
+	}
+	_, occurrence, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firedAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: cron.ScheduleRevision, ExclusiveAdmission: &admission})
+	if err != nil || !created || occurrence.Status != "pending" || occurrence.ExclusiveOperationID == "" || occurrence.AppTaskID != "" {
+		t.Fatalf("managed occurrence=%+v created=%t err=%v; want atomic pending operation admission", occurrence, created, err)
+	}
+	cronAfter, err := store.CronByID(ctx, cron.ID)
+	if err != nil || !cronAfter.LastFiredAt.Equal(firedAt) {
+		t.Fatalf("cron cursor=%v err=%v; want %v", cronAfter.LastFiredAt, err, firedAt)
+	}
+	op, err := owners.ExclusiveOperationByID(ctx, accountID, occurrence.ExclusiveOperationID)
+	if err != nil || op.State != "pending" {
+		t.Fatalf("operation=%+v err=%v; want pending", op, err)
+	}
+	requestID, err := store.InsertFireNowRequest(ctx, cron.ID, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedRequest, err := store.ClaimPendingFireNowRequest(ctx)
+	if err != nil || claimedRequest.ID != requestID {
+		t.Fatalf("ClaimPendingFireNowRequest=%+v err=%v", claimedRequest, err)
+	}
+	manualAdmission := admission
+	manualAdmission.IdempotencyKey = "cron-manual:" + requestID
+	joinedOperation, joined, err := store.AdmitExclusiveCommandCronFireNow(ctx, requestID, time.Now().UTC(), manualAdmission)
+	if err != nil || !joined || joinedOperation.ID != op.ID {
+		t.Fatalf("manual admission=%+v joined=%t err=%v; want existing scheduled operation", joinedOperation, joined, err)
+	}
+	receipt, err := store.GetFireNowRequest(ctx, requestID)
+	if err != nil || receipt.Status != state.FireNowStatusSucceeded || receipt.OperationID == nil || *receipt.OperationID != op.ID {
+		t.Fatalf("fire-now receipt=%+v err=%v; want operation-linked success", receipt, err)
+	}
+	claim, err := owners.ClaimExclusiveOperation(ctx, accountID, op.ID, "pg-command-cron-test")
+	if err != nil {
+		t.Fatalf("ClaimExclusiveOperation: %v", err)
+	}
+	task, err := store.CreateExclusiveCommandCronAppTask(ctx, accountID, appID, op.ID, claim.Generation, cron.ID, time.Now().UTC())
+	if err != nil || task.ExclusiveOperationID != op.ID || task.ExclusiveGeneration != claim.Generation ||
+		task.OccurrenceID != occurrence.ID || task.DeploymentID != deploymentID || task.ScheduledFor == nil || !task.ScheduledFor.Equal(firedAt) {
+		t.Fatalf("owned command task=%+v err=%v; want generation-fenced scheduled task", task, err)
+	}
+	occurrences, err := store.ScheduleOccurrenceListByCron(ctx, cron.ID, 10, "")
+	if err != nil || len(occurrences) != 1 || occurrences[0].AppTaskID != task.ID || occurrences[0].ExclusiveOperationID != op.ID || occurrences[0].Status != "queued" {
+		t.Fatalf("occurrence history=%+v err=%v; want linked queued task", occurrences, err)
+	}
+	receipt, err = store.GetFireNowRequest(ctx, requestID)
+	if err != nil || receipt.TaskID == nil || *receipt.TaskID != task.ID {
+		t.Fatalf("fire-now task receipt=%+v err=%v; want task %s", receipt, err, task.ID)
 	}
 }
 

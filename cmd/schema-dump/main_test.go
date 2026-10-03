@@ -19,6 +19,7 @@ func TestStripNoise(t *testing.T) {
 		");",
 		"-- PostgreSQL database dump complete",
 		"",
+		"",
 	}, "\n")
 
 	got := string(stripNoise([]byte(in)))
@@ -34,6 +35,9 @@ func TestStripNoise(t *testing.T) {
 	}
 	if !strings.Contains(got, "CREATE TABLE public.crons") {
 		t.Errorf("stripNoise removed the real schema content:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n") || strings.HasSuffix(got, "\n\n") {
+		t.Errorf("stripNoise must leave one final newline, got %q", got)
 	}
 }
 

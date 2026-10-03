@@ -43,7 +43,7 @@ func cmdRollouts(args []string) int {
 	case "recover":
 		return cmdRolloutsRecover(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown rollouts subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown rollouts subcommand %q\n", args[0])
 	return 1
 }
 

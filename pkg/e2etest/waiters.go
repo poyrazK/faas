@@ -71,6 +71,17 @@ func WaitForDeploymentLive(ctx context.Context, t T, pool *pgxpool.Pool, deploym
 // matches want, OR deadline. Subscribed to instance_changed as the trigger.
 // want is compared against state.State (parked, running, …).
 func WaitForInstanceState(ctx context.Context, t T, pool *pgxpool.Pool, appID string, want state.State, deadline time.Duration) ([]state.Instance, error) {
+	return waitForInstanceState(ctx, t, pool, appID, want, deadline, false)
+}
+
+// WaitForAppParked waits for a parked instance and no resident instances of
+// the app. Historical parked rows alone do not prove that the current VM has
+// parked: a restored instance has a new row while its snapshot row survives.
+func WaitForAppParked(ctx context.Context, t T, pool *pgxpool.Pool, appID string, deadline time.Duration) ([]state.Instance, error) {
+	return waitForInstanceState(ctx, t, pool, appID, state.StateParked, deadline, true)
+}
+
+func waitForInstanceState(ctx context.Context, t T, pool *pgxpool.Pool, appID string, want state.State, deadline time.Duration, noResidents bool) ([]state.Instance, error) {
 	t.Helper()
 	notif, cancel, err := db.Subscribe(ctx, pool, []string{db.NotifyInstanceChanged})
 	if err != nil {
@@ -88,16 +99,14 @@ func WaitForInstanceState(ctx context.Context, t T, pool *pgxpool.Pool, appID st
 		if err != nil {
 			return nil, fmt.Errorf("list instances: %w", err)
 		}
-		for _, i := range ins {
-			if state.State(i.State) == want {
-				return ins, nil
-			}
+		if instanceStateReached(ins, want, noResidents) {
+			return ins, nil
 		}
 		select {
 		case <-ctx.Done():
 			return ins, ctx.Err()
 		case <-time.After(time.Until(end)):
-			return ins, fmt.Errorf("deadline %s reached before instance of app %s reached state %s", deadline, appID, want)
+			return ins, fmt.Errorf("deadline %s reached before instance of app %s reached state %s (require no residents=%t)", deadline, appID, want, noResidents)
 		case n := <-notif:
 			var p struct {
 				AppID string `json:"app_id"`
@@ -109,6 +118,18 @@ func WaitForInstanceState(ctx context.Context, t T, pool *pgxpool.Pool, appID st
 		case <-poll.C:
 		}
 	}
+}
+
+func instanceStateReached(instances []state.Instance, want state.State, noResidents bool) bool {
+	matched := false
+	for _, instance := range instances {
+		current := state.State(instance.State)
+		if noResidents && current.CountsForRAM() {
+			return false
+		}
+		matched = matched || current == want
+	}
+	return matched
 }
 
 // WaitForHTTPReady polls a URL until it returns 2xx. Used to confirm

@@ -26,6 +26,8 @@ The closed vocabulary is:
 | `secrets:read` | Reserved for IAM-5 (per-secret GET). Today every secret read is admin-only. |
 | `secrets:write`| PUT/DELETE on `/v1/apps/{slug}/secrets/{key}`.                      |
 | `usage:read`   | GET `/v1/usage`, `/v1/usage/summary`.                               |
+| `runs:read`    | Read Runs capabilities, account-scoped receipts, and execution event streams. |
+| `runs:write`   | Submit and cancel disposable executions; also admits Runs reads so agents can follow submitted work. |
 
 `admin` implicitly satisfies every other scope check — the
 `principalHasScope` helper grants any-of. Session-cookie auth (Key ==
@@ -115,7 +117,7 @@ rev2 closes both gaps. Issue #185 captures the customer-side ask.
   the keyboard gets full access; an API key holder is the only
   principal that can be scoped down.
 - OpenAPI spec, SDK `CreateKey`, and DTOs gain an enumerated `scopes
-  []string` field with six valid values. `make spec-check` enforces
+  []string` field with the closed set of valid values. `make spec-check` enforces
   parity (rev2 closes the vacuum `oas3-valid-schema-example` warnings
   rev1 left in place by adding `example:` to APIKeyResponse and
   APIKeyExportResponse).
@@ -126,6 +128,33 @@ rev2 closes both gaps. Issue #185 captures the customer-side ask.
 - The 401 → 403 path is now distinguishable: `code: unauthorized`
   means "log in", `code: insufficient_scope` means "your key does
   not have permission for this endpoint".
+
+## Later addition: disposable Runs (2026-10-01)
+
+The `runs:read` and `runs:write` scopes allow agents to use the stateless
+execution API without receiving deployment or secret-management authority.
+`runs:write` includes read access for receipts and streaming output. Existing
+`apps:read` and `deploy:write` keys retain their Runs access for compatibility.
+Migration `20261001100000001_runs_api_key_scopes.sql` extends the database
+vocabulary check; its Down migration refuses to remove the scopes while any
+key still uses them.
+
+Successful creation and cancellation requests emit `execution.created` and
+`execution.cancel_requested` account-audit events. API-key requests use the
+canonical `api:<key-id>` actor and include the sanitized key label as
+metadata. Event payloads contain run identifiers and execution configuration
+metadata only, never source, input, output, artifact contents, or host details.
+
+Narrow Runs keys are isolated by a stable API-key family identity persisted on
+each new run. Separate keys under one account cannot list, read, stream,
+cancel, or import one another's runs. Rotation preserves the family identity.
+Existing broad `admin`, `apps:read`, and `deploy:write` keys retain
+account-wide Runs access, as do dashboard sessions. Pre-ownership runs remain
+visible only to these broad principals. This boundary is metadata on stateless
+run receipts; it does not add a persistent guest disk or workspace.
+Migration `20261001110000001_runs_execution_principals.sql` backfills a stable
+principal for API-key families and leaves existing execution receipts without
+an owner so broad principals keep compatibility access.
 
 ## Rejected alternatives
 

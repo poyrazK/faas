@@ -163,6 +163,13 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 		}
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
+	// Snapshot priming has already parked the VM when the deployment becomes
+	// live. Wake it through the real gateway before inspecting its resident
+	// cgroup; the prime's removed scope is not memory-fence evidence.
+	body, status := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, "m8-memfence"), "m8-memfence.apps.test.example", 30*time.Second)
+	if status != http.StatusOK || strings.TrimSpace(string(body)) != helloBody {
+		t.Fatalf("wake before memory fence probe: status=%d body=%q", status, body)
+	}
 	// PROBE while the instance is still RUNNING — the jailer removes
 	// the per-VM cgroup scope during the Park→Kill sequence
 	// (pkg/fcvm/vmm.go:766-770: `os.RemoveAll(scopePath)` inside
@@ -216,7 +223,7 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 	// here. /dev/kvm requires root, so this test always runs as root
 	// in practice; if a future refactor relaxes that, this read is
 	// the first thing to break, which is the desired tripwire.
-	body, err := os.ReadFile(filepath.Join(scopeDir, "memory.max"))
+	body, err = os.ReadFile(filepath.Join(scopeDir, "memory.max"))
 	if err != nil {
 		t.Fatalf("read %s/memory.max: %v (kernel state unreachable from this process — root required?)", scopeDir, err)
 	}

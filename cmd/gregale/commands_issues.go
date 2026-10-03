@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|impact-alert|ownership-rules|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -37,7 +40,8 @@ func cmdIssues(args []string) int {
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true})
+	rulesFile := fs.String("rules-file", "", "JSON policy file for ownership-rules; omit to read the current policy")
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -45,6 +49,12 @@ func cmdIssues(args []string) int {
 		PrintUsage(os.Stderr, issuesCmdUsage, "issues")
 		return 1
 	}
+	impactThresholdSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "min-customers" {
+			impactThresholdSpecified = true
+		}
+	})
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -108,6 +118,79 @@ func cmdIssues(args []string) int {
 			return printErr("Could not read issue", err)
 		}
 		return jsonOut(writeJSON(out))
+	case "impact-alert":
+		if len(positionals) != 0 {
+			return issueCLIUsage()
+		}
+		var policy api.IssueImpactAlertPolicy
+		if impactThresholdSpecified {
+			if *minCustomers < 0 || *minCustomers > api.IssueImpactAlertMaxCustomers {
+				return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be between 0 and %d", api.IssueImpactAlertMaxCustomers))
+			}
+			policy, err = c.SetIssueImpactAlertPolicy(ctx, *app, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: *minCustomers})
+		} else {
+			policy, err = c.GetIssueImpactAlertPolicy(ctx, *app)
+		}
+		if err != nil {
+			return printErr("Could not read impact alert policy", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(policy))
+		}
+		if !policy.Enabled {
+			PrintOK(osStdout, "Customer-impact alerts are disabled.")
+			return 0
+		}
+		PrintOK(osStdout, "Customer-impact alerts fire at %d verified customers within 24 hours.", policy.MinimumCustomers)
+		return 0
+	case "ownership-rules":
+		if len(positionals) != 0 {
+			return issueCLIUsage()
+		}
+		var policy api.IssueOwnershipRules
+		if *rulesFile == "" {
+			policy, err = c.GetIssueOwnershipRules(ctx, *app)
+		} else {
+			var raw []byte
+			if *rulesFile == "-" {
+				raw, err = io.ReadAll(os.Stdin)
+			} else {
+				raw, err = os.ReadFile(*rulesFile)
+			}
+			if err != nil {
+				return printErr("Could not read ownership-rules file", err)
+			}
+			if err = json.Unmarshal(raw, &policy); err != nil {
+				return printErr("Invalid ownership-rules JSON", err)
+			}
+			policy, err = c.SetIssueOwnershipRules(ctx, *app, policy)
+		}
+		if err != nil {
+			return printErr("Could not read ownership rules", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(policy))
+		}
+		if len(policy.Rules) == 0 {
+			PrintOK(osStdout, "Automatic issue assignment is disabled.")
+			return 0
+		}
+		for i, rule := range policy.Rules {
+			matchers := make([]string, 0, 3)
+			if rule.ExceptionType != "" {
+				matchers = append(matchers, "exception="+rule.ExceptionType)
+			}
+			if rule.SourceKind != "" {
+				matchers = append(matchers, "source="+rule.SourceKind)
+			}
+			if rule.RoutePrefix != "" {
+				matchers = append(matchers, "route="+rule.RoutePrefix)
+			}
+			if _, err := fmt.Fprintf(osStdout, "%d. %s -> %s\n", i+1, strings.Join(matchers, " & "), rule.AssigneeAccountID); err != nil {
+				return printErr("Could not write ownership rules", err)
+			}
+		}
+		return 0
 	case "assign", "resolve", "reopen", "ignore":
 		if len(positionals) != 1 {
 			return issueCLIUsage()

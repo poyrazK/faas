@@ -5,19 +5,224 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func createRunsOnlyKey(t *testing.T, e testEnv, label string) string {
+	t.Helper()
+	plaintext, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, label, []string{api.ScopeRunsRead, api.ScopeRunsWrite}); err != nil {
+		t.Fatal(err)
+	}
+	return plaintext
+}
+
+func createExecutionAs(t *testing.T, e testEnv, key, idempotencyKey string, request api.CreateExecutionRequest) api.ExecutionResponse {
+	t.Helper()
+	rec := e.doAs(t, http.MethodPost, "/v1/executions", request, map[string]string{"Idempotency-Key": idempotencyKey}, key)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create run = %d: %s", rec.Code, rec.Body.String())
+	}
+	var row api.ExecutionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func finishExecutionWithArtifact(t *testing.T, e testEnv, executionID string) {
+	t.Helper()
+	ctx := context.Background()
+	claimedAt := time.Now().UTC().Add(time.Millisecond)
+	claim, err := e.store.ClaimExecution(ctx, "ownership-test", claimedAt, time.Minute)
+	if err != nil || claim.ID != executionID {
+		t.Fatalf("ClaimExecution = %q, %v; want %q", claim.ID, err, executionID)
+	}
+	startedAt := claimedAt.Add(time.Millisecond)
+	if _, err := e.store.MarkExecutionRunning(ctx, executionID, *claim.LeaseToken, startedAt); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("value\n42\n")
+	digest := sha256.Sum256(content)
+	_, err = e.store.CompleteExecution(ctx, state.CompleteExecutionParams{
+		ID: executionID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
+		Result:     json.RawMessage("null"),
+		Artifacts:  []api.ExecutionArtifact{{Name: "result.csv", Content: content, SizeBytes: len(content), SHA256: "sha256:" + hex.EncodeToString(digest[:])}},
+		Usage:      api.ExecutionUsage{WallTimeMS: 5, CPUTimeMS: 3, PeakMemoryMB: 64},
+		FinishedAt: startedAt.Add(time.Millisecond),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunsOnlyKeysAreIsolatedByAPIKeyFamily(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableExecutionAPIForTest(t, &e)
+	agentA := createRunsOnlyKey(t, e, "agent-a")
+	agentB := createRunsOnlyKey(t, e, "agent-b")
+	sharedRequest := executionRequest()
+	owned := createExecutionAs(t, e, agentA, "same-key", sharedRequest)
+	finishExecutionWithArtifact(t, e, owned.ID)
+	pending := createExecutionAs(t, e, agentA, "pending", sharedRequest)
+	other := createExecutionAs(t, e, agentB, "same-key", sharedRequest)
+	if owned.ID == other.ID {
+		t.Fatal("second agent replayed the first agent's idempotent response")
+	}
+
+	for _, check := range []struct {
+		key  string
+		want []string
+	}{{agentA, []string{pending.ID, owned.ID}}, {agentB, []string{other.ID}}, {e.key, []string{other.ID, pending.ID, owned.ID}}} {
+		rec := e.doAs(t, http.MethodGet, "/v1/executions", nil, nil, check.key)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list runs = %d: %s", rec.Code, rec.Body.String())
+		}
+		var response api.ExecutionListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]string, len(response.Executions))
+		for i := range response.Executions {
+			got[i] = response.Executions[i].ID
+		}
+		if !reflect.DeepEqual(got, check.want) {
+			t.Fatalf("list for key %q = %v, want %v", check.key[:min(len(check.key), 12)], got, check.want)
+		}
+	}
+
+	for _, path := range []string{
+		"/v1/executions/" + owned.ID,
+		"/v1/executions/" + owned.ID + "/events",
+	} {
+		rec := e.doAs(t, http.MethodGet, path, nil, nil, agentB)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("cross-agent GET %s = %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := e.doAs(t, http.MethodDelete, "/v1/executions/"+pending.ID, nil,
+		map[string]string{"Idempotency-Key": "cancel-other"}, agentB); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-agent cancellation = %d: %s", rec.Code, rec.Body.String())
+	}
+	stillQueued, err := e.store.ExecutionByID(context.Background(), e.acct.ID, pending.ID)
+	if err != nil || stillQueued.Status != api.ExecutionStatusQueued {
+		t.Fatalf("unauthorized cancellation changed owner run: status=%s err=%v", stillQueued.Status, err)
+	}
+
+	importRequest := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimeNode22, Entrypoint: "main.js",
+		Files:          []api.ExecutionFile{{Path: "main.js", Content: []byte("export default async () => 1")}},
+		ArtifactInputs: []api.ExecutionArtifactInput{{ExecutionID: owned.ID, Name: "result.csv", Path: "input/result.csv"}},
+	}
+	rec := e.doAs(t, http.MethodPost, "/v1/executions", importRequest,
+		map[string]string{"Idempotency-Key": "cross-artifact"}, agentB)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-agent artifact import = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExecutionWorkflowSummariesRespectKeyFamilyBoundaries(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableExecutionAPIForTest(t, &e)
+	agentA := createRunsOnlyKey(t, e, "workflow-agent-a")
+	agentB := createRunsOnlyKey(t, e, "workflow-agent-b")
+	workflowID := "agent-flow-2026-10"
+
+	producer := executionRequest()
+	producer.WorkflowID = workflowID
+	producer.StepLabel = "collect inputs"
+	completed := createExecutionAs(t, e, agentA, "workflow-a", producer)
+	finishExecutionWithArtifact(t, e, completed.ID)
+	privateRequest := executionRequest()
+	privateRequest.WorkflowID = "agent-a-private-flow"
+	createExecutionAs(t, e, agentA, "workflow-a-private", privateRequest)
+
+	consumer := executionRequest()
+	consumer.WorkflowID = workflowID
+	consumer.StepLabel = "analyze"
+	pending := createExecutionAs(t, e, agentB, "workflow-b", consumer)
+	if completed.WorkflowID != workflowID || completed.StepLabel != producer.StepLabel {
+		t.Fatalf("workflow receipt metadata = %q/%q", completed.WorkflowID, completed.StepLabel)
+	}
+	if rec := e.doAs(t, http.MethodGet, "/v1/execution-workflows/agent-a-private-flow", nil, nil, agentB); rec.Code != http.StatusNotFound {
+		t.Fatalf("other family workflow summary = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, check := range []struct {
+		key       string
+		wantRuns  int64
+		wantState api.ExecutionStatus
+	}{{agentA, 1, api.ExecutionStatusSucceeded}, {agentB, 1, api.ExecutionStatusQueued}, {e.key, 2, ""}} {
+		rec := e.doAs(t, http.MethodGet, "/v1/execution-workflows/"+workflowID, nil, nil, check.key)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("workflow summary = %d: %s", rec.Code, rec.Body.String())
+		}
+		var summary api.ExecutionWorkflowResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+			t.Fatal(err)
+		}
+		if summary.RunCount != check.wantRuns {
+			t.Fatalf("workflow run count for key %q = %d, want %d", check.key[:min(len(check.key), 12)], summary.RunCount, check.wantRuns)
+		}
+		if check.wantState != "" && summary.StatusCounts.Succeeded+summary.StatusCounts.Queued != 1 {
+			t.Fatalf("workflow status counts for key = %+v", summary.StatusCounts)
+		}
+		if check.key == agentA && (summary.StatusCounts.Succeeded != 1 || summary.Usage.WallTimeMS != 5 || summary.Usage.CPUTimeMS != 3 || summary.Usage.PeakMemoryMB != 64 || summary.Usage.OutputBytes == 0) {
+			t.Fatalf("agent A workflow aggregate = %+v", summary)
+		}
+		if check.key == agentB && summary.StatusCounts.Queued != 1 {
+			t.Fatalf("agent B workflow aggregate = %+v", summary)
+		}
+		if check.key == e.key && (summary.StatusCounts.Succeeded != 1 || summary.StatusCounts.Queued != 1) {
+			t.Fatalf("broad workflow aggregate = %+v", summary)
+		}
+	}
+
+	for _, check := range []struct {
+		key  string
+		want string
+	}{{agentA, completed.ID}, {agentB, pending.ID}, {e.key, ""}} {
+		rec := e.doAs(t, http.MethodGet, "/v1/executions?workflow_id="+workflowID, nil, nil, check.key)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("workflow-filtered list = %d: %s", rec.Code, rec.Body.String())
+		}
+		var page api.ExecutionListResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if check.key == e.key {
+			if len(page.Executions) != 2 {
+				t.Fatalf("broad workflow list contains %d runs, want 2", len(page.Executions))
+			}
+		} else if len(page.Executions) != 1 || page.Executions[0].ID != check.want {
+			t.Fatalf("workflow list for key = %+v, want only %s", page.Executions, check.want)
+		}
+	}
+
+	invalid := executionRequest()
+	invalid.StepLabel = "unscoped"
+	if rec := e.doAs(t, http.MethodPost, "/v1/executions", invalid, map[string]string{"Idempotency-Key": "workflow-invalid"}, agentA); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("step label without workflow_id = %d: %s", rec.Code, rec.Body.String())
+	}
+}
 
 func enableExecutionAPIForTest(t *testing.T, e *testEnv) *age.X25519Identity {
 	t.Helper()
@@ -30,6 +235,39 @@ func enableExecutionAPIForTest(t *testing.T, e *testEnv) *age.X25519Identity {
 	t.Cleanup(func() { setSecretRecipient = previous })
 	e.s.WithExecutionAPIEnabled(true)
 	return identity
+}
+
+func TestCreateExecutionRejectsDuplicateAgentWorkflowStep(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	enableExecutionAPIForTest(t, &e)
+	key := createRunsOnlyKey(t, e, "workflow-step-agent")
+	request := executionRequest()
+	request.WorkflowID = "incident-duplicate-step"
+	request.StepLabel = "gwf:0123456789abcdef01234567:inspect"
+	first := createExecutionAs(t, e, key, "workflow-step-first", request)
+
+	rec := e.doAs(t, http.MethodPost, "/v1/executions", request, map[string]string{"Idempotency-Key": "workflow-step-retry"}, key)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate workflow step = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	var problem api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != api.CodeExecutionWorkflowStepExists {
+		t.Fatalf("duplicate workflow step code = %q", problem.Code)
+	}
+	list := e.doAs(t, http.MethodGet, "/v1/executions?workflow_id="+request.WorkflowID, nil, nil, key)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list workflow receipts = %d: %s", list.Code, list.Body.String())
+	}
+	var page api.ExecutionListResponse
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Executions) != 1 || page.Executions[0].ID != first.ID {
+		t.Fatalf("workflow receipts = %+v, want only first receipt %q", page.Executions, first.ID)
+	}
 }
 
 func TestExecutionDataProfileAdmissionAndReceiptProvenance(t *testing.T) {
@@ -83,6 +321,55 @@ func executionRequest() api.CreateExecutionRequest {
 		Runtime: api.ExecutionRuntimeNode22,
 		Source:  "console.log(input.value)",
 		Input:   json.RawMessage(`{"value":42}`),
+	}
+}
+
+func TestCreateExecutionKeepsIntegrationAllowlistOutOfGuestPayload(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	identity := enableExecutionAPIForTest(t, &e)
+	offer, err := e.store.CreateOutboundIntegration(context.Background(), state.OutboundIntegrationOffer{
+		ID: uuid.NewString(), AccountID: e.acct.ID, Name: "agent-api", Origin: "https://api.example.com",
+		AllowedMethods: []string{"GET"}, AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		OwnerKind: "customer", CredentialSource: "customer_sealed",
+	})
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := e.store.SetOutboundCredential(context.Background(), e.acct.ID, offer.ID, []byte("sealed-provider-credential")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	if err := e.store.SetOutboundIntegrationRunsEnabled(context.Background(), e.acct.ID, offer.ID, true); err != nil {
+		t.Fatalf("SetOutboundIntegrationRunsEnabled: %v", err)
+	}
+	request := executionRequest()
+	request.IntegrationIDs = []string{offer.ID}
+	key := createRunsOnlyKey(t, e, "integration-agent")
+	response := createExecutionAs(t, e, key, "integration-run", request)
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(responseJSON), offer.ID) {
+		t.Fatalf("customer response contains integration ID: %s", responseJSON)
+	}
+	claimedAt := time.Now().UTC().Add(time.Millisecond)
+	claim, err := e.store.ClaimExecution(context.Background(), "integration-guest", claimedAt, time.Minute)
+	if err != nil || claim.ID != response.ID {
+		t.Fatalf("ClaimExecution = %q, %v; want %q", claim.ID, err, response.ID)
+	}
+	if len(claim.OutboundIntegrationIDs) != 1 || claim.OutboundIntegrationIDs[0] != offer.ID {
+		t.Fatalf("scheduler claim integration IDs = %v, want [%s]", claim.OutboundIntegrationIDs, offer.ID)
+	}
+	resolved, err := executionpayload.DecodeRequest(context.Background(), []*age.X25519Identity{identity}, claim.SealedPayload, claim.PayloadKID)
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	serialized, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(serialized), offer.ID) || strings.Contains(string(serialized), "integration_ids") {
+		t.Fatalf("guest request payload contains integration allowlist: %s", serialized)
 	}
 }
 

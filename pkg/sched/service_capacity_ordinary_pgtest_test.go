@@ -6,10 +6,15 @@ package sched
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOrdinaryPlacementPreservesRegionalRecoveryPostgres(t *testing.T) {
-	exerciseOrdinaryRegionalPlacement(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	exerciseOrdinaryRegionalPlacement(t, state.NewPgStore(pool))
 }

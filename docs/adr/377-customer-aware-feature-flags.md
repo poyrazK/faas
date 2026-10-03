@@ -13,7 +13,14 @@
   a new publication. Server-generated seeds are stable for an environment/key,
   including removal and recreation. Ordered rules use first-match precedence;
   customer lists, group membership, and eligible-customer percentage constraints
-  combine with AND. Anonymous requests do not match customer rules.
+  combine with AND. Anonymous requests do not match customer rules. Subject-specific
+  rules accept opaque stable application user IDs only alongside a customer or
+  group constraint. Subject percentage and variant allocation hashes include both
+  verified tenant and subject identity. Runtime clients negotiate the
+  `subject-targeting-v1` capability; older clients receive HTTP 426 when a bundle
+  uses subject targeting. Subject IDs are not included in evidence or propagated
+  decisions; applications can propagate a selected, used decision through the
+  existing bounded context envelope.
 
 The capability is internal until operational and native restore qualification;
 `FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification. The

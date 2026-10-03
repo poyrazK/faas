@@ -3,7 +3,7 @@
 - **Status:** accepted; fleet enable requires native qualification
 - **Date:** 2026-10-02
 - **Milestone:** Multi-region compute placement
-- **Related:** ADR-422, ADR-424, ADR-463
+- **Related:** ADR-422, ADR-465, ADR-463
 
 ## Problem
 

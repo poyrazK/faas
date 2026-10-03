@@ -489,7 +489,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	for _, n := range nodes {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
-	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS)
+	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -1617,6 +1618,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
+	}
+	if err := startCommitRelay(ctx, store, hostAgeIdentities, log, ops.Registry()); err != nil {
+		return err
 	}
 	// ADR-098: app-delete handler. Built here (not via the
 	// runDeps.subscribeAppDelete seam — that seam's now a stub

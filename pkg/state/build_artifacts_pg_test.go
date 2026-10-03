@@ -8,18 +8,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/conformance"
 )
 
 func TestPgRegionalBuildExports(t *testing.T) {
-	testRegionalBuildExports(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+	testRegionalBuildExports(t, state.NewPgStore(openMigratedRegionalPool(t)))
 }
 
 func TestPgRegionalBuildExportDirectWriteGuards(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	s := state.NewPgStore(pool)
 	fx := conformance.Seed(t, s)
 	id := "eu-export-guard"
@@ -90,7 +89,7 @@ func TestPgRegionalBuildExportDirectWriteGuards(t *testing.T) {
 
 // The descriptor, success status and provenance must roll back together.
 func TestPgRegionalBuildExportProvenanceRollback(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	s := state.NewPgStore(pool)
 	fx := conformance.Seed(t, s)
 	id := "eu-export-rollback"

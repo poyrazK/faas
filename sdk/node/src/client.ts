@@ -26,6 +26,7 @@
 // tests that need to swap the underlying transport.
 
 import { OpenAPI } from './generated/index.js';
+import { RunsService } from './generated/services/RunsService.js';
 import {
   asFaasError,
   isFaasError,
@@ -42,7 +43,13 @@ import {
   type WatchExecutionOptions,
 } from './executions.js';
 import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
+import type { CreateExecutionArtifactGrantRequest } from './generated/models/CreateExecutionArtifactGrantRequest.js';
 import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
+import type { ExecutionCapabilitiesResponse } from './generated/models/ExecutionCapabilitiesResponse.js';
+import type { ExecutionListResponse } from './generated/models/ExecutionListResponse.js';
+import type { ExecutionWorkflowResponse } from './generated/models/ExecutionWorkflowResponse.js';
+import type { ExecutionArtifactGrantResponse } from './generated/models/ExecutionArtifactGrantResponse.js';
+import type { RevokeExecutionArtifactGrantResponse } from './generated/models/RevokeExecutionArtifactGrantResponse.js';
 
 /** Minimal logger contract — the SDK doesn't bind to `console` or a
  *  third-party logger. Customers can pass `console`, pino, winston,
@@ -187,6 +194,44 @@ export class FaaSClient {
     const headers = readHeaders();
     headers['Idempotency-Key'] = key;
     OpenAPI.HEADERS = headers;
+  }
+
+  /** Read this account's Runs admission contract and plan limits. The result
+   *  does not indicate scheduler or runtime image readiness. */
+  getExecutionCapabilities(): Promise<ExecutionCapabilitiesResponse> {
+    return RunsService.getExecutionCapabilities();
+  }
+
+  /** Read status counts and terminal-run usage for one visible workflow. */
+  getExecutionWorkflow(workflowID: string): Promise<ExecutionWorkflowResponse> {
+    return RunsService.getExecutionWorkflow({ workflowId: workflowID });
+  }
+
+  /** List receipts in one visible workflow, optionally narrowed by status. */
+  listExecutionsForWorkflow(
+    workflowID: string,
+    options: { limit?: number; offset?: number; status?: ExecutionResponse['status'] } = {},
+  ): Promise<ExecutionListResponse> {
+    return RunsService.listExecutions({
+      ...options,
+      workflowId: workflowID,
+    });
+  }
+
+  /** Create a short-lived, single-use capability for one output artifact.
+   *  The returned token is shown once; share it only with the intended agent. */
+  createExecutionArtifactGrant(
+    executionID: string,
+    requestBody: CreateExecutionArtifactGrantRequest,
+  ): Promise<ExecutionArtifactGrantResponse> {
+    return RunsService.createExecutionArtifactGrant({ id: executionID, requestBody });
+  }
+
+  /** Revoke an artifact grant before it is redeemed. */
+  revokeExecutionArtifactGrant(
+    grantID: string,
+  ): Promise<RevokeExecutionArtifactGrantResponse> {
+    return RunsService.revokeExecutionArtifactGrant({ id: grantID });
   }
 
   /** Stream one disposable execution until its terminal event. The

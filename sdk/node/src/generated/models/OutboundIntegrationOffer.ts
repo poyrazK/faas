@@ -14,6 +14,10 @@ export type OutboundIntegrationOffer = {
   allowed_path_prefixes: Array<string>;
   enabled: boolean;
   /**
+   * Whether account policy grants use by stateless Runs.
+   */
+  runs_enabled: boolean;
+  /**
    * Who supplies the provider Authorization value.
    */
   credential_source: 'operator_env' | 'customer_sealed';

@@ -64,9 +64,13 @@ from .flags import (
     evaluate_flag,
     evaluate_variant,
     flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
     flag_variant_bucket,
     validate_bundle,
 )
+
+from .commit import insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -121,6 +125,8 @@ __all__ = (
     "evaluate_flag",
     "evaluate_variant",
     "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
     "flag_variant_bucket",
     "validate_bundle",
     "GregaleReleaseMiddleware",
@@ -163,4 +169,5 @@ __all__ = (
     "DevBridgeTransport",
     "current_dev_bridge_context",
     "with_dev_bridge_context",
+    "insert_commit_event",
 )

@@ -67,7 +67,7 @@ to review placement and current admission through the read-only server planner.
 `--plan --region eu-fsn` shows local simple-app creation intent without login;
 it does not check existing app placement, remote admission, or reserve capacity.
 This capability remains internal pending native fleet qualification. See
-[ADR-428](adr/428-regional-deployment-previews.md).
+[ADR-469](adr/469-regional-deployment-previews.md).
 
 ## Revisions
 

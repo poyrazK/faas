@@ -28,7 +28,7 @@ func cmdDebugRunning(args []string) int {
 		return 1
 	}
 	if *limit < 1 || *limit > 100 {
-		fmt.Fprintln(os.Stderr, "--limit must be between 1 and 100")
+		printCommandValidation(os.Stderr, "--limit must be between 1 and 100\n")
 		return 1
 	}
 	client, err := authedClient()

@@ -104,6 +104,10 @@ def sync_detailed(
     sibling traffic rebalance, terminal promotion, and deployment audit
     row are committed together. Pro/Scale only — Free/Hobby are rejected
     at 403 `plan_traffic_split_not_allowed`.
+    Enforced route gates require complete, current, satisfied evidence for
+    this candidate under policy, intent and capture locks. Missing or stale
+    evidence durably requests a fresh check without increasing traffic.
+    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
 
     Args:
         id (str):
@@ -146,6 +150,10 @@ def sync(
     sibling traffic rebalance, terminal promotion, and deployment audit
     row are committed together. Pro/Scale only — Free/Hobby are rejected
     at 403 `plan_traffic_split_not_allowed`.
+    Enforced route gates require complete, current, satisfied evidence for
+    this candidate under policy, intent and capture locks. Missing or stale
+    evidence durably requests a fresh check without increasing traffic.
+    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
 
     Args:
         id (str):
@@ -183,6 +191,10 @@ async def asyncio_detailed(
     sibling traffic rebalance, terminal promotion, and deployment audit
     row are committed together. Pro/Scale only — Free/Hobby are rejected
     at 403 `plan_traffic_split_not_allowed`.
+    Enforced route gates require complete, current, satisfied evidence for
+    this candidate under policy, intent and capture locks. Missing or stale
+    evidence durably requests a fresh check without increasing traffic.
+    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
 
     Args:
         id (str):
@@ -223,6 +235,10 @@ async def asyncio(
     sibling traffic rebalance, terminal promotion, and deployment audit
     row are committed together. Pro/Scale only — Free/Hobby are rejected
     at 403 `plan_traffic_split_not_allowed`.
+    Enforced route gates require complete, current, satisfied evidence for
+    this candidate under policy, intent and capture locks. Missing or stale
+    evidence durably requests a fresh check without increasing traffic.
+    A blocked gate returns 409 `route_gate_blocked` with reason codes in detail.
 
     Args:
         id (str):

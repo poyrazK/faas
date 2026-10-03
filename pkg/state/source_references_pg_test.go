@@ -8,18 +8,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/conformance"
 )
 
 func TestPgRegionalSourceReferences(t *testing.T) {
-	testRegionalSourceReferences(t, state.NewPgStore(pgtest.OpenMigrated(t)))
+	testRegionalSourceReferences(t, state.NewPgStore(openMigratedRegionalPool(t)))
 }
 
 func TestPgRegionalSourceReplayPreservesLaterPlacementGuards(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	store := state.NewPgStore(pool)
 	fx := conformance.Seed(t, store)
 	for _, id := range []string{"eu-project-source", "eu-job-source"} {
@@ -50,7 +49,7 @@ func TestPgRegionalSourceReplayPreservesLaterPlacementGuards(t *testing.T) {
 }
 
 func TestPgRegionalSourceDirectWriteGuards(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigratedRegionalPool(t)
 	store := state.NewPgStore(pool)
 	fx := conformance.Seed(t, store)
 	key := "sources/" + uuid.NewString() + ".tar.gz"

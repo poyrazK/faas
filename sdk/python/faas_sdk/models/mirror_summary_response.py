@@ -13,7 +13,9 @@ T = TypeVar("T", bound="MirrorSummaryResponse")
 class MirrorSummaryResponse:
     """Aggregated mirror drift counts over a trailing window. The changed
     response percentage uses only complete comparisons; `incomplete_comparison_count`
-    separately reports missing or truncated response snapshots.
+    separately reports missing or truncated response snapshots and scheduler
+    admission failures. Admission counters explain scheduler failures without
+    including them in `crash_count`.
 
     """
 
@@ -29,8 +31,18 @@ class MirrorSummaryResponse:
     """Signed: mirror - source. Positive = mirror slower."""
     p99_latency_diff_ms: int
     crash_count: int
+    """Mirror invocations that returned 5xx or no response after admission; scheduler admission failures are
+    counted separately."""
     incomplete_comparison_count: int
-    """Comparisons skipped because a response was missing or exceeded the capture limit."""
+    """Comparisons without a complete source and mirror response, including scheduler admission failures."""
+    scheduler_admission_timeout_count: int
+    """Mirror admissions that timed out before the gateway received an admitted target. A late schedd admission is
+    cleaned up by schedd."""
+    scheduler_admission_rejected_count: int
+    """Mirror admissions refused by a capacity or concurrency limit. These are incomplete comparisons, not guest
+    crashes."""
+    scheduler_admission_error_count: int
+    """Mirror admissions that failed for another scheduler error before returning a target."""
     window_seconds: int
     """The window's length in seconds. Matches the requested `?window=` value."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -56,6 +68,12 @@ class MirrorSummaryResponse:
 
         incomplete_comparison_count = self.incomplete_comparison_count
 
+        scheduler_admission_timeout_count = self.scheduler_admission_timeout_count
+
+        scheduler_admission_rejected_count = self.scheduler_admission_rejected_count
+
+        scheduler_admission_error_count = self.scheduler_admission_error_count
+
         window_seconds = self.window_seconds
 
         field_dict: dict[str, Any] = {}
@@ -72,6 +90,9 @@ class MirrorSummaryResponse:
                 "p99_latency_diff_ms": p99_latency_diff_ms,
                 "crash_count": crash_count,
                 "incomplete_comparison_count": incomplete_comparison_count,
+                "scheduler_admission_timeout_count": scheduler_admission_timeout_count,
+                "scheduler_admission_rejected_count": scheduler_admission_rejected_count,
+                "scheduler_admission_error_count": scheduler_admission_error_count,
                 "window_seconds": window_seconds,
             }
         )
@@ -101,6 +122,12 @@ class MirrorSummaryResponse:
 
         incomplete_comparison_count = d.pop("incomplete_comparison_count")
 
+        scheduler_admission_timeout_count = d.pop("scheduler_admission_timeout_count")
+
+        scheduler_admission_rejected_count = d.pop("scheduler_admission_rejected_count")
+
+        scheduler_admission_error_count = d.pop("scheduler_admission_error_count")
+
         window_seconds = d.pop("window_seconds")
 
         mirror_summary_response = cls(
@@ -114,6 +141,9 @@ class MirrorSummaryResponse:
             p99_latency_diff_ms=p99_latency_diff_ms,
             crash_count=crash_count,
             incomplete_comparison_count=incomplete_comparison_count,
+            scheduler_admission_timeout_count=scheduler_admission_timeout_count,
+            scheduler_admission_rejected_count=scheduler_admission_rejected_count,
+            scheduler_admission_error_count=scheduler_admission_error_count,
             window_seconds=window_seconds,
         )
 

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 427
+// adr: 468
 package state
 
 import (

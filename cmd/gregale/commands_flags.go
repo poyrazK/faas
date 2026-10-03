@@ -25,6 +25,7 @@ func cmdFlags(args []string) int {
 	key := fs.String("key", "", "flag key")
 	ruleID := fs.String("rule-id", "", "targeting rule ID for outcomes or rollout promotion")
 	customer := fs.String("customer-id", "", "verified platform customer UUID")
+	subject := fs.String("subject-id", "", "opaque authenticated application subject ID for inspect")
 	fallbackVariant := fs.String("fallback-variant", "", "named-variant fallback for inspect")
 	version := fs.Int64("version", 0, "historical version for inspect or rollback")
 	configVersion := fs.Int64("config-version", 0, "filter outcomes to one flag configuration version")
@@ -49,7 +50,7 @@ func cmdFlags(args []string) int {
 	case "apply":
 		valid = *file != ""
 	case "inspect":
-		valid = *key != ""
+		valid = *key != "" && (*subject == "" || *customer != "")
 	case "requests":
 		valid = *key != "" && (*variant == "" || *value == "")
 	case "outcomes":
@@ -81,7 +82,7 @@ func cmdFlags(args []string) int {
 			out, err = client.PublishProjectFlags(ctx, *project, *environment, raw)
 		}
 	case "inspect":
-		out, err = client.InspectProjectFlag(ctx, *project, *environment, *key, *customer, *version, *fallbackVariant)
+		out, err = client.InspectProjectFlagForSubject(ctx, *project, *environment, *key, *customer, *subject, *version, *fallbackVariant)
 	case "rollback":
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":

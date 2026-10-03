@@ -24,7 +24,7 @@ func TestBuildFullRootfsPublishesAllLayers(t *testing.T) {
 	res, err := b.BuildFullRootfs(context.Background(), BuildFullRootfsInput{
 		Layers: []io.Reader{
 			gzLayer(t, []entry{{name: "bin/", typeflag: tar.TypeDir}, {name: "bin/base", body: "base"}}),
-			gzLayer(t, []entry{{name: "bin/app", body: "app"}}),
+			gzLayer(t, []entry{{name: "bin/app", body: "app", mode: 0o755}}),
 		},
 		Manifest:      api.AppManifest{Entrypoint: []string{"/bin/app"}},
 		GuestInitPath: guestInit,

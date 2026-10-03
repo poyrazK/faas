@@ -33,6 +33,8 @@ func (s *server) mountInternalSafeDeploy(mux *http.ServeMux, listenerAddr, canar
 		internalSafeDeployAuth(actionToken, s.internalSafeDeployReady))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/canary/advance",
 		internalSafeDeployAuth(canaryToken, s.internalAdvanceCanary))
+	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/route-health/recover",
+		internalSafeDeployAuth(actionToken, s.internalRecoverCanaryRouteHealth))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/deployments/{id}/rollouts/recover",
 		internalSafeDeployAuth(actionToken, s.internalRecoverDeploymentRollout))
 	mux.HandleFunc("POST /v1/internal/safe-deploy/apps/{slug}/rollouts/recover",

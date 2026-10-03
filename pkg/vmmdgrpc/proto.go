@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -137,6 +138,23 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Invalid execution restore request", "vcpu_count, mem_size_mib, and cpu_millicores must be positive")
 	}
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(req.GetOutboundIntegrationIds())
+	if err != nil {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "outbound integration IDs are invalid")
+	}
+	leaseToken := req.GetLeaseToken()
+	if len(integrationIDs) > 0 {
+		parsedLease, parseErr := uuid.Parse(leaseToken)
+		if parseErr != nil {
+			return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+				api.CodeValidation, "Invalid execution restore request", "outbound integration IDs require a valid lease fence")
+		}
+		leaseToken = parsedLease.String()
+	} else if leaseToken != "" {
+		return fcvm.ExecutionWakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
+			api.CodeValidation, "Invalid execution restore request", "lease fence requires outbound integration IDs")
+	}
 	var snapshot *fcvm.Snapshot
 	if ref := req.GetSnapshot(); ref != nil {
 		if !ref.GetNetworkless() {
@@ -155,6 +173,7 @@ func executionWakeRequestFromProto(req *vmmdpb.RestoreExecutionRequest) (fcvm.Ex
 		BaseKey: req.GetBaseKey(), LayerKey: req.GetLayerKey(), Snapshot: snapshot,
 		VcpuCount: int(req.GetVcpuCount()), MemSizeMiB: int(req.GetMemSizeMib()),
 		CPUMillicores: int(req.GetCpuMillicores()),
+		LeaseToken:    leaseToken, OutboundIntegrationIDs: integrationIDs,
 	}, nil
 }
 
@@ -176,17 +195,18 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
 	}
 	wireReq := executionproto.Request{
-		Profile:     api.ExecutionProfile(req.GetProfile()),
-		Version:     uint16(req.GetVersion()),
-		ExecutionID: req.GetExecutionId(),
-		Runtime:     api.ExecutionRuntime(req.GetRuntime()),
-		Source:      req.GetSource(),
-		Entrypoint:  req.GetEntrypoint(),
-		OutputFiles: append([]string(nil), req.GetOutputFiles()...),
-		Input:       append([]byte(nil), req.GetInput()...),
-		TimeoutMS:   int(req.GetTimeoutMs()),
-		MaxOutput:   int(req.GetMaxOutputBytes()),
-		NetworkMode: api.ExecutionNetworkMode(req.GetNetworkMode()),
+		Profile:         api.ExecutionProfile(req.GetProfile()),
+		Version:         uint16(req.GetVersion()),
+		ExecutionID:     req.GetExecutionId(),
+		Runtime:         api.ExecutionRuntime(req.GetRuntime()),
+		Source:          req.GetSource(),
+		Entrypoint:      req.GetEntrypoint(),
+		OutputFiles:     append([]string(nil), req.GetOutputFiles()...),
+		Input:           append([]byte(nil), req.GetInput()...),
+		TimeoutMS:       int(req.GetTimeoutMs()),
+		MaxOutput:       int(req.GetMaxOutputBytes()),
+		NetworkMode:     api.ExecutionNetworkMode(req.GetNetworkMode()),
+		OutboundEnabled: req.GetOutboundEnabled(),
 	}
 	for _, file := range req.GetFiles() {
 		wireReq.Files = append(wireReq.Files, api.ExecutionFile{Path: file.GetPath(), Content: append([]byte{}, file.GetContent()...)})

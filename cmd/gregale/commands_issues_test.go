@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,5 +54,101 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("CLI output missing %q: %s", want, out.String())
 		}
+	}
+}
+
+func TestIssuesImpactAlertPolicyCLI(t *testing.T) {
+	var method, path string
+	var threshold int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		policy := api.IssueImpactAlertPolicy{WindowSeconds: int64(api.IssueImpactAlertWindow / time.Second)}
+		if r.Method == http.MethodPut {
+			var input api.UpdateIssueImpactAlertPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Errorf("decode update: %v", err)
+			}
+			threshold = input.MinimumCustomers
+			policy.MinimumCustomers = threshold
+			policy.Enabled = threshold > 0
+		} else {
+			policy.MinimumCustomers = 4
+			policy.Enabled = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(policy)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports"}); code != 0 {
+		t.Fatalf("policy read returned %d", code)
+	}
+	if method != http.MethodGet || path != "/v1/apps/exports/issue-impact-alert-policy" || !strings.Contains(out.String(), "4 verified customers") {
+		t.Fatalf("policy read request=%s %s output=%q", method, path, out.String())
+	}
+	out.Reset()
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "6"}); code != 0 {
+		t.Fatalf("policy update returned %d", code)
+	}
+	if method != http.MethodPut || path != "/v1/apps/exports/issue-impact-alert-policy" || threshold != 6 || !strings.Contains(out.String(), "6 verified customers") {
+		t.Fatalf("policy update request=%s %s threshold=%d output=%q", method, path, threshold, out.String())
+	}
+	out.Reset()
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "0"}); code != 0 {
+		t.Fatalf("policy disable returned %d", code)
+	}
+	if threshold != 0 || !strings.Contains(out.String(), "disabled") {
+		t.Fatalf("disable threshold=%d output=%q", threshold, out.String())
+	}
+}
+
+func TestIssuesOwnershipRulesCLI(t *testing.T) {
+	var method, path string
+	var configured api.IssueOwnershipRules
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		if r.Method == http.MethodPut {
+			if err := json.NewDecoder(r.Body).Decode(&configured); err != nil {
+				t.Errorf("decode ownership rules: %v", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(configured)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdIssues([]string{"ownership-rules", "--app", "exports"}); code != 0 {
+		t.Fatalf("policy read returned %d", code)
+	}
+	if method != http.MethodGet || path != "/v1/apps/exports/issue-ownership-rules" || !strings.Contains(out.String(), "disabled") {
+		t.Fatalf("policy read request=%s %s output=%q", method, path, out.String())
+	}
+	rules := api.IssueOwnershipRules{Rules: []api.IssueOwnershipRule{{SourceKind: "worker", AssigneeAccountID: "11111111-1111-4111-8111-111111111111"}}}
+	raw, err := json.Marshal(rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(t.TempDir(), "ownership-rules.json")
+	if err := os.WriteFile(filename, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := cmdIssues([]string{"ownership-rules", "--app", "exports", "--rules-file", filename}); code != 0 {
+		t.Fatalf("policy update returned %d", code)
+	}
+	if method != http.MethodPut || path != "/v1/apps/exports/issue-ownership-rules" || len(configured.Rules) != 1 || !strings.Contains(out.String(), "worker") {
+		t.Fatalf("policy update request=%s %s rules=%+v output=%q", method, path, configured, out.String())
 	}
 }

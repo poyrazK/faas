@@ -1,4 +1,4 @@
-// ADR-427: legacy single-host Jobs use the durable default-local identity;
+// ADR-468: legacy single-host Jobs use the durable default-local identity;
 // this inference must never bind an unnamed vmmd to a shared-fleet node.
 package main
 

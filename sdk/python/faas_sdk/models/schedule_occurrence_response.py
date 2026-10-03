@@ -41,6 +41,7 @@ class ScheduleOccurrenceResponse:
     """Persisted classifier decision for one execution result."""
     outcome_code: str | Unset = UNSET
     blocking_occurrence_id: UUID | Unset = UNSET
+    exclusive_operation_id: UUID | Unset = UNSET
     job_run_id: UUID | Unset = UNSET
     invocation_id: UUID | Unset = UNSET
     app_task_id: UUID | Unset = UNSET
@@ -76,6 +77,10 @@ class ScheduleOccurrenceResponse:
         blocking_occurrence_id: str | Unset = UNSET
         if not isinstance(self.blocking_occurrence_id, Unset):
             blocking_occurrence_id = str(self.blocking_occurrence_id)
+
+        exclusive_operation_id: str | Unset = UNSET
+        if not isinstance(self.exclusive_operation_id, Unset):
+            exclusive_operation_id = str(self.exclusive_operation_id)
 
         job_run_id: str | Unset = UNSET
         if not isinstance(self.job_run_id, Unset):
@@ -119,6 +124,8 @@ class ScheduleOccurrenceResponse:
             field_dict["outcome_code"] = outcome_code
         if blocking_occurrence_id is not UNSET:
             field_dict["blocking_occurrence_id"] = blocking_occurrence_id
+        if exclusive_operation_id is not UNSET:
+            field_dict["exclusive_operation_id"] = exclusive_operation_id
         if job_run_id is not UNSET:
             field_dict["job_run_id"] = job_run_id
         if invocation_id is not UNSET:
@@ -175,6 +182,13 @@ class ScheduleOccurrenceResponse:
         else:
             blocking_occurrence_id = UUID(_blocking_occurrence_id)
 
+        _exclusive_operation_id = d.pop("exclusive_operation_id", UNSET)
+        exclusive_operation_id: UUID | Unset
+        if isinstance(_exclusive_operation_id, Unset):
+            exclusive_operation_id = UNSET
+        else:
+            exclusive_operation_id = UUID(_exclusive_operation_id)
+
         _job_run_id = d.pop("job_run_id", UNSET)
         job_run_id: UUID | Unset
         if isinstance(_job_run_id, Unset):
@@ -222,6 +236,7 @@ class ScheduleOccurrenceResponse:
             work_decision=work_decision,
             outcome_code=outcome_code,
             blocking_occurrence_id=blocking_occurrence_id,
+            exclusive_operation_id=exclusive_operation_id,
             job_run_id=job_run_id,
             invocation_id=invocation_id,
             app_task_id=app_task_id,

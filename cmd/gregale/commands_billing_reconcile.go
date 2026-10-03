@@ -33,7 +33,7 @@ const billingSubReconcile = "reconcile"
 // provider-scoped, not a transport bug.
 func cmdBillingReconcile(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale billing reconcile <account-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale billing reconcile <account-id>\n")
 		return 1
 	}
 	accountID := args[0]

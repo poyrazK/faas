@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -300,6 +301,22 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: begin scheduled cron occurrence: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if options.ExclusiveAdmission != nil {
+		// Exclusive policy and trigger-binding mutations lock the account before
+		// they inspect the cron. Keep that lock order here to avoid a cycle with
+		// fire-now admission while the scheduled cursor is being advanced.
+		var scheduledAccountID string
+		if err := tx.QueryRow(ctx, `select a.account_id::text from crons c join apps a on a.id=c.app_id
+			where c.id=$1::uuid and a.status <> 'deleted'`, cronID).Scan(&scheduledAccountID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return AppTask{}, ScheduleOccurrence{}, false, nil
+			}
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: resolve scheduled command cron account: %w", err)
+		}
+		if err := (&exclusivePostgresTx{ctx: ctx, db: tx, q: sqlc.New()}).lockAccount(scheduledAccountID); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, err
+		}
+	}
 
 	var cron Cron
 	var accountID string
@@ -362,18 +379,19 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 	} else if workpolicy.DeadlineMissed(deadline, evaluatedAt) {
 		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
 	}
-	if status == "queued" && policy.Overlap != "allow" {
+	if status == "queued" && (policy.Overlap != "allow" || (options.ExclusiveAdmission != nil && skipIfRunning)) {
 		var active bool
 		var activeOccurrence string
 		err = tx.QueryRow(ctx, `
 			select true, coalesce(occurrence_id::text, '') from app_tasks
 			 where cron_id = $1::uuid and status in ('queued','restoring','running')
-			 order by created_at asc, id asc limit 1`, cronID).Scan(&active, &activeOccurrence)
+			   and ($2::boolean = false or exclusive_operation_id is null)
+			 order by created_at asc, id asc limit 1`, cronID, options.ExclusiveAdmission != nil).Scan(&active, &activeOccurrence)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: check active command cron tasks: %w", err)
 		}
 		if active {
-			if policy.Overlap == "replace" {
+			if policy.Overlap == "replace" && options.ExclusiveAdmission == nil {
 				return AppTask{}, ScheduleOccurrence{}, false, nil
 			}
 			status, reason, blocker = "skipped_overlap", "an earlier task for this cron is still active", activeOccurrence
@@ -396,16 +414,36 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: select live deployment for scheduled cron: %w", err)
 		}
 	}
+	var exclusiveOperationID string
+	if status == "queued" && options.ExclusiveAdmission != nil {
+		admission := *options.ExclusiveAdmission
+		if err := validateExclusiveCommandCronAdmission(admission, accountID, cron.AppID, cronID); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrInvalidArgument
+		}
+		operation, joined, admitErr := admitExclusiveTransaction(&exclusivePostgresTx{ctx: ctx, db: tx, q: sqlc.New()}, admission)
+		if errors.Is(admitErr, exclusivework.ErrBusy) {
+			status, reason = "skipped_overlap", "managed operation lane is busy under the configured contention policy"
+		} else if admitErr != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: admit scheduled command cron operation: %w", admitErr)
+		} else {
+			exclusiveOperationID = operation.ID
+			if joined {
+				status, reason = "coalesced", "joined an equivalent active managed operation"
+			} else {
+				status = "pending"
+			}
+		}
+	}
 	if _, err := tx.Exec(ctx, `update crons set last_fired_at = $2 where id = $1::uuid`, cronID, scheduledFor); err != nil {
 		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: advance scheduled cron cursor: %w", err)
 	}
 	var occurrenceID string
 	if err := tx.QueryRow(ctx, `insert into schedule_occurrences (
 		account_id, cron_id, schedule_revision, scheduled_for, start_deadline_at,
-		 schedule_policy, status, reason, blocking_occurrence_id)
-		values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,$8,nullif($9,'')::uuid)
+		 schedule_policy, status, reason, blocking_occurrence_id, exclusive_operation_id)
+		values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,$8,nullif($9,'')::uuid,nullif($10,'')::uuid)
 		returning id::text`, accountID, cronID, cron.ScheduleRevision, scheduledFor, deadline,
-		policyJSON(policy), status, reason, blocker).Scan(&occurrenceID); err != nil {
+		policyJSON(policy), status, reason, blocker, exclusiveOperationID).Scan(&occurrenceID); err != nil {
 		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: record scheduled cron occurrence: %w", mapErr(err))
 	}
 	occurrence := ScheduleOccurrence{
@@ -413,13 +451,14 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 		ScheduleRevision: cron.ScheduleRevision, ScheduledFor: scheduledFor,
 		StartDeadlineAt: cloneTimePtr(deadline), SchedulePolicy: *workpolicy.Clone(policy),
 		Status: status, Reason: reason, BlockingOccurrenceID: blocker,
-		CreatedAt: evaluatedAt, UpdatedAt: evaluatedAt,
+		ExclusiveOperationID: exclusiveOperationID,
+		CreatedAt:            evaluatedAt, UpdatedAt: evaluatedAt,
 	}
 	if status != "queued" {
 		if err := tx.Commit(ctx); err != nil {
 			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: commit skipped cron occurrence: %w", err)
 		}
-		return AppTask{}, occurrence, false, nil
+		return AppTask{}, occurrence, exclusiveOperationID != "" && status == "pending", nil
 	}
 	task, err := scanAppTask(tx.QueryRow(ctx, `insert into app_tasks (
 		 account_id, app_id, deployment_id, kind, command, command_shell,

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ExecutionResponse } from './ExecutionResponse.js';
 /**
- * Account-scoped page of disposable execution receipts. `next_offset`
+ * Page of disposable execution receipts visible to the caller. `next_offset`
  * is -1 when there is no following page; otherwise pass it as `offset`.
  *
  */

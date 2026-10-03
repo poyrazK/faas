@@ -25,6 +25,10 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events", s.ingestIssueEvent)
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events/otlp/{signal}", s.ingestIssueOTLP)
 	mux.HandleFunc("GET /v1/apps/{slug}/issues", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssues)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-impact-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueImpactAlertPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-impact-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueImpactAlertPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueOwnershipRules)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueOwnershipRules))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssue)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.actOnIssue)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-ingest-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createIssueIngestToken))))
@@ -247,6 +251,91 @@ func (s *server) listIssues(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	out, err := st.ListIssues(r.Context(), app.ID, filter, cur)
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) getIssueImpactAlertPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	st, ok := s.issueStore(w, acct)
+	if !ok {
+		return
+	}
+	policy, err := st.GetIssueImpactAlertPolicy(r.Context(), app.ID)
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *server) setIssueImpactAlertPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	st, ok := s.issueStore(w, acct)
+	if !ok {
+		return
+	}
+	var in api.UpdateIssueImpactAlertPolicyRequest
+	if !decodeIssueBody(w, r, &in) {
+		return
+	}
+	if in.MinimumCustomers < 0 || in.MinimumCustomers > api.IssueImpactAlertMaxCustomers {
+		api.WriteProblem(w, api.ErrValidation("minimum_customers must be between 0 and 10000"))
+		return
+	}
+	policy, err := st.SetIssueImpactAlertPolicy(r.Context(), app.ID, app.AccountID, in.MinimumCustomers, time.Now().UTC())
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *server) getIssueOwnershipRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	st, ok := s.issueStore(w, acct)
+	if !ok {
+		return
+	}
+	rules, err := st.GetIssueOwnershipRules(r.Context(), app.ID)
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (s *server) setIssueOwnershipRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	st, ok := s.issueStore(w, acct)
+	if !ok {
+		return
+	}
+	var in api.IssueOwnershipRules
+	if !decodeIssueBody(w, r, &in) {
+		return
+	}
+	normalized, err := api.NormalizeIssueOwnershipRules(in.Rules)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	out, err := st.SetIssueOwnershipRules(r.Context(), app.ID, app.AccountID, normalized)
 	if err != nil {
 		writeIssueError(w, err)
 		return

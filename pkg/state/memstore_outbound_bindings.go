@@ -10,6 +10,7 @@ import (
 )
 
 var _ OutboundBindingStore = (*MemStore)(nil)
+var _ OutboundRunsGrantStore = (*MemStore)(nil)
 
 func copyOutboundOffer(in OutboundIntegrationOffer) OutboundIntegrationOffer {
 	in.AllowedMethods = append([]string(nil), in.AllowedMethods...)
@@ -96,6 +97,22 @@ func (m *MemStore) SetOutboundRequestPolicy(_ context.Context, accountID, integr
 		return ErrInvalidArgument
 	}
 	offer.RequestPolicy = policy
+	m.outboundIntegrationOffers[integrationID] = offer
+	return nil
+}
+
+func (m *MemStore) SetOutboundIntegrationRunsEnabled(_ context.Context, accountID, integrationID string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	offer, ok := m.outboundIntegrationOffers[integrationID]
+	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" ||
+		offer.CredentialSource != "customer_sealed" {
+		return ErrNotFound
+	}
+	if enabled && (!offer.Enabled || !offer.CredentialConfigured || len(offer.AllowedMethods) == 0 || len(offer.AllowedPathPrefixes) == 0) {
+		return ErrInvalidArgument
+	}
+	offer.RunsEnabled = enabled
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }
@@ -227,6 +244,7 @@ func (m *MemStore) DeleteOutboundCredential(_ context.Context, accountID, integr
 	}
 	delete(m.outboundCredentials, integrationID)
 	offer.CredentialConfigured = false
+	offer.RunsEnabled = false
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }

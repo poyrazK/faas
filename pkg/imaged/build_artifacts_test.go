@@ -125,7 +125,7 @@ func mustOpenExport(t *testing.T, path string) io.ReadCloser {
 	t.Helper()
 	// Archive parsing is performed by the production consumer; this helper
 	// only reads the bytes that the fixture publishes.
-	r, err := os.Open(path)
+	r, err := os.Open(path) //nolint:forbidigo // Fixture-owned OCI archive created in t.TempDir.
 	if err != nil {
 		t.Fatal(err)
 	}

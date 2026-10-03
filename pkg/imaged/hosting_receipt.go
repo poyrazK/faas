@@ -90,14 +90,30 @@ func HostingHealthPath(app state.App, dep state.Deployment) string {
 	return path
 }
 
+// VerifyHostingDeployment retains strict HTTP health checks when configured.
+// Direct OCI images with TCP readiness use candidate route connectivity.
+func VerifyHostingDeployment(ctx context.Context, verifier apihostingreceipt.Verifier, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+	if isDirectOCIImage(app, dep) && hostingReceiptProfile(app, dep).HealthPath == "" {
+		return verifier.VerifyDeploymentRoute(ctx, app.Slug, dep.ID)
+	}
+	return verifier.VerifyDeployment(ctx, app.Slug, HostingHealthPath(app, dep), dep.ID)
+}
+
 func buildHostingReceipt(app state.App, dep state.Deployment, smoke apihostingreceipt.SmokeResult) apihostingreceipt.Receipt {
+	profile := hostingReceiptProfile(app, dep)
+	if smoke.Verification == "" {
+		smoke.Verification = apihostingreceipt.VerificationHTTPHealth
+		if isDirectOCIImage(app, dep) && profile.HealthPath == "" {
+			smoke.Verification = apihostingreceipt.VerificationRouteConnectivity
+		}
+	}
 	return apihostingreceipt.Receipt{
 		SchemaVersion: apihostingreceipt.SchemaVersion,
 		DeploymentID:  dep.ID,
 		AppID:         app.ID,
 		AppURL:        hostingAppURL(app.Slug),
 		Source:        apihostingreceipt.Source{Kind: string(dep.Kind), URL: safeSourceURL(dep.SourceURL), CommitSHA: dep.CommitSHA, ImageDigest: dep.ImageDigest},
-		Profile:       hostingReceiptProfile(app, dep),
+		Profile:       profile,
 		Artifact:      apihostingreceipt.Artifact{RootfsKey: dep.RootfsKey, RootfsBytes: dep.RootfsBytes},
 		Smoke:         smoke,
 	}

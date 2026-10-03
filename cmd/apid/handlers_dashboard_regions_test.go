@@ -1,4 +1,4 @@
-// ADR-424/ADR-425: dashboard creation preserves immutable region intent and
+// ADR-465/ADR-466: dashboard creation preserves immutable region intent and
 // enforces the shared admission policy, including a pause racing insertion.
 package main
 

@@ -96,9 +96,9 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 	// Hobby-plan default (true). The gateway-side decision is the
 	// AND-gate at handler.go:720 — both flags must be true for the
 	// streaming path to activate.
-	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
 		"FAAS_GATEWAY_STREAMING=true",
-	})
+	}...)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
@@ -187,9 +187,9 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
 		"FAAS_GATEWAY_STREAMING=true",
-	})
+	}...)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
@@ -284,9 +284,9 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
 		"FAAS_GATEWAY_STREAMING=true",
-	})
+	}...)
 	defer h.DumpLogs(t)
 
 	plans := []struct {
@@ -389,9 +389,9 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
 		"FAAS_GATEWAY_STREAMING=true",
-	})
+	}...)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
@@ -507,14 +507,14 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
 		"FAAS_GATEWAY_STREAMING=true",
 		// Default streamBridgeVersion is v2 post-PR-#750. Pinning
 		// it explicitly makes the test self-documenting and
 		// prevents a future default-flip from silently changing
 		// which path is under test.
 		"FAAS_STREAM_BRIDGE_VERSION=v2",
-	})
+	}...)
 	defer h.DumpLogs(t)
 
 	key := h.SeedAccount(context.Background(), api.PlanHobby)

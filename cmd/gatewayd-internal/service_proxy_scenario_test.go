@@ -53,7 +53,7 @@ func TestServiceProxyScenarioTestNamespace(t *testing.T) {
 	resolve := newServiceProxyResolver(store)
 	authorize := newServiceProxyAuthorizer(store)
 	target, ok, err := resolve(ctx, caller.ID, "worker")
-	if err != nil || !ok || target.AppID != worker.ID || !target.PreviewScoped {
+	if err != nil || !ok || target.AppID != worker.ID || !target.PreviewScoped || target.ScenarioTestRunID != runID {
 		t.Fatalf("sibling = (%+v, %v, %v)", target, ok, err)
 	}
 	if _, err := authorize(ctx, caller.ID, worker.ID); err != nil {
