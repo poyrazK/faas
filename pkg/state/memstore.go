@@ -202,6 +202,7 @@ type MemStore struct {
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
 	keys                      map[string]APIKey
+	keyDisplayPrefixes        map[string]string
 	keyByHash                 map[string]APIKey
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken

@@ -7,11 +7,11 @@
  */
 export type QueueBindingStatusResponse = {
   /**
-   * Immutable project environment slug; omitted for a shared legacy binding.
+   * Captured environment slug of the observed consumer; absent for legacy shared consumers.
    */
   environment?: string;
   /**
-   * Original catalog environment identity; omitted for a shared legacy binding.
+   * Original environment catalog UUID of this consumer status; absent for a shared legacy consumer.
    */
   environment_id?: string;
   binding_id: string;

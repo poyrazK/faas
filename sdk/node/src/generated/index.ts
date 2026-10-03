@@ -364,6 +364,7 @@ export type { DiffRequest } from './models/DiffRequest.js';
 export type { DiffResponse } from './models/DiffResponse.js';
 export type { DiscoveredAPIRoute } from './models/DiscoveredAPIRoute.js';
 export type { DiscoveredRoutesResponse } from './models/DiscoveredRoutesResponse.js';
+export type { DNSRecordInstruction } from './models/DNSRecordInstruction.js';
 export type { DomainDoctorCheck } from './models/DomainDoctorCheck.js';
 export type { DomainDoctorReport } from './models/DomainDoctorReport.js';
 export type { EdgeRuleAsyncAction } from './models/EdgeRuleAsyncAction.js';

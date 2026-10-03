@@ -23,9 +23,9 @@ class QueueReceiveResponse:
     id: str
     payload: QueueReceiveResponsePayload
     environment: str | Unset = UNSET
-    """Deployment scope captured when the message was accepted."""
+    """Original environment of the completed invocation in this queue feed."""
     queue_binding_id: str | Unset = UNSET
-    """Immutable captured queue binding identity; omitted for legacy unbound work."""
+    """Retained binding identity of the completed queue invocation; absent for legacy work."""
     result: QueueReceiveResponseResult | Unset = UNSET
     trace_id: str | Unset = UNSET
     traceparent: str | Unset = UNSET

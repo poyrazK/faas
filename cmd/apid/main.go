@@ -616,6 +616,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
 		return err
 	}
+	// ADR-520: a malformed edge address would otherwise silently drop out
+	// of the customer DNS instructions and the routing probe.
+	if _, err := api.CustomDomainAddresses(); err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {

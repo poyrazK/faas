@@ -25,8 +25,8 @@ class QueueSendRequest:
     """
 
     environment: str | Unset = UNSET
-    """Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the
-    default environment and legacy shared queues."""
+    """Target registered environment with an enabled scoped queue binding. Omission sends through the default
+    environment and legacy shared queues."""
     payload: QueueSendRequestPayload | Unset = UNSET
     flag_context: str | Unset = UNSET
     """Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform

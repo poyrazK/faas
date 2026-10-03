@@ -7,11 +7,11 @@
  */
 export type QueueReceiveResponse = {
   /**
-   * Deployment scope captured when the message was accepted.
+   * Original environment of the completed invocation in this queue feed.
    */
   environment?: string;
   /**
-   * Immutable captured queue binding identity; omitted for legacy unbound work.
+   * Retained binding identity of the completed queue invocation; absent for legacy work.
    */
   queue_binding_id?: string;
   id: string;

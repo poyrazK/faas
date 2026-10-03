@@ -28,6 +28,7 @@ class EnvironmentGitReviewedMergeEvidence:
     qualified: bool
     profile: str
     policy: EnvironmentGitProtectedBranchEvidence
+    """Protected branch policy and approval checks bound to the exact environment definition commit."""
     pull_request_id: int
     pull_request_number: int
     author_id: int

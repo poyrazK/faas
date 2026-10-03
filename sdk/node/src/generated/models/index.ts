@@ -258,6 +258,7 @@ export type { CustomMetricListResponse } from './CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './CustomMetricRequest.js';
 export type { CustomMetricResponse } from './CustomMetricResponse.js';
 export type { CustomStage } from './CustomStage.js';
+export type { DNSRecordInstruction } from './DNSRecordInstruction.js';
 export type { DailyUsageListResponse } from './DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './DailyUsagePoint.js';
 export type { DailyUsageResponse } from './DailyUsageResponse.js';

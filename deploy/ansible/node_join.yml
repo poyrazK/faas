@@ -1353,6 +1353,33 @@
         path: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf
         state: absent
 
+    # An audit hotfix (scripts/ops/request_evidence_hotfix_host.py) pins a
+    # daemon to a binary under /opt/faas/hotfixes through a
+    # `98-audit-*-hotfix.conf` ExecStart override and says "remove before a
+    # later full release". Nothing removed it, so a rollout restarted the
+    # daemon on the hotfix build instead of the release it just installed
+    # (FaasDeployVersionSkew). Retire every such override before activation;
+    # the hotfix binary stays on disk for audit evidence.
+    - name: Find audit hotfix ExecStart overrides before service activation
+      ansible.builtin.find:
+        paths:
+          - /etc/systemd/system/faas-vmmd.service.d
+          - /etc/systemd/system/faas-schedd.service.d
+          - /etc/systemd/system/faas-realtimed.service.d
+          - /etc/systemd/system/faas-gatewayd-internal.service.d
+          - /etc/systemd/system/faas-builderd.service.d
+          - /etc/systemd/system/faas-imaged.service.d
+        patterns: "*-audit-*-hotfix.conf"
+      register: faas_join_audit_hotfix_overrides
+
+    - name: Retire audit hotfix ExecStart overrides before service activation
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ faas_join_audit_hotfix_overrides.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     - name: Stage the reusable box-age identity when supplied
       ansible.builtin.copy:
         src: "{{ faas_join_box_age_key_source }}"

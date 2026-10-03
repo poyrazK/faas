@@ -219,8 +219,8 @@ export class TriggersService {
   }
   /**
    * Delete a trigger.
-   * Queue binding consumers are managed through the queue-binding API.
-   * Direct mutations of those private projections return 409.
+   * Delete an independent trigger. A private queue consumer must be removed
+   * through its queue binding; direct deletion of that projection returns 409.
    *
    * @returns void
    * @throws ApiError
@@ -351,7 +351,7 @@ export class TriggersService {
    * Queue binding consumers are managed through the queue-binding API;
    * direct pause/resume of those private projections returns 409.
    *
-   * @returns Trigger The updated trigger.
+   * @returns Trigger The paused trigger with enabled set to false.
    * @throws ApiError
    */
   public static pauseTrigger({
@@ -386,7 +386,7 @@ export class TriggersService {
    * Queue binding consumers are managed through the queue-binding API;
    * direct pause/resume of those private projections returns 409.
    *
-   * @returns Trigger The updated trigger.
+   * @returns Trigger The resumed trigger with enabled set to true.
    * @throws ApiError
    */
   public static resumeTrigger({

@@ -14,6 +14,8 @@ T = TypeVar("T", bound="EnvironmentGitProtectedBranchEvidence")
 
 @_attrs_define
 class EnvironmentGitProtectedBranchEvidence:
+    """Protected branch policy and approval checks bound to the exact environment definition commit."""
+
     qualified: bool
     profile: str
     installation_id: int
@@ -25,7 +27,7 @@ class EnvironmentGitProtectedBranchEvidence:
     required_review_count: int
     checked_at: datetime.datetime
     reason: str | Unset = UNSET
-    """Qualification failure reason; absent from persisted approval evidence."""
+    """Protected branch check failure reason; excluded from durable approval evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

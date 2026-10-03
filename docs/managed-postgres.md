@@ -362,6 +362,16 @@ prior evidence and is reported as deferred. Coverage freshness does not imply
 provider settlement; older revisions still require explicit reconciliation.
 See [ADR-493](adr/493-managed-postgres-usage-correction-replay.md).
 
+Neon HTTP 429 responses defer further requests through that provider instance
+until `Retry-After` expires (positive seconds or a future HTTP date), with a
+one-minute fallback for invalid or absent guidance. Consumption cooldowns cover
+the consumption endpoints and leave lifecycle and credential requests available;
+general API cooldowns cover both. Deferred calls return unavailable immediately.
+The adapter does not sleep or retry mutations. Cooldowns are local, reset on
+restart, and do not coordinate other backends or processes sharing the provider
+account. Shared request budgets and fair fleet recovery scheduling remain open.
+See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
+
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
 window keys without increasing totals. Admission stays stale until recovery

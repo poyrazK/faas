@@ -46,9 +46,9 @@ class QueueBindingStatusResponse:
     dead_letter: int
     generated_at: datetime.datetime
     environment: str | Unset = UNSET
-    """Immutable project environment slug; omitted for a shared legacy binding."""
+    """Captured environment slug of the observed consumer; absent for legacy shared consumers."""
     environment_id: UUID | Unset = UNSET
-    """Original catalog environment identity; omitted for a shared legacy binding."""
+    """Original environment catalog UUID of this consumer status; absent for a shared legacy consumer."""
     consumer_state_reason: str | Unset = UNSET
     trigger_id: str | Unset = UNSET
     last_poll_at: datetime.datetime | None | Unset = UNSET

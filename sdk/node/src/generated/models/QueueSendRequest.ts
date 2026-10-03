@@ -9,7 +9,7 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
  */
 export type QueueSendRequest = {
   /**
-   * Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues.
+   * Target registered environment with an enabled scoped queue binding. Omission sends through the default environment and legacy shared queues.
    */
   environment?: string;
   payload?: Record<string, any>;
@@ -26,7 +26,7 @@ export type QueueSendRequest = {
    */
   retry_policy?: RetryPolicyDTO;
   /**
-   * Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option.
+   * Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available.
    */
   work?: InvokeWork;
 };

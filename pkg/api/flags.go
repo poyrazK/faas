@@ -12,6 +12,8 @@
 package api
 
 import (
+	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 )
@@ -209,4 +211,37 @@ const CustomDomainTLSModeOnDemand = "on_demand"
 // than "on_demand" keeps the earlier behaviour.
 func CustomDomainTLSOnDemand() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_CUSTOM_DOMAIN_TLS")), CustomDomainTLSModeOnDemand)
+}
+
+// CustomDomainTarget returns the hostname customers point a custom domain
+// at with a CNAME record (FAAS_CUSTOM_DOMAIN_TARGET, for example
+// edge.gregale.dev). It must resolve straight to the public edge, never
+// through a proxying CDN, or the edge cannot complete ACME validation.
+// Empty means the apps-domain apex is the only accepted target.
+func CustomDomainTarget() string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(os.Getenv("FAAS_CUSTOM_DOMAIN_TARGET")), "."))
+}
+
+// CustomDomainAddresses returns the public edge addresses customers may
+// use for apex A/AAAA records (FAAS_CUSTOM_DOMAIN_ADDRESSES,
+// comma-separated). An unparsable entry is an error so a typo fails at
+// boot instead of silently narrowing the accepted set.
+func CustomDomainAddresses() ([]netip.Addr, error) {
+	raw := strings.TrimSpace(os.Getenv("FAAS_CUSTOM_DOMAIN_ADDRESSES"))
+	if raw == "" {
+		return nil, nil
+	}
+	var out []netip.Addr
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		addr, err := netip.ParseAddr(part)
+		if err != nil {
+			return nil, fmt.Errorf("FAAS_CUSTOM_DOMAIN_ADDRESSES: %q: %w", part, err)
+		}
+		out = append(out, addr.Unmap())
+	}
+	return out, nil
 }

@@ -71,8 +71,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Delete a trigger.
 
-     Queue binding consumers are managed through the queue-binding API.
-    Direct mutations of those private projections return 409.
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):
@@ -103,8 +103,8 @@ def sync(
 ) -> Any | Problem | None:
     """Delete a trigger.
 
-     Queue binding consumers are managed through the queue-binding API.
-    Direct mutations of those private projections return 409.
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):
@@ -130,8 +130,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Delete a trigger.
 
-     Queue binding consumers are managed through the queue-binding API.
-    Direct mutations of those private projections return 409.
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):
@@ -160,8 +160,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Delete a trigger.
 
-     Queue binding consumers are managed through the queue-binding API.
-    Direct mutations of those private projections return 409.
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):

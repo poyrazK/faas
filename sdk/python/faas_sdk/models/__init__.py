@@ -708,6 +708,9 @@ from .dispatch_invocation_batch_response_200_results_item import DispatchInvocat
 from .dispatch_invocation_batch_response_200_results_item_status import (
     DispatchInvocationBatchResponse200ResultsItemStatus,
 )
+from .dns_record_instruction import DNSRecordInstruction
+from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
+from .dns_record_instruction_type import DNSRecordInstructionType
 from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
@@ -3006,6 +3009,9 @@ __all__ = (
     "DispatchInvocationBatchResponse200",
     "DispatchInvocationBatchResponse200ResultsItem",
     "DispatchInvocationBatchResponse200ResultsItemStatus",
+    "DNSRecordInstruction",
+    "DNSRecordInstructionPurpose",
+    "DNSRecordInstructionType",
     "DomainDoctorCheck",
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",

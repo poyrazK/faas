@@ -12,6 +12,8 @@ T = TypeVar("T", bound="EnvironmentGitReviewEvidence")
 
 @_attrs_define
 class EnvironmentGitReviewEvidence:
+    """One reviewer decision for the proposed environment definition at an exact commit."""
+
     id: int
     reviewer_id: int
     reviewer: str

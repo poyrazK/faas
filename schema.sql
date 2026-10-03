@@ -6501,6 +6501,8 @@ CREATE TABLE public.api_keys (
     created_ua text,
     parent_key_id uuid,
     runs_principal_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    display_prefix text,
+    CONSTRAINT api_keys_display_prefix_chk CHECK (((display_prefix IS NULL) OR (display_prefix ~ '^fp_[a-z]+_[0-9a-f]{8}$'::text))),
     CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );

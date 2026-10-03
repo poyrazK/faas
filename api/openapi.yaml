@@ -10795,6 +10795,11 @@ paths:
       operationId: wakeApp
       summary: Queue a durable instance pre-warm.
       responses:
+        '200':
+          description: The app already has a routable running instance; no wake is queued. wake_id is that instance's wake id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppWakeResponse' }
         '202':
           description: Wake accepted and correlated.
           content:
@@ -32205,7 +32210,9 @@ components:
       type: object
       required: [wake_id]
       properties:
-        wake_id: { type: string, format: uuid, description: "Wake id stamped on the admitted instance and wake timeline." }
+        wake_id: { type: string, format: uuid, description: "Wake id on the admitted instance and wake timeline (the running instance's when already_running)." }
+        already_running: { type: boolean, description: "True when the app already had a routable running instance and no wake was queued." }
+        instance_id: { type: string, format: uuid, description: "The running instance, present when already_running is true." }
 
     PreAuthRateLimitConfig:
       description: "Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe mode records threshold crossings without rejecting requests."
@@ -36754,6 +36761,21 @@ components:
         cert_expires_at: { type: [string, "null"], format: date-time, description: "Durable certificate expiry timestamp recorded by the cert observer." }
         cert_last_error: { type: [string, "null"], description: "Most recent certificate issuance/renewal error, when cert_status is failed." }
         dns_last_checked_at: { type: [string, "null"], format: date-time, description: "Timestamp of the most recent DNS verification/doctor probe." }
+        dns_records:
+          type: array
+          description: "DNS records to publish (ADR-520): the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses."
+          items: { $ref: '#/components/schemas/DNSRecordInstruction' }
+
+    DNSRecordInstruction:
+      description: "One DNS record a customer publishes for a custom domain (ADR-520). `alternative` marks an A/AAAA routing record that replaces the CNAME where a CNAME is not allowed, such as at a zone apex."
+      type: object
+      required: [type, name, value, purpose]
+      properties:
+        type: { type: string, enum: [TXT, CNAME, A, AAAA], example: "CNAME" }
+        name: { type: string, example: "app.example.com" }
+        value: { type: string, example: "edge.gregale.dev" }
+        purpose: { type: string, enum: [verification, routing], example: "routing" }
+        alternative: { type: boolean, default: false }
 
     CreateCustomDomainRequest:
       description: "Bind a custom domain to an app, optionally routing it to one project environment."

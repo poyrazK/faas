@@ -2,10 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Protected branch policy and approval checks bound to the exact environment definition commit.
+ */
 export type EnvironmentGitProtectedBranchEvidence = {
   qualified: boolean;
   /**
-   * Qualification failure reason; absent from persisted approval evidence.
+   * Protected branch check failure reason; excluded from durable approval evidence.
    */
   reason?: string;
   profile: string;

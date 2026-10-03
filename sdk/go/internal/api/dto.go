@@ -38,7 +38,9 @@ type AppRestartResponse struct {
 }
 
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // RetryPolicyDTO configures exponential retry behavior for invocations.
