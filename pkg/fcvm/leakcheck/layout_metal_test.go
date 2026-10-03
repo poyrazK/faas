@@ -1,5 +1,7 @@
 //go:build metal
 
+// adr: 459 — helper cgroup holdings must be visible to leak acceptance.
+
 package leakcheck
 
 import (
@@ -27,7 +29,7 @@ func TestVersionedJailsAndBuilderScopes(t *testing.T) {
 	if got := jailChrootsAt(root); len(got) != 2 {
 		t.Fatalf("missed versioned jail: %v", got)
 	}
-	for _, name := range []string{"faas.slice/faas-tenant.slice/tenant-pro/app-a", "faas.slice/faas-cp.slice/faas-cp-build.slice/build-b", "faas-tenant.slice/legacy-c"} {
+	for _, name := range []string{"faas.slice/faas-tenant.slice/tenant-pro/app-a", "faas.slice/faas-cp.slice/faas-cp-build.slice/build-b", "faas-tenant.slice/legacy-c", "faas.slice/faas-cp.slice/faas-vmmd.service/gregale-host-helpers/helper-a", "gregale-host-helpers/helper-b"} {
 		path := filepath.Join(root, name)
 		if err := os.MkdirAll(path, 0755); err != nil {
 			t.Fatal(err)
@@ -40,7 +42,7 @@ func TestVersionedJailsAndBuilderScopes(t *testing.T) {
 	if err := os.WriteFile(parent, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := listVMScopes(root); len(got) != 3 {
+	if got := listVMScopes(root); len(got) != 5 {
 		t.Fatalf("wrong VM scopes: %v", got)
 	}
 }

@@ -472,6 +472,10 @@ func sameNativeJournalLease(a, b Lease) bool {
 }
 
 func writeNativeLaunchRecord(path string, record nativeLaunchRecord) (err error) {
+	return writeNativeJournalValue(path, record)
+}
+
+func writeNativeJournalValue(path string, record any) (err error) {
 	file, err := os.CreateTemp(filepath.Dir(path), ".launch-")
 	if err != nil {
 		return err

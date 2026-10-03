@@ -115,6 +115,7 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	// Portable tests do not claim Linux network/mount acceptance.
 	r.resources = func(Lease, netns.Config) error { return nil }
 	r.inventory = func([]Lease) error { return nil }
+	r.helperGroups = newNativeHelperGroupsFixture()
 	t.Cleanup(func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()

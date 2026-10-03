@@ -3,6 +3,7 @@ package fcvm
 
 import (
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/jailsetup"
 )
@@ -23,6 +24,11 @@ func runNativeLaunchHelperFixture() {
 	_ = gate.Close()
 	if err := os.WriteFile(os.Getenv("GREGALE_NATIVE_LAUNCH_MARKER"), []byte("authorized"), 0o600); err != nil {
 		os.Exit(3)
+	}
+	if os.Getenv("GREGALE_NATIVE_HOLD_HELPER_FIXTURE") == "1" {
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 	os.Exit(0)
 }

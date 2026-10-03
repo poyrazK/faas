@@ -1305,13 +1305,53 @@ provenance or fabricate a historical guest exit code.
 
 A restarted daemon can revoke and confirm the exact VM's exit, but unfinished
 records retain their quarantine: provisioning/export helper processes and
-their producer frames are not yet durably recovered. Firecracker exit cannot
+their full producer coverage is not yet durably recovered. Firecracker exit cannot
 prove those helpers are gone. Previously completed resource acknowledgements
 can be rechecked for idempotent stops. Exact helper recovery, bind provenance,
 journal retention, legacy adoption and attempt-bound scheduler evidence still
 remain necessary. The qualification consumer, serving proofs, graph activation
 and apid executor remain disabled/unwired. Native `test-metal` and `leakcheck`
 remain mandatory and unverified.
+
+Jail device setup now uses a durable host helper frame under its original VM
+launch generation. The frame binds the full persisted lease, kernel boot UUID,
+helper UUID, PID/start time and an exclusive cgroup's path/device/inode. The VM
+producer lock spans cgroup publication, fork, incarnation publication and opening
+the release-matched helper's pipe gate. Linux creates the helper directly in
+that cgroup with `CLONE_INTO_CGROUP`; moving an already running helper is refused.
+Helpers inherit vmmd's control-plane cgroup limits and cannot borrow tenant or
+builder capacity. Arguments and stdin are not persisted in these journals.
+
+Retirement durably revokes the helper before killing its entire cgroup, waits
+for the kernel's recursive `populated` acknowledgement and removes the exact
+recorded cgroup. [The kernel documents inherited cgroup membership and recursive
+kill semantics](https://docs.kernel.org/admin-guide/cgroup-v2.html). A crash before
+cgroup inode publication can only leave an empty group; a populated group with
+unpublished identity remains an error. Reused paths, missing/corrupt evidence and
+unfinished helpers refuse resource acknowledgement or VM generation replacement.
+Current and archived helper frames remain discoverable after daemon death;
+startup rejects unknown helper cgroups and unfinished frames under retired owners.
+Completed acknowledgements are rechecked for resource reappearance.
+Kernel control-file evidence is bounded to 4,096 bytes by
+`pkg/api/limits.go`; missing, duplicate or unknown event fields refuse proof.
+
+The single command watchdog joins every fork, including publication failure and
+cancellation. Native jail setup refuses legacy helper fallback after failure.
+The remaining mount, network, export and materialisation producers and durable
+bind/source-mode provenance still need this protocol. Restart cleanup therefore
+continues to retain its quarantine; this increment does not enable attempt-bound
+native receipts, the qualification consumer or environment graph activation.
+Dedicated native `test-metal` and `leakcheck` remain required before completion.
+
+The host helper checkpoint passes the complete portable fcvm, vmmd, vmmdgrpc
+and jailsetup suites. Native ownership/launch/helper contracts pass five
+repeated race-detector runs, including daemon death between fork and publication,
+cancellation, uncertain retirement, immutable owner replacement and corrupt
+journal refusal. Leak-layout checks include helper cgroups. The Linux x86_64
+acceptance binary and release helper cross-compile; the dedicated native helper
+test exercises orphan descendants and refuses changed cgroup identities, but has
+not been executed here. These results do not establish native VM or leak
+acceptance, full helper coverage, qualification receipts or graph activation.
 
 Scheduler qualification now records an immutable execution frame with the
 original request, attempt, reviewed artifact, environment/source identities,

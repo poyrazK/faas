@@ -138,6 +138,8 @@ func listVMScopes(root string) []string {
 	patterns := []string{
 		"faas.slice/faas-tenant.slice/tenant-*/*",
 		"faas.slice/faas-cp.slice/faas-cp-build.slice/*",
+		"faas.slice/faas-cp.slice/faas-vmmd.service/gregale-host-helpers/*",
+		"gregale-host-helpers/*", // native acceptance processes in the root cgroup
 		"faas-tenant.slice/*",
 	}
 	var out []string

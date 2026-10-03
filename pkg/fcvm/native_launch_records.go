@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -47,6 +47,10 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 			return nil, err
 		}
 		records = append(records, record)
+	}
+	helpers := nativeHostHelperJournal{owner: j}
+	if _, err := helpers.allRecords(ctx, records); err != nil {
+		return nil, err
 	}
 	return records, ctx.Err()
 }
@@ -65,6 +69,10 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	}
 	if !record.Revoked || !record.ExitConfirmed || record.Generation != expected.Generation || record.KernelBootID != expected.KernelBootID || record.PID != expected.PID || record.StartTime != expected.StartTime || record.Authorized != expected.Authorized || !sameNativeJournalLease(record.Lease, expected.Lease) {
 		return errors.New("native journal: resource acknowledgement identity changed")
+	}
+	helpers := nativeHostHelperJournal{owner: j}
+	if err := helpers.requireRetired(record); err != nil {
+		return err
 	}
 	record.ResourcesRemoved = true
 	return j.write(record)
@@ -88,6 +96,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	if !old.Revoked || !old.ExitConfirmed || old.Generation != expectedGeneration || requireResourcesRemoved && !old.ResourcesRemoved || !requireResourcesRemoved && !sameNativeJournalLease(old.Lease, lease) {
 		return record, errors.New("native journal: prior launch is not replaceable by this owner")
+	}
+	helpers := nativeHostHelperJournal{owner: j}
+	if err := helpers.requireRetired(old); err != nil {
+		return record, err
 	}
 	archive := filepath.Join(j.root, "retired")
 	if err := os.MkdirAll(archive, 0o700); err != nil {

@@ -71,6 +71,9 @@ const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
 // keep their holdings and are retried on a later pass through the cursor.
 const EnvironmentGitOpsQualificationRecoveryBatchMax = 100
 
+// NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
+const NativeHostHelperCgroupEventsMaxBytes = 4096
+
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
 const (

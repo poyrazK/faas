@@ -13,14 +13,15 @@ import (
 )
 
 type nativeProcessRecoveryRuntime struct {
-	journal   *nativeLaunchJournal
-	retirer   nativeProcessRetirer
-	support   func() error
-	resources func(Lease, netns.Config) error
-	startTime func(int) (uint64, error)
-	mounts    func(string) ([]string, error)
-	unmount   func(context.Context, string) error
-	inventory func([]Lease) error
+	journal      *nativeLaunchJournal
+	retirer      nativeProcessRetirer
+	support      func() error
+	resources    func(Lease, netns.Config) error
+	startTime    func(int) (uint64, error)
+	mounts       func(string) ([]string, error)
+	unmount      func(context.Context, string) error
+	inventory    func([]Lease) error
+	helperGroups nativeHostHelperGroups
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
 	helper     string
@@ -35,11 +36,12 @@ type nativeProcessRecoveryRuntime struct {
 // It remains opt-in until the dedicated native VM/leak acceptance gates pass.
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:   &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes")},
-		retirer:   nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
-		owned:     make(map[string]string),
-		lockWait:  v.readyTimeout,
-		inventory: nativeNetworkInventory,
+		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes")},
+		retirer:      nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
+		owned:        make(map[string]string),
+		lockWait:     v.readyTimeout,
+		inventory:    nativeNetworkInventory,
+		helperGroups: newNativeHostHelperGroups(),
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
 			if err != nil {
@@ -94,6 +96,18 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 	records, err := r.journal.records(ctx)
 	if err != nil {
 		return nil, err
+	}
+	helperJournal := nativeHostHelperJournal{owner: r.journal, groups: r.helperGroups}
+	helperRecords, err := helperJournal.allRecords(ctx, records)
+	if err != nil {
+		return nil, err
+	}
+	if r.helperGroups != nil {
+		if err := r.helperGroups.Inventory(helperRecords); err != nil {
+			return nil, err
+		}
+	} else if len(helperRecords) != 0 {
+		return nil, errors.New("native recovery: host helper kernel support is unavailable")
 	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
 	var leases []Lease
@@ -278,6 +292,14 @@ func (v *JailerVMM) confirmNativeCleanup(ctx context.Context, lease Lease, nc ne
 }
 
 func (v *JailerVMM) nativeResourcesRemoved(lease Lease, nc netns.Config) error {
+	owner, err := v.nativeRecovery.journal.read(lease.Instance)
+	if err != nil {
+		return err
+	}
+	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
+	if err := helpers.requireRemoved(owner); err != nil {
+		return err
+	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)
 	if err != nil {
 		return err

@@ -927,7 +927,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	}
 	startedJailerAt := time.Now()
 	if len(cfg.NetworkInterfaces) > 0 {
-		if _, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if _, err = v.bindTunDeviceInJailer(ctx, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1790,7 +1790,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	tStartJailer := time.Now()
 	var tunTimings bindTunTimings
 	if !spec.Networkless {
-		if tunTimings, err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+		if tunTimings, err = v.bindTunDeviceInJailer(ctx, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -5151,7 +5151,7 @@ func parseSetupJailWorkUs(out []byte) int64 {
 	return 0
 }
 
-func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (bindTunTimings, error) {
+func (v *JailerVMM) bindTunDeviceInJailer(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
 	var timings bindTunTimings
 	if instance == "" {
 		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
@@ -5184,6 +5184,8 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 			break
 		}
 		select {
+		case <-ctx.Done():
+			return timings, ctx.Err()
 		case <-deadline.C:
 			return timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
 		case <-time.After(1 * time.Millisecond):
@@ -5205,6 +5207,8 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 			break
 		}
 		select {
+		case <-ctx.Done():
+			return timings, ctx.Err()
 		case <-deadline.C:
 			return timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
@@ -5213,15 +5217,19 @@ func (v *JailerVMM) bindTunDeviceInJailer(root, instance string, uid, gid int) (
 	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
 	tSetupJailStart := time.Now()
 	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
-	if setupOut, err := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); err != nil {
+	if setupOut, err := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); err != nil {
+		if v.nativeRecovery != nil {
+			// A failed or uncertain helper cannot authorize another attempt.
+			return timings, fmt.Errorf("vmm: prepare native jail device tree: %w (%s)", err, strings.TrimSpace(string(setupOut)))
+		}
 		// Fallback to legacy 3-step sequence if the mounted helper doesn't support --setup-jail yet
-		if outDev, errDev := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev").CombinedOutput(); errDev != nil {
+		if outDev, errDev := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-dev", "/dev"}); errDev != nil {
 			return timings, fmt.Errorf("vmm: prepare jail device tree: %w (%s)", errDev, strings.TrimSpace(string(outDev)))
 		}
-		if outTun, errTun := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-bind", "/faas-host-tun", source).CombinedOutput(); errTun != nil {
+		if outTun, errTun := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mount-bind", "/faas-host-tun", source}); errTun != nil {
 			return timings, fmt.Errorf("vmm: bind TUN device: %w (%s)", errTun, strings.TrimSpace(string(outTun)))
 		}
-		if outKvm, errKvm := exec.Command("nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)).CombinedOutput(); errKvm != nil {
+		if outKvm, errKvm := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); errKvm != nil {
 			return timings, fmt.Errorf("vmm: provision KVM device: %w (%s)", errKvm, strings.TrimSpace(string(outKvm)))
 		}
 	} else {

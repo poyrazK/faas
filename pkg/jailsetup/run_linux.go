@@ -16,15 +16,15 @@ import (
 // Run handles launch gating and device setup for vmmd's compatibility mode
 // and the standalone helper. args includes argv[0]. A recognized command exits
 // on failure; unknown commands return false. Device setup runs inside the
-// jailer's private mount namespace; launch gating runs before execing jailer.
+// jailer's private mount namespace; launch gating precedes jailer or a host helper.
 func Run(args []string) bool {
 	if len(args) <= 1 {
 		return false
 	}
 	switch args[1] {
-	case "--launch-jailer":
-		if err := launchJailer(args); err != nil {
-			fmt.Fprintf(os.Stderr, "vmmd: launch jailer: %v\n", err)
+	case "--launch-jailer", "--launch-host-command":
+		if err := launchCommand(args); err != nil {
+			fmt.Fprintf(os.Stderr, "vmmd: native launch: %v\n", err)
 			os.Exit(1)
 		}
 		return true
@@ -176,9 +176,9 @@ func Run(args []string) bool {
 // This helper never forks another process: exec preserves the PID/start-time
 // pair that vmmd recorded before opening the gate. FD 3 belongs only to this
 // child; daemon death closes its writer even in the fork-to-exec crash window.
-func launchJailer(args []string) error {
+func launchCommand(args []string) error {
 	if len(args) < 5 || args[2] != "3" || args[3] != "--" || !filepath.IsAbs(args[4]) {
-		return fmt.Errorf("--launch-jailer requires 3 -- absolute-jailer-path arguments")
+		return fmt.Errorf("native launch requires 3 -- absolute-executable-path arguments")
 	}
 	gate := os.NewFile(3, "native-launch-gate")
 	if gate == nil {

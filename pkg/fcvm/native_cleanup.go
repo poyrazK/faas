@@ -37,6 +37,10 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return fmt.Errorf("vmm: native process retirement: %w", err)
 	}
+	helpers := nativeHostHelperJournal{owner: v.nativeRecovery.journal, groups: v.nativeRecovery.helperGroups}
+	if err := helpers.retireAll(ctx, record); err != nil {
+		return fmt.Errorf("vmm: native host helper retirement: %w", err)
+	}
 	if cmd != nil && cmd.Process != nil && (rec == nil || rec.done == nil) {
 		return errors.New("vmm: native process retirement has no watchdog")
 	}
