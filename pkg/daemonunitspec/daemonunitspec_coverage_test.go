@@ -293,6 +293,35 @@ func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	}
 }
 
+// adr: 474
+func TestGatewayArtifactStorageSurvivesUnitGeneration(t *testing.T) {
+	unit := UnitGatewaydInternal()
+	rendered := unit.Render()
+	for _, directive := range []string{
+		"StateDirectory=faas/gatewayd-internal-artifacts\n",
+		"StateDirectoryMode=0750\n",
+		"EnvironmentFile=-/etc/faas/storage.env\n",
+		"EnvironmentFile=-/etc/faas/gatewayd-internal-storage.env\n",
+		"ReadWritePaths=/var/lib/faas/gatewayd-internal-artifacts ",
+	} {
+		if !strings.Contains(string(rendered), directive) {
+			t.Errorf("generated gateway unit loses artifact storage directive %q", directive)
+		}
+	}
+	parsed, err := daemonunit.Decode(rendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := daemonunit.Diff(unit, parsed); len(diff) != 0 {
+		t.Fatalf("generated artifact storage does not round-trip: %v", diff)
+	}
+	parsed.StateDirectory = ""
+	parsed.StateDirectoryMode = ""
+	if diff := daemonunit.Diff(unit, parsed); len(diff) != 2 {
+		t.Fatalf("unit drift must detect losing artifact state and its permissions: %v", diff)
+	}
+}
+
 func TestUnitGatewaydPublic_Shape(t *testing.T) {
 	u := UnitGatewaydPublic()
 	assertBasicShape(t, "gatewayd-public", u)

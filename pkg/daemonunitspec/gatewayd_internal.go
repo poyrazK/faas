@@ -73,6 +73,9 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
+		// ADR-474: artifact ownership and uploads survive service restarts.
+		StateDirectory:     "faas/gatewayd-internal-artifacts",
+		StateDirectoryMode: "0750",
 
 		// gatewayd-internal reads the shared control-plane database
 		// through DATABASE_URL. In a split deployment the root-owned
@@ -80,7 +83,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
 		// gatewayd-internal.env (0400 root:root) holds
 		// FAAS_SESSION_KEY + FAAS_TLS_DNS_TOKEN content-shaped vars.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env -/etc/faas/otel.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/gatewayd-internal-storage.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env -/etc/faas/otel.env",
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
@@ -124,7 +127,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage"},
+		ReadWritePaths: []string{"/var/lib/faas/gatewayd-internal-artifacts", "/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage"},
 
 		WantedBy: "multi-user.target",
 	}

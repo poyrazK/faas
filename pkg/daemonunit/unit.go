@@ -111,6 +111,8 @@ type Unit struct {
 	Delegate              bool
 	CapabilityBoundingSet []string
 	AmbientCapabilities   []string
+	StateDirectory        string // persistent service state under /var/lib
+	StateDirectoryMode    string
 	EnvironmentFile       string
 	Environment           []KV
 	LoadCredential        []LoadCred
@@ -153,7 +155,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Inside [Service], field ordering is fixed (Type → User → Group →
 // ExecStartPre → ExecStart → Restart → RestartSec →
 // TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → Delegate →
-// CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
+// StateDirectory → StateDirectoryMode → CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
 // ProtectKernelTunables → ProtectKernelModules → ProtectControlGroups →\n →
@@ -209,6 +211,9 @@ func (u Unit) Render() []byte {
 	if u.Delegate {
 		buf.WriteString("Delegate=yes\n")
 	}
+
+	writeStringKV(&buf, "StateDirectory", u.StateDirectory)
+	writeStringKV(&buf, "StateDirectoryMode", u.StateDirectoryMode)
 
 	// CapabilityBoundingSet empty-but-present is intentional (locks down
 	// the cap set; see struct godoc). We write it as `CapabilityBoundingSet=`
@@ -508,6 +513,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
 		u.MemoryMax = val
+	case "[Service]/StateDirectory":
+		u.StateDirectory = val
+	case "[Service]/StateDirectoryMode":
+		u.StateDirectoryMode = val
 	case "[Service]/Delegate":
 		u.Delegate = parseYes(val)
 	case "[Service]/CapabilityBoundingSet":
@@ -679,6 +688,8 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
+	add("[Service]", "StateDirectory", a.StateDirectory, b.StateDirectory)
+	add("[Service]", "StateDirectoryMode", a.StateDirectoryMode, b.StateDirectoryMode)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))
 	add("[Service]", "CapabilityBoundingSet",
 		fmt.Sprintf("%v|%d", sortClone(a.CapabilityBoundingSet), len(a.CapabilityBoundingSet)),
