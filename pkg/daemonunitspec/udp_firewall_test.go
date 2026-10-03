@@ -49,7 +49,7 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 	cloudflare := `ip saddr 173.245.48.0/20 tcp dport { 80,443 } accept comment "gateway via Cloudflare"`
 	for _, tc := range []struct {
 		cloudflareOnly, customDomains string
-		wantOpen, wantCloudflare     bool
+		wantOpen, wantCloudflare      bool
 	}{
 		{"true", "false", false, true},
 		{"true", "true", true, false},
