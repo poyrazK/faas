@@ -137,7 +137,7 @@ func (m *Manager) nativeCleanupNetworkContext(ctx context.Context, lease Lease) 
 
 // File fallback is an in-process producer, so hold the same launch lock across
 // its effect instead of allowing retirement/replacement between check and remove.
-func (m *Manager) removeScopedStaleNetnsMarker(ctx context.Context, name string) error {
+func (m *Manager) removeScopedStaleNetnsMarker(ctx context.Context, name string) (err error) {
 	v := m.nativeVMM()
 	if v == nil {
 		removeStaleNetnsMarker(name)
@@ -152,7 +152,7 @@ func (m *Manager) removeScopedStaleNetnsMarker(ctx context.Context, name string)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func() { err = errors.Join(err, lock.Close()) }()
 	owner, err := r.journal.read(scope.owner.Lease.Instance)
 	if err != nil {
 		return err

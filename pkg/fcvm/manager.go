@@ -6288,6 +6288,12 @@ func (m *Manager) UpdatePrivateNetworkWithFirewall(ctx context.Context, appID st
 }
 
 func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
+	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, nil)
+}
+
+// An attachment operation carries its original live target set through the
+// final route/policy fan-out. A fresh snapshot could acquire a replacement VM.
+func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, originalTargets map[string]*Instance) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdatePrivateNetwork: empty app_id")
 	}
@@ -6343,11 +6349,17 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 		if inst.AppID != appID {
 			continue
 		}
+		if originalTargets != nil && originalTargets[id] != inst {
+			continue
+		}
 		prior := append([]netip.Prefix(nil), inst.Net.PrivateNetworkCIDRs...)
 		priorPolicy := append([]netip.Prefix(nil), inst.Net.PrivateNetworkAllowedCIDRs...)
 		targets = append(targets, target{instance: inst, generation: inst.nativeGeneration, id: id, netns: inst.Net.Netns, net: inst.Net, prior: prior, priorPolicy: priorPolicy, h4: inst.PrivateNetworkHandleV4, h6: inst.PrivateNetworkHandleV6})
 	}
 	m.mu.Unlock()
+	if originalTargets != nil && len(targets) != len(originalTargets) {
+		return errors.New("fcvm: private network original live targets changed")
+	}
 	if len(targets) == 0 {
 		return nil
 	}
@@ -6680,7 +6692,11 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		}
 		m.mu.Unlock()
 	}
-	return m.updatePrivateNetwork(ctx, appID, cidrs, allowedCIDRs, firewallRules)
+	originalTargets := make(map[string]*Instance, len(targets))
+	for _, t := range targets {
+		originalTargets[t.id] = t.instance
+	}
+	return m.updatePrivateNetworkForTargets(ctx, appID, cidrs, allowedCIDRs, firewallRules, originalTargets)
 }
 
 func insertNftRule(argv []string) []string {

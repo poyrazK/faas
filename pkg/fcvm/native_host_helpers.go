@@ -56,9 +56,14 @@ func (r *nativeHostHelperRecord) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	type plain nativeHostHelperRecord
+	var decoded plain
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode((*plain)(r))
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = nativeHostHelperRecord(decoded)
+	return nil
 }
 
 func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {

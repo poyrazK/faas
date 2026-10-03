@@ -1360,7 +1360,9 @@ original VM generation and lease before dispatch. A helper rechecks that frozen
 identity under the VM producer lock; an old scope cannot acquire a replacement
 generation through the same instance ID. Live instances retain an immutable
 launch identity, and late policy cache writes affect only the original live
-instance object. Native commands cannot fall back to the legacy command runner.
+instance object. Private-network attachment carries that original target set
+through its final route/policy fan-out; a replacement or removed target refuses
+the remaining operation. Native commands cannot fall back to the legacy command runner.
 The regular-file namespace-marker fallback is an in-process producer: it holds
 the same launch lock across its identity check and file removal.
 
@@ -1385,7 +1387,8 @@ the apid executor remain unavailable. Dedicated native VM and leak acceptance
 remain mandatory before completing the feature.
 
 The network checkpoint passes the complete portable fcvm, jailsetup, vmmd and
-vmmdgrpc suites and five repeated native-contract race runs. Protocol fixtures
+vmmdgrpc suites, five repeated native-contract race runs and scoped pinned lint.
+Protocol fixtures
 cover gated stdin/capture, stale-generation refusal, restricted deletion,
 unfinished-helper fencing, allocator retention/retry, duplicate cleanup and
 replacement-safe policy caches. Leak-layout checks pass. The Linux x86_64

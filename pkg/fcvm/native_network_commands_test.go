@@ -364,6 +364,25 @@ func TestNativeNetworkLatePolicyCacheDoesNotAlterReplacement(t *testing.T) {
 	}
 }
 
+func TestNativeNetworkAttachmentFinalFanoutRetainsOriginalTargets(t *testing.T) {
+	m, _, inst := nativeNetworkFixture(t)
+	replacement := &Instance{Lease: inst.Lease, Net: inst.Net, AppID: inst.AppID, Plan: inst.Plan, nativeGeneration: inst.nativeGeneration}
+	fixture := m.vmm.(*recoveryVMMFixture)
+	fixture.command = func(context.Context, []string, []byte) ([]byte, error) {
+		m.mu.Lock()
+		m.live[inst.Lease.Instance] = replacement
+		m.mu.Unlock()
+		return nil, nil
+	}
+	err := m.UpdatePrivateNetworkAttachment(t.Context(), inst.AppID, "team", netip.MustParseAddr("10.20.0.2"), []netip.Prefix{netip.MustParsePrefix("10.20.0.0/24")})
+	if err == nil || !strings.Contains(err.Error(), "original live targets changed") {
+		t.Fatalf("attachment borrowed replacement targets: %v", err)
+	}
+	if len(replacement.Net.PrivateNetworkCIDRs) != 0 || replacement.Net.PrivateNetworkBridge != inst.Net.PrivateNetworkBridge {
+		t.Fatal("late attachment published policy to replacement instance")
+	}
+}
+
 func TestNativeNetworkHelperPurposeCompatibilityIsStrict(t *testing.T) {
 	j, owner, _ := nativeHelperJournalFixture(t)
 	frame := preparedNativeHelperFrame(t, j, owner)
@@ -374,6 +393,10 @@ func TestNativeNetworkHelperPurposeCompatibilityIsStrict(t *testing.T) {
 	var old nativeHostHelperRecord
 	if err := json.Unmarshal(encoded, &old); err != nil || old.Purpose != "" || old.validate(owner) != nil {
 		t.Fatalf("old effect shape=%+v err=%v", old, err)
+	}
+	old.Purpose = nativeHostHelperNetworkCleanup
+	if err := json.Unmarshal(encoded, &old); err != nil || old.Purpose != "" || old.validate(owner) != nil {
+		t.Fatalf("old effect shape inherited prior cleanup authority: %+v err=%v", old, err)
 	}
 	frame.Purpose = nativeHostHelperNetworkCleanup
 	if err := frame.validate(owner); err == nil {
