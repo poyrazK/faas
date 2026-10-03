@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -26,10 +27,12 @@ import (
 )
 
 type S3 struct {
-	client  *s3.Client
-	signer  *s3.PresignClient
-	region  string
-	origins []string
+	encryption EncryptionConfig
+	kms        *kms.Client
+	client     *s3.Client
+	signer     *s3.PresignClient
+	region     string
+	origins    []string
 }
 
 func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
@@ -53,7 +56,11 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &S3{client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: c.AllowedOrigins}, nil
+	p := &S3{client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: append([]string(nil), c.AllowedOrigins...), encryption: cloneEncryptionConfig(c.Encryption)}
+	if len(c.Encryption.Keys) != 0 {
+		p.kms = kms.New(kms.Options{Region: c.S3Region, BaseEndpoint: stringPtrOrNil(c.Encryption.KMSEndpoint), Credentials: client.Options().Credentials, HTTPClient: encryptionKeyReadClient{base: httpClient}, RetryMaxAttempts: 1})
+	}
+	return p, nil
 }
 
 func (p *S3) CreateBucket(ctx context.Context, bucket string) error {
@@ -257,6 +264,10 @@ func (p *S3) WriteObject(ctx context.Context, bucket, key string, body io.Reader
 }
 
 func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string) (UploadResult, error) {
+	return p.writeObjectEncrypted(ctx, bucket, key, body, size, metadata, receipt, nil)
+}
+
+func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string, encryption *ResolvedObjectEncryption) (UploadResult, error) {
 	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
 		return UploadResult{}, invalidS3Write(receipt)
 	}
@@ -290,6 +301,7 @@ func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
+	applyPutEncryption(in, encryption)
 	out, err := p.client.PutObject(ctx, in, func(o *s3.Options) {
 		o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 		p.boundStreamClient(ctx, o)
@@ -299,14 +311,17 @@ func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader
 	})
 	if err != nil {
 		if receipt != "" && definiteS3WriteRejection(err) {
+			if encryption != nil {
+				return UploadResult{}, errors.Join(ErrWriteRejected, normalize(err))
+			}
 			return UploadResult{}, ErrWriteRejected
 		}
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil || !validUploadETag(aws.ToString(out.ETag)) {
+	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validEncryptionResponse(out.ResultMetadata, encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
+	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
@@ -335,6 +350,10 @@ func (p *S3) PresignConditionalPut(ctx context.Context, bucket string, r SignReq
 }
 
 func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string) (SignedRequest, error) {
+	return p.presignEncrypted(ctx, bucket, r, conditions, receipt, nil)
+}
+
+func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}
@@ -369,6 +388,7 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 			Metadata: metadata,
 			IfMatch:  stringPtrOrNil(conditions.IfMatch), IfNoneMatch: stringPtrOrNil(conditions.IfNoneMatch),
 		}
+		applyPutEncryption(in, encryption)
 		if tagging != "" {
 			in.Tagging = aws.String(tagging)
 		}
@@ -392,6 +412,9 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 			}
 		}
 		result.Headers["Content-Type"] = contentType
+		if encryption != nil && !validEncryptedSignedPut(out, encryption) {
+			return SignedRequest{}, ErrUnavailable
+		}
 	case http.MethodGet:
 		out, err := p.presignGetObject(ctx, bucket, r.Key, options, true)
 		if err != nil {
@@ -502,6 +525,10 @@ func (p *S3) DeleteObjectTags(ctx context.Context, bucket, key string) error {
 }
 
 func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r MultipartCreateRequest) (string, error) {
+	return p.ensureMultipartEncrypted(ctx, bucket, r, nil)
+}
+
+func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r MultipartCreateRequest, encryption *ResolvedObjectEncryption) (string, error) {
 	if r.SessionID == "" || len(r.SessionID) > 128 || !ValidKey(r.Key) || r.SizeBytes < 0 || r.SizeBytes > api.MaxObjectUploadBytes || ValidateObjectMetadata(r.Metadata) != nil {
 		return "", ErrInvalid
 	}
@@ -561,12 +588,20 @@ func (p *S3) EnsureMultipartUpload(ctx context.Context, bucket string, r Multipa
 		ContentEncoding: stringPtrOrNil(r.Metadata.ContentEncoding), ContentLanguage: stringPtrOrNil(r.Metadata.ContentLanguage),
 		Metadata: metadata,
 	}
+	applyMultipartEncryption(in, encryption)
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.CreateMultipartUpload(ctx, in)
+	out, err := p.client.CreateMultipartUpload(ctx, in, func(o *s3.Options) {
+		if encryption != nil {
+			o.RetryMaxAttempts = 1
+		}
+	})
 	if err != nil {
 		return "", normalize(err)
+	}
+	if out == nil || !validEncryptionResponse(out.ResultMetadata, encryption) {
+		return "", ErrUnavailable
 	}
 	id := aws.ToString(out.UploadId)
 	if id == "" {
@@ -671,7 +706,7 @@ func normalize(err error) error {
 	var e smithy.APIError
 	if errors.As(err, &e) {
 		switch e.ErrorCode() {
-		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed":
+		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken", "AuthorizationHeaderMalformed", "KMS.AccessDeniedException", "KMS.NotFoundException", "KMS.DisabledException", "KMS.InvalidStateException", "KMS.InvalidKeyUsageException", "KMS.KMSInvalidStateException":
 			return ErrConfiguration
 		case "NoSuchBucket", "NoSuchKey", "NoSuchUpload", "NoSuchVersion", "NotFound":
 			return ErrNotFound

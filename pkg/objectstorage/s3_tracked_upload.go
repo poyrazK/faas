@@ -47,6 +47,10 @@ func definiteS3WriteRejection(err error) bool {
 	return errors.As(err, &response) && response.HTTPStatusCode() >= 400 && response.HTTPStatusCode() < 500 && response.HTTPStatusCode() != http.StatusRequestTimeout
 }
 func (p *S3) ConfirmTrackedObject(ctx context.Context, bucket, key, receipt string, size int64) (UploadResult, error) {
+	return p.confirmTrackedObjectEncrypted(ctx, bucket, key, receipt, size, nil)
+}
+
+func (p *S3) confirmTrackedObjectEncrypted(ctx context.Context, bucket, key, receipt string, size int64, encryption *ResolvedObjectEncryption) (UploadResult, error) {
 	if _, err := uuid.Parse(receipt); err != nil || !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
 		return UploadResult{}, ErrInvalid
 	}
@@ -57,7 +61,10 @@ func (p *S3) ConfirmTrackedObject(ctx context.Context, bucket, key, receipt stri
 	if out == nil || out.ContentLength == nil || *out.ContentLength != size || out.Metadata[ReservedUploadReceiptMetadataKey] != receipt || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrConflict
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
+	if !validEncryptionResponse(out.ResultMetadata, encryption) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, encryption) || encryption != nil && (!validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || aws.ToBool(out.DeleteMarker)) {
+		return UploadResult{}, ErrUnavailable
+	}
+	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func invalidS3Write(receipt string) error {

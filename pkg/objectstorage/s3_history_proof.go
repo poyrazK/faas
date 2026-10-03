@@ -35,6 +35,9 @@ func historyBinding(bucket string, r ObjectHistoryProofRequest) string {
 	if r.MultipartSession {
 		identity += "\x00multipart"
 	}
+	if r.Encryption != nil {
+		identity += "\x00encryption\x00" + r.Encryption.proof()
+	}
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])
 }
@@ -76,6 +79,11 @@ func decodeHistoryCursor(bucket string, r ObjectHistoryProofRequest) (s3HistoryC
 // or delete markers. Missing history remains uncertain, including a full sweep.
 func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r ObjectHistoryProofRequest) (ObjectHistoryProofPage, error) {
 	page := ObjectHistoryProofPage{Cursor: r.Cursor}
+	if r.Encryption != nil {
+		if err := p.verifyEncryption(*r.Encryption); err != nil {
+			return page, err
+		}
+	}
 	maxBytes := api.MaxObjectSinglePutBytes
 	if r.MultipartSession {
 		maxBytes = api.MaxObjectUploadBytes
@@ -208,7 +216,10 @@ func (p *S3) confirmTrackedVersion(ctx context.Context, bucket string, r ObjectH
 	if *out.ContentLength != r.SizeBytes || out.Metadata[metadataKey] != r.Receipt {
 		return UploadResult{}, ErrConflict
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: version}, nil
+	if !validEncryptionResponse(out.ResultMetadata, r.Encryption) || !validStoredEncryptionResponse(out.Metadata, out.ResultMetadata, r.Encryption) {
+		return UploadResult{}, ErrUnavailable
+	}
+	return UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: version}, nil
 }
 
 func normalizeVersionHistoryError(err error) error {

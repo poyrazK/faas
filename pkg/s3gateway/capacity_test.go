@@ -85,7 +85,7 @@ func TestGatewayWriteSettlement(t *testing.T) {
 func TestCopyObjectHeadersHidesRecoveryMetadata(t *testing.T) {
 	src := http.Header{}
 	src.Set("X-Amz-Meta-Owner", "customer")
-	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey} {
+	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey, objectstorage.ReservedObjectEncryptionMetadataKey} {
 		src.Set("X-Amz-Meta-"+key, "private")
 	}
 	dst := http.Header{}
@@ -93,7 +93,7 @@ func TestCopyObjectHeadersHidesRecoveryMetadata(t *testing.T) {
 	if dst.Get("X-Amz-Meta-Owner") != "customer" {
 		t.Fatal("customer metadata removed")
 	}
-	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey} {
+	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey, objectstorage.ReservedObjectEncryptionMetadataKey} {
 		if dst.Get("X-Amz-Meta-"+key) != "" {
 			t.Fatal("recovery marker exposed", key)
 		}

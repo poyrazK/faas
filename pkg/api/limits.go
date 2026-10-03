@@ -7881,3 +7881,13 @@ const (
 	MaxObjectNotificationXMLDepth             = 6
 	MaxObjectNotificationXMLNodes             = MaxObjectNotificationRules*24 + 1
 )
+
+// Managed-key configuration and strict provider control-response bounds.
+const (
+	MaxObjectEncryptionKeys                  = 256
+	MaxObjectEncryptionKeyRefBytes           = 512
+	MaxObjectEncryptionContextBytes          = 8 << 10
+	MaxObjectEncryptionContextEntries        = 32
+	MaxObjectEncryptionProviderResponseBytes = 64 << 10
+	MaxObjectEncryptionJSONDepth             = 32
+)

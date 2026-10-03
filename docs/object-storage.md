@@ -613,6 +613,22 @@ retention, or replication. Enable versioning through the managed cutover below;
 keep Object Lock off until retention support is implemented. The UI does not
 manage historical versions or retention locks.
 
+ADR-412 adds an internal native S3 encryption foundation. An operator can
+declare backend `encryption.algorithms` (`AES256`, `aws:kms`, `aws:kms:dsse`)
+and enroll `encryption.keys` with a Gregale key UUID, owning account UUID and
+same-region native key ARN. Native key resources must have one unambiguous
+Gregale owner across the registry. Enrollment maps to an owned
+`arn:gregale:kms:<public-region>:<account>:key/<key-id>` reference; it does not
+create a KMS key or manage its policies. Optional `encryption.kms_endpoint`
+selects the operator's KMS origin and follows the registry's HTTPS policy.
+KMS identity/type validation uses DescribeKey; actual S3 operations enforce
+GenerateDataKey/Decrypt permission. Bounds and strict context validation live
+in `pkg/api/limits.go`. This foundation does not enable customer encryption
+directives or encrypted public provider URLs: durable public configuration,
+admission, metering, response mapping and client support remain in progress.
+See [ADR-412](adr/412-owned-key-bindings-and-native-s3-encryption.md) for the
+implemented provider contract and completion boundary.
+
 Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
 Only configured region defaults appear in the creation catalog.

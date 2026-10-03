@@ -35,6 +35,7 @@ func TestS3RecoveryErrorClassification(t *testing.T) {
 		{"AccessDenied", ErrConfiguration}, {"InvalidAccessKeyId", ErrConfiguration},
 		{"SignatureDoesNotMatch", ErrConfiguration}, {"ExpiredToken", ErrConfiguration},
 		{"InvalidToken", ErrConfiguration}, {"AuthorizationHeaderMalformed", ErrConfiguration},
+		{"KMS.AccessDeniedException", ErrConfiguration}, {"KMS.DisabledException", ErrConfiguration}, {"KMS.InvalidKeyUsageException", ErrConfiguration},
 		{"InvalidRequest", ErrInvalid}, {"InvalidPart", ErrInvalid}, {"InvalidPartOrder", ErrInvalid},
 		{"EntityTooSmall", ErrInvalid}, {"OperationAborted", ErrConflict}, {"SlowDown", ErrUnavailable},
 	} {

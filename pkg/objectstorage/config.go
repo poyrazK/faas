@@ -35,11 +35,12 @@ type Config struct {
 }
 
 type BackendConfig struct {
-	UsageReportsPath string      `json:"usage_reports_path,omitempty"`
-	Usage            UsageConfig `json:"usage,omitempty"`
-	ID               string      `json:"id"`
-	Driver           string      `json:"driver"`
-	Region           string      `json:"region"`
+	Encryption       EncryptionConfig `json:"encryption,omitempty"`
+	UsageReportsPath string           `json:"usage_reports_path,omitempty"`
+	Usage            UsageConfig      `json:"usage,omitempty"`
+	ID               string           `json:"id"`
+	Driver           string           `json:"driver"`
+	Region           string           `json:"region"`
 	// Namespace identifies the upstream account/cluster. Changing it, the
 	// endpoint or S3 region fences existing buckets instead of misrouting data.
 	Namespace                    string   `json:"namespace"`
@@ -149,6 +150,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	validGCSLocation := regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 	validGCSServiceAccount := regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,126}@[a-z0-9.-]+\.gserviceaccount\.com$`)
+	encryptionOwners := map[string]string{}
 	for _, b := range c.Backends {
 		if b.UsageReportsPath != "" {
 			if !filepath.IsAbs(b.UsageReportsPath) {
@@ -212,11 +214,27 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if !ok {
 			return nil, fmt.Errorf("object storage: unknown driver %s", b.Driver)
 		}
+		b.Encryption, err = normalizeEncryptionConfig(b.Encryption, b, c.PublicRegion)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range b.Encryption.Keys {
+			identity := b.Driver + "\x00" + key.ProviderKeyID
+			if owner, ok := encryptionOwners[identity]; ok && owner != key.Reference {
+				return nil, fmt.Errorf("object storage: backend %s has an ambiguous encryption key owner", b.ID)
+			}
+			encryptionOwners[identity] = key.Reference
+		}
 		p, err := factory(b, getenv)
 		if err != nil {
 			return nil, fmt.Errorf("object storage: backend %s configuration failed: %w", b.ID, err)
 		}
-		r.backends[b.ID] = Backend{AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
+		if len(b.Encryption.Algorithms) != 0 {
+			if _, ok := p.(ObjectEncryptionProvider); !ok {
+				return nil, fmt.Errorf("object storage: backend %s lacks its declared encryption capability", b.ID)
+			}
+		}
+		r.backends[b.ID] = Backend{Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]
@@ -239,6 +257,7 @@ func (r *Registry) Backends() []Backend {
 	}
 	out := make([]Backend, 0, len(r.backends))
 	for _, backend := range r.backends {
+		backend.Encryption = cloneEncryptionConfig(backend.Encryption)
 		backend.AllowedOrigins = append([]string(nil), backend.AllowedOrigins...)
 		out = append(out, backend)
 	}
@@ -296,6 +315,8 @@ func (r *Registry) Default(region string) (Backend, error) {
 	if !ok {
 		return Backend{}, ErrInvalid
 	}
+	b.Encryption = cloneEncryptionConfig(b.Encryption)
+	b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
 	return b, nil
 }
 
@@ -333,6 +354,8 @@ func (r *Registry) Resolve(id, placementFingerprint string) (Backend, error) {
 	if !ok || b.Fingerprint != placementFingerprint {
 		return Backend{}, ErrUnavailable
 	}
+	b.Encryption = cloneEncryptionConfig(b.Encryption)
+	b.AllowedOrigins = append([]string(nil), b.AllowedOrigins...)
 	return b, nil
 }
 

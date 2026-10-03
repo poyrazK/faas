@@ -888,7 +888,7 @@ func copyObjectHeaders(dst, src http.Header) {
 		default:
 			continue
 		}
-		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || len(values) == 0 {
+		if key == objectstorage.ReservedObjectTagsMetadataKey || key == objectstorage.ReservedMultipartSessionMetadataKey || key == objectstorage.ReservedUploadReceiptMetadataKey || key == objectstorage.ReservedObjectEncryptionMetadataKey || len(values) == 0 {
 			continue
 		}
 		dst.Set("x-amz-meta-"+key, values[0])

@@ -92,7 +92,7 @@ func trackedCopySourceMatch(s CopySourceSnapshot, c CopySourceConditions) *strin
 func copyCustomerMetadata(source map[string]string) map[string]string {
 	metadata := cloneMetadata(source)
 	for key := range metadata {
-		if strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedObjectTagsMetadataKey) {
+		if strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
 			delete(metadata, key)
 		}
 	}
@@ -108,6 +108,10 @@ func (p *S3) CopyDateConditionalTrackedObject(ctx context.Context, bucket, recei
 }
 
 func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
+	return p.copyEncryptedObject(ctx, bucket, receipt, r, source, conditions, nil)
+}
+
+func (p *S3) copyEncryptedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions, encryption *ResolvedObjectEncryption) (CopyObjectResult, error) {
 	if _, err := uuid.Parse(receipt); err != nil || ctx.Err() != nil || !validCopySource(source) || ValidateObjectMetadata(r.Metadata) != nil || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
@@ -130,6 +134,7 @@ func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt s
 		in.Metadata = map[string]string{}
 	}
 	in.Metadata[ReservedUploadReceiptMetadataKey] = receipt
+	applyCopyEncryption(in, encryption)
 	in.CopySource = aws.String(trackedCopySource(bucket, r.SourceKey, source))
 	in.CopySourceIfMatch = trackedCopySourceMatch(source, conditions)
 	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
@@ -145,7 +150,14 @@ func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt s
 	if out != nil && !validCopyResponseSource(out.ResultMetadata, aws.ToString(out.CopySourceVersionId), source.ProviderVersionID) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
-	return copyObjectResult(out)
+	if out != nil && !validEncryptionResponse(out.ResultMetadata, encryption) {
+		return CopyObjectResult{}, ErrUnavailable
+	}
+	result, err := copyObjectResult(out)
+	if err == nil {
+		result.Encryption = publicObjectEncryption(encryption)
+	}
+	return result, err
 }
 
 func trackedCopyError(err error) error {

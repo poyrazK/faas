@@ -131,6 +131,7 @@ type HistoricalObjectWriteConfirmer interface {
 }
 
 type ObjectHistoryProofRequest struct {
+	Encryption           *ResolvedObjectEncryption `json:"-"`
 	Key, Receipt, Cursor string
 	SizeBytes            int64
 	MultipartSession     bool `json:"-"`
@@ -163,6 +164,7 @@ type TrackedObjectWriter interface {
 }
 
 type UploadResult struct {
+	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
 	ETag              string
 	ProviderVersionID string `json:"-"`
 }
@@ -312,7 +314,8 @@ type CopyObjectRequest struct {
 }
 
 type CopyObjectResult struct {
-	ProviderVersionID string `json:"-"`
+	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
+	ProviderVersionID string               `json:"-"`
 	ETag              string
 	LastModified      time.Time
 }
@@ -510,6 +513,7 @@ type CompletedPart struct {
 }
 
 type MultipartCompleteRequest struct {
+	Encryption       *ResolvedObjectEncryption   `json:"-"`
 	Recovering       bool                        `json:"-"`
 	RecoveryCursor   string                      `json:"-"`
 	BeforeRequest    func(context.Context) error `json:"-"`
@@ -553,6 +557,7 @@ const (
 	// marker written when Gregale initiates a multipart upload.
 	ReservedMultipartSessionMetadataKey = "gregale-upload-id"
 	ReservedUploadReceiptMetadataKey    = "gregale-upload-receipt"
+	ReservedObjectEncryptionMetadataKey = "gregale-encryption-proof"
 )
 
 // ValidateObjectMetadata applies the portable S3 metadata/tag limits before
@@ -568,7 +573,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 		return ErrInvalid
 	}
 	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
 			return ErrInvalid
 		}
 	}
@@ -589,6 +594,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 }
 
 type Backend struct {
+	Encryption       EncryptionConfig
 	AllowedOrigins   []string
 	ID               string
 	Region           string

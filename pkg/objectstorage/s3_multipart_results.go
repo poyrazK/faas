@@ -26,6 +26,11 @@ func multipartBeforeRequest(ctx context.Context, r MultipartCompleteRequest) err
 
 func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
 	result := MultipartCompletionResult{RecoveryCursor: r.RecoveryCursor}
+	if r.Encryption != nil {
+		if err := p.verifyEncryption(*r.Encryption); err != nil {
+			return result, err
+		}
+	}
 	in, err := multipartCompletionInput(bucket, r, c)
 	if err != nil {
 		return result, err
@@ -40,10 +45,14 @@ func (p *S3) CompleteMultipartWithResult(ctx context.Context, bucket string, r M
 				result.VersionsObserved = multipartVersionsObserved(response.Header)
 			}
 		}
-		if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || multipartResultIsMarker(out.ResultMetadata) {
+		if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || multipartResultIsMarker(out.ResultMetadata) || !validEncryptionResponse(out.ResultMetadata, r.Encryption) {
 			return result, ErrUnavailable
 		}
-		result.UploadResult = UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}
+		result.UploadResult = UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}
+		if err = p.confirmEncryptedMultipartResult(ctx, bucket, r, result.UploadResult); err != nil {
+			result.UploadResult = UploadResult{}
+			return result, err
+		}
 		result.RecoveryCursor = ""
 		return result, nil
 	}
@@ -97,7 +106,7 @@ func multipartCompletionInput(bucket string, r MultipartCompleteRequest, c Objec
 }
 
 func multipartHistoryRequest(r MultipartCompleteRequest) ObjectHistoryProofRequest {
-	return ObjectHistoryProofRequest{Key: r.Key, Receipt: r.SessionID, Cursor: r.RecoveryCursor, SizeBytes: r.SizeBytes, MultipartSession: true, BeforeRequest: func(ctx context.Context) error { return multipartBeforeRequest(ctx, r) }}
+	return ObjectHistoryProofRequest{Encryption: r.Encryption, Key: r.Key, Receipt: r.SessionID, Cursor: r.RecoveryCursor, SizeBytes: r.SizeBytes, MultipartSession: true, BeforeRequest: func(ctx context.Context) error { return multipartBeforeRequest(ctx, r) }}
 }
 
 func (p *S3) recoverMultipartResult(ctx context.Context, bucket string, r MultipartCompleteRequest, result MultipartCompletionResult, rejected error) (MultipartCompletionResult, error) {
@@ -122,7 +131,10 @@ func (p *S3) recoverMultipartResult(ctx context.Context, bucket string, r Multip
 			if !validUploadETag(aws.ToString(head.ETag)) || !validTrackedProofHeaders(head.ResultMetadata, ReservedMultipartSessionMetadataKey) {
 				return result, ErrUnavailable
 			}
-			result.UploadResult = UploadResult{ETag: aws.ToString(head.ETag), ProviderVersionID: aws.ToString(head.VersionId)}
+			if !validEncryptionResponse(head.ResultMetadata, r.Encryption) || !validStoredEncryptionResponse(head.Metadata, head.ResultMetadata, r.Encryption) {
+				return result, ErrUnavailable
+			}
+			result.UploadResult = UploadResult{Encryption: publicObjectEncryption(r.Encryption), ETag: aws.ToString(head.ETag), ProviderVersionID: aws.ToString(head.VersionId)}
 			result.RecoveryCursor = ""
 			return result, nil
 		}
