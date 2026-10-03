@@ -8121,6 +8121,19 @@ WHERE r.operation_id=sqlc.arg(operation_id)::uuid AND r.source_database_id=sqlc.
 -- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
 SELECT * FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
 
+-- name: ReadProjectEnvironmentClonePostgresTargetSQLPins :one
+SELECT * FROM project_environment_clone_postgres_target_sql_pins WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresTargetSQLPins :one
+INSERT INTO project_environment_clone_postgres_target_sql_pins(operation_id,source_database_id,account_id,project_id,target_database_id,
+    target_provider_resource_id,target_provider_created_at,scope,inventory_fingerprint,target_fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(target_database_id)::uuid,
+    sqlc.arg(target_provider_resource_id)::text,sqlc.arg(target_provider_created_at)::timestamptz,sqlc.arg(scope)::jsonb,sqlc.arg(inventory_fingerprint)::text,
+    sqlc.arg(target_fingerprint)::text,sqlc.arg(key_id)::text,sqlc.arg(ciphertext)::bytea,sqlc.arg(ciphertext_sha256)::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid
+    AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.status='capturing'
+    AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
 -- name: ReadProjectEnvironmentClonePostgresInventory :one
 SELECT * FROM project_environment_clone_postgres_inventories WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE;
 

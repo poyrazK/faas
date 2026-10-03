@@ -4867,3 +4867,34 @@ outer scope/owner/project/recipient/hash substitution, damaged/truncated ciphert
 wrong namespaces, malformed/trailing envelopes, inner SQL/provider pin drift and
 both ciphertext and decrypted-envelope budgets. Existing actual dump/stage/restore
 contracts pass. Public complete clone admission remains closed.
+
+### Private durable target SQL pin ownership (2026-10-03)
+
+One write-once encrypted bootstrap identity is now retained for each prepared
+independent target. The record binds the original inventory fingerprint/scope
+and exact target owner/project creation time. Operation, native capture, frozen
+reservation, target catalogue and retained inventory are locked together under
+the live worker lease. The first committed bytes and key win; even an equivalent
+re-encryption cannot replace them. The existing charged target reservation bounds
+record count, and existing central encrypted-metadata ceilings bound each record.
+SQL names and SQL OIDs are absent from plaintext ledger columns. These records
+set neither data-resource identity nor observed generation/resource/stage readiness.
+
+Verification: all 21 focused archive/import/target/schema state contracts pass
+against isolated PostgreSQL 16 with no skips (55.368 s), including four new pin
+ownership contracts. They cover concurrent first capture, exact receipt replay,
+worker handoff/stale leases, scope/source-inventory/physical/SQL descriptor and
+ciphertext/key substitution, prepared-target prerequisites, byte budgets, damaged
+committed bytes, immutable source configuration and absent target publication.
+The new migration round-trips an empty table with identical columns/constraints
+and refuses rollback with any committed pins. The schema registry classifies the
+new table as operational. The schema snapshot is regenerated from real migrations;
+independent SQLC regeneration matches all thirteen generated files. Normal state/
+managedpostgres/Neon/archive/APID builds and state/archive vet pass.
+
+The first database verification run was refused by the test harness because
+schema generation had migrated its shared bootstrap database. The successful
+complete run uses a fresh unmigrated bootstrap and isolated migrated test
+databases. Full-repository/lint/native/provider acceptance is not claimed. Pin
+retirement and account/project deletion integration remain required along with
+complete database/global provisioning and independent dataset completion.

@@ -10022,6 +10022,73 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx conte
 	return i, err
 }
 
+const insertProjectEnvironmentClonePostgresTargetSQLPins = `-- name: InsertProjectEnvironmentClonePostgresTargetSQLPins :one
+INSERT INTO project_environment_clone_postgres_target_sql_pins(operation_id,source_database_id,account_id,project_id,target_database_id,
+    target_provider_resource_id,target_provider_created_at,scope,inventory_fingerprint,target_fingerprint,key_id,ciphertext,ciphertext_sha256)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,
+    $6::text,$7::timestamptz,$8::jsonb,$9::text,
+    $10::text,$11::text,$12::bytea,$13::text
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+    AND o.account_id=$3::uuid AND o.project_id=$4::uuid AND o.status='capturing'
+    AND o.revision=$14::bigint AND o.lease_token::text=$15::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, account_id, project_id, target_database_id, target_provider_resource_id, target_provider_created_at, scope, inventory_fingerprint, target_fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at
+`
+
+type InsertProjectEnvironmentClonePostgresTargetSQLPinsParams struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	AccountID                pgtype.UUID
+	ProjectID                pgtype.UUID
+	TargetDatabaseID         pgtype.UUID
+	TargetProviderResourceID string
+	TargetProviderCreatedAt  pgtype.Timestamptz
+	Scope                    []byte
+	InventoryFingerprint     string
+	TargetFingerprint        string
+	KeyID                    string
+	Ciphertext               []byte
+	CiphertextSha256         string
+	ExpectedRevision         int64
+	WorkerToken              string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresTargetSQLPins,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.TargetDatabaseID,
+		arg.TargetProviderResourceID,
+		arg.TargetProviderCreatedAt,
+		arg.Scope,
+		arg.InventoryFingerprint,
+		arg.TargetFingerprint,
+		arg.KeyID,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresTargetSqlPin
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.TargetProviderResourceID,
+		&i.TargetProviderCreatedAt,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.TargetFingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
 INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
 VALUES ($1::uuid, $2::uuid, $3::text,
@@ -24765,6 +24832,37 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentClonePostgresTargetSQLPins = `-- name: ReadProjectEnvironmentClonePostgresTargetSQLPins :one
+SELECT operation_id, source_database_id, account_id, project_id, target_database_id, target_provider_resource_id, target_provider_created_at, scope, inventory_fingerprint, target_fingerprint, key_id, ciphertext, ciphertext_sha256, captured_at FROM project_environment_clone_postgres_target_sql_pins WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresTargetSQLPinsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresTargetSQLPins, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresTargetSqlPin
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.TargetDatabaseID,
+		&i.TargetProviderResourceID,
+		&i.TargetProviderCreatedAt,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.TargetFingerprint,
+		&i.KeyID,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
 	)
 	return i, err
 }

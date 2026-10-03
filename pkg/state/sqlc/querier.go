@@ -571,6 +571,7 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error
 	InsertProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	InsertProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error)
 	InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error)
 	InsertProjectEnvironmentCloneSidecarLayer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarLayerParams) error
 	InsertProjectEnvironmentCloneSidecarSignal(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarSignalParams) error
@@ -1368,6 +1369,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresInventory(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresInventoryParams) (ProjectEnvironmentClonePostgresInventory, error)
 	ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	ReadProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error)
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)
 	ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectConfigurationParams) (ReadProjectEnvironmentCloneProjectConfigurationRow, error)
