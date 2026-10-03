@@ -91,6 +91,7 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    - role: control_plane_cell
     # Optional OTLP traces + metrics configuration. The role only validates
     # the operator-owned root-only env file and installs the example;
     # export stays disabled when /etc/faas/otel.env is absent.
@@ -160,6 +161,7 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    - role: control_plane_cell
     # Keep the optional OTLP configuration tripwire consistent on compute nodes.
     - role: otlp_exporter
     - role: nftables

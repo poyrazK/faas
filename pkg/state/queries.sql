@@ -6364,3 +6364,11 @@ ORDER BY id FOR UPDATE;
 
 -- name: NotifyRouteHealthRecovery :exec
 SELECT pg_notify('deployment_changed', sqlc.arg(payload)::text);
+-- name: ControlPlaneCellSchemaReady :one
+SELECT (to_regclass('control_plane_cells') IS NOT NULL)::boolean AS ready;
+
+-- name: ReadControlPlaneCell :one
+SELECT id::text AS cell_id, compute_region FROM control_plane_cells WHERE singleton;
+
+-- name: InitializeControlPlaneCell :one
+SELECT initialize_control_plane_cell(sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text)::text AS cell_id;

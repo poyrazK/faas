@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
+	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
 // renderSystemd returns the bytes for the per-daemon systemd unit file
@@ -38,6 +39,18 @@ func renderSystemd(daemon, hostName string) ([]byte, error) {
 		return body, nil
 	}
 	return injectNodeNameEnvironment(body, hostName)
+}
+
+// Every daemon gets the same expected cell, including the central schedd
+// whose node name is deliberately empty. Values were validated by Manifest.
+func renderCellSystemd(daemon, hostName string, cell *manifest.ControlPlaneCell) ([]byte, error) {
+	body, err := renderSystemd(daemon, hostName)
+	if err != nil || cell == nil {
+		return body, err
+	}
+	lines := "[Service]\nEnvironment=FAAS_CONTROL_PLANE_CELL_ID=" + cell.ID +
+		"\nEnvironment=FAAS_CONTROL_PLANE_CELL_REGION=" + cell.Region + "\n"
+	return append(body, []byte("\n"+lines)...), nil
 }
 
 // injectNodeNameEnvironment appends an `Environment=FAAS_NODE_NAME=<hostName>`

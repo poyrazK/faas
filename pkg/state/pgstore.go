@@ -25239,6 +25239,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "control_plane_cell_region":
+				return api.ErrComputeRegionOutsideCell(pgErr.Detail)
 			case "compute_region_unknown":
 				return api.ErrComputeRegionUnknown(pgErr.Detail)
 			case "compute_region_admission_paused":

@@ -86,6 +86,10 @@ type Manifest struct {
 	// emits the current major's shape.
 	SchemaVersion string `yaml:"schema_version"`
 
+	// ControlPlaneCell binds this fleet to a fresh independent regional DB.
+	// Omission retains the shared-fleet contract (ADR-475).
+	ControlPlaneCell *ControlPlaneCell `yaml:"control_plane_cell,omitempty"`
+
 	// Fleet is the list of hosts in the deployment. Each host has a
 	// role from `pkg/role.AllRoles` and a stable transport endpoint. In
 	// hostname-based fleets the private_dns adapter maps that name to the
@@ -823,6 +827,7 @@ func (m *Manifest) Validate() Errors {
 		})
 	}
 	errs = append(errs, m.Fleet.validate()...)
+	errs = append(errs, m.validateControlPlaneCell()...)
 	errs = append(errs, m.validateDynamicCompute()...)
 	errs = append(errs, m.validateFleetEndpoints()...)
 	errs = append(errs, m.Daemons.validate()...)

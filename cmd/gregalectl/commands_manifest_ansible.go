@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
+
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/roleTemplating"
 )
@@ -199,6 +201,15 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		if cell := m.ControlPlaneCell; cell != nil {
+			body += fmt.Sprintf("faas_control_plane_cell_id: %q\nfaas_control_plane_cell_region: %q\n", cell.ID, cell.Region)
+		}
+		body += "faas_control_plane_cell_units:\n"
+		for _, entry := range daemonunitspec.UnitEntries() {
+			if role := daemonunitspec.Role(host.Role); entry.Role == role || slices.Contains(entry.AdditionalRoles, role) {
+				body += fmt.Sprintf("  - faas-%s.service\n", entry.Name)
+			}
+		}
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {

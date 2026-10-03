@@ -1761,6 +1761,17 @@ func (q *Queries) ComputeRegionByID(ctx context.Context, db DBTX, id string) (Co
 	return i, err
 }
 
+const controlPlaneCellSchemaReady = `-- name: ControlPlaneCellSchemaReady :one
+SELECT (to_regclass('control_plane_cells') IS NOT NULL)::boolean AS ready
+`
+
+func (q *Queries) ControlPlaneCellSchemaReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, controlPlaneCellSchemaReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
 const countActiveMirrorSlotLeases = `-- name: CountActiveMirrorSlotLeases :one
 SELECT count(*)::bigint FROM mirror_slot_leases
 WHERE mirror_rule_id = $1::uuid
@@ -6716,6 +6727,22 @@ func (q *Queries) IncrementAppError(ctx context.Context, db DBTX, arg IncrementA
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const initializeControlPlaneCell = `-- name: InitializeControlPlaneCell :one
+SELECT initialize_control_plane_cell($1::uuid, $2::text)::text AS cell_id
+`
+
+type InitializeControlPlaneCellParams struct {
+	CellID pgtype.UUID
+	Region string
+}
+
+func (q *Queries) InitializeControlPlaneCell(ctx context.Context, db DBTX, arg InitializeControlPlaneCellParams) (string, error) {
+	row := db.QueryRow(ctx, initializeControlPlaneCell, arg.CellID, arg.Region)
+	var cell_id string
+	err := row.Scan(&cell_id)
+	return cell_id, err
 }
 
 const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
@@ -17894,6 +17921,22 @@ func (q *Queries) ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploym
 	row := db.QueryRow(ctx, readCanaryRouteGateOwner, deploymentID)
 	var i ReadCanaryRouteGateOwnerRow
 	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
+}
+
+const readControlPlaneCell = `-- name: ReadControlPlaneCell :one
+SELECT id::text AS cell_id, compute_region FROM control_plane_cells WHERE singleton
+`
+
+type ReadControlPlaneCellRow struct {
+	CellID        string
+	ComputeRegion string
+}
+
+func (q *Queries) ReadControlPlaneCell(ctx context.Context, db DBTX) (ReadControlPlaneCellRow, error) {
+	row := db.QueryRow(ctx, readControlPlaneCell)
+	var i ReadControlPlaneCellRow
+	err := row.Scan(&i.CellID, &i.ComputeRegion)
 	return i, err
 }
 

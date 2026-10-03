@@ -270,7 +270,7 @@ func render(opts RenderOptions) (RenderReport, error) {
 		if host.Role == "control-plane" && d == "schedd" {
 			nodeName = ""
 		}
-		systemdBody, err := renderSystemd(d, nodeName)
+		systemdBody, err := renderCellSystemd(d, nodeName, m.ControlPlaneCell)
 		if err != nil {
 			return report, err
 		}

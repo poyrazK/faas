@@ -1333,6 +1333,44 @@ $$;
 
 
 --
+-- Name: enforce_control_plane_cell_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_control_plane_cell_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE required_region text;
+BEGIN
+    SELECT compute_region INTO required_region FROM control_plane_cells WHERE singleton;
+    IF FOUND AND NEW.compute_region <> '' AND NEW.compute_region IS DISTINCT FROM required_region THEN
+        RAISE EXCEPTION 'workload is outside control plane cell region'
+            USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_region', DETAIL = NEW.compute_region;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enforce_control_plane_cell_node(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_control_plane_cell_node() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE required_region text;
+BEGIN
+    SELECT compute_region INTO required_region FROM control_plane_cells WHERE singleton;
+    IF FOUND AND NEW.region IS DISTINCT FROM required_region THEN
+        RAISE EXCEPTION 'compute node is outside control plane cell region'
+            USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_region', DETAIL = coalesce(NEW.region, '');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enforce_deployment_build_artifact(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2972,6 +3010,32 @@ $$;
 
 
 --
+-- Name: initialize_control_plane_cell(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.initialize_control_plane_cell(wanted_id uuid, wanted_region text) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE existing control_plane_cells%ROWTYPE;
+BEGIN
+    LOCK TABLE control_plane_cells IN EXCLUSIVE MODE;
+    SELECT * INTO existing FROM control_plane_cells WHERE singleton;
+    IF FOUND THEN
+        IF existing.id IS DISTINCT FROM wanted_id OR existing.compute_region IS DISTINCT FROM wanted_region THEN
+            RAISE EXCEPTION 'database belongs to a different control plane cell'
+                USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_identity';
+        END IF;
+        RETURN existing.id;
+    END IF;
+    INSERT INTO compute_regions(id, display_name, accepting_new_apps)
+        VALUES (wanted_region, wanted_region, true) ON CONFLICT (id) DO NOTHING;
+    INSERT INTO control_plane_cells(id, compute_region) VALUES (wanted_id, wanted_region);
+    RETURN wanted_id;
+END;
+$$;
+
+
+--
 -- Name: instance_readiness_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3503,6 +3567,38 @@ BEGIN
         RAISE EXCEPTION 'compute region is in use' USING ERRCODE = '23514', CONSTRAINT = 'compute_region_in_use';
     END IF;
     RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: protect_control_plane_cell(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_control_plane_cell() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'control plane cell identity is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_immutable';
+    END IF;
+    -- Freeze adoption and customer creation while checking the fresh database.
+    LOCK TABLE accounts, apps, projects, jobs, instances, compute_nodes IN SHARE ROW EXCLUSIVE MODE;
+    IF EXISTS (SELECT 1 FROM accounts) OR EXISTS (SELECT 1 FROM apps)
+       OR EXISTS (SELECT 1 FROM projects) OR EXISTS (SELECT 1 FROM jobs)
+       OR EXISTS (SELECT 1 FROM instances)
+       OR EXISTS (SELECT 1 FROM compute_nodes WHERE NOT coalesce((
+           name = 'default-local' AND target_url = 'unix:///run/faas/vmmd.sock'
+           AND region = 'local' AND zone = 'local'
+           AND release_id IS NULL AND manifest_hash IS NULL AND role IS NULL
+           AND host_certificate IS NULL AND cert_fingerprint IS NULL
+           AND last_heartbeat_at = created_at), false)) THEN
+        RAISE EXCEPTION 'cell initialization requires a fresh database'
+            USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_fresh';
+    END IF;
+    DELETE FROM compute_nodes WHERE name = 'default-local';
+    RETURN NEW;
 END;
 $$;
 
@@ -6635,6 +6731,21 @@ CREATE TABLE public.container_host_port_leases (
     CONSTRAINT container_host_port_leases_host_port_check CHECK (((host_port >= 30000) AND (host_port <= 39999))),
     CONSTRAINT container_host_port_leases_listener_name_check CHECK ((listener_name ~ '^[a-z0-9][a-z0-9-]{0,30}$'::text)),
     CONSTRAINT container_host_port_leases_protocol_check CHECK ((protocol = ANY (ARRAY['tcp'::text, 'udp'::text])))
+);
+
+
+--
+-- Name: control_plane_cells; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.control_plane_cells (
+    singleton boolean DEFAULT true NOT NULL,
+    id uuid NOT NULL,
+    compute_region text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT control_plane_cells_compute_region_check CHECK ((((length(compute_region) >= 1) AND (length(compute_region) <= 63)) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT control_plane_cells_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT control_plane_cells_singleton_check CHECK (singleton)
 );
 
 
@@ -13769,6 +13880,22 @@ ALTER TABLE ONLY public.container_host_port_leases
 
 ALTER TABLE ONLY public.container_host_port_leases
     ADD CONSTRAINT container_host_port_leases_pkey PRIMARY KEY (node_id, instance_id, listener_name, protocol);
+
+
+--
+-- Name: control_plane_cells control_plane_cells_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.control_plane_cells
+    ADD CONSTRAINT control_plane_cells_id_key UNIQUE (id);
+
+
+--
+-- Name: control_plane_cells control_plane_cells_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.control_plane_cells
+    ADD CONSTRAINT control_plane_cells_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -21506,6 +21633,13 @@ CREATE TRIGGER apps_bump_scaling_policy_revision_trg BEFORE UPDATE OF min_instan
 
 
 --
+-- Name: apps apps_cell_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_cell_region_guard BEFORE INSERT OR UPDATE OF compute_region ON public.apps FOR EACH ROW EXECUTE FUNCTION public.enforce_control_plane_cell_intent();
+
+
+--
 -- Name: apps apps_compute_region_admission_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21709,6 +21843,13 @@ CREATE TRIGGER compute_nodes_bound_region_guard BEFORE UPDATE OF region ON publi
 
 
 --
+-- Name: compute_nodes compute_nodes_cell_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_nodes_cell_region_guard BEFORE INSERT OR UPDATE OF region ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.enforce_control_plane_cell_node();
+
+
+--
 -- Name: compute_regions compute_regions_identity_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21720,6 +21861,20 @@ CREATE TRIGGER compute_regions_identity_guard BEFORE DELETE OR UPDATE OF id ON p
 --
 
 CREATE TRIGGER consumer_keys_set_updated_at_trg BEFORE UPDATE ON public.consumer_keys FOR EACH ROW EXECUTE FUNCTION public.consumer_keys_set_updated_at();
+
+
+--
+-- Name: control_plane_cells control_plane_cell_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER control_plane_cell_identity_guard BEFORE INSERT OR DELETE OR UPDATE ON public.control_plane_cells FOR EACH ROW EXECUTE FUNCTION public.protect_control_plane_cell();
+
+
+--
+-- Name: control_plane_cells control_plane_cell_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER control_plane_cell_truncate_guard BEFORE TRUNCATE ON public.control_plane_cells FOR EACH STATEMENT EXECUTE FUNCTION public.protect_control_plane_cell();
 
 
 --
@@ -22052,6 +22207,13 @@ CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR UPDATE ON public.job_tasks F
 
 
 --
+-- Name: jobs jobs_cell_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER jobs_cell_region_guard BEFORE INSERT OR UPDATE OF compute_region ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.enforce_control_plane_cell_intent();
+
+
+--
 -- Name: jobs jobs_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22273,6 +22435,13 @@ CREATE TRIGGER private_network_peering_set_updated_at_trg BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.private_networks FOR EACH ROW EXECUTE FUNCTION public.private_network_set_updated_at();
+
+
+--
+-- Name: projects projects_cell_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER projects_cell_region_guard BEFORE INSERT OR UPDATE OF compute_region ON public.projects FOR EACH ROW EXECUTE FUNCTION public.enforce_control_plane_cell_intent();
 
 
 --
@@ -23697,6 +23866,14 @@ ALTER TABLE ONLY public.container_host_port_leases
 
 ALTER TABLE ONLY public.container_host_port_leases
     ADD CONSTRAINT container_host_port_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: control_plane_cells control_plane_cells_compute_region_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.control_plane_cells
+    ADD CONSTRAINT control_plane_cells_compute_region_fkey FOREIGN KEY (compute_region) REFERENCES public.compute_regions(id);
 
 
 --

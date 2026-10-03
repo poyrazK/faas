@@ -1,0 +1,45 @@
+---
+# ADR-475: role-installed base units must carry the same identity as renderer
+# output. Run before service roles so their first restart sees the drop-ins.
+- name: control_plane_cell — validate paired canonical identity
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((faas_control_plane_cell_id | default('') | length == 0) and
+         (faas_control_plane_cell_region | default('') | length == 0)) or
+        ((faas_control_plane_cell_id | default('') is match('^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')) and
+         (faas_control_plane_cell_id != '00000000-0000-0000-0000-000000000000') and
+         (faas_control_plane_cell_region | default('') | length > 0) and
+         (faas_control_plane_cell_region | default('') | length <= 63) and
+         (faas_control_plane_cell_region | default('') is match('^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')))
+    fail_msg: "Control-plane cell UUID and region must be configured together; use manifest-generated inventory."
+
+- name: control_plane_cell — load the canonical daemon topology
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/daemons.yml"
+
+- name: control_plane_cell — select this host's daemon units
+  ansible.builtin.set_fact:
+    faas_cell_units: >-
+      {{ faas_control_plane_cell_units | default(
+         faas_control_plane_units if faas_box_role == 'control-plane'
+         else faas_compute_only_units) }}
+
+- name: control_plane_cell — create identity drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ faas_cell_units }}"
+
+- name: control_plane_cell — install identity or clear stale unbound values
+  ansible.builtin.template:
+    src: cell-identity.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.d/zz-faas-control-plane-cell.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ faas_cell_units }}"
+  notify: Reload regional cell unit configuration

@@ -1,0 +1,4 @@
+---
+- name: Reload regional cell unit configuration
+  ansible.builtin.systemd:
+    daemon_reload: true

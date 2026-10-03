@@ -1849,7 +1849,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeComputeRegionUnknown:
+	case CodeComputeRegionUnknown, CodeComputeRegionOutsideCell:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,

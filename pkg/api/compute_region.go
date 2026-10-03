@@ -12,6 +12,7 @@ import (
 
 const (
 	CodeComputeRegionUnknown           = "compute_region_unknown"
+	CodeComputeRegionOutsideCell       = "compute_region_outside_cell"
 	CodeComputeRegionAdmissionPaused   = "compute_region_admission_paused"
 	CodeComputeRegionUnavailable       = "compute_region_unavailable"
 	CodeComputeRegionCapacityExhausted = "compute_region_capacity_exhausted"
@@ -39,6 +40,11 @@ func computeRegionProblem(region, code, title, detail string, status int) *Probl
 func ErrComputeRegionUnknown(region string) *Problem {
 	return computeRegionProblem(region, CodeComputeRegionUnknown, "Unknown compute region",
 		fmt.Sprintf("Compute region %q is not registered; use gregale regions list to choose a region.", region), http.StatusUnprocessableEntity)
+}
+
+func ErrComputeRegionOutsideCell(region string) *Problem {
+	return computeRegionProblem(region, CodeComputeRegionOutsideCell, "Compute region outside control plane cell",
+		fmt.Sprintf("This control plane cell does not host compute region %q. Use the control plane for that region or select this cell's region.", region), http.StatusUnprocessableEntity)
 }
 
 func ErrComputeRegionAdmissionPaused(region string) *Problem {

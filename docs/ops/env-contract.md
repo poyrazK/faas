@@ -99,6 +99,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_CONTROL_PLANE_CELL_ID` | shared | `default` |  |  | `` | ADR-475; manifest-rendered expected database cell UUID; must be paired with FAAS_CONTROL_PLANE_CELL_REGION; unset retains unbound fleet mode |
+| `FAAS_CONTROL_PLANE_CELL_REGION` | shared | `default` |  |  | `` | ADR-475; manifest-rendered canonical cell region; ordinary and direct database pools verify the immutable identity before use |
 | `FAAS_DATABASE_URL` | shared | `default` | yes |  | `url` | DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement |
 | `FAAS_DATABASE_URL_DIRECT` | shared | `default` |  |  | `` | Session-scoped DSN reaching PostgreSQL directly, bypassing a transaction-mode pooler on the ordinary DSN. LISTEN and session pg_advisory_lock resolve here (pkg/db/direct.go); setting it also switches the ordinary pool to QueryExecModeExec so named prepared statements cannot outlive a pooled transaction. Unset = no pooler, direct pool is the ordinary pool |
 | `FAAS_DATA_PLACEMENT` | apid | `runtime-config` |  |  | `` |  |

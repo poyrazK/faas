@@ -1201,6 +1201,13 @@ type ContainerHostPortLease struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type ControlPlaneCell struct {
+	Singleton     bool
+	ID            pgtype.UUID
+	ComputeRegion string
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ControlPlaneChangeLog struct {
 	ID           int64
 	ResourceType string

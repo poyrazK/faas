@@ -177,6 +177,9 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 		// operator looks when a LISTEN or an advisory lock misbehaves.
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName + "-direct"
 	}
+	if err := installCellGuard(cfg); err != nil {
+		return nil, err
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: open direct pool: %w", err)

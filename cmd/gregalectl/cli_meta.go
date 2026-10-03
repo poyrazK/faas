@@ -85,6 +85,12 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{Name: "cell", DocSlug: "cell", Short: "Initialize or inspect a regional control-plane database",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Bind a fresh migrated database to the manifest cell identity", Flags: []cliFlag{{Name: "manifest-file", Short: "regional deployment manifest (required)", Req: true}}},
+			{Name: "status", Short: "Verify the database against the manifest cell identity", Flags: []cliFlag{{Name: "manifest-file", Short: "regional deployment manifest (required)", Req: true}}},
+		},
+	},
 	{
 		Name:    dispatchBilling,
 		DocSlug: "billing",

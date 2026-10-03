@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/onebox-faas/faas/migrations"
@@ -69,11 +67,7 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	defer func() { _ = release(ctx) }() //nolint:errcheck // PG auto-releases on conn close; logged at call sites
 
-	connStr := stdlib.RegisterConnConfig(cfg.ConnConfig)
-	sqlDB, err := sql.Open("pgx", connStr)
-	if err != nil {
-		return fmt.Errorf("db: open stdlib: %w", err)
-	}
+	sqlDB := migrationSQLDB(cfg)
 	defer func() { _ = sqlDB.Close() }()
 
 	goose.SetBaseFS(migrations.FS)
@@ -190,11 +184,7 @@ func Status(ctx context.Context, pool *pgxpool.Pool) (MigrationStatus, error) {
 	if cfg == nil || cfg.ConnConfig == nil {
 		return MigrationStatus{}, errors.New("db: Status: pool has no config")
 	}
-	connStr := stdlib.RegisterConnConfig(cfg.ConnConfig)
-	sqlDB, err := sql.Open("pgx", connStr)
-	if err != nil {
-		return MigrationStatus{}, fmt.Errorf("db: open stdlib: %w", err)
-	}
+	sqlDB := migrationSQLDB(cfg)
 	defer func() { _ = sqlDB.Close() }()
 
 	goose.SetBaseFS(migrations.FS)

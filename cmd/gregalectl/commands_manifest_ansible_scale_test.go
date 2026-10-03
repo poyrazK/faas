@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRenderManifestAnsibleFiles_ScaleMatrix(t *testing.T) {
@@ -109,7 +110,7 @@ func assertScaleInventory(t *testing.T, inventory string, hostVars map[string]st
 		if groupVars == "" {
 			t.Fatal("large generated inventory did not include inventory/group_vars/all.yml")
 		}
-		if got := strings.Count(groupVars, "\n  - "); got != len(allHosts) {
+		if got := privatePeerCount(t, groupVars); got != len(allHosts) {
 			t.Fatalf("shared private peer records = %d, want %d", got, len(allHosts))
 		}
 	} else if groupVars != "" {
@@ -121,7 +122,7 @@ func assertScaleInventory(t *testing.T, inventory string, hostVars map[string]st
 		if !ok {
 			t.Fatalf("missing host_vars for %s", hostName)
 		}
-		if got := strings.Count(body, "\n  - "); sharedPrivateHosts && got != 0 || !sharedPrivateHosts && got != len(allHosts) {
+		if got := privatePeerCount(t, body); sharedPrivateHosts && got != 0 || !sharedPrivateHosts && got != len(allHosts) {
 			want := 0
 			if !sharedPrivateHosts {
 				want = len(allHosts)
@@ -174,6 +175,17 @@ func assertScaleInventory(t *testing.T, inventory string, hostVars map[string]st
 			t.Fatalf("last compute host %s is absent from its generated peer map", hostName)
 		}
 	}
+}
+
+func privatePeerCount(t *testing.T, body string) int {
+	t.Helper()
+	var vars struct {
+		Peers []map[string]any `yaml:"faas_private_hosts"`
+	}
+	if err := yaml.Unmarshal([]byte(body), &vars); err != nil {
+		t.Fatal(err)
+	}
+	return len(vars.Peers)
 }
 
 func inventoryGroupHosts(inventory, group string) []string {

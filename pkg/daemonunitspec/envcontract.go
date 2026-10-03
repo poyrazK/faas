@@ -178,6 +178,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMPUTE_VCPUS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "host vCPU count reported by node_join"},
 	{Name: "FAAS_CONSUMER_USAGE_OUTBOX_ROOT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage"},
 	{Name: "FAAS_CONTROL_PLANE_API_TARGET", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_CONTROL_PLANE_CELL_ID", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-475; manifest-rendered expected database cell UUID; must be paired with FAAS_CONTROL_PLANE_CELL_REGION; unset retains unbound fleet mode"},
+	{Name: "FAAS_CONTROL_PLANE_CELL_REGION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-475; manifest-rendered canonical cell region; ordinary and direct database pools verify the immutable identity before use"},
 	{Name: "FAAS_DATABASE_URL", Owners: []string{"shared"}, Source: EnvSourceDefault, Required: true, Validate: EnvValidationURL, Note: "DATABASE_URL from compute-db.env is the production DSN; this is the legacy alias; DATABASE_URL satisfies this requirement"},
 	{Name: "FAAS_DATABASE_URL_DIRECT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "Session-scoped DSN reaching PostgreSQL directly, bypassing a transaction-mode pooler on the ordinary DSN. LISTEN and session pg_advisory_lock resolve here (pkg/db/direct.go); setting it also switches the ordinary pool to QueryExecModeExec so named prepared statements cannot outlive a pooled transaction. Unset = no pooler, direct pool is the ordinary pool"},
 	{Name: "FAAS_DATA_PLACEMENT", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},

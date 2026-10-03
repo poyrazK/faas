@@ -129,6 +129,7 @@ type Querier interface {
 	CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error)
 	CompleteServiceRecovery(ctx context.Context, db DBTX, arg CompleteServiceRecoveryParams) (int64, error)
 	ComputeRegionByID(ctx context.Context, db DBTX, id string) (ComputeRegion, error)
+	ControlPlaneCellSchemaReady(ctx context.Context, db DBTX) (bool, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
@@ -439,6 +440,7 @@ type Querier interface {
 	// outcomeInserted vs outcomeMerged on the wire — the gateway
 	// uses that signal to update its in-process LRU freshness.
 	IncrementAppError(ctx context.Context, db DBTX, arg IncrementAppErrorParams) (bool, error)
+	InitializeControlPlaneCell(ctx context.Context, db DBTX, arg InitializeControlPlaneCellParams) (string, error)
 	// One row per request that hit the grouped fingerprint. No
 	// ON CONFLICT — every request gets its own row. request_count
 	// on app_errors is bumped on the paired IncrementAppError
@@ -1183,6 +1185,7 @@ type Querier interface {
 	ReadAutomaticRouteCheck(ctx context.Context, db DBTX, arg ReadAutomaticRouteCheckParams) ([]byte, error)
 	ReadCanaryRouteGate(ctx context.Context, db DBTX, arg ReadCanaryRouteGateParams) ([]byte, error)
 	ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploymentID string) (ReadCanaryRouteGateOwnerRow, error)
+	ReadControlPlaneCell(ctx context.Context, db DBTX) (ReadControlPlaneCellRow, error)
 	ReadExclusiveWorkKey(ctx context.Context, db DBTX, arg ReadExclusiveWorkKeyParams) (ExclusiveWorkKey, error)
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
