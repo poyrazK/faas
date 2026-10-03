@@ -11,7 +11,35 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { rewriteImportsToJs, writeModelsBarrel } from '../scripts/post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses } from '../scripts/post-process.mjs';
+
+test('binary response post-processing is idempotent and preserves Problem parsing', async () => {
+  await withTempDir(async (dir) => {
+    await mkdir(join(dir, 'core'));
+    await mkdir(join(dir, 'services'));
+    await writeFile(join(dir, 'core', 'ApiRequestOptions.ts'), 'export type Options = {\n  readonly responseHeader?: string;\n};\n');
+    await writeFile(join(dir, 'core', 'request.ts'), [
+      'export const getResponseBody = async (response: Response): Promise<any> => {',
+      '  if (response.status !== 204) {',
+      '    try {',
+      '      return await response.json();',
+      '    } catch {}',
+      '  }',
+      '};',
+      'const responseBody = await getResponseBody(response);',
+    ].join('\n'));
+    await writeFile(join(dir, 'services', 'Download.ts'), "  public static download(): CancelablePromise<Blob> {\n    return __request(OpenAPI, {\n      method: 'GET',\n    });\n  }\n");
+    await patchBinaryResponses(dir);
+    const paths = ['core/ApiRequestOptions.ts', 'core/request.ts', 'services/Download.ts'];
+    const first = await Promise.all(paths.map(path => readFile(join(dir, path), 'utf8')));
+    assert.match(first[1], /response\.ok && responseType === 'blob'/);
+    assert.match(first[1], /response\.json\(\)/);
+    assert.match(first[2], /responseType: 'blob'/);
+    await patchBinaryResponses(dir);
+    const second = await Promise.all(paths.map(path => readFile(join(dir, path), 'utf8')));
+    assert.deepEqual(second, first);
+  });
+});
 
 async function withTempDir(fn) {
   const dir = await mkdtemp(join(tmpdir(), 'post-process-test-'));

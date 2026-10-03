@@ -327,7 +327,7 @@ message LivenessFailedReport {
 message LivenessFailedAck {
   // ok retains the legacy acceptance/no-op acknowledgement.
   bool ok = 1;
-  // ADR-397: true once the observation is applied/superseded by a cold
+  // ADR-471: true once the observation is applied/superseded by a cold
   // instance state. False means pending (including cross-node notify relay).
   // vmmd retains its durable report and retries; this is not a drain receipt.
   // Old schedds omit this field and therefore cannot prematurely retire it.
@@ -345,7 +345,7 @@ message LivenessFailedAck {
 // into Why and "at least peak_mb + 8 MB" into Fix).
 //
 // Wire is additive per ADR-016 — pre-Cluster-C schedds reject the
-// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-397).
+// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-471).
 message ReportWorkloadOOMRequest {
   // instance_id is the instances.id row vmmd observed the OOM
   // kill on. The schedd engine resolves the parent app +
@@ -367,8 +367,8 @@ message ReportWorkloadOOMRequest {
   string source_node_id = 4;
 }
 
-// ReportWorkloadOOMAck separates acceptance from application (ADR-397).
-// This is not a fleet drain receipt. Additive per ADR-016.
+// ReportWorkloadOOMAck separates acceptance from application (ADR-471).
+// This is not a fleet drain receipt. Additive per ADR-16.
 message ReportWorkloadOOMAck {
   bool ok = 1;
   // False until a cold outcome is observed; older schedds omit this field.
@@ -991,6 +991,18 @@ message CapacityReport {
   // it on the persistent capacity stream removes the schedd-side 200 ms
   // fresh-dial fan-out across the fleet.
   repeated InstanceTelemetry instances = 10;
+  // Authoritative process inventory, independent of optional resource metrics.
+  // Absence means an older producer; complete=false means unknown. A complete
+  // empty inventory explicitly asserts that this node has no running VMs.
+  NodeInstanceInventory instance_inventory = 11;
+}
+
+// Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
+// Its separate signature preserves the v1 capacity signature during upgrades.
+message NodeInstanceInventory {
+  bool complete = 1;
+  repeated string instance_ids = 2;
+  bytes node_signature = 3;
 }
 
 // InstanceTelemetry is the vmmd-side Stats row carried in CapacityReport.

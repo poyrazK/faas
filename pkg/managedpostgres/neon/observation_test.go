@@ -1,4 +1,4 @@
-// adr: 389 — metadata health never wakes compute or repairs SQL permissions.
+// adr: 463 — metadata health never wakes compute or repairs SQL permissions.
 
 package neon
 

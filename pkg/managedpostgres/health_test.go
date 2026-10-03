@@ -1,4 +1,4 @@
-// adr: 389 — read-only database health and durable observation fencing.
+// adr: 463 — read-only database health and durable observation fencing.
 
 package managedpostgres
 

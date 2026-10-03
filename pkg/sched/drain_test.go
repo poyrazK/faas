@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // drainSynth is a recording GatewaySynth that captures the invocations
@@ -33,13 +34,15 @@ import (
 // this stub is in the same package as Drain so tests can construct the
 // drain without an extra import.
 type drainSynth struct {
-	mu        sync.Mutex
-	calls     atomic.Int64
-	active    atomic.Int64
-	maxActive atomic.Int64
-	permanent atomic.Bool // if true, return ErrPermanentInvoke
-	transient atomic.Bool // if true, return a transient error
-	hold      time.Duration
+	mu             sync.Mutex
+	calls          atomic.Int64
+	active         atomic.Int64
+	maxActive      atomic.Int64
+	permanent      atomic.Bool // if true, return ErrPermanentInvoke
+	transient      atomic.Bool // if true, return a transient error
+	responseStatus int
+	outcomeCode    string
+	hold           time.Duration
 }
 
 func (d *drainSynth) SynthesizeRequest(_ context.Context, _, _, _ string) error { return nil }
@@ -58,6 +61,8 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	perm := d.permanent.Load()
 	trans := d.transient.Load()
 	hold := d.hold
+	status := d.responseStatus
+	outcomeCode := d.outcomeCode
 	d.mu.Unlock()
 	if hold > 0 {
 		time.Sleep(hold)
@@ -71,6 +76,8 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-" + inv.ID
 	inv.Result = json.RawMessage(`{"ok":true}`)
+	inv.ResponseStatusCode = status
+	inv.OutcomeCode = outcomeCode
 	return inv, nil
 }
 
@@ -157,6 +164,107 @@ func seedDrainInvocation(t *testing.T, store state.Store, source state.Invocatio
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
 	return inv
+}
+
+func TestDrain_HTTPCronOutcomeClassificationAndUncertainHold(t *testing.T) {
+	t.Run("structured retry result", func(t *testing.T) {
+		d, store, _, _, ds := newDrainHarness(t, api.PlanPro, true)
+		apps, err := store.ListAllApps(context.Background())
+		if err != nil || len(apps) != 1 {
+			t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+		}
+		rules := &workpolicy.FailureRules{
+			Version:          workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"temporary_error"}, Action: "retry"}},
+			UnmatchedFailure: "fail_partition", UncertainOutcome: "hold",
+		}
+		cron, err := store.CreateCronWithOptions(context.Background(), apps[0].ID, "* * * * *", "/sync", true, state.CronOptions{FailureRules: rules})
+		if err != nil {
+			t.Fatalf("CreateCronWithOptions: %v", err)
+		}
+		scheduledFor := time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)
+		inv, _, created, err := store.(state.ScheduledCronInvocationStore).CreateScheduledCronInvocationOccurrence(context.Background(), cron.ID, nil, time.Now().UTC(), state.CronScheduledOccurrenceOptions{
+			ScheduledFor: scheduledFor, ScheduleRevision: cron.ScheduleRevision,
+		}, state.Invocation{Method: http.MethodPost, Path: "/sync"})
+		if err != nil || !created || inv.FailureRules == nil {
+			t.Fatalf("scheduled retry contract = %+v created=%t err=%v", inv, created, err)
+		}
+		ds.mu.Lock()
+		ds.responseStatus, ds.outcomeCode = http.StatusOK, "temporary_error"
+		ds.mu.Unlock()
+		d.Tick(context.Background())
+		got, err := store.InvocationByID(context.Background(), inv.ID)
+		if err != nil || got.State != state.InvocationPending || got.OutcomeCode != "temporary_error" || got.WorkDecision == nil || got.WorkDecision.Action != "retry" || !got.DueAt.After(time.Now()) {
+			t.Fatalf("retryable invocation = %+v, err=%v", got, err)
+		}
+	})
+
+	t.Run("structured permanent result", func(t *testing.T) {
+		d, store, _, _, ds := newDrainHarness(t, api.PlanPro, true)
+		apps, err := store.ListAllApps(context.Background())
+		if err != nil || len(apps) != 1 {
+			t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+		}
+		rules := &workpolicy.FailureRules{
+			Version:          workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+			UnmatchedFailure: "retry", UncertainOutcome: "hold",
+		}
+		cron, err := store.CreateCronWithOptions(context.Background(), apps[0].ID, "* * * * *", "/sync", true, state.CronOptions{FailureRules: rules})
+		if err != nil {
+			t.Fatalf("CreateCronWithOptions: %v", err)
+		}
+		scheduledFor := time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)
+		occurrenceStore := store.(state.ScheduledCronInvocationStore)
+		inv, _, created, err := occurrenceStore.CreateScheduledCronInvocationOccurrence(context.Background(), cron.ID, nil, time.Now().UTC(), state.CronScheduledOccurrenceOptions{
+			ScheduledFor: scheduledFor, ScheduleRevision: cron.ScheduleRevision,
+		}, state.Invocation{Method: http.MethodPost, Path: "/sync"})
+		if err != nil || !created || inv.FailureRules == nil {
+			t.Fatalf("CreateScheduledCronInvocationOccurrence = %+v created=%t err=%v", inv, created, err)
+		}
+		ds.mu.Lock()
+		ds.responseStatus, ds.outcomeCode = http.StatusOK, "invalid_record"
+		ds.mu.Unlock()
+		d.Tick(context.Background())
+		got, err := store.InvocationByID(context.Background(), inv.ID)
+		if err != nil || got.State != state.InvocationFailed || got.OutcomeCode != "invalid_record" || got.WorkDecision == nil || got.WorkDecision.Action != "fail_partition" {
+			t.Fatalf("classified invocation = %+v, err=%v", got, err)
+		}
+		history, err := store.(state.ScheduleOccurrenceHistoryStore).ScheduleOccurrenceListByCron(context.Background(), cron.ID, 10, "")
+		if err != nil || len(history) != 1 || history[0].Status != "failed" || history[0].OutcomeCode != "invalid_record" || history[0].WorkDecision == nil || history[0].WorkDecision.Action != "fail_partition" {
+			t.Fatalf("classified occurrence = %+v, err=%v", history, err)
+		}
+	})
+
+	t.Run("missing receipt held as uncertain", func(t *testing.T) {
+		d, store, _, _, ds := newDrainHarness(t, api.PlanPro, true)
+		apps, err := store.ListAllApps(context.Background())
+		if err != nil || len(apps) != 1 {
+			t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+		}
+		rules := &workpolicy.FailureRules{Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: "hold"}
+		cron, err := store.CreateCronWithOptions(context.Background(), apps[0].ID, "* * * * *", "/sync", true, state.CronOptions{FailureRules: rules})
+		if err != nil {
+			t.Fatalf("CreateCronWithOptions: %v", err)
+		}
+		scheduledFor := time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)
+		inv, _, created, err := store.(state.ScheduledCronInvocationStore).CreateScheduledCronInvocationOccurrence(context.Background(), cron.ID, nil, time.Now().UTC(), state.CronScheduledOccurrenceOptions{
+			ScheduledFor: scheduledFor, ScheduleRevision: cron.ScheduleRevision,
+		}, state.Invocation{Method: http.MethodPost, Path: "/sync"})
+		if err != nil || !created {
+			t.Fatalf("CreateScheduledCronInvocationOccurrence = %+v created=%t err=%v", inv, created, err)
+		}
+		ds.transient.Store(true)
+		d.Tick(context.Background())
+		got, err := store.InvocationByID(context.Background(), inv.ID)
+		if err != nil || got.State != state.InvocationFailed || got.Outcome == nil || *got.Outcome != state.OutcomeUncertain || got.WorkDecision == nil || got.WorkDecision.Classification != "uncertain" {
+			t.Fatalf("uncertain invocation = %+v, err=%v", got, err)
+		}
+		history, err := store.(state.ScheduleOccurrenceHistoryStore).ScheduleOccurrenceListByCron(context.Background(), cron.ID, 10, "")
+		if err != nil || len(history) != 1 || history[0].Status != "uncertain" || history[0].WorkDecision == nil || history[0].WorkDecision.Action != "hold" {
+			t.Fatalf("uncertain occurrence = %+v, err=%v", history, err)
+		}
+	})
 }
 
 // TestDrain_DispatchesDueRow is the headline gate: one due row → one

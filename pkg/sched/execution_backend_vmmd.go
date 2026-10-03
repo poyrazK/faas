@@ -62,7 +62,10 @@ func newRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decoder executionP
 		if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
 			return nil, errors.New("sched: vmmd returned an unexpected execution instance")
 		}
-		return &routedVmmdExecutionTransport{router: router, nodeID: request.NodeID, instance: outcome.Instance}, nil
+		return &routedVmmdExecutionTransport{
+			router: router, nodeID: request.NodeID, instance: outcome.Instance,
+			outboundIntegrationIDs: append([]string(nil), request.OutboundIntegrationIDs...),
+		}, nil
 	}, decoder)
 }
 
@@ -70,6 +73,9 @@ type routedVmmdExecutionTransport struct {
 	router   RoutedExecutionVMM
 	nodeID   string
 	instance string
+	// outboundIntegrationIDs is the immutable host-side restore grant. It
+	// selects the full-duplex broker RPC but is never copied into the guest.
+	outboundIntegrationIDs []string
 }
 
 func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executionproto.Request) (executionproto.Result, error) {
@@ -77,6 +83,17 @@ func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executio
 }
 
 func (t *routedVmmdExecutionTransport) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	if len(t.outboundIntegrationIDs) != 0 {
+		req.OutboundEnabled = true
+		broker, ok := t.router.(interface {
+			ExecuteExecutionWithBroker(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+		})
+		if !ok {
+			return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+				"Execution broker unavailable", "vmmd router does not support the Runs outbound broker")
+		}
+		return broker.ExecuteExecutionWithBroker(ctx, t.nodeID, t.instance, req, receive)
+	}
 	streaming, ok := t.router.(interface {
 		ExecuteExecutionWithOutput(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
 	})

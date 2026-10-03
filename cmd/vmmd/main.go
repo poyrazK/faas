@@ -678,7 +678,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// fails (Postgres down, schema drift), vmmd exits rather than
 	// serving traffic with no identity. The legacy default-local
 	// path skips self-registration. A configured DB URL also enables
-	// durable app admission on that node (ADR-394).
+	// durable app admission on that node (ADR-468).
 	var nodeID string
 	var pool *pgxpool.Pool
 	var store state.Store
@@ -921,7 +921,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
-	// ADR-397: install durable failure delivery before accepting Wake RPCs.
+	// ADR-471: install durable failure delivery before accepting Wake RPCs.
 	failureNodeID := nodeID
 	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
 		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
@@ -938,7 +938,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
-	// ADR-398: preserve restart-survivor identities before a prepared pool
+	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
 	resourceJournal, err := recoverRestartResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
 	if err != nil {
@@ -953,7 +953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
-	// ADR-403: journal survivors remain quarantined. The legacy name reaper
+	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
 	var preparedCleanupErr error
@@ -972,7 +972,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("vmmd: prepared network cleanup", "err", err)
 		}
 	}()
-	jailer.WithProcessExitSink(mgr.ProcessExited)
+	jailer.WithProcessExitAttemptSink(mgr.ProcessExitedAttempt)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The
@@ -1451,7 +1451,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID)
+		WithNodeID(nodeID).
+		WithExecutionIdentitySigner(identitySigner)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200

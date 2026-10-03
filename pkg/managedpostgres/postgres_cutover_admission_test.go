@@ -1,4 +1,4 @@
-// adr: 392 — durable admission fences do not constitute writer-drain evidence.
+// adr: 466 — durable admission fences do not constitute writer-drain evidence.
 package managedpostgres
 
 import (

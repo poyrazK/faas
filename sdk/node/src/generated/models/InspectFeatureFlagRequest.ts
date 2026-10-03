@@ -11,6 +11,10 @@ export type InspectFeatureFlagRequest = {
    */
   customer_id?: string;
   /**
+   * Opaque application subject ID after authentication; requires customer_id and does not record the ID in evidence.
+   */
+  subject_id?: string;
+  /**
    * Zero or omitted selects current configuration.
    */
   version?: number;

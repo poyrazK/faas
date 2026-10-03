@@ -26,6 +26,12 @@ func appTaskFromSQLC(row sqlc.AppTask) (AppTask, error) {
 		ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), StartDeadlineAt: timestamptzToTimePtr(row.StartDeadlineAt),
 		OutcomeCode: row.OutcomeCode,
 	}
+	if row.ExclusiveOperationID.Valid {
+		task.ExclusiveOperationID = pgUUIDString(row.ExclusiveOperationID)
+	}
+	if row.ExclusiveGeneration.Valid {
+		task.ExclusiveGeneration = row.ExclusiveGeneration.Int64
+	}
 	if row.CronID.Valid {
 		task.CronID = pgUUIDString(row.CronID)
 	}

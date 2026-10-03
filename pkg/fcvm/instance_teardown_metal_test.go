@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 395 — failed stops retain the real guest; concurrent retries cannot ack early.
+// adr: 469 — failed stops retain the real guest; concurrent retries cannot ack early.
 package fcvm
 
 import (

@@ -32,6 +32,9 @@ type Metrics struct {
 	duration       *prometheus.HistogramVec
 	bytes          *prometheus.CounterVec
 	idleTimeouts   prometheus.Counter
+	tlsReady       prometheus.Gauge
+	tlsNotReady    prometheus.Gauge
+	tlsExpiry      prometheus.Gauge
 }
 
 // New creates and registers a TCP metrics bundle. A nil registry creates an
@@ -82,6 +85,10 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 			Help: "Number of raw TCP sessions terminated by the idle timeout.",
 		}),
 	}
+	m.tlsReady = prometheus.NewGauge(prometheus.GaugeOpts{Name: prefix + "_tcp_tls_listeners_ready", Help: "Enabled TLS listeners with a currently valid hostname certificate."})
+	m.tlsNotReady = prometheus.NewGauge(prometheus.GaugeOpts{Name: prefix + "_tcp_tls_listeners_not_ready", Help: "Enabled TLS listeners without a currently valid hostname certificate."})
+	m.tlsExpiry = prometheus.NewGauge(prometheus.GaugeOpts{Name: prefix + "_tcp_tls_certificate_expiry_seconds", Help: "Seconds until the earliest expiry among ready TLS listeners; zero when none are ready."})
+	registry.MustRegister(m.tlsReady, m.tlsNotReady, m.tlsExpiry)
 	registry.MustRegister(
 		m.accepted,
 		m.rejected,
@@ -92,7 +99,7 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 		m.bytes,
 		m.idleTimeouts,
 	)
-	for _, reason := range []string{"global_limit", "route_missing", "route_error", "invalid_route", "account_limit", "target_error"} {
+	for _, reason := range []string{"global_limit", "route_missing", "route_error", "invalid_route", "account_limit", "target_error", "tls_handshake"} {
 		m.rejected.WithLabelValues(reason)
 	}
 	for _, outcome := range []string{outcomeSuccess, outcomeError, outcomeCanceled, outcomeRejected} {
@@ -103,6 +110,23 @@ func New(registry *prometheus.Registry, prefix string) *Metrics {
 		m.bytes.WithLabelValues(direction)
 	}
 	return m
+}
+
+// SetTLSReadiness replaces aggregate observations without hostname labels.
+func (m *Metrics) SetTLSReadiness(ready, notReady int, earliestExpiry time.Time) {
+	if m == nil {
+		return
+	}
+	m.tlsReady.Set(float64(ready))
+	m.tlsNotReady.Set(float64(notReady))
+	seconds := 0.0
+	if !earliestExpiry.IsZero() {
+		seconds = time.Until(earliestExpiry).Seconds()
+		if seconds < 0 {
+			seconds = 0
+		}
+	}
+	m.tlsExpiry.Set(seconds)
 }
 
 // Registry returns the registry populated by New.

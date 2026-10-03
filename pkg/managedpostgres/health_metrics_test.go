@@ -1,4 +1,4 @@
-// adr: 389 — bounded health labels and collector heartbeat semantics.
+// adr: 463 — bounded health labels and collector heartbeat semantics.
 
 package managedpostgres
 

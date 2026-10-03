@@ -195,6 +195,9 @@ func TestProjectEnvironmentCloneCopiesScopedStateAtomically(t *testing.T) {
 	if response.ClonedFrom != "production" || response.Clone == nil || !response.Clone.ConfigurationCopied || response.Clone.VariablesCopied != 1 || response.Clone.SecretsCopied != 1 {
 		t.Fatalf("clone response=%+v", response)
 	}
+	if strings.Join(response.Clone.SharedResources, ",") != "domains,policies" {
+		t.Fatalf("shared resources must be unique: %v", response.Clone.SharedResources)
+	}
 	if strings.Contains(rec.Body.String(), "sealed-source") || strings.Contains(rec.Body.String(), "age1-source") {
 		t.Fatalf("clone response leaked secret material: %s", rec.Body.String())
 	}

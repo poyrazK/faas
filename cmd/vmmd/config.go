@@ -28,10 +28,10 @@ import (
 // explicit).
 type Config struct {
 	// ResourceJournalDir persists lease intent and process incarnations before
-	// resource creation (ADR-399). Keep it outside jail tmpfs and /run.
+	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
-	// reports (ADR-397). Keep it outside /run and the Firecracker jail tmpfs.
+	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
 
 	// PreparedNetworks bounds the optional cache of unused namespaces.

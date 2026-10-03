@@ -73,19 +73,24 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
+	var gateDecision api.RouteGateDecision
+	var healthDecision api.RouteHealthDecision
 	updated, auditID, err := advancer.AdvanceCanary(r.Context(), d.ID, state.CanaryAdvanceParams{
 		ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
 		RequireSafeReleaseLease:   requireWorkerLease,
 		RequireCanaryStageElapsed: requireWorkerLease,
 		CanaryStageDuration:       current.Duration,
 		Audit:                     audit,
+		RouteCheckFingerprint:     s.routeGateFingerprint,
+		RouteGateDecision:         &gateDecision,
+		RouteHealthDecision:       &healthDecision,
 	})
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
 	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
-		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID),
+		Deployment: s.deploymentResponse(updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision,
 	})
 }
 
@@ -169,7 +174,13 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	if err == nil {
 		return true
 	}
+	var routeBlocked *state.RouteGateBlockedError
+	var healthBlocked *state.RouteHealthBlockedError
 	switch {
+	case errors.As(err, &healthBlocked):
+		s.routeHealthError(w, err)
+	case errors.As(err, &routeBlocked):
+		s.canaryRouteGateError(w, err)
 	case errors.Is(err, state.ErrSafeReleaseLeaseUnavailable):
 		api.WriteProblem(w, api.ErrSafeReleaseUnavailable())
 	case errors.Is(err, state.ErrCanaryStageNotElapsed):

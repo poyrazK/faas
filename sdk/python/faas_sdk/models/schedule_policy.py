@@ -16,12 +16,16 @@ T = TypeVar("T", bound="SchedulePolicy")
 
 @_attrs_define
 class SchedulePolicy:
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for a prior
+    dispatched request to complete because the scheduler has no stop acknowledgement for a request already delivered to
+    the app.
+
+    """
 
     version: SchedulePolicyVersion
     overlap: SchedulePolicyOverlap
-    """Allow concurrent occurrences, record-and-skip while one is active, or stop prior scheduled work before
-    replacement."""
+    """Allow concurrent occurrences, record-and-skip while one is active, or replace when previous work can be
+    stopped safely. HTTP Crons wait for a dispatched request to finish."""
     missed_runs: SchedulePolicyMissedRuns
     """On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as
     skipped."""

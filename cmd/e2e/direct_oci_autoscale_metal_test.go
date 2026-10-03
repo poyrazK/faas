@@ -57,7 +57,7 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 			h.DumpLogs(t)
 		}
 	})
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	key := h.SeedAccount(context.Background(), api.PlanPro)
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{
 		Slug: "oci-autoscale", Type: "app", MaxConcurrency: 2, RequireAuthn: &falsy,
@@ -73,7 +73,7 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer deployCancel()
 	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 75*time.Second)

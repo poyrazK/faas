@@ -1,4 +1,4 @@
-// adr: 388 — release delivery and migration rotation retirement fences.
+// adr: 462 — release delivery and migration rotation retirement fences.
 
 package managedpostgres
 

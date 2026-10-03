@@ -1,4 +1,4 @@
-// adr: 393 — no deployment-attached command crosses the cutover barrier.
+// adr: 467 — no deployment-attached command crosses the cutover barrier.
 package sched
 
 import (

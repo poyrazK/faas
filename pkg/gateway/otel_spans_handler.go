@@ -16,7 +16,7 @@
 // the loopback-only posture — see ADR-070 cross-box HA).
 //
 // Failure posture:
-//   - 400 on shape-invalid OTLP body (malformed JSON, no spans).
+//   - 400 on shape-invalid OTLP body (malformed body, invalid IDs).
 //   - 401 on bearer auth failure (apid Unauthenticated).
 //   - 402 on plan-disabled (DebugTelemetryEnabled=false).
 //   - 429 on per-account rate cap exhaustion.
@@ -29,10 +29,8 @@ package gateway
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -44,7 +42,6 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
@@ -108,20 +105,11 @@ func NewOTelSpansHandler(cfg OTelSpansHandlerConfig) *OTelSpansHandler {
 	return &OTelSpansHandler{cfg: cfg}
 }
 
-// otelSpansResponse is the 200 OK body. Match the §12 panel
-// shape — operators want {accepted_spans, truncated} so a
-// quick `curl -s .../v1/otel/v1/traces | jq` confirms the
-// truncation tripwire is or isn't firing.
-type otelSpansResponse struct {
-	AcceptedSpans int  `json:"accepted_spans"`
-	Truncated     bool `json:"truncated"`
-}
-
 // ServeHTTP handles POST /v1/otel/v1/traces. Drain-tracked for
 // graceful shutdown parity with the trace handler.
 //
 // PR-D code-review #6: auth runs BEFORE the body read. The
-// previous order decoded up to 4 MiB + protojson-unmarshalled
+// previous order decoded up to 4 MiB + OTLP-decoded
 // every request before peeking the Authorization header, so
 // unauthenticated attackers could amplify their CPU/bandwidth
 // spend ~1000x against the gateway by sending valid-shaped
@@ -141,6 +129,7 @@ type otelSpansResponse struct {
 // Unauthenticated 401s now do ~header-parse work; the
 // 4 MiB + decode cost only applies to legitimate traffic.
 func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	codec, codecErr := traceCodec(r)
 	// Drain tracker (parity with trace_handler.go:74-78).
 	done := func() {}
 	if h.cfg.Drain != nil {
@@ -150,16 +139,42 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
-		writeProblem(w, http.StatusMethodNotAllowed, "method not allowed")
+		codec.problem(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
+	accountID, authorized := h.authorizeOTLP(w, r, codec)
+	if !authorized {
+		return
+	}
+
+	if codecErr != nil {
+		codec.problem(w, http.StatusUnsupportedMediaType, codecErr.Error())
+		return
+	}
+	if encoding := strings.TrimSpace(r.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "gzip") {
+		codec.problem(w, http.StatusUnsupportedMediaType, "unsupported Content-Encoding")
+		return
+	}
+
+	batches, err := readTraceBatches(w, r, codec)
+	if err != nil {
+		h.observeIngest("shape_invalid")
+		codec.problem(w, http.StatusBadRequest, "invalid OTLP body")
+		return
+	}
+	h.acceptTraceBatches(w, codec, accountID, batches)
+}
+
+// authorizeOTLP completes authentication and quota checks without reading
+// customer-controlled payloads or initializing a decompressor.
+func (h *OTelSpansHandler) authorizeOTLP(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) (uuid.UUID, bool) {
 	// ---- Step 2: Bearer parse (no body read) ----
 	tok := bearerToken(r)
 	if tok == "" {
 		h.observeAuthFailure("unauthenticated")
-		writeProblem(w, http.StatusUnauthorized, "missing bearer token")
-		return
+		codec.problem(w, http.StatusUnauthorized, "missing bearer token")
+		return uuid.Nil, false
 	}
 
 	// ---- Step 3: apid Auth RPC (no body read) ----
@@ -167,19 +182,19 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if status.Code(err) == codes.Unauthenticated {
 			h.observeAuthFailure("unauthenticated")
-			writeProblem(w, http.StatusUnauthorized, "unauthenticated")
-			return
+			codec.problem(w, http.StatusUnauthorized, "unauthenticated")
+			return uuid.Nil, false
 		}
 		h.observeAuthFailure("internal")
 		h.cfg.Log.Warn("apid auth RPC failed", "err", err)
-		writeProblem(w, http.StatusInternalServerError, "auth unavailable")
-		return
+		codec.problem(w, http.StatusInternalServerError, "auth unavailable")
+		return uuid.Nil, false
 	}
 	accountID, err := uuid.Parse(accountIDStr)
 	if err != nil {
 		h.observeAuthFailure("unauthenticated")
-		writeProblem(w, http.StatusUnauthorized, "malformed account_id")
-		return
+		codec.problem(w, http.StatusUnauthorized, "malformed account_id")
+		return uuid.Nil, false
 	}
 
 	// ---- Step 4: Plan gate ----
@@ -187,8 +202,8 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !limits.DebugTelemetryEnabled {
 		h.observeAuthFailure("plan_disabled")
 		w.Header().Set("Retry-After", "0")
-		writeProblem(w, http.StatusPaymentRequired, "plan does not include telemetry")
-		return
+		codec.problem(w, http.StatusPaymentRequired, "plan does not include telemetry")
+		return uuid.Nil, false
 	}
 
 	// ---- Step 5: Per-account token bucket ----
@@ -196,105 +211,94 @@ func (h *OTelSpansHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !taken {
 		h.observeIngest("rate_limited")
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryMs/1000))
-		writeProblem(w, http.StatusTooManyRequests, "rate limited")
-		return
+		codec.problem(w, http.StatusTooManyRequests, "rate limited")
+		return uuid.Nil, false
 	}
 
-	// ---- Step 6: Body read (now auth-bounded) ----
-	// 4 MiB cap. OTLP allows up to 2 MiB per spec; the 2x
-	// buffer is headroom for a chatty service emitting
-	// attribute-heavy spans.
-	const bodyCap = 4 << 20
-	r.Body = http.MaxBytesReader(w, r.Body, bodyCap)
-	raw, err := io.ReadAll(r.Body)
+	return accountID, true
+}
+
+func readTraceBatches(w http.ResponseWriter, r *http.Request, codec otlpTraceCodec) ([]traceSpanBatch, error) {
+	raw, err := readOTLPTraceBody(w, r)
 	if err != nil {
-		h.observeIngest("shape_invalid")
-		writeProblem(w, http.StatusBadRequest, "body too large or unreadable")
-		return
+		return nil, err
 	}
+	request, err := codec.decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	return extractTraceBatches(request)
+}
 
-	// ---- Step 7: OTLP decode + shape validation ----
-	req, decodeErr := decodeExportTraceServiceRequest(raw)
-	if decodeErr != nil {
-		h.observeIngest("shape_invalid")
-		writeProblem(w, http.StatusBadRequest, "shape_invalid: "+decodeErr.Error())
-		return
+// acceptTraceBatches keeps per-trace account isolation while allowing standard
+// exporter batches. Contested traces are rejected without discarding the other
+// traces in the request or inviting retries of data already accepted.
+func (h *OTelSpansHandler) acceptTraceBatches(w http.ResponseWriter, codec otlpTraceCodec, accountID uuid.UUID, batches []traceSpanBatch) {
+	var rejected int64
+	accepted := 0
+	for _, batch := range batches {
+		if _, err := h.cfg.Acc.Add(batch.traceID, accountID, batch.spans); err != nil {
+			rejected += int64(len(batch.spans))
+			h.observeAuthFailure("unauthenticated")
+			continue
+		}
+		accepted += len(batch.spans)
 	}
-	traceID, spans, shapeErr := extractAndValidate(req)
-	if shapeErr != nil {
-		h.observeIngest("shape_invalid")
-		writeProblem(w, http.StatusBadRequest, "shape_invalid: "+shapeErr.Error())
-		return
+	response := &collectortracepb.ExportTraceServiceResponse{}
+	if rejected > 0 {
+		response.PartialSuccess = &collectortracepb.ExportTracePartialSuccess{
+			RejectedSpans: rejected,
+			ErrorMessage:  "some spans could not be accepted",
+		}
 	}
-
-	// ---- Step 8: Accumulator Add ----
-	added, accErr := h.cfg.Acc.Add(traceID, accountID, spans)
-	if accErr != nil {
-		// PR-D code-review #4: a trace_id being contended
-		// across accounts is treated as 401 (the bucket
-		// can't safely coalesce both).
-		h.observeAuthFailure("unauthenticated")
-		writeProblem(w, http.StatusUnauthorized, "trace_id claimed by another account")
-		return
-	}
-	_ = added
-
 	h.observeIngest("inserted")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(otelSpansResponse{
-		AcceptedSpans: len(spans),
-		Truncated:     false,
-	})
+	w.Header().Set("X-Gregale-Accepted-Spans", fmt.Sprint(accepted))
+	codec.write(w, http.StatusOK, response)
 }
 
-// decodeExportTraceServiceRequest unmarshals an OTLP/JSON-protobuf
-// body. The OTLP standard uses the canonical JSON encoding; we
-// rely on the protojson helper rather than rolling our own
-// (protojson handles the protobuf-JSON oneof edge cases the
-// standard encodes).
-func decodeExportTraceServiceRequest(raw []byte) (*collectortracepb.ExportTraceServiceRequest, error) {
-	var req collectortracepb.ExportTraceServiceRequest
-	if err := protojson.Unmarshal(raw, &req); err != nil {
-		return nil, fmt.Errorf("decode otlp: %w", err)
-	}
-	return &req, nil
+type traceSpanBatch struct {
+	traceID string
+	spans   []summarizedSpan
 }
 
-// extractAndValidate walks the ResourceSpans/ScopeSpans/Span
-// tree, returns the canonical W3C trace-id (hex) + a flat slice
-// of summarizedSpan, or a shape error describing what was wrong.
-// Spans from different trace_ids in one POST are rejected — OTLP
-// is trace-bounded; a multi-trace POST is a customer bug.
-func extractAndValidate(req *collectortracepb.ExportTraceServiceRequest) (string, []summarizedSpan, error) {
-	if len(req.GetResourceSpans()) == 0 {
-		return "", nil, errors.New("no resource_spans")
-	}
-	var traceID string
-	var out []summarizedSpan
+// extractTraceBatches validates the whole request before buffering any spans,
+// and preserves the first-seen trace order. Empty exports are successful.
+func extractTraceBatches(req *collectortracepb.ExportTraceServiceRequest) ([]traceSpanBatch, error) {
+	var batches []traceSpanBatch
+	index := make(map[string]int)
 	for _, rs := range req.GetResourceSpans() {
 		for _, ss := range rs.GetScopeSpans() {
-			for _, sp := range ss.GetSpans() {
-				tid := formatTraceID(sp.GetTraceId())
-				if tid == "" {
-					return "", nil, errors.New("span missing trace_id")
+			for _, span := range ss.GetSpans() {
+				if !validOTLPID(span.GetTraceId(), 16) || !validOTLPID(span.GetSpanId(), 8) {
+					return nil, errors.New("invalid trace or span ID")
 				}
-				if traceID == "" {
-					traceID = tid
-				} else if traceID != tid {
-					return "", nil, errors.New("trace_id mismatch across spans")
+				if parent := span.GetParentSpanId(); len(parent) != 0 && !validOTLPID(parent, 8) {
+					return nil, errors.New("invalid parent span ID")
 				}
-				if !isOTelHex32(tid) {
-					return "", nil, errors.New("trace_id not 32-char lowercase hex")
+				traceID := formatTraceID(span.GetTraceId())
+				position, found := index[traceID]
+				if !found {
+					position = len(batches)
+					index[traceID] = position
+					batches = append(batches, traceSpanBatch{traceID: traceID})
 				}
-				out = append(out, summarizeSpan(sp))
+				batches[position].spans = append(batches[position].spans, summarizeSpan(span))
 			}
 		}
 	}
-	if len(out) == 0 {
-		return "", nil, errors.New("no spans")
+	return batches, nil
+}
+
+func validOTLPID(id []byte, length int) bool {
+	if len(id) != length {
+		return false
 	}
-	return traceID, out, nil
+	for _, value := range id {
+		if value != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // summarizeSpan flattens one OTLP Span into the summarizedSpan
@@ -401,22 +405,6 @@ func extractDBStatement(attrs map[string]string) string {
 		return v
 	}
 	return ""
-}
-
-// isOTelHex32 matches the W3C trace-id regex: 32 lowercase hex
-// chars. Returns false on any other shape — used both here and
-// in the apid WriteSpansSummary handler's validator (Stage 4).
-func isOTelHex32(s string) bool {
-	if len(s) != 32 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c < '0' || c > '9' && c < 'a' || c > 'f' {
-			return false
-		}
-	}
-	return true
 }
 
 // bearerToken extracts the raw Bearer token from the

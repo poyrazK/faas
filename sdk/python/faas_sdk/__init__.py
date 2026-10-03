@@ -24,6 +24,7 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 """
 
 from ._rfc7807 import (
@@ -52,6 +53,24 @@ from .dev_bridge import (
     with_dev_bridge_context,
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .flags import (
+    GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_PROPAGATION_HEADER,
+    AsyncGregaleFlagsTransport,
+    FlagDecision,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+    evaluate_flag,
+    evaluate_variant,
+    flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
+    flag_variant_bucket,
+    validate_bundle,
+)
+
+from .commit import insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -96,6 +115,20 @@ __all__ = (
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REVISION_HEADER",
+    "GREGALE_FLAG_CONTEXT_HEADER",
+    "GREGALE_FLAG_EVIDENCE_HEADER",
+    "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GregaleFlags",
+    "GregaleFlagsMiddleware",
+    "AsyncGregaleFlagsTransport",
+    "FlagDecision",
+    "evaluate_flag",
+    "evaluate_variant",
+    "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
+    "flag_variant_bucket",
+    "validate_bundle",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",
     "AsyncGregaleReleaseTransport",
@@ -136,4 +169,5 @@ __all__ = (
     "DevBridgeTransport",
     "current_dev_bridge_context",
     "with_dev_bridge_context",
+    "insert_commit_event",
 )

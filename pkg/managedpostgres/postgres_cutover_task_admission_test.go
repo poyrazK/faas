@@ -1,19 +1,26 @@
-// adr: 393 — durable command admission shares the app tuple cutover barrier.
+// adr: 467 — durable command admission shares the app tuple cutover barrier.
 package managedpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func createCutoverAppTask(t *testing.T, ps *state.PgStore, account, app string, kind state.AppTaskKind) state.AppTask {
+	t.Helper()
+	return createCutoverOwnedAppTask(t, ps, account, app, kind, "", 0)
+}
+
+func createCutoverOwnedAppTask(t *testing.T, ps *state.PgStore, account, app string, kind state.AppTaskKind, operation string, generation int64) state.AppTask {
 	t.Helper()
 	ctx := t.Context()
 	d, err := ps.CreateDeployment(ctx, state.Deployment{AppID: app, Kind: state.DeploymentKindImage, ImageDigest: "sha256:cutover-task"})
@@ -29,7 +36,8 @@ func createCutoverAppTask(t *testing.T, ps *state.PgStore, account, app string, 
 		t.Fatal(err)
 	}
 	params := state.CreateAppTaskParams{AccountID: account, AppID: app, DeploymentID: d.ID, Kind: kind,
-		Command: []string{"bin/migrate"}, CreatedAt: time.Now().UTC().Add(-time.Second)}
+		Command: []string{"bin/migrate"}, CreatedAt: time.Now().UTC().Add(-time.Second),
+		ExclusiveOperationID: operation, ExclusiveGeneration: generation}
 	if kind == state.AppTaskKindCron {
 		cron, err := ps.CreateCronWithOptions(ctx, app, "* * * * *", "", true, state.CronOptions{Command: params.Command})
 		if err != nil {
@@ -102,6 +110,106 @@ func TestPostgresCutoverFenceLeavesQueuedTasksAndDispatchesOtherApps(t *testing.
 	_, down := cutoverMigrationStatements(t, "20261001184558948_managed_postgres_cutover_task_fence.sql")
 	if _, err := s.pool.Exec(t.Context(), down); err == nil {
 		t.Fatal("rollback removed a live task admission barrier")
+	}
+}
+
+// adr: 467
+// adr: 393 — PostgreSQL admission and exclusive-operation ownership both govern dispatch.
+func TestPostgresCutoverTaskDispatchPreservesExclusiveOwner(t *testing.T) {
+	for _, phase := range []string{"running", "expired-before-claim", "expired-before-run", "fenced-before-claim", "fenced-before-run", "deadline-before-run"} {
+		t.Run(phase, func(t *testing.T) {
+			s, ps, c, _ := admissionCutoverFixture(t)
+			ctx := t.Context()
+			owners := state.ExclusiveWorkStore(ps)
+			if _, err := owners.UpsertExclusiveWorkPolicy(ctx, c.AccountID, exclusivework.Policy{
+				Name: "cutover-task", Scope: "account", MemberAppIDs: []string{c.AppID},
+				Contention: "queue", LeaseSeconds: 30, MaxAttemptSeconds: 60,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			op, _, err := owners.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
+				AccountID: c.AccountID, AppID: c.AppID, PolicyName: "cutover-task",
+				Key: json.RawMessage(`"migration"`), Request: json.RawMessage(`{"kind":"app_task"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, err := owners.ClaimExclusiveOperation(ctx, c.AccountID, op.ID, "cutover-task-worker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			task := createCutoverOwnedAppTask(t, ps, c.AccountID, c.AppID, state.AppTaskKindManual, op.ID, owner.Generation)
+			expire := func() {
+				t.Helper()
+				if _, err := s.pool.Exec(ctx, `UPDATE exclusive_work_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fence := func() {
+				t.Helper()
+				if _, err := s.FenceCutoverAdmission(ctx, c.AccountID, c.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if phase == "expired-before-claim" {
+				expire()
+			}
+			if phase == "fenced-before-claim" {
+				fence()
+			}
+			claimed, err := ps.ClaimNextAppTask(ctx, "schedd", time.Now(), time.Minute)
+			if phase == "expired-before-claim" || phase == "fenced-before-claim" {
+				if !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("ineligible operation claimed: %+v, %v", claimed, err)
+				}
+				saved, err := ps.AppTaskByID(ctx, c.AccountID, c.AppID, task.ID)
+				if err != nil || saved.Status != state.AppTaskQueued || saved.LeaseToken != nil {
+					t.Fatalf("filtered task lost queue: %+v, %v", saved, err)
+				}
+				return
+			}
+			if err != nil || claimed.ID != task.ID || claimed.ExclusiveOperationID != op.ID || claimed.ExclusiveGeneration != owner.Generation {
+				t.Fatalf("claim lost exclusive principal: %+v, %v", claimed, err)
+			}
+			if phase == "expired-before-run" {
+				expire()
+			}
+			if phase == "fenced-before-run" {
+				fence()
+			}
+			startedAt := time.Now()
+			if phase == "deadline-before-run" {
+				deadline := startedAt.Add(time.Second)
+				if _, err := s.pool.Exec(ctx, `UPDATE app_tasks SET start_deadline_at=$2 WHERE id=$1`, task.ID, deadline); err != nil {
+					t.Fatal(err)
+				}
+				startedAt = deadline.Add(time.Second)
+			}
+			bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			running, err := ps.MarkAppTaskRunning(bounded, task.ID, *claimed.LeaseToken, startedAt)
+			if phase == "running" {
+				if err != nil || running.ExclusiveOperationID != op.ID || running.ExclusiveGeneration != owner.Generation {
+					t.Fatalf("running lost exclusive principal: %+v, %v", running, err)
+				}
+				return
+			}
+			want := state.ErrAppTaskLeaseLost
+			if phase == "fenced-before-run" {
+				want = state.ErrManagedPostgresAdmissionFenced
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("dispatch crossed %s: %v, want %v", phase, err, want)
+			}
+			saved, err := ps.AppTaskByID(ctx, c.AccountID, c.AppID, task.ID)
+			status := state.AppTaskRestoring
+			if phase == "deadline-before-run" {
+				status = state.AppTaskCancelled
+			}
+			if err != nil || saved.Status != status || saved.StartedAt != nil {
+				t.Fatalf("rejected dispatch changed task: %+v, %v", saved, err)
+			}
+		})
 	}
 }
 

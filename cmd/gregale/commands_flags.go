@@ -8,13 +8,14 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func cmdFlags(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes> --project SLUG [flags]", "flags")
+		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
 		return 1
 	}
 	fs := newFlagSet("flags-"+args[0], flag.ContinueOnError)
@@ -22,10 +23,13 @@ func cmdFlags(args []string) int {
 	environment := fs.String("environment", "production", "named project environment")
 	file := fs.String("file", "", "JSON update with expected_version and config")
 	key := fs.String("key", "", "flag key")
+	ruleID := fs.String("rule-id", "", "targeting rule ID for outcomes or rollout promotion")
 	customer := fs.String("customer-id", "", "verified platform customer UUID")
+	subject := fs.String("subject-id", "", "opaque authenticated application subject ID for inspect")
 	fallbackVariant := fs.String("fallback-variant", "", "named-variant fallback for inspect")
 	version := fs.Int64("version", 0, "historical version for inspect or rollback")
-	expected := fs.Int64("expected-version", -1, "current version required for rollback")
+	configVersion := fs.Int64("config-version", 0, "filter outcomes to one flag configuration version")
+	expected := fs.Int64("expected-version", -1, "current version required for rollback or rollout promotion")
 	before := fs.Int64("before-version", 0, "history pagination boundary")
 	value := fs.String("value", "", "filter requests by true or false")
 	variant := fs.String("variant", "", "filter variant request evidence by key")
@@ -46,11 +50,13 @@ func cmdFlags(args []string) int {
 	case "apply":
 		valid = *file != ""
 	case "inspect":
-		valid = *key != ""
+		valid = *key != "" && (*subject == "" || *customer != "")
 	case "requests":
 		valid = *key != "" && (*variant == "" || *value == "")
 	case "outcomes":
-		valid = *key != ""
+		valid = *key != "" && *configVersion >= 0
+	case "promote":
+		valid = *key != "" && *ruleID != "" && *expected >= 0
 	case "rollback":
 		valid = *version > 0 && *expected >= 0
 	}
@@ -76,13 +82,23 @@ func cmdFlags(args []string) int {
 			out, err = client.PublishProjectFlags(ctx, *project, *environment, raw)
 		}
 	case "inspect":
-		out, err = client.InspectProjectFlag(ctx, *project, *environment, *key, *customer, *version, *fallbackVariant)
+		out, err = client.InspectProjectFlagForSubject(ctx, *project, *environment, *key, *customer, *subject, *version, *fallbackVariant)
 	case "rollback":
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":
 		out, err = client.ProjectFlagRequests(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "value": {*value}, "variant": {*variant}, "used": {*used}, "since": {*since}, "cursor": {*cursor}})
 	case "outcomes":
-		out, err = client.ProjectFlagOutcomes(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "since": {*since}})
+		query := url.Values{"customer_id": {*customer}, "rule_id": {*ruleID}, "since": {*since}}
+		if *configVersion > 0 {
+			query.Set("config_version", strconv.FormatInt(*configVersion, 10))
+		}
+		out, err = client.ProjectFlagOutcomes(ctx, *project, *environment, *key, query)
+	case "promote":
+		var body []byte
+		body, err = json.Marshal(map[string]any{"expected_version": *expected, "rule_id": *ruleID})
+		if err == nil {
+			out, err = client.PromoteProjectFlagRollout(ctx, *project, *environment, *key, body)
+		}
 	}
 	if err != nil {
 		return printErr("Flags operation failed", err)

@@ -79,7 +79,7 @@ func cmdSecrets(args []string) int {
 	case subRotate:
 		return secretsRotate(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown secrets subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown secrets subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

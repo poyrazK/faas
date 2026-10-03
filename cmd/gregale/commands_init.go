@@ -264,6 +264,8 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
+	case "mcp-node":
+		return "https://gregale.dev/docs/mcp"
 	default:
 		return cliDocsURL
 	}
@@ -351,6 +353,8 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "mcp-node":
+		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
 	case "customer-platform":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",

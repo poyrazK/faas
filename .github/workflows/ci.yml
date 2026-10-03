@@ -231,6 +231,9 @@ jobs:
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
 
+      - name: signed component hotfix controller contracts
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -243,6 +246,9 @@ jobs:
 
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
+
+      - name: npm publication readiness and tag isolation
+        run: bash scripts/publish-npm-packages_test.sh
 
       # Cloudflare Free can replace origin 502/504 bodies. Keep the optional
       # public-timeout Worker contract executable in CI so its marker-based
@@ -631,8 +637,9 @@ jobs:
             state_coverage: false
     # The state suite uses a migrated template database and clones a clean
     # database per fixture, so the test binary has a strict 20-minute budget.
-    # Leave a small amount of job-level headroom for coverage and upload.
-    timeout-minutes: 25
+    # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
+    # and artifact upload after the main suite completes.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -703,6 +710,36 @@ jobs:
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}
         run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
+
+      - name: require PostgreSQL operation-policy retirement
+        if: matrix.id == 'a'
+        run: |
+          set -o pipefail
+          python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
+
+      - name: upload PostgreSQL operation-policy retirement log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operation-policy-postgres-contract
+          path: operation-policy-postgres-contract.log
+          if-no-files-found: ignore
+
+      - name: require PostgreSQL UDP contracts
+        if: matrix.id == 'a'
+        env:
+          GOFLAGS: -race
+        run: |
+          set -o pipefail
+          make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
+
+      - name: upload PostgreSQL UDP contract log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: udp-postgres-contract
+          path: udp-postgres-contract.log
+          if-no-files-found: ignore
 
       - name: coverage floor (ship-blocking packages)
         # Validates the ship-blocking package floors via the shared
@@ -882,6 +919,46 @@ jobs:
             ~/go/pkg/mod
           key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
+  container-contract:
+    name: portable container contracts (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: cache container contract builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          restore-keys: |
+            go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-container-contract-${{ runner.os }}-
+      - name: require portable container contracts
+        run: |
+          set -o pipefail
+          make test-container-contract 2>&1 | tee container-contract.log
+      - name: require portable UDP contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+      - name: retain container qualification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            container-contract.log
+            udp-contract.log
+          if-no-files-found: warn
+
   checks:
     # Nine gates that each finished in well under two minutes used to run
     # as nine separate jobs. Each one paid ~40 s of runner spin-up +
@@ -993,7 +1070,7 @@ jobs:
       - name: product capability registry and generated matrix
         run: make capabilities-check
       - name: standards registry and generated matrix
-        run: make standards-check standards-conformance
+        run: make standards-check standards-conformance standards-contract-check focus-contract-check
       - name: customer docs and pricing
         run: make pricing-check docs-links-check
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
@@ -1175,6 +1252,7 @@ jobs:
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
+          make udp-alert-check tcp-tls-alert-check commit-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -1207,6 +1285,7 @@ jobs:
         run: |
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
+          python3 scripts/ci/test_udp_deployment.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -1239,6 +1318,7 @@ jobs:
               https://github.com/ansible-collections/community.postgresql.git \
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
+          ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
@@ -1422,6 +1502,8 @@ jobs:
       - name: unit tests
         working-directory: sdk/node
         run: npm run test:unit
+      - name: Gregale Issues staging smoke contract
+        run: node --test tests/issues-smoke/run.test.mjs
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
   # telemetry persistence together; the small fakeapid fixture cannot prove

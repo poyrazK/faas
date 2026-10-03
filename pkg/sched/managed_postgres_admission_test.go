@@ -1,4 +1,4 @@
-// adr: 392 — cutover barriers apply even to scheduler paths bypassing request gates.
+// adr: 466 — cutover barriers apply even to scheduler paths bypassing request gates.
 package sched
 
 import (

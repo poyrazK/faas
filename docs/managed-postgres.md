@@ -97,7 +97,7 @@ provider timeout. Provider request failures back off to fifteen minutes, so a
 persistent outage can become stale. Replicas do not share a global provider
 rate limit. Monitor stale counts and sweep age when growing the catalog; do
 not interpret cached observations as a guaranteed real-time availability SLO.
-See [ADR-389](adr/389-managed-postgres-provider-health.md) and the
+See [ADR-463](adr/463-managed-postgres-provider-health.md) and the
 [health runbook](runbooks/FaasManagedPostgresDegraded.md).
 
 ## Provider qualification
@@ -459,10 +459,10 @@ pending. Both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and
-reprepare before retiring those keys. See [ADR-391](adr/391-managed-postgres-cutover-verification.md).
+reprepare before retiring those keys. See [ADR-465](adr/465-managed-postgres-cutover-verification.md).
 
 The next cutover prerequisite is an internal, durable app-wide admission fence
-([ADR-392](adr/392-managed-postgres-cutover-admission-fence.md)). It requires fresh
+([ADR-466](adr/466-managed-postgres-cutover-admission-fence.md)). It requires fresh
 verification and blocks new instance admission and running-state publication,
 including worker, job, mirror, and warm-pool paths. It persists through retries
 and credential verification refresh, and completed cancellation releases it.
@@ -477,20 +477,20 @@ resources. Delayed boot RPCs must read the fence again, including after a daemon
 restart. Warm and migration resume/capture operations use the same admission check
 and destruction join. Default-local nodes honor a configured `db_url` or
 `FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
-See [ADR-394](adr/394-managed-postgres-vmmd-admission.md). Teardown now retains
+See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the
-original resources ([ADR-395](adr/395-managed-postgres-confirmed-teardown.md)).
+original resources ([ADR-469](adr/469-managed-postgres-confirmed-teardown.md)).
 Scheduler watchdog, liveness, OOM, operator restart and pressure-recycling paths
 also retain their resident state, admission and host-port ownership when Destroy
 fails; a schedd restart rebuilds those reservations. Read failures and state races
 cannot free another operation's resident capacity
-([ADR-396](adr/396-managed-postgres-scheduler-teardown-accounting.md)). Remaining
+([ADR-470](adr/470-managed-postgres-scheduler-teardown-accounting.md)). Remaining
 boot/migration cleanup paths need further work. Liveness and workload OOM reports
 now persist on vmmd and retry failed delivery/cleanup; schedd distinguishes
 acceptance from applied outcomes, including across-node relays. Source node
 binding refuses reports delayed past a completed migration
-([ADR-397](adr/397-managed-postgres-failure-report-redelivery.md)).
+([ADR-471](adr/471-managed-postgres-failure-report-redelivery.md)).
 This proof is local to the running daemon. Crash recovery, all-node
 capability/ownership checks and durable drain receipts remain pending.
 Operators must keep `/var/lib/faas/vmmd-failures` on persistent storage. Pending
@@ -503,7 +503,7 @@ spool or treat a cold instance row as fleet teardown proof.
 Linux vmmd now inventories surviving Firecracker/jailer processes, links,
 namespaces and jails before allocating prepared networks or serving RPCs. It
 quarantines observed allocator slots and rejects boot/stop/resume requests for
-their instance IDs ([ADR-398](adr/398-managed-postgres-restart-resource-quarantine.md)).
+their instance IDs ([ADR-472](adr/472-managed-postgres-restart-resource-quarantine.md)).
 Startup logs report the observed slot, instance and process counts. An incomplete
 required inventory fails startup. Quarantine persists for that Manager's lifetime;
 even a later orphan sweep does not release those slots. Reattachment, durable
@@ -515,7 +515,7 @@ lifecycle acceptance remains pending.
 
 Linux vmmd also commits lease intent before creating new resources and records
 kernel boot ID, PID and process start ticks before guest boot returns
-([ADR-399](adr/399-managed-postgres-resource-intent-journal.md)). Keep
+([ADR-473](adr/473-managed-postgres-resource-intent-journal.md)). Keep
 `/var/lib/faas/vmmd-resources` on persistent storage alongside the failure outbox.
 The generated service provisions it with mode 0700. A `resource_journal_dir`
 TOML override requires a private, writable persistent directory and an existing
@@ -535,7 +535,7 @@ passed the real guest checkpoint/reopen regression and three leak checks.
 Native lifecycle and filesystem power-loss qualification remain pending.
 
 Version-2 records additionally persist temporary materialization/reflink intent
-and image-bind provenance ([ADR-400](adr/400-managed-postgres-resource-assets.md)).
+and image-bind provenance ([ADR-474](adr/474-managed-postgres-resource-assets.md)).
 Intent precedes creation or source chmod; inode checkpoints precede copying or
 mounting. Bind records include the target placeholder, source/original mode,
 read-only policy and vmmd mount namespace plus mount ID. The running owner
@@ -548,12 +548,12 @@ Child TUN, loop/parent mounts, jail-local links/copies, snapshot publication and
 complete jail/network namespace incarnations are not covered by this asset list.
 
 Version-3 records add the instance/inner jail directories and named nsfs binding
-observations ([ADR-401](adr/401-managed-postgres-resource-placement.md)). Intents
+observations ([ADR-475](adr/475-managed-postgres-resource-placement.md)). Intents
 precede mkdir/namespace creation; checkpoints precede staging and policy setup.
 The running owner refuses changed directory or namespace bindings, checks for
 remaining jail mounts, and retains failed retirement for retry. Prepared alias
 transfer preserves the namespace inode and captures its new mount ID before
-policy retarget or guest launch. ADR-403 adds durable handoff intent;
+policy retarget or guest launch. ADR-477 adds durable handoff intent;
 complete resource incarnations and verified restart cleanup remain pending.
 These observations do not grant a replacement daemon lifecycle ownership.
 The final nested-node [asset diagnostics](ops/evidence/20261002-managed-postgres-resource-assets/README.md)
@@ -561,7 +561,7 @@ passed 31 selected top-level tests and three leak checks. Native lifecycle and
 filesystem power-loss qualification remain pending.
 
 Version-4 assets record host-veth creation addresses, interface indices and vmmd's
-boot/network namespace context ([ADR-402](adr/402-managed-postgres-resource-links.md)).
+boot/network namespace context ([ADR-476](adr/476-managed-postgres-resource-links.md)).
 Intent precedes atomic tagged creation; checkpoints precede topology changes.
 Ordinary/prepared cleanup preflights all host links, deletes by checked index and
 retires their records before namespace deletion. Renamed or foreign links retain
@@ -577,7 +577,7 @@ regressions and three leak checks. Native lifecycle acceptance remains pending.
 
 Version-5 prepared-network records commit a network-only spare before creation
 and its target before namespace alias movement
-([ADR-403](adr/403-managed-postgres-prepared-network-journal.md)). One stable source
+([ADR-477](adr/477-managed-postgres-prepared-network-journal.md)). One stable source
 filename survives guest adoption, which atomically commits the validated guest
 lease and transferred checkpoints before staging, policy or launch. Spares have
 no VM admission or process state. Live cleanup retires the record before returning
@@ -592,7 +592,7 @@ full Linux/macOS race suites and three lifecycle leak checks. Native lifecycle
 acceptance remains pending.
 
 Startup also reports `reclaimed_prepared_records`
-([ADR-404](adr/404-managed-postgres-prior-boot-spare-retirement.md)). It may retire
+([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). It may retire
 an unclaimed, network-only spare with complete namespace/veth checkpoints from
 one earlier kernel boot when its current names and all process UID claims are
 absent. Journal removal and directory fsync precede allocation. Any current
@@ -606,7 +606,7 @@ race suites and three leak checks with injected prior-boot provenance and real
 foreign resources. They do not perform an actual host reboot.
 
 Version-6 prepared records now commit the creator kernel boot in the initial
-lease intent before setup ([ADR-405](adr/405-managed-postgres-prepared-boot-intent.md)).
+lease intent before setup ([ADR-479](adr/479-managed-postgres-prepared-boot-intent.md)).
 Absent unclaimed reservations from a different boot can retire even with missing
 creation checkpoints or retired assets, using the same inventory, collision and
 fsync gates. All later namespace/mount/process provenance must agree with the
@@ -626,6 +626,11 @@ sessions still require scheduler drain; atomic publication and customer activati
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.
 
 ## Customer usability
+
+The implementation ADRs are now numbered 461–479 after integration with the
+current main branch. Historical validation captures retain their original
+387–405 numbering and source paths; add 74 to map those references to the current
+ADRs. Captured logs, patches and source manifests remain unchanged.
 
 The `gregale postgres` command is the supported customer entry point for the
 provider-neutral API:
@@ -728,4 +733,4 @@ the existing app/account deletion guards still require live resources to be
 cleaned up first. Cancel
 all active intents before migration rollback or retiring a host age identity;
 the existing secret re-sealer does not cover these staged envelopes.
-See [ADR-390](adr/390-managed-postgres-cutover-preparation.md).
+See [ADR-464](adr/464-managed-postgres-cutover-preparation.md).

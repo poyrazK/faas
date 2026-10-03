@@ -1,8 +1,8 @@
 //go:build linux && metal
 
-// adr: 401
-// adr: 403
-// adr: 405
+// adr: 475
+// adr: 477
+// adr: 479
 package fcvm
 
 import (

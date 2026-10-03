@@ -1,5 +1,5 @@
-// adr: 398
-// adr: 404
+// adr: 472
+// adr: 478
 package fcvm
 
 import (
@@ -39,7 +39,7 @@ type RestartQuarantineReport struct {
 // slot-addressed links, namespaces and jails before any new leases or prepared
 // networks are allocated. No physical resources are removed. Only absent,
 // unclaimed prepared networks with complete provenance from an earlier kernel
-// boot may retire their reservations before quarantine is installed (ADR-404).
+// boot may retire their reservations before quarantine is installed (ADR-478).
 // All remaining quarantined slots stay unavailable for this Manager's lifetime.
 func (m *Manager) RecoverRestartQuarantine(ctx context.Context, jailRoot string) (RestartQuarantineReport, error) {
 	return m.recoverRestartQuarantine(ctx, restartInventoryOptions{

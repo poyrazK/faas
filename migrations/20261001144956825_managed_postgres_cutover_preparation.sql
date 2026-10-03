@@ -1,4 +1,4 @@
--- ADR-390: stage credentials without publishing or switching application bindings.
+-- ADR-464: stage credentials without publishing or switching application bindings.
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE managed_postgres_cutovers (

@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 396 — scheduler capacity survives an unconfirmed stop of a real guest.
+// adr: 470 — scheduler capacity survives an unconfirmed stop of a real guest.
 package fcvm_test
 
 import (

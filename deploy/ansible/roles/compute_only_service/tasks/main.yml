@@ -828,3 +828,12 @@
       /opt/faas/current/bin/imaged. The role does not enable imaged
       because it cannot assume the firecracker role ran first on
       the same host.
+
+- name: compute_only_service — configure signed VM inventory repair
+  ansible.builtin.template:
+    src: "{{ role_path }}/../_shared/templates/zz-faas-node-inventory.conf.j2"
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-node-inventory.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd

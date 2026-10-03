@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-393: deployment-attached commands can carry migration credentials.
+-- ADR-467: deployment-attached commands can carry migration credentials.
 CREATE FUNCTION guard_managed_postgres_app_task_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE pinned uuid;
 BEGIN

@@ -1,4 +1,4 @@
-// adr: 394 — vmmd reads admission; schedd retains lifecycle ownership.
+// adr: 468 — vmmd reads admission; schedd retains lifecycle ownership.
 package main
 
 import (

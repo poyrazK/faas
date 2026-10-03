@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-392: app-wide admission barrier, separate from writer-drain evidence.
+-- ADR-466: app-wide admission barrier, separate from writer-drain evidence.
 ALTER TABLE apps ADD COLUMN managed_postgres_admission_cutover_id uuid REFERENCES managed_postgres_cutovers(id) ON DELETE RESTRICT;
 ALTER TABLE apps ADD COLUMN managed_postgres_admission_fenced_at timestamptz;
 ALTER TABLE apps ADD CONSTRAINT apps_managed_postgres_admission_fence_check

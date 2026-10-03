@@ -1,4 +1,4 @@
-// adr: 388 — release-only managed migration credential delivery.
+// adr: 462 — release-only managed migration credential delivery.
 
 package state
 

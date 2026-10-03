@@ -91,6 +91,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	retained.complete = true
 	delete(m.pendingCleanup, lease.Instance)
 	delete(m.pendingProcessExits, lease.Instance)
+	delete(m.processGenerations, lease.Instance)
 	delete(m.waking, lease.Instance)
 	delete(m.live, lease.Instance)
 	delete(m.cidToID, GuestVsockCID(lease.Slot))

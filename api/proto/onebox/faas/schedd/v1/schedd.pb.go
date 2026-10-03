@@ -153,7 +153,7 @@ type LivenessFailedAck struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ok retains the legacy acceptance/no-op acknowledgement.
 	Ok bool `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	// ADR-397: true once the observation is applied/superseded by a cold
+	// ADR-471: true once the observation is applied/superseded by a cold
 	// instance state. False means pending (including cross-node notify relay).
 	// vmmd retains its durable report and retries; this is not a drain receipt.
 	// Old schedds omit this field and therefore cannot prematurely retire it.
@@ -216,7 +216,7 @@ func (x *LivenessFailedAck) GetApplied() bool {
 // into Why and "at least peak_mb + 8 MB" into Fix).
 //
 // Wire is additive per ADR-016 — pre-Cluster-C schedds reject the
-// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-397).
+// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-471).
 type ReportWorkloadOOMRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// instance_id is the instances.id row vmmd observed the OOM
@@ -299,8 +299,8 @@ func (x *ReportWorkloadOOMRequest) GetSourceNodeId() string {
 	return ""
 }
 
-// ReportWorkloadOOMAck separates acceptance from application (ADR-397).
-// This is not a fleet drain receipt. Additive per ADR-016.
+// ReportWorkloadOOMAck separates acceptance from application (ADR-471).
+// This is not a fleet drain receipt. Additive per ADR-16.
 type ReportWorkloadOOMAck struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Ok    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
@@ -2276,9 +2276,13 @@ type CapacityReport struct {
 	// Complete per-node vmmd Stats batch sampled alongside this frame. Keeping
 	// it on the persistent capacity stream removes the schedd-side 200 ms
 	// fresh-dial fan-out across the fleet.
-	Instances     []*InstanceTelemetry `protobuf:"bytes,10,rep,name=instances,proto3" json:"instances,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Instances []*InstanceTelemetry `protobuf:"bytes,10,rep,name=instances,proto3" json:"instances,omitempty"`
+	// Authoritative process inventory, independent of optional resource metrics.
+	// Absence means an older producer; complete=false means unknown. A complete
+	// empty inventory explicitly asserts that this node has no running VMs.
+	InstanceInventory *NodeInstanceInventory `protobuf:"bytes,11,opt,name=instance_inventory,json=instanceInventory,proto3" json:"instance_inventory,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *CapacityReport) Reset() {
@@ -2381,6 +2385,75 @@ func (x *CapacityReport) GetInstances() []*InstanceTelemetry {
 	return nil
 }
 
+func (x *CapacityReport) GetInstanceInventory() *NodeInstanceInventory {
+	if x != nil {
+		return x.InstanceInventory
+	}
+	return nil
+}
+
+// Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
+// Its separate signature preserves the v1 capacity signature during upgrades.
+type NodeInstanceInventory struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Complete      bool                   `protobuf:"varint,1,opt,name=complete,proto3" json:"complete,omitempty"`
+	InstanceIds   []string               `protobuf:"bytes,2,rep,name=instance_ids,json=instanceIds,proto3" json:"instance_ids,omitempty"`
+	NodeSignature []byte                 `protobuf:"bytes,3,opt,name=node_signature,json=nodeSignature,proto3" json:"node_signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeInstanceInventory) Reset() {
+	*x = NodeInstanceInventory{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeInstanceInventory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeInstanceInventory) ProtoMessage() {}
+
+func (x *NodeInstanceInventory) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeInstanceInventory.ProtoReflect.Descriptor instead.
+func (*NodeInstanceInventory) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *NodeInstanceInventory) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *NodeInstanceInventory) GetInstanceIds() []string {
+	if x != nil {
+		return x.InstanceIds
+	}
+	return nil
+}
+
+func (x *NodeInstanceInventory) GetNodeSignature() []byte {
+	if x != nil {
+		return x.NodeSignature
+	}
+	return nil
+}
+
 // InstanceTelemetry is the vmmd-side Stats row carried in CapacityReport.
 // Node identity is inherited from the enclosing report. Wrapper fields retain
 // the existing absent-versus-zero semantics used by ListInstanceStats.
@@ -2421,7 +2494,7 @@ type InstanceTelemetry struct {
 
 func (x *InstanceTelemetry) Reset() {
 	*x = InstanceTelemetry{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[26]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2433,7 +2506,7 @@ func (x *InstanceTelemetry) String() string {
 func (*InstanceTelemetry) ProtoMessage() {}
 
 func (x *InstanceTelemetry) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[26]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2446,7 +2519,7 @@ func (x *InstanceTelemetry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceTelemetry.ProtoReflect.Descriptor instead.
 func (*InstanceTelemetry) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{26}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *InstanceTelemetry) GetInstanceId() string {
@@ -2589,7 +2662,7 @@ type ReportCapacityAck struct {
 
 func (x *ReportCapacityAck) Reset() {
 	*x = ReportCapacityAck{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[27]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2601,7 +2674,7 @@ func (x *ReportCapacityAck) String() string {
 func (*ReportCapacityAck) ProtoMessage() {}
 
 func (x *ReportCapacityAck) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[27]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2614,7 +2687,7 @@ func (x *ReportCapacityAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportCapacityAck.ProtoReflect.Descriptor instead.
 func (*ReportCapacityAck) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{27}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{28}
 }
 
 // EnsureWakeRequest (ADR-098) is the request shape for the
@@ -2642,7 +2715,7 @@ type EnsureWakeRequest struct {
 
 func (x *EnsureWakeRequest) Reset() {
 	*x = EnsureWakeRequest{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[28]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2654,7 +2727,7 @@ func (x *EnsureWakeRequest) String() string {
 func (*EnsureWakeRequest) ProtoMessage() {}
 
 func (x *EnsureWakeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[28]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2667,7 +2740,7 @@ func (x *EnsureWakeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureWakeRequest.ProtoReflect.Descriptor instead.
 func (*EnsureWakeRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{28}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *EnsureWakeRequest) GetAppId() string {
@@ -2740,7 +2813,7 @@ type EnsureWakeResponse struct {
 
 func (x *EnsureWakeResponse) Reset() {
 	*x = EnsureWakeResponse{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[29]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2752,7 +2825,7 @@ func (x *EnsureWakeResponse) String() string {
 func (*EnsureWakeResponse) ProtoMessage() {}
 
 func (x *EnsureWakeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[29]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2765,7 +2838,7 @@ func (x *EnsureWakeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureWakeResponse.ProtoReflect.Descriptor instead.
 func (*EnsureWakeResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{29}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *EnsureWakeResponse) GetInstanceId() string {
@@ -2840,7 +2913,7 @@ type FrameworkReadyReport struct {
 
 func (x *FrameworkReadyReport) Reset() {
 	*x = FrameworkReadyReport{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[30]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2852,7 +2925,7 @@ func (x *FrameworkReadyReport) String() string {
 func (*FrameworkReadyReport) ProtoMessage() {}
 
 func (x *FrameworkReadyReport) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[30]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2865,7 +2938,7 @@ func (x *FrameworkReadyReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkReadyReport.ProtoReflect.Descriptor instead.
 func (*FrameworkReadyReport) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{30}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *FrameworkReadyReport) GetInstanceId() string {
@@ -2883,7 +2956,7 @@ type FrameworkReadyAck struct {
 
 func (x *FrameworkReadyAck) Reset() {
 	*x = FrameworkReadyAck{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[31]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2895,7 +2968,7 @@ func (x *FrameworkReadyAck) String() string {
 func (*FrameworkReadyAck) ProtoMessage() {}
 
 func (x *FrameworkReadyAck) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[31]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2908,7 +2981,7 @@ func (x *FrameworkReadyAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrameworkReadyAck.ProtoReflect.Descriptor instead.
 func (*FrameworkReadyAck) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{31}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{32}
 }
 
 // FlowSummary is one bounded endpoint aggregate observed in conntrack for an
@@ -2927,7 +3000,7 @@ type FlowSummary struct {
 
 func (x *FlowSummary) Reset() {
 	*x = FlowSummary{}
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[32]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2939,7 +3012,7 @@ func (x *FlowSummary) String() string {
 func (*FlowSummary) ProtoMessage() {}
 
 func (x *FlowSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[32]
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2952,7 +3025,7 @@ func (x *FlowSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlowSummary.ProtoReflect.Descriptor instead.
 func (*FlowSummary) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{32}
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *FlowSummary) GetProtocol() string {
@@ -3148,7 +3221,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x129\n" +
 	"\n" +
-	"written_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\twrittenAt\"\x85\x03\n" +
+	"written_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\twrittenAt\"\xe2\x03\n" +
 	"\x0eCapacityReport\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12+\n" +
 	"\x12sampled_at_unix_ms\x18\x02 \x01(\x03R\x0fsampledAtUnixMs\x12\x1d\n" +
@@ -3161,7 +3234,12 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x0enode_signature\x18\b \x01(\fR\rnodeSignature\x12\x1e\n" +
 	"\vnode_key_id\x18\t \x01(\tR\tnodeKeyId\x12F\n" +
 	"\tinstances\x18\n" +
-	" \x03(\v2(.onebox.faas.schedd.v1.InstanceTelemetryR\tinstances\"\xcc\t\n" +
+	" \x03(\v2(.onebox.faas.schedd.v1.InstanceTelemetryR\tinstances\x12[\n" +
+	"\x12instance_inventory\x18\v \x01(\v2,.onebox.faas.schedd.v1.NodeInstanceInventoryR\x11instanceInventory\"}\n" +
+	"\x15NodeInstanceInventory\x12\x1a\n" +
+	"\bcomplete\x18\x01 \x01(\bR\bcomplete\x12!\n" +
+	"\finstance_ids\x18\x02 \x03(\tR\vinstanceIds\x12%\n" +
+	"\x0enode_signature\x18\x03 \x01(\fR\rnodeSignature\"\xcc\t\n" +
 	"\x11InstanceTelemetry\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12B\n" +
@@ -3249,7 +3327,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_schedd_v1_schedd_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_onebox_faas_schedd_v1_schedd_proto_goTypes = []any{
 	(WakeMethod)(0),                       // 0: onebox.faas.schedd.v1.WakeMethod
 	(*LivenessFailedReport)(nil),          // 1: onebox.faas.schedd.v1.LivenessFailedReport
@@ -3278,84 +3356,86 @@ var file_onebox_faas_schedd_v1_schedd_proto_goTypes = []any{
 	(*StreamWarmHintsRequest)(nil),        // 24: onebox.faas.schedd.v1.StreamWarmHintsRequest
 	(*StreamWarmHintsResponse)(nil),       // 25: onebox.faas.schedd.v1.StreamWarmHintsResponse
 	(*CapacityReport)(nil),                // 26: onebox.faas.schedd.v1.CapacityReport
-	(*InstanceTelemetry)(nil),             // 27: onebox.faas.schedd.v1.InstanceTelemetry
-	(*ReportCapacityAck)(nil),             // 28: onebox.faas.schedd.v1.ReportCapacityAck
-	(*EnsureWakeRequest)(nil),             // 29: onebox.faas.schedd.v1.EnsureWakeRequest
-	(*EnsureWakeResponse)(nil),            // 30: onebox.faas.schedd.v1.EnsureWakeResponse
-	(*FrameworkReadyReport)(nil),          // 31: onebox.faas.schedd.v1.FrameworkReadyReport
-	(*FrameworkReadyAck)(nil),             // 32: onebox.faas.schedd.v1.FrameworkReadyAck
-	(*FlowSummary)(nil),                   // 33: onebox.faas.schedd.v1.FlowSummary
-	(*structpb.Struct)(nil),               // 34: google.protobuf.Struct
-	(*wrapperspb.Int64Value)(nil),         // 35: google.protobuf.Int64Value
-	(*timestamppb.Timestamp)(nil),         // 36: google.protobuf.Timestamp
-	(*wrapperspb.DoubleValue)(nil),        // 37: google.protobuf.DoubleValue
+	(*NodeInstanceInventory)(nil),         // 27: onebox.faas.schedd.v1.NodeInstanceInventory
+	(*InstanceTelemetry)(nil),             // 28: onebox.faas.schedd.v1.InstanceTelemetry
+	(*ReportCapacityAck)(nil),             // 29: onebox.faas.schedd.v1.ReportCapacityAck
+	(*EnsureWakeRequest)(nil),             // 30: onebox.faas.schedd.v1.EnsureWakeRequest
+	(*EnsureWakeResponse)(nil),            // 31: onebox.faas.schedd.v1.EnsureWakeResponse
+	(*FrameworkReadyReport)(nil),          // 32: onebox.faas.schedd.v1.FrameworkReadyReport
+	(*FrameworkReadyAck)(nil),             // 33: onebox.faas.schedd.v1.FrameworkReadyAck
+	(*FlowSummary)(nil),                   // 34: onebox.faas.schedd.v1.FlowSummary
+	(*structpb.Struct)(nil),               // 35: google.protobuf.Struct
+	(*wrapperspb.Int64Value)(nil),         // 36: google.protobuf.Int64Value
+	(*timestamppb.Timestamp)(nil),         // 37: google.protobuf.Timestamp
+	(*wrapperspb.DoubleValue)(nil),        // 38: google.protobuf.DoubleValue
 }
 var file_onebox_faas_schedd_v1_schedd_proto_depIdxs = []int32{
 	0,  // 0: onebox.faas.schedd.v1.WakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	34, // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
+	35, // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
 	6,  // 2: onebox.faas.schedd.v1.WakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	0,  // 3: onebox.faas.schedd.v1.AdmitInstanceResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	34, // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
+	35, // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
 	6,  // 5: onebox.faas.schedd.v1.AdmitInstanceResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	10, // 6: onebox.faas.schedd.v1.ReportActivityRequest.touches:type_name -> onebox.faas.schedd.v1.Touch
-	35, // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	35, // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	36, // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	36, // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
 	19, // 9: onebox.faas.schedd.v1.ListInstanceStatsResponse.rows:type_name -> onebox.faas.schedd.v1.InstanceStatsRow
-	36, // 10: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
-	36, // 11: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
-	36, // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
-	36, // 13: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
-	27, // 14: onebox.faas.schedd.v1.CapacityReport.instances:type_name -> onebox.faas.schedd.v1.InstanceTelemetry
-	35, // 15: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
-	37, // 16: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
-	37, // 17: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
-	37, // 18: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
-	36, // 19: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
-	35, // 20: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
-	35, // 21: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
-	35, // 22: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
-	35, // 23: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	35, // 24: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
-	33, // 25: onebox.faas.schedd.v1.InstanceTelemetry.flow_summaries:type_name -> onebox.faas.schedd.v1.FlowSummary
-	35, // 26: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
-	35, // 27: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
-	0,  // 28: onebox.faas.schedd.v1.EnsureWakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	34, // 29: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
-	9,  // 30: onebox.faas.schedd.v1.EnsureWakeResponse.additional_instances:type_name -> onebox.faas.schedd.v1.AdmitInstanceResponse
-	6,  // 31: onebox.faas.schedd.v1.EnsureWakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
-	5,  // 32: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
-	8,  // 33: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
-	11, // 34: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
-	31, // 35: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
-	13, // 36: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
-	15, // 37: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
-	17, // 38: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
-	20, // 39: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
-	22, // 40: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
-	24, // 41: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
-	26, // 42: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
-	1,  // 43: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
-	29, // 44: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
-	3,  // 45: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
-	7,  // 46: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
-	9,  // 47: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
-	12, // 48: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
-	32, // 49: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
-	14, // 50: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
-	16, // 51: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
-	18, // 52: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
-	21, // 53: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
-	23, // 54: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
-	25, // 55: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
-	28, // 56: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
-	2,  // 57: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
-	30, // 58: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
-	4,  // 59: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
-	46, // [46:60] is the sub-list for method output_type
-	32, // [32:46] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	37, // 10: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
+	37, // 11: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
+	37, // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
+	37, // 13: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
+	28, // 14: onebox.faas.schedd.v1.CapacityReport.instances:type_name -> onebox.faas.schedd.v1.InstanceTelemetry
+	27, // 15: onebox.faas.schedd.v1.CapacityReport.instance_inventory:type_name -> onebox.faas.schedd.v1.NodeInstanceInventory
+	36, // 16: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
+	38, // 17: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
+	38, // 18: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
+	38, // 19: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
+	37, // 20: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
+	36, // 21: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
+	36, // 22: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
+	36, // 23: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
+	36, // 24: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	36, // 25: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	34, // 26: onebox.faas.schedd.v1.InstanceTelemetry.flow_summaries:type_name -> onebox.faas.schedd.v1.FlowSummary
+	36, // 27: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
+	36, // 28: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
+	0,  // 29: onebox.faas.schedd.v1.EnsureWakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
+	35, // 30: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
+	9,  // 31: onebox.faas.schedd.v1.EnsureWakeResponse.additional_instances:type_name -> onebox.faas.schedd.v1.AdmitInstanceResponse
+	6,  // 32: onebox.faas.schedd.v1.EnsureWakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
+	5,  // 33: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
+	8,  // 34: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
+	11, // 35: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
+	32, // 36: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
+	13, // 37: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
+	15, // 38: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
+	17, // 39: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
+	20, // 40: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
+	22, // 41: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
+	24, // 42: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
+	26, // 43: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
+	1,  // 44: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
+	30, // 45: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
+	3,  // 46: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
+	7,  // 47: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
+	9,  // 48: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
+	12, // 49: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
+	33, // 50: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
+	14, // 51: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
+	16, // 52: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
+	18, // 53: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
+	21, // 54: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
+	23, // 55: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
+	25, // 56: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
+	29, // 57: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
+	2,  // 58: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
+	31, // 59: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
+	4,  // 60: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
+	47, // [47:61] is the sub-list for method output_type
+	33, // [33:47] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_schedd_v1_schedd_proto_init() }
@@ -3370,7 +3450,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_schedd_v1_schedd_proto_rawDesc), len(file_onebox_faas_schedd_v1_schedd_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

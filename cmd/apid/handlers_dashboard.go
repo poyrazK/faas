@@ -677,7 +677,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			Path:                  c.Path,
 			Enabled:               c.Enabled,
 			FireNowConfirmToken:   fireCSRFToken,
-			SchedulePolicyEnabled: len(c.Command) > 0,
+			SchedulePolicyEnabled: true,
+			IsCommandCron:         len(c.Command) > 0,
 			SchedulePolicyCSRF:    schedulePolicyCSRFToken,
 			PolicyURL:             "/dashboard/apps/" + url.PathEscape(app.Slug) + "/crons/" + url.PathEscape(c.ID) + "/policy",
 		}
@@ -708,15 +709,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		} else {
 			log.Warn("dashboard renderAppDetail: list cron runs", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", rerr)
 		}
-		if item.SchedulePolicyEnabled {
-			if history, ok := s.store.(state.ScheduleOccurrenceHistoryStore); ok {
-				if rows, historyErr := history.ScheduleOccurrenceListByCron(ctx, c.ID, 10, ""); historyErr == nil {
-					item.HistoryAvailable = true
-					item.Occurrences = projectDashboardScheduleOccurrences(rows)
-					item.OccurrencesCount = len(item.Occurrences)
-				} else {
-					log.Warn("dashboard renderAppDetail: list cron schedule occurrences", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", historyErr)
-				}
+		if history, ok := s.store.(state.ScheduleOccurrenceHistoryStore); ok {
+			if rows, historyErr := history.ScheduleOccurrenceListByCron(ctx, c.ID, 10, ""); historyErr == nil {
+				item.HistoryAvailable = true
+				item.Occurrences = projectDashboardScheduleOccurrences(rows)
+				item.OccurrencesCount = len(item.Occurrences)
+			} else {
+				log.Warn("dashboard renderAppDetail: list cron schedule occurrences", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", historyErr)
 			}
 		}
 		cronItems = append(cronItems, item)

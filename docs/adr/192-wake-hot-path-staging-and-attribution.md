@@ -50,3 +50,30 @@ Manager.Wake already timed `lease_acquire`, `env_prepare`, `pre_network`,
 `setup_network` and `bring_up`, but only into a slog line that fires on
 failure or when the wake exceeds 20 s. The customer-facing timeline
 (`gregale wake-timeline`) had no row for them.
+
+## Operator staging attribution (2026-10-03)
+
+The existing Debug `restore timing breakdown` record also splits the pre-boot
+staging interval into payload validation/construction/digest (`pre_boot_prepare_us`),
+the host mount command (`pre_boot_mount_ms`), captured-file comparison
+(`pre_boot_check_us`), all file writers (`pre_boot_write_us`), and the host unmount
+command (`pre_boot_unmount_ms`). The two command intervals include process start
+and the complete command round trip; they do not isolate kernel execution.
+`pre_boot_files_total` counts intended writers and `pre_boot_files_written` counts
+successfully completed writers. The existing `stage_pre_boot_files_skipped` means
+the capture digest avoided the mount; a mounted identical-file check can instead
+have zero writes without setting that flag.
+
+These diagnostics stay operator-only, like the existing TUN subphases. The
+customer event, metric names, guest contract, file contents, mount options,
+write order, error propagation and cleanup behavior are unchanged. No file
+contents, environment values or digests are logged. The sum of these subphases
+can be below `stage_pre_boot_files_ms`: drive resolution, ledger work, temporary
+directory setup/cleanup and integer rounding remain in the outer interval.
+Native restore acceptance and leak checks remain required for lifecycle changes.
+
+The 2026-10-02 saved latency sample recorded 36–101 ms in this aggregate phase,
+but contained no measurements distinguishing host mount/unmount from file work.
+It therefore does not justify attributing the interval to either component or
+claiming a measured gain from this instrumentation. In particular, the existing
+whole-capture skip must still miss when a new instance changes `env.json`.

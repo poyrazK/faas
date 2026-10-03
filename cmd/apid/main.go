@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authcode"
 	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
+	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -772,6 +773,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
@@ -1504,6 +1506,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if billingProv != nil {
 			srv.WithBillingProvider(billingProv)
+		} else if loadedName == "stripe" {
+			srv.legacyStripeInvoiceReader = stripe.NewClient(nil, nil, billingCfg.Stripe.APIKey, "", log)
 		}
 		log.Info("billing provider loaded", "provider", provName)
 	} else {
@@ -1950,6 +1954,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
+	go srv.runAutomaticRouteCheckWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2392,8 +2397,14 @@ type pgNotifier struct {
 	log  *slog.Logger
 }
 
+var _ runtimeConfigRestartStatusReader = pgNotifier{}
+
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+func (p pgNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error) {
+	return db.GetRuntimeConfigRestartStatus(ctx, p.pool, appID, wakeID)
 }
 
 // Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A

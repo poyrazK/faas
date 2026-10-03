@@ -1,4 +1,4 @@
-# ADR-389: degraded, stale, replica, opt-out, and heartbeat alert coverage.
+# ADR-463: degraded, stale, replica, opt-out, and heartbeat alert coverage.
 rule_files:
 - faas.rules.yml
 evaluation_interval: 30s

@@ -304,13 +304,24 @@ func envPull(args []string) int {
 	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
 		return printErr("Could not write .env", err)
 	}
-	if resp.Count == 0 && len(existing) == 0 {
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			AppSlug       string `json:"app_slug"`
+			Scope         string `json:"scope"`
+			OutputPath    string `json:"output_path"`
+			RemoteKeys    int    `json:"remote_key_count"`
+			AddedKeys     int    `json:"added_key_count"`
+			PreservedKeys int    `json:"preserved_key_count"`
+			KeyOnly       bool   `json:"key_only"`
+		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
+	}
+	if len(resp.Secrets) == 0 && len(existing) == 0 {
 		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
 		return 0
 	}
 	if len(existing) == 0 {
 		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			resp.Count, *out)
+			len(resp.Secrets), *out)
 	} else {
 		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
 			added, *out)
@@ -330,6 +341,27 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		}
 	}
 	return keys
+}
+
+type envPushReceipt struct {
+	AppSlug          string   `json:"app_slug"`
+	Scope            string   `json:"scope"`
+	Result           string   `json:"result"`
+	UpdatedKeys      []string `json:"updated_keys"`
+	UpdatedKeyCount  int      `json:"updated_key_count"`
+	ApplyMode        string   `json:"apply_mode"`
+	RestartRequested bool     `json:"restart_requested"`
+	WakeID           string   `json:"wake_id,omitempty"`
+	FailedKey        string   `json:"failed_key,omitempty"`
+}
+
+func envPushFailure(receipt envPushReceipt, message string, err error) int {
+	if jsonOutput {
+		if code := jsonOut(writeJSON(receipt)); code != 0 {
+			return code
+		}
+	}
+	return printErr(message, err)
 }
 
 func envPush(args []string) int {
@@ -508,18 +540,33 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	receipt := envPushReceipt{
+		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
+		UpdatedKeys: []string{}, ApplyMode: "next_cold_wake",
+	}
 	for _, p := range pairs {
 		if err := client.SetSecretWithScope(context.Background(), *app, p.k, p.v, *scope); err != nil {
-			return printErr("Set "+p.k+" failed", err)
+			receipt.Result, receipt.FailedKey = "partial", p.k
+			return envPushFailure(receipt, "Set "+p.k+" failed", err)
 		}
-		PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+		receipt.UpdatedKeys = append(receipt.UpdatedKeys, p.k)
+		receipt.UpdatedKeyCount++
+		if !jsonOutput {
+			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+		}
 	}
 	if *restart {
 		// Runtime configuration must not use the ordinary snapshot restart:
 		// capturing process memory would preserve the previous environment.
 		out, err := client.RestartAppFresh(context.Background(), *app)
 		if err != nil {
-			return printErr("Restart failed", err)
+			receipt.Result = "restart_failed"
+			return envPushFailure(receipt, "Restart failed", err)
+		}
+		receipt.ApplyMode = "fresh_restart_requested"
+		receipt.RestartRequested, receipt.WakeID = true, out.WakeID
+		if jsonOutput {
+			return jsonOut(writeJSON(receipt))
 		}
 		PrintOK(osStdout, "Restart requested after env update (wake_id=%s)", out.WakeID)
 		return 0
@@ -528,6 +575,9 @@ func envPush(args []string) int {
 	// instances on their existing environment and the next cold wake picks up
 	// the persisted values. Say this even when no key was a re-PUT — a new
 	// key is just as invisible to already-running processes as a rotation.
+	if jsonOutput {
+		return jsonOut(writeJSON(receipt))
+	}
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	return 0
 }
@@ -969,6 +1019,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsRoutes(slug, args[2:])
 		case subTCPListeners:
 			return cmdAppsTCP(slug, args[2:])
+		case subUDPListeners:
+			return cmdAppsUDP(slug, args[2:])
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, args[2:])
 		case subStaticEgressIP:
@@ -1090,6 +1142,12 @@ func cmdDashboard(args []string) int {
 	target := dashboardAccountURL(apiBase())
 	if *stateless {
 		target = dashboardStatelessURL(apiBase())
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			URL       string `json:"url"`
+			Stateless bool   `json:"stateless"`
+		}{target, *stateless}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", target)
 	if err := browser.Open(target); err != nil {

@@ -1,4 +1,4 @@
-// adr: 397 — migration preserves IDs; delayed failures cannot stop the new node.
+// adr: 471 — migration preserves IDs; delayed failures cannot stop the new node.
 package sched
 
 import (

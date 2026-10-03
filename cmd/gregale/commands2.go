@@ -1063,7 +1063,6 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -1082,7 +1081,7 @@ func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "app-protocol",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
@@ -2255,6 +2254,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
+	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
+	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
+	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2538,6 +2540,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
+	}
+	healthcheck, healthErr := resolveDeployHealthcheck(*healthcheckPath, *healthcheckGRPC, *healthcheckGRPCService, explicit)
+	if healthErr != nil {
+		return printErr("Invalid startup healthcheck", healthErr)
+	}
+	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
+		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
 	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
@@ -2841,10 +2850,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2877,9 +2886,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
-			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr})
+			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 
@@ -3523,7 +3532,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3863,9 +3872,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			NoTriggers:             *noTriggers,
-			Companions:             sidecarDefs,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers: *noTriggers,
+			Companions: sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3892,7 +3901,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -4022,6 +4031,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,
 		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Overrides:              deployHealthcheckOverrides(healthcheck),
 		Workflows:              workflowDefs,
 		Companions:             sidecarDefs,
 		TrafficPercent:         optTrafficPercent(*trafficPercent),
@@ -4616,7 +4626,7 @@ func cmdDomains(args []string) int {
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4817,7 +4827,7 @@ func cmdCrons(args []string) int {
 		// commands_crons_fire_now.go (cmdCronsFireNowGet).
 		return cmdCronsFireNowGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5034,18 +5044,42 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
 			return 0
 		}
-		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
+		flags, positional := splitArgsForFlags(args[1:])
+		fs := newFlagSet("keys add", flag.ContinueOnError)
+		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		if err := fs.Parse(flags); err != nil {
 			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
+			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			return 1
+		}
+		var scopes []string
+		if flagWasSet(fs, "scopes") {
+			if strings.TrimSpace(*scopesCSV) == "" {
+				return printErr("Invalid scopes", errors.New("--scopes must contain at least one scope"))
+			}
+			for _, scope := range strings.Split(*scopesCSV, ",") {
+				scope = strings.TrimSpace(scope)
+				if scope == "" {
+					return printErr("Invalid scopes", errors.New("--scopes cannot contain an empty scope"))
+				}
+				scopes = append(scopes, scope)
+			}
+			var err error
+			scopes, err = api.NormalizeCreateKeyScopes(scopes)
+			if err != nil {
+				return printErr("Invalid scopes", err)
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), args[1], nil)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
 			return printErr("Create failed", err)
 		}
@@ -5076,7 +5110,7 @@ func cmdKeys(args []string) int {
 	case "grace-window":
 		return cmdKeysGraceWindow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5213,7 +5247,7 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
-	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5553,7 +5587,15 @@ func cmdOpen(args []string) int {
 	if *dash {
 		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
-	} else {
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			Slug      string `json:"slug"`
+			URL       string `json:"url"`
+			Dashboard bool   `json:"dashboard"`
+		}{slug, target, *dash}))
+	}
+	if !*dash {
 		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
 		// a 2 s deadline; if the response carries the cold-wake header
 		// (see pkg/wire.WakeHeader), print the cold-start line

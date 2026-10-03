@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 394 — durable admission and joined resumes on a real Firecracker guest.
+// adr: 468 — durable admission and joined resumes on a real Firecracker guest.
 package fcvm
 
 import (

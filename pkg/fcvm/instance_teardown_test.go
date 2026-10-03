@@ -1,4 +1,4 @@
-// adr: 395 — stop acknowledgements require retained ownership and confirmed exit.
+// adr: 469 — stop acknowledgements require retained ownership and confirmed exit.
 package fcvm
 
 import (

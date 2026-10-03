@@ -18,7 +18,10 @@ T = TypeVar("T", bound="UpdateCronRequest")
 
 @_attrs_define
 class UpdateCronRequest:
-    """Partial cron update."""
+    """Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes;
+    command Cron rules may also match exit codes.
+
+    """
 
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
@@ -33,9 +36,12 @@ class UpdateCronRequest:
     """Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed
     attempt."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

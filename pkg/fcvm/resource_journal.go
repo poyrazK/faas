@@ -1,7 +1,7 @@
-// adr: 399
-// adr: 403
-// adr: 404
-// adr: 405
+// adr: 473
+// adr: 477
+// adr: 478
+// adr: 479
 package fcvm
 
 import (
@@ -26,7 +26,7 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 
 // ResourceJournal commits lease intent before guest resource creation and
 // retires it after the owning Manager confirms cleanup, or after startup proves
-// an unclaimed prepared reservation obsolete across a kernel boot (ADR-404).
+// an unclaimed prepared reservation obsolete across a kernel boot (ADR-478).
 // Other recovered records quarantine capacity. None authorize process adoption
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.

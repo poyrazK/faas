@@ -1,4 +1,4 @@
-// adr: 391 — SQL probing is TLS-only, read-only, and fails closed on identity/ACL drift.
+// adr: 465 — SQL probing is TLS-only, read-only, and fails closed on identity/ACL drift.
 package managedpostgres
 
 import (

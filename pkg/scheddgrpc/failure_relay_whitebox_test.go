@@ -1,4 +1,4 @@
-// adr: 397 — a notification publish is not an application acknowledgement.
+// adr: 471 — a notification publish is not an application acknowledgement.
 package scheddgrpc
 
 import (

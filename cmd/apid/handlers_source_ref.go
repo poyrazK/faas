@@ -105,6 +105,12 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(req.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -117,7 +123,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
-	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
 		return
@@ -326,6 +332,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		ReleaseCommandShell:    releaseCommand.shell,
 		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})

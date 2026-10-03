@@ -1,4 +1,4 @@
-// adr: 391 — authenticated cutover transport preserves staging and tenant boundaries.
+// adr: 465 — authenticated cutover transport preserves staging and tenant boundaries.
 package main
 
 import (

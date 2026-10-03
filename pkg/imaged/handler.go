@@ -3451,59 +3451,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		return fmt.Errorf("imaged: load current live deployment: %w", liveErr)
 	}
 	if hostingReceiptEnabled {
-		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(hostingApp, dep), ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}
-		if smoke.Path == "" {
-			smoke.Path = defaultHealthzPath
-		}
-		if h.hostingSmoke == nil && smokeRequired {
-			smoke.Status = apihostingreceipt.SmokeFailed
-			smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
-			smoke.Error = "public hosting smoke verifier is required but not configured"
-		}
-		if h.hostingSmoke != nil {
-			var smokeErr error
-			smoke, smokeErr = h.hostingSmoke(ctx, hostingApp, dep)
-			if smokeErr == nil && smokeRequired && smoke.Status != apihostingreceipt.SmokeVerified {
-				if smoke.ErrorCode == "" {
-					smoke.ErrorCode = apihostingreceipt.SmokeErrorVerifierNotConfigured
-				}
-				if smoke.Error == "" {
-					smoke.Error = "public hosting smoke verifier did not verify deployment"
-				}
-				smoke.Status = apihostingreceipt.SmokeFailed
+		if err := h.verifyHostingCandidate(ctx, hostingApp, dep, smokeRequired, verificationStarted); err != nil {
+			if errors.Is(err, errHostingVerificationFinalized) {
+				return nil
 			}
-			if smokeErr == nil {
-				smokeErr = hostingSmokeFailure(smoke)
-			}
-			if smokeErr != nil {
-				if h.ops != nil {
-					h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-				}
-				_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
-				h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
-			}
-		}
-		if h.hostingSmoke == nil && smokeRequired {
-			if h.ops != nil {
-				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-			}
-			_ = h.persistHostingReceipt(ctx, hostingApp, dep, smoke)
-			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
-			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
-		}
-		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
-			if h.ops != nil {
-				h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeFailed, time.Since(verificationStarted))
-			}
-			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
-			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
-			return fmt.Errorf("imaged: hosting receipt: %w", err)
-		}
-		if h.ops != nil {
-			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
+			return err
 		}
 	}
 
@@ -4848,6 +4800,7 @@ func (h *Handler) buildFullRootfsLayer(
 		StorageKey:     appsKey,
 		SBOMRun:        sbomRun,
 		SBOMStorageKey: sbomKey,
+		CommandPATH:    fullRootfsCommandPATH(ctx, h.store, app, dep, manifest),
 		// BuildFullRootfs derives the image's merged /etc/passwd resolver
 		// while applying the pulled layers; no host-side passwd data is used.
 		Resolver: nil,

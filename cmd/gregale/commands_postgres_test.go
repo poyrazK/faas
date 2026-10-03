@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 389 — customer health survives safe CLI decoding in both formats.
+// adr: 463 — customer health survives safe CLI decoding in both formats.
 func TestCmdPostgresGetHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/db-1" {

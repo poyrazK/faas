@@ -191,7 +191,7 @@ func TestManagedPostgresCredentialSinkFailsClosedWithoutSealKeys(t *testing.T) {
 	}
 }
 
-// adr: 390 — sealing for cutover does not publish or replace app secrets.
+// adr: 464 — sealing for cutover does not publish or replace app secrets.
 func TestManagedPostgresCredentialSealerDoesNotPublish(t *testing.T) {
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {

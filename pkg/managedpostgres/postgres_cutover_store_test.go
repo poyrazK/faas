@@ -1,4 +1,4 @@
-// adr: 391 — native preparation, lease fencing, cancellation, and rollback.
+// adr: 465 — native preparation, lease fencing, cancellation, and rollback.
 package managedpostgres
 
 import (

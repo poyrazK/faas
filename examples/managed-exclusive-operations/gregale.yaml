@@ -1,0 +1,32 @@
+exclusive_operations:
+  policies:
+    - name: crm-sync
+      scope: platform_tenant
+      member_apps:
+        - crm-api
+      contention: queue
+      lease_seconds: 30
+      max_attempt_seconds: 600
+      max_attempts: 5
+      retry_after_seconds: 5
+  bindings:
+    - source: cron
+      app: crm-api
+      schedule: "*/15 * * * *"
+      path: /sync
+      policy: crm-sync
+      key: customer-crm-sync
+      platform_tenant_id: 11111111-1111-4111-8111-111111111111
+    - source: inbound_webhook
+      app: crm-api
+      name: stripe-events
+      policy: crm-sync
+      key: customer-crm-sync
+      platform_tenant_id: 11111111-1111-4111-8111-111111111111
+    - source: broker
+      app: crm-api
+      kind: kafka
+      name: crm-events
+      policy: crm-sync
+      key: customer-crm-sync
+      platform_tenant_id: 11111111-1111-4111-8111-111111111111

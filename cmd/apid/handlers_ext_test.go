@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // TestDeploymentLogsSSE_Pagination confirms the initial page of a
@@ -2923,6 +2924,63 @@ func TestCreateCron_OptionsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpdateHTTPCronSchedulePolicy(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "cron-schedule-policy")
+	policy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "skip", StartDeadlineSeconds: 120, MissedRuns: "coalesce_latest"}
+	initialFailureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"temporary_error"}, Action: "retry"}},
+		UnmatchedFailure: "fail_partition", UncertainOutcome: "hold",
+	}
+	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
+		AppID: appID, Schedule: "*/5 * * * *", Path: "/sync", SchedulePolicy: policy, FailureRules: initialFailureRules,
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create HTTP Cron policy = %d: %s", rec.Code, rec.Body)
+	}
+	var created api.CronResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created Cron: %v", err)
+	}
+	if created.SchedulePolicy == nil || created.SchedulePolicy.Overlap != "skip" || created.SchedulePolicy.StartDeadlineSeconds != 120 {
+		t.Fatalf("created HTTP Cron policy = %+v", created.SchedulePolicy)
+	}
+	if created.FailureRules == nil || created.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("created HTTP Cron failure rules = %+v", created.FailureRules)
+	}
+	stored, err := e.store.CronByID(context.Background(), created.ID)
+	if err != nil || stored.SchedulePolicy == nil || stored.SchedulePolicy.MissedRuns != "coalesce_latest" || stored.FailureRules == nil || stored.FailureRules.Rules[0].OutcomeCodes[0] != "temporary_error" {
+		t.Fatalf("stored HTTP Cron policies = schedule %+v failure %+v, %v", stored.SchedulePolicy, stored.FailureRules, err)
+	}
+	updatedPolicy := &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip"}
+	update := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{SchedulePolicy: updatedPolicy}, nil)
+	if update.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron policy = %d: %s", update.Code, update.Body)
+	}
+	var updated api.CronResponse
+	if err := json.Unmarshal(update.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated Cron: %v", err)
+	}
+	if updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron policy = %+v", updated.SchedulePolicy)
+	}
+	failureRules := &workpolicy.FailureRules{
+		Version: workpolicy.Version, Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+		UnmatchedFailure: "retry", UncertainOutcome: "hold",
+	}
+	updateFailureRules := e.do(t, http.MethodPatch, "/v1/crons/"+created.ID, api.UpdateCronRequest{FailureRules: failureRules}, nil)
+	if updateFailureRules.Code != http.StatusOK {
+		t.Fatalf("update HTTP Cron failure rules = %d: %s", updateFailureRules.Code, updateFailureRules.Body)
+	}
+	var updatedRules api.CronResponse
+	if err := json.Unmarshal(updateFailureRules.Body.Bytes(), &updatedRules); err != nil || updatedRules.FailureRules == nil || updatedRules.FailureRules.Rules[0].OutcomeCodes[0] != "invalid_record" {
+		t.Fatalf("updated HTTP Cron failure rules = %+v, err=%v", updatedRules.FailureRules, err)
+	}
+	if updatedRules.SchedulePolicy == nil || updatedRules.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("updated HTTP Cron schedule policy = %+v", updatedRules.SchedulePolicy)
+	}
+}
+
 // adr: 099 — a cron may target an app command as well as an HTTP path.
 func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 	e := setup(t, api.PlanPro)
@@ -2950,13 +3008,16 @@ func TestCreateCron_CommandRunRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCreateCron_RetryOptionsRequireCommandCron(t *testing.T) {
+func TestCreateCron_HTTPRetryOptionsRequireCommandCron(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	appID := mustSeedApp(t, e, "cron-http-retry")
 	rec := e.do(t, http.MethodPost, "/v1/crons", api.CreateCronRequest{
 		AppID: appID, Schedule: "0 2 * * *", Path: "/heartbeat", RetryMax: 1,
 	}, nil)
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	if strings.Contains(rec.Body.String(), "retry options require a deployment command cron") == false {
+		t.Fatalf("HTTP cron retry error = %s", rec.Body)
+	}
 }
 
 func TestUpdateCommandCronRetryPolicyRoundTrip(t *testing.T) {

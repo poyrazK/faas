@@ -25,6 +25,9 @@
 # marker then identifies files owned by this role; `force: false` prevents a
 # later run from overwriting that one-time recovery copy.
 
+- name: nftables — validate UDP policy before host changes
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/validate_udp_policy.yml"
+
 - name: nftables — install nftables package
   ansible.builtin.apt:
     name: nftables

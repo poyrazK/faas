@@ -105,6 +105,11 @@ func TestExecutionWakeRequestFromProto(t *testing.T) {
 		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
 		BaseKey: "base/node22", LayerKey: "layer/execution",
 		VcpuCount: 2, MemSizeMib: 256, CpuMillicores: 500,
+		LeaseToken: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		OutboundIntegrationIds: []string{
+			"22222222-2222-4222-8222-222222222222",
+			"11111111-1111-4111-8111-111111111111",
+		},
 		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
 	}
 	got, err := executionWakeRequestFromProto(req)
@@ -117,10 +122,25 @@ func TestExecutionWakeRequestFromProto(t *testing.T) {
 	if got.Snapshot.StorageKey != req.Snapshot.StorageKey || got.Snapshot.VMStateStorageKey != req.Snapshot.VmstateStorageKey {
 		t.Fatalf("snapshot locators = %#v", got.Snapshot)
 	}
+	if got.LeaseToken != req.LeaseToken || len(got.OutboundIntegrationIDs) != 2 ||
+		got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" ||
+		got.OutboundIntegrationIDs[1] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
+	}
 	ordinary := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
 	ordinary.Snapshot.Networkless = false
 	if _, err := executionWakeRequestFromProto(ordinary); err == nil {
 		t.Fatal("ordinary snapshot accepted by execution restore converter")
+	}
+	invalidLease := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
+	invalidLease.LeaseToken = ""
+	if _, err := executionWakeRequestFromProto(invalidLease); err == nil {
+		t.Fatal("outbound grants accepted without lease fence")
+	}
+	leaseWithoutGrants := proto.Clone(req).(*vmmdpb.RestoreExecutionRequest)
+	leaseWithoutGrants.OutboundIntegrationIds = nil
+	if _, err := executionWakeRequestFromProto(leaseWithoutGrants); err == nil {
+		t.Fatal("lease fence accepted without outbound grants")
 	}
 }
 

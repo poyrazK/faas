@@ -1,4 +1,4 @@
-// adr: 393 — teardown joins every boot before acknowledging resource destruction.
+// adr: 467 — teardown joins every boot before acknowledging resource destruction.
 package fcvm
 
 import (

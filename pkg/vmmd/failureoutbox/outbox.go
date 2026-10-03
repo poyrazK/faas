@@ -1,6 +1,6 @@
 // Package failureoutbox persists vmmd failure reports until schedd acknowledges
 // their application. It never changes instance state or releases VM resources.
-// adr: 397
+// adr: 471
 package failureoutbox
 
 import (

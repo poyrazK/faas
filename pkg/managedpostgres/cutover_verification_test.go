@@ -1,4 +1,4 @@
-// adr: 391 — durable read-only evidence, retries, and cancellation fencing.
+// adr: 465 — durable read-only evidence, retries, and cancellation fencing.
 package managedpostgres
 
 import (

@@ -1,6 +1,6 @@
 package sched
 
-// adr: 396 — failed or unfinished teardown must retain scheduler admission.
+// adr: 470 — failed or unfinished teardown must retain scheduler admission.
 
 import (
 	"context"

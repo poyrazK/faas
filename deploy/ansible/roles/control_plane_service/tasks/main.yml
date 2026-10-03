@@ -933,3 +933,12 @@
   ansible.builtin.debug:
     msg: "{{ faas_mail_transport_assert.stdout }}"
   when: faas_mail_transport_assert.stdout != ""
+
+- name: control_plane_service — configure signed VM inventory repair
+  ansible.builtin.template:
+    src: "{{ role_path }}/../_shared/templates/zz-faas-node-inventory.conf.j2"
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-node-inventory.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd

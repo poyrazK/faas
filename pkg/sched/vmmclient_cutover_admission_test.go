@@ -1,4 +1,4 @@
-// adr: 394 — retain the durable fence error across the owner RPC.
+// adr: 468 — retain the durable fence error across the owner RPC.
 package sched_test
 
 import (

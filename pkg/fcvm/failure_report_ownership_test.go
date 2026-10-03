@@ -1,4 +1,4 @@
-// adr: 397 — an unknown-ID stop reservation cannot authorize recovered reports.
+// adr: 471 — an unknown-ID stop reservation cannot authorize recovered reports.
 package fcvm
 
 import (

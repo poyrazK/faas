@@ -1,5 +1,5 @@
 // Tests for cmd/vmmd/readiness.go (issue #571 PR-A2).
-// adr: 398 — run the portable readiness checks on the internal KVM host.
+// adr: 472 — run the portable readiness checks on the internal KVM host.
 //
 // The /readyz probe is constructed at vmmd boot and exposed
 // via ControlMuxLite on the metrics mux. These tests pin the

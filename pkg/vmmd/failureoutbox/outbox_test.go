@@ -1,4 +1,4 @@
-// adr: 397 — retry, process restart and persistence failure coverage.
+// adr: 471 — retry, process restart and persistence failure coverage.
 package failureoutbox
 
 import (

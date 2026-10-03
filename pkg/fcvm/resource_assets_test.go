@@ -1,14 +1,18 @@
-// adr: 400
+// adr: 474
 package fcvm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 func assetFixture(t *testing.T) (*JailerVMM, *ResourceJournal) {
@@ -88,6 +92,136 @@ func TestResourceAssetsIntentCheckpointAndReopen(t *testing.T) {
 	}
 	if _, err := os.Stat(f.Name()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("file survived cleanup")
+	}
+}
+
+// adr: 474
+// adr: 425
+func TestResourceAssetsRetainedStorageLink(t *testing.T) {
+	for _, phase := range []string{"retained", "copy", "intent", "checkpoint", "retirement", "collision", "replacement"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			v, j := assetFixture(t)
+			cache, err := storage.NewLocalCacheBackend(&restoreResolutionBackend{}, t.TempDir(), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &observedMaterializationBackend{StorageBackend: cache}
+			v.WithStorage(backend)
+			injected := errors.New("retained asset fsync failure")
+			syncDir := j.directorySync
+			intentCommitted, retiring := false, false
+			j.directorySync = func() error {
+				assets := j.records[idLive].Assets
+				if (phase == "intent" && len(assets) == 1 && assets[0].File == nil) ||
+					(phase == "checkpoint" && len(assets) == 1 && assets[0].File != nil) ||
+					(phase == "retirement" && retiring && len(assets) == 0) {
+					return injected
+				}
+				if err := syncDir(); err != nil {
+					return err
+				}
+				if len(assets) == 1 && assets[0].File == nil {
+					intentCommitted = true
+				}
+				return nil
+			}
+			backend.beforeLink = func() {
+				record, _, err := j.lookup(idLive)
+				if err != nil || !intentCommitted || len(record.Assets) != 1 || record.Assets[0].File != nil {
+					t.Fatalf("link preceded durable intent: %+v, %v", record, err)
+				}
+				if _, err := os.Lstat(record.Assets[0].Path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("destination existed before link: %v", err)
+				}
+				if phase == "collision" {
+					if err := os.WriteFile(record.Assets[0].Path, []byte("foreign"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if phase == "copy" {
+				backend.linkErr = syscall.EXDEV
+			}
+			path, err := v.materializeFromStorage(context.Background(), idLive, "snap/dep/mem")
+			j.directorySync = syncDir
+			if phase == "intent" || phase == "checkpoint" {
+				if !errors.Is(err, injected) || backend.reads.Load() != 0 {
+					t.Fatalf("uncertain link fell through to copying: %v, reads=%d", err, backend.reads.Load())
+				}
+				want := 0
+				if phase == "checkpoint" {
+					want = 1
+				}
+				if len(v.materialisedTmp[idLive]) != want {
+					t.Fatal("checkpoint failure lost cleanup ownership")
+				}
+			} else if phase == "collision" {
+				if err == nil || len(v.materialisedTmp[idLive]) != 1 || v.sweepMaterialised(idLive) == nil {
+					t.Fatal("foreign destination granted cleanup authority")
+				}
+				path = v.materialisedTmp[idLive][0]
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != "foreign" {
+					t.Fatal("cleanup touched the competing destination")
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err != nil || (backend.reads.Load() == 0) != (phase != "copy") {
+					t.Fatalf("materialization path changed: %v, reads=%d", err, backend.reads.Load())
+				}
+				record, _, err := j.lookup(idLive)
+				if err != nil || len(record.Assets) != 1 || record.Assets[0].File == nil || record.Assets[0].Path != path {
+					t.Fatalf("retained file lacks inode checkpoint: %+v, %v", record, err)
+				}
+				if err := cache.Delete(context.Background(), "snap/dep/mem"); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != "remote" {
+					t.Fatal("cache eviction removed retained bytes")
+				}
+				if phase == "replacement" {
+					if err := os.Rename(path, path+".original"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, []byte("foreign"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if v.sweepMaterialised(idLive) == nil {
+						t.Fatal("replacement accepted as owned inode")
+					}
+					if got, err := os.ReadFile(path); err != nil || string(got) != "foreign" {
+						t.Fatal("replacement deleted")
+					}
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(path+".original", path); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if phase == "retirement" {
+					retiring = true
+					j.directorySync = func() error { return injected }
+					if !errors.Is(v.sweepMaterialised(idLive), injected) || len(v.materialisedTmp[idLive]) != 1 {
+						t.Fatal("failed retirement lost retry ownership")
+					}
+					j.directorySync = syncDir
+				}
+			}
+			if err := v.sweepMaterialised(idLive); err != nil {
+				t.Fatal(err)
+			}
+			if phase != "intent" {
+				record, _, err := j.lookup(idLive)
+				if err != nil || len(record.Assets) != 0 {
+					t.Fatal("confirmed cleanup retained asset intent")
+				}
+			}
+		})
 	}
 }
 

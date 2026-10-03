@@ -1,4 +1,4 @@
-// adr: 394 — delayed boots/resumes cannot bypass the durable app fence.
+// adr: 468 — delayed boots/resumes cannot bypass the durable app fence.
 package fcvm
 
 import (

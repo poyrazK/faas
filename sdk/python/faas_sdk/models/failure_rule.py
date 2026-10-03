@@ -13,8 +13,8 @@ T = TypeVar("T", bound="FailureRule")
 
 @_attrs_define
 class FailureRule:
-    """A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP status
-    evidence is not available on the scheduled-job execution path.
+    """A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP Crons
+    support outcome_codes; exit_codes apply to Jobs and command Crons.
 
     """
 

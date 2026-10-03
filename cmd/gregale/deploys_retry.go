@@ -139,6 +139,12 @@ func cmdDeploysRetry(args []string) int {
 		printErr("retry deployment failed", err)
 		return 2
 	}
+	if jsonOutput {
+		if err := writeJSON(resp); err != nil {
+			return printErr("write retry receipt", err)
+		}
+		return 0
+	}
 
 	_, _ = fmt.Fprintf(osStdout, "Retry queued.\n")
 	_, _ = fmt.Fprintf(osStdout, "  new deployment id: %s\n", resp.ID)

@@ -855,7 +855,7 @@ func (s *Server) ForceRestartInstance(ctx context.Context, req *scheddpb.ForceRe
 // longer RUNNING (already parked by the idle reaper, mid-restore
 // after the previous restart) the engine returns nil and the
 // RPC preserves Ok=true for acceptance; Applied=true requires a cold
-// outcome (ADR-397). Resident transitions leave the durable report pending.
+// outcome (ADR-471). Resident transitions leave the durable report pending.
 //
 // Wire error mapping:
 //
@@ -919,7 +919,7 @@ func (s *Server) ReportLivenessFailed(ctx context.Context, req *scheddpb.Livenes
 //
 // Idempotent (mirrors ReportLivenessFailed): if the instance is
 // no longer RUNNING, the engine returns nil. The RPC preserves the acceptance
-// acknowledgement, but Applied requires a cold outcome (ADR-397).
+// acknowledgement, but Applied requires a cold outcome (ADR-471).
 //
 // Wire error mapping:
 //
@@ -1402,14 +1402,23 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
-		// Complete vmmd presence reports also drive the stale-instance
-		// reconciler. This is an optional additive seam so older/fake
-		// engines keep the existing capacity-stream contract.
+		// Only separately signed process inventories can drive destructive
+		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {
-			ObserveNodeInstances(context.Context, string, int32, []sched.NodeTelemetry)
+			ObserveNodeInventory(context.Context, sched.NodeInstanceInventory)
 		}); ok {
-			observer.ObserveNodeInstances(
-				stream.Context(), report.NodeID, report.LiveCount, telemetryRows)
+			inventory := sched.NodeInstanceInventory{NodeID: report.NodeID,
+				NodeKeyID: report.NodeKeyID, SampledAt: report.SampledAt}
+			if in := msg.GetInstanceInventory(); in != nil {
+				inventory.Complete = in.GetComplete()
+				inventory.InstanceIDs = in.GetInstanceIds()
+				inventory.Signature = in.GetNodeSignature()
+				if err := sched.VerifyNodeInventory(inventory, keys); err != nil {
+					inventory.Complete = false
+					s.log.Warn("schedd: ignoring unauthenticated VM inventory", "node_id", report.NodeID, "err", err)
+				}
+			}
+			observer.ObserveNodeInventory(stream.Context(), inventory)
 		}
 	}
 }

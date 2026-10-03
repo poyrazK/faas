@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean }
-export interface VariantFlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value?: string }
+export interface ProgressiveRollout {
+  stages: number[]; current_stage: number; auto_advance?: boolean; minimum_used_requests: number;
+  maximum_http_5xx_rate_basis_points: number; maximum_p95_latency_ms: number; window_seconds: number;
+}
+export interface FlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value: boolean; progression?: ProgressiveRollout }
+export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string }
 export interface WeightedVariant { key: string; weight: number }
 export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
 export type BooleanFeatureFlag = FeatureFlag;
@@ -37,8 +41,17 @@ export function flagBucket(seed: string, key: string, customer: string): number 
 export function flagVariantBucket(seed: string, key: string, customer: string): number {
   return createHash('sha256').update(`${seed}\0${key}\0variant\0${customer}`).digest().readUInt32BE(0) % 10000;
 }
+export function flagSubjectBucket(seed: string, key: string, customer: string, subject: string): number {
+  return createHash('sha256').update(`${seed}\0${key}\0subject\0${customer}\0${subject}`).digest().readUInt32BE(0) % 10000;
+}
+export function flagSubjectVariantBucket(seed: string, key: string, customer: string, subject: string): number {
+  return createHash('sha256').update(`${seed}\0${key}\0variant\0subject\0${customer}\0${subject}`).digest().readUInt32BE(0) % 10000;
+}
+export function validFlagSubjectID(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
+}
 /** Pure evaluator. customer must come from trusted server-side middleware. */
-export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean): FlagDecision {
+export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean, subject?: string): FlagDecision {
   const d: FlagDecision = { flag: key, value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
   if (!f) return d;
@@ -46,20 +59,26 @@ export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string 
   d.value = f.default; d.source = 'configuration'; d.reason = 'default';
   if (!f.enabled) return { ...d, reason: 'disabled' };
   if (!customer) return { ...d, reason: 'customer_missing' };
+  if (!validFlagSubjectID(subject)) subject = undefined;
+  let subjectMissing = false;
   for (const rule of f.rules) {
     if (rule.customers?.length && !rule.customers.includes(customer)) continue;
     if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    const subjectScoped = !!rule.subjects?.length || rule.rollout_unit === 'subject';
+    if (subjectScoped && !subject) { subjectMissing = true; continue; }
+    if (rule.subjects?.length && !rule.subjects.includes(subject!)) continue;
     let bucket: number | undefined;
     if (rule.rollout !== undefined) {
-      bucket = flagBucket(f.seed, f.key, customer);
+      bucket = rule.rollout_unit === 'subject' ? flagSubjectBucket(f.seed, f.key, customer, subject!) : flagBucket(f.seed, f.key, customer);
       if (bucket >= rule.rollout) continue;
     }
     return { ...d, value: rule.value, rule_id: rule.id, reason: 'rule_match', ...(bucket === undefined ? {} : { bucket }) };
   }
+  if (subjectMissing) return { ...d, reason: 'subject_missing' };
   return d;
 }
 /** Pure named-variant evaluator with deterministic weighted allocation. */
-export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string): VariantFlagDecision {
+export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string, subject?: string): VariantFlagDecision {
   const d: VariantFlagDecision = { flag: key, type: 'variant', value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
   if (!f) return d;
@@ -67,18 +86,24 @@ export function evaluateVariant(bundle: FlagsBundle, key: string, customer: stri
   d.value = f.default; d.source = 'configuration'; d.reason = 'default';
   if (!f.enabled) return { ...d, reason: 'disabled' };
   if (!customer) return { ...d, reason: 'customer_missing' };
+  if (!validFlagSubjectID(subject)) subject = undefined;
+  let subjectMissing = false;
   for (const rule of f.rules) {
     if (rule.customers?.length && !rule.customers.includes(customer)) continue;
     if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    const subjectScoped = !!rule.subjects?.length || rule.rollout_unit === 'subject';
+    if (subjectScoped && !subject) { subjectMissing = true; continue; }
+    if (rule.subjects?.length && !rule.subjects.includes(subject!)) continue;
     let rolloutBucket: number | undefined;
     if (rule.rollout !== undefined) {
-      rolloutBucket = flagBucket(f.seed, f.key, customer);
+      rolloutBucket = rule.rollout_unit === 'subject' ? flagSubjectBucket(f.seed, f.key, customer, subject!) : flagBucket(f.seed, f.key, customer);
       if (rolloutBucket >= rule.rollout) continue;
     }
     if (rule.value !== undefined) return { ...d, value: rule.value, rule_id: rule.id, reason: 'rule_match', ...(rolloutBucket === undefined ? {} : { rollout_bucket: rolloutBucket }) };
-    const bucket = flagVariantBucket(f.seed, f.key, customer);
+    const bucket = subjectScoped ? flagSubjectVariantBucket(f.seed, f.key, customer, subject!) : flagVariantBucket(f.seed, f.key, customer);
     return { ...d, value: chooseVariant(f.variants, bucket), rule_id: rule.id, reason: 'rule_match', bucket, ...(rolloutBucket === undefined ? {} : { rollout_bucket: rolloutBucket }) };
   }
+  if (subjectMissing) return { ...d, reason: 'subject_missing' };
   return d;
 }
 function chooseVariant(variants: WeightedVariant[], bucket: number): string {
@@ -104,7 +129,7 @@ export interface GregaleFlagsOptions {
 type PropagatedDecision =
   | (FlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin })
   | (VariantFlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin });
-type RequestFlags = { customer?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
+type RequestFlags = { customer?: string; subject?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
 
 /** Server-only client. Refresh is asynchronous; all checks in a request share one snapshot. */
 export class GregaleFlags {
@@ -151,7 +176,7 @@ export class GregaleFlags {
     if (!identity.ok) throw new Error('Flags workload identity unavailable');
     const token = await boundedJSON(identity, 16_384) as { access_token?: string };
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
-    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}` } });
+    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1' } });
     if (!response.ok) throw new Error(`Flags refresh failed (${response.status})`);
     // Configuration is bounded to 256 KiB; the runtime envelope adds scope/version.
     const next = validateBundle(await boundedJSON(response, 262_144 + 1024));
@@ -180,6 +205,13 @@ export class GregaleFlags {
     };
     return this.requests.run(request, handler);
   }
+  /** Bind an opaque end-user ID after application authentication, within runRequest. */
+  withSubject<T>(subjectID: string, handler: () => T | Promise<T>): Promise<T> {
+    const request = this.requests.getStore();
+    if (!request) throw new Error('Subject context requires runRequest');
+    if (!validFlagSubjectID(subjectID)) throw new Error('Invalid opaque subject ID');
+    return this.requests.run({ ...request, subject: subjectID }, async () => await handler());
+  }
   boolean(key: string, fallback: boolean): FlagDecision {
     const r = this.requests.getStore();
     if (!r) throw new Error('Flag checks require runRequest');
@@ -193,7 +225,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback, r.subject) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -210,7 +242,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -280,7 +312,7 @@ function decodePropagationHeader(value: string | null): { customer_id: string; d
     const envelope: unknown = JSON.parse(raw.toString('utf8'));
     if (!isRecord(envelope) || !hasOnlyKeys(envelope, ['version', 'customer_id', 'decisions']) || envelope.version !== 1 || typeof envelope.customer_id !== 'string' || !UUID.test(envelope.customer_id) || !Array.isArray(envelope.decisions) || envelope.decisions.length === 0 || envelope.decisions.length > 32) return undefined;
     const decisions = new Map<string, PropagatedDecision>();
-    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'rule_match', 'configuration_stale', 'type_mismatch']);
+    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'subject_missing', 'rule_match', 'configuration_stale', 'type_mismatch']);
     const decisionKeys = ['flag', 'value', 'type', 'config_version', 'rule_id', 'reason', 'bucket', 'rollout_bucket', 'source', 'origin'];
     for (const rawDecision of envelope.decisions) {
       if (!isRecord(rawDecision) || !hasOnlyKeys(rawDecision, decisionKeys)) return undefined;
@@ -335,7 +367,9 @@ function validateBundle(raw: unknown): FlagsBundle {
     } else if ('variants' in f) throw new Error('Boolean flag cannot define variants');
     for (const r of f.rules) {
       const validRuleValue = isVariant ? (r.value === undefined || (typeof r.value === 'string' && variantKeys.has(r.value))) : typeof r.value === 'boolean';
-      if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && r.rollout === undefined)) throw new Error('Invalid Flags rule');
+      const validSubjects = (value: unknown): value is string[] => Array.isArray(value) && value.length >= 1 && value.length <= 1000 && value.every(validFlagSubjectID) && new Set(value).size === value.length;
+      const tenantScoped = !!r.customers?.length || !!r.group;
+      if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.subjects !== undefined && !validSubjects(r.subjects)) || (r.rollout_unit !== undefined && r.rollout_unit !== 'customer' && r.rollout_unit !== 'subject') || (r.rollout_unit !== undefined && r.rollout === undefined) || ((!!r.subjects?.length || r.rollout_unit === 'subject') && !tenantScoped) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && !r.subjects?.length && r.rollout === undefined)) throw new Error('Invalid Flags rule');
       rules.add(r.id);
     }
   }

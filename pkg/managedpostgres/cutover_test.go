@@ -1,4 +1,4 @@
-// adr: 390 — preparation stages every binding without publishing credentials.
+// adr: 464 — preparation stages every binding without publishing credentials.
 package managedpostgres
 
 import (

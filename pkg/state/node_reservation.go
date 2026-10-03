@@ -174,10 +174,10 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 
 	inst, err := insert(tx)
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Instance{}, fmt.Errorf("state: node reservation: commit (node=%s): %w", nodeID, err)
+		return Instance{}, fmt.Errorf("state: node reservation: commit (node=%s): %w", nodeID, mapErr(err))
 	}
 	return inst, nil
 }

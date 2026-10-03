@@ -142,7 +142,7 @@ func (s *Server) relayForeignFailure(ctx context.Context, authErr error, r sched
 // Acknowledgements retire an observation, not a fleet drain receipt. Only these
 // cold states supersede it; resident transitions, missing rows and read failures
 // keep the vmmd outbox pending. In particular an account-deletion marker can be
-// published before cleanup and cannot acknowledge this report (ADR-397).
+// published before cleanup and cannot acknowledge this report (ADR-471).
 func failureReportSuperseded(ins state.Instance) bool {
 	switch state.State(ins.State) {
 	case state.StateParked, state.StateStopped, state.StateFailed:

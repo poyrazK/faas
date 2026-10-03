@@ -1,6 +1,6 @@
-// adr: 400
-// adr: 402
-// adr: 403
+// adr: 474
+// adr: 476
+// adr: 477
 package fcvm
 
 import (
@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Assets are provenance for future recovery, not recovered lifecycle ownership.
@@ -339,6 +341,65 @@ func (v *JailerVMM) newMaterialisedFile(instance, dir, pattern, kind string) (*o
 		return nil, fmt.Errorf("checkpoint staged file: %w", err)
 	}
 	return f, nil
+}
+
+// retainStorageFile combines ADR-425's immutable cache link with asset intent
+// and inode-fenced cleanup. A failed link permits copying only after confirming
+// that no destination exists and retiring its intent durably.
+func (v *JailerVMM) retainStorageFile(instance string, linker storage.LocalFileLinker) (string, bool, error) {
+	v.mu.Lock()
+	journal := v.resourceJournal
+	v.mu.Unlock()
+	dir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return "", false, err
+	}
+	path := filepath.Join(dir, "faas-snap-"+rand.Text()+".bin.linked")
+	if journal != nil {
+		if err := journal.addAsset(instance, resourceAsset{Kind: "materialised", Path: path}); err != nil {
+			return "", false, err
+		}
+	}
+	if linkErr := linker.LinkTo(path); linkErr != nil {
+		if journal == nil {
+			return "", false, nil
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return "", false, journal.retireAsset(instance, path)
+		}
+		// An unchanged competing destination grants no cleanup authority.
+		v.trackRetainedMaterialisation(instance, path, resourceFileIdentity{})
+		return "", false, fmt.Errorf("retain storage file: destination absence unconfirmed: %w", linkErr)
+	}
+	// Retain an unknown identity before any stat/checkpoint can fail.
+	v.trackRetainedMaterialisation(instance, path, resourceFileIdentity{})
+	info, err := os.Lstat(path)
+	var identity resourceFileIdentity
+	if err == nil {
+		identity, err = resourceFileID(info)
+	}
+	if err == nil {
+		v.mu.Lock()
+		v.materialisedIdentity[path] = identity
+		v.mu.Unlock()
+		if journal != nil {
+			err = journal.checkpointAsset(instance, path, identity, nil)
+		}
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("checkpoint retained storage file: %w", err)
+	}
+	return path, true, nil
+}
+
+func (v *JailerVMM) trackRetainedMaterialisation(instance, path string, identity resourceFileIdentity) {
+	v.trackMaterialised(instance, path)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.materialisedIdentity == nil {
+		v.materialisedIdentity = make(map[string]resourceFileIdentity)
+	}
+	v.materialisedIdentity[path] = identity
 }
 
 func chmodResourceFile(path string, expected resourceFileIdentity, mode os.FileMode) error {

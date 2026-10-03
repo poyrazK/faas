@@ -121,3 +121,30 @@ if grep -Fq '/etc/faas/uuid.txt' "${runner}"; then
 fi
 
 echo "native metal wrapper contracts OK"
+
+# Exercise selection and verdict behavior with synthetic results. Missing,
+# skipped, and newly added companion tests must fail qualification.
+source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+fixture_root="$(mktemp -d)"
+trap 'rm -rf "${fixture_root}"' EXIT
+mkdir -p "${fixture_root}/pkg/fcvm"
+fixture_source="${fixture_root}/pkg/fcvm/sidecar_metal_test.go"
+printf 'func TestCompanionOne(
+func TestCompanionTwo(
+' > "${fixture_source}"
+names="$(native_container_companion_tests "${fixture_root}")"
+[[ "${names}" == $'TestCompanionOne\nTestCompanionTwo' ]]
+log="${fixture_root}/results.log"
+printf '%s\n' '--- PASS: TestCompanionOne (0.1s)' '--- PASS: TestCompanionTwo (0.1s)' > "${log}"
+native_e2e_lane_verdict "${log}" companions TestCompanionOne TestCompanionTwo
+for result in missing skipped; do
+ printf '%s\n' '--- PASS: TestCompanionOne (0.1s)' > "${log}"
+ if [[ "${result}" == skipped ]]; then printf '%s\n' '--- SKIP: TestCompanionTwo (0.1s)' >> "${log}"; fi
+ if native_e2e_lane_verdict "${log}" companions TestCompanionOne TestCompanionTwo; then
+   echo "accepted ${result} companion test" >&2; exit 1
+ fi
+done
+printf 'func TestCompanionThree(\n' >> "${fixture_source}"
+native_container_companion_tests "${fixture_root}" | grep -Fxq TestCompanionThree
+: > "${fixture_source}"
+if native_container_companion_tests "${fixture_root}"; then echo 'accepted empty companion source' >&2; exit 1; fi

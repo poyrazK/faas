@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 397 — durable report redelivery retries failed real-guest cleanup.
+// adr: 471 — durable report redelivery retries failed real-guest cleanup.
 package fcvm_test
 
 import (
