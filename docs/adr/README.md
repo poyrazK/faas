@@ -58,6 +58,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 |---|---|---|---|
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
+| 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
 | 515 | [Bindings gate at traffic promotion](515-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
 | 514 | [Deployment selection for bindings verification](514-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
 | 513 | [Bindings preflight policy](513-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
@@ -255,7 +256,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
 | 492 | [Validate the Neon consumption contract](492-managed-postgres-consumption-contract.md) | accepted | Correct byte-month normalization, require complete usage coverage, and reconcile prior ledgers |
-| 493 | [Replay recent managed PostgreSQL usage corrections](493-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
 | 500 | [Managed PostgreSQL provider rate-limit cooldowns](500-managed-postgres-provider-rate-limit-cooldowns.md) | accepted | Honor retry guidance, isolate consumption throttling, and preserve canceled response reads |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
