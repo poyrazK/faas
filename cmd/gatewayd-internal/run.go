@@ -835,7 +835,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
 
 	rec := httptest.NewRecorder()
-	if err := serveSyntheticForward(a.forward(target), rec, req); err != nil {
+	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
 		inv.Result = nil
 		return inv, 0, nil, err
 	}
@@ -873,14 +873,14 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 // serveSyntheticForward translates the HTTP abort signal at the buffered
 // invocation boundary. A partial response cannot become a completed result.
 // adr: 375
-func serveSyntheticForward(handler http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
+func serveSyntheticForward(ctx context.Context, handler http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
 	defer func() {
 		if caught := recover(); caught != nil {
 			abort, ok := caught.(error)
 			if !ok || !errors.Is(abort, http.ErrAbortHandler) {
 				panic(caught)
 			}
-			if cause := context.Cause(r.Context()); cause != nil {
+			if cause := context.Cause(ctx); cause != nil {
 				err = cause
 			} else {
 				err = fmt.Errorf("gateway synth: forwarding response aborted: %w", abort)

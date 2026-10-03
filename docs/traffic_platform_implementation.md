@@ -4304,3 +4304,34 @@ state artifacts being acquired and verified separately.
 Fresh complete software CI is pending. All six release requirements remain
 unchecked. Native KVM/network/firewall/leak and deployed/staging acceptance still
 need their own evidence; no acceptance host is available.
+
+
+### Eighth CI result and explicit abort-context correction — 2026-10-04
+
+Run [37159480300](https://github.com/poyrazK/faas/actions/runs/37159480300)
+finished with failure on `55b9d6037c69ad5090f80ffa09414937fa4ed3b4`.
+All 25 jobs became terminal: 24 passed. The complete traffic unit/PostgreSQL
+and Linux compilation job, both ordinary Go shards, all database partitions,
+all four E2E shards, full state inventory/coverage, migrations, load, SDKs and
+contracts passed. The real gRPC cancellation fixture and the deterministic
+buffered-abort/result/cleanup regressions passed in complete package scopes.
+The original forwarding panic is repaired; complete software qualification is
+still pending because lint failed.
+
+Lint identified two issues. The abort helper now receives the admitted invocation
+context explicitly and reads its cause directly, satisfying the context
+inheritance checker. The request continues to inherit that same context.
+The unrelated-panic regression now checks both an error payload and an opaque
+comparable value through the general panic payload interface. Its exact payload
+identity and security-cleanup assertions remain; neither error wrapping nor
+replacement can pass them. No linter configuration, suppression, timeout or
+existing test assertion changes are introduced by these corrections.
+
+The frozen 12,572-file source inventory, terminal status and complete lint log
+are retained under `outputs/traffic-ci-20261003/` in the checkout's parent.
+All ten original artifacts are being retained with digest-verified memory
+buffers before writing, to avoid local disk exhaustion during slow downloads.
+Failed partial downloads from earlier runs remain separately preserved. Fresh
+complete CI is required on the corrected source. All six release requirements
+remain unchecked; native KVM/network/firewall/leak and deployed/staging
+acceptance still need their own evidence, and no acceptance host is available.

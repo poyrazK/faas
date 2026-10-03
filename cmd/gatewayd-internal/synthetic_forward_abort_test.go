@@ -52,25 +52,36 @@ func TestSyntheticForwardAbortDiscardsPartialResult(t *testing.T) {
 }
 
 func TestSyntheticForwardAbortDoesNotConsumeUnexpectedPanic(t *testing.T) {
-	store, app, _, target := invocationDeliveryFixture(t)
-	registry := trafficrevocation.New(&syntheticSecurityStore{})
-	defer registry.Close()
-	want := errors.New("unexpected forwarder panic")
-	adapter := &synthAdapter{store: store, trafficRevocations: registry,
-		forward: func(gateway.Target) http.Handler {
-			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(want) })
-		},
+	// Panic payloads may be errors or arbitrary values. Recovery must preserve
+	// the exact payload, including its identity, for either kind.
+	for _, tc := range []struct {
+		name    string
+		payload any
+	}{
+		{"error", errors.New("unexpected forwarder panic")},
+		{"opaque_value", struct{ Code int }{Code: 17}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, app, _, target := invocationDeliveryFixture(t)
+			registry := trafficrevocation.New(&syntheticSecurityStore{})
+			defer registry.Close()
+			adapter := &synthAdapter{store: store, trafficRevocations: registry,
+				forward: func(gateway.Target) http.Handler {
+					return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(tc.payload) })
+				},
+			}
+			var caught any
+			func() {
+				defer func() { caught = recover() }()
+				_, _, _ = adapter.InvokeWithTargetStatus(t.Context(), app.ID,
+					state.Invocation{AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationAsyncInvoke}, target)
+			}()
+			if caught != tc.payload {
+				t.Fatalf("panic = %v, want exact payload %v", caught, tc.payload)
+			}
+			assertSyntheticSecurityReleased(t, registry)
+		})
 	}
-	var caught any
-	func() {
-		defer func() { caught = recover() }()
-		_, _, _ = adapter.InvokeWithTargetStatus(t.Context(), app.ID,
-			state.Invocation{AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationAsyncInvoke}, target)
-	}()
-	if caught != want {
-		t.Fatalf("panic = %v, want %v", caught, want)
-	}
-	assertSyntheticSecurityReleased(t, registry)
 }
 
 func TestSyntheticInvokeCancellationDiscardsPriorResult(t *testing.T) {
