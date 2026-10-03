@@ -202,6 +202,19 @@ dns:
   apps_domain: gregale.dev
   mode: cloudflare
 
+# Customer custom domains served by the control plane's own edge (ADR-520).
+# Caddy obtains and renews a Let's Encrypt certificate per customer hostname
+# on demand, after gatewayd-public confirms the hostname is verified. The
+# target must be a DNS-only record that resolves straight to the control
+# plane (never a Cloudflare-proxied name). Enabling this opens 80/443 to every
+# source; platform hosts still answer Cloudflare only.
+# public_edge:
+#   custom_domains:
+#     mode: on_demand
+#     target: edge.gregale.dev
+#     addresses: [203.0.113.10]
+#     acme_email: ops@gregale.dev
+
 private_dns:
   mode: managed_hosts
   zone: gregale.dev
