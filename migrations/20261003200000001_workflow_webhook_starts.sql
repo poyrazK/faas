@@ -1,6 +1,6 @@
 -- +goose Up
-CREATE SEQUENCE workflow_webhook_binding_revision_seq;
-CREATE TABLE workflow_webhook_bindings (
+CREATE SEQUENCE IF NOT EXISTS workflow_webhook_binding_revision_seq;
+CREATE TABLE IF NOT EXISTS workflow_webhook_bindings (
     endpoint_id uuid PRIMARY KEY REFERENCES inbound_webhook_endpoints(id) ON DELETE CASCADE,
     workflow_name text NOT NULL CHECK (octet_length(workflow_name) BETWEEN 1 AND 128),
     event_type text NOT NULL CHECK (event_type ~ '^[a-z*][a-z0-9_.*]{0,255}$'),
@@ -8,7 +8,7 @@ CREATE TABLE workflow_webhook_bindings (
     version bigint NOT NULL CHECK (version > 0),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE TABLE workflow_webhook_receipts (
+CREATE TABLE IF NOT EXISTS workflow_webhook_receipts (
     endpoint_id uuid NOT NULL REFERENCES inbound_webhook_endpoints(id) ON DELETE CASCADE,
     provider_event_id text NOT NULL CHECK (octet_length(provider_event_id) BETWEEN 1 AND 256),
     receipt_id uuid NOT NULL UNIQUE,
@@ -23,11 +23,11 @@ CREATE TABLE workflow_webhook_receipts (
     CHECK ((status = 'accepted' AND recipient_id IS NOT NULL AND ignored_reason IS NULL)
         OR (status = 'ignored' AND recipient_id IS NULL AND ignored_reason IS NOT NULL))
 );
-CREATE INDEX workflow_webhook_receipts_outbox_idx ON workflow_webhook_receipts(outbox_id);
+CREATE INDEX IF NOT EXISTS workflow_webhook_receipts_outbox_idx ON workflow_webhook_receipts(outbox_id);
 -- Serialize competing routing modes even when an older API binary writes a
 -- callback or managed-operation binding. One endpoint has one delivery mode.
 -- +goose StatementBegin
-CREATE FUNCTION guard_workflow_webhook_routing() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_workflow_webhook_routing() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE endpoint uuid;
 BEGIN
     IF TG_TABLE_NAME = 'exclusive_work_trigger_bindings' THEN
@@ -48,10 +48,13 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS workflow_webhook_routing_guard ON workflow_webhook_bindings;
 CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON workflow_webhook_bindings
 FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
+DROP TRIGGER IF EXISTS workflow_callback_routing_guard ON workflow_callback_webhook_bindings;
 CREATE TRIGGER workflow_callback_routing_guard BEFORE INSERT OR UPDATE ON workflow_callback_webhook_bindings
 FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
+DROP TRIGGER IF EXISTS exclusive_webhook_routing_guard ON exclusive_work_trigger_bindings;
 CREATE TRIGGER exclusive_webhook_routing_guard BEFORE INSERT OR UPDATE ON exclusive_work_trigger_bindings
 FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
 -- +goose StatementEnd

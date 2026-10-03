@@ -16,9 +16,19 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
 $$;
 -- +goose StatementEnd
 ALTER TABLE workflow_steps
- ADD COLUMN foreach_parent text CHECK (foreach_parent IS NULL OR (octet_length(foreach_parent) BETWEEN 1 AND 64)),
- ADD COLUMN foreach_index integer CHECK (foreach_index IS NULL OR foreach_index BETWEEN 0 AND 127),
- ADD COLUMN foreach_count integer CHECK (foreach_count IS NULL OR foreach_count BETWEEN 0 AND 128),
+ ADD COLUMN IF NOT EXISTS foreach_parent text,
+ ADD COLUMN IF NOT EXISTS foreach_index integer,
+ ADD COLUMN IF NOT EXISTS foreach_count integer;
+ALTER TABLE workflow_steps
+ DROP CONSTRAINT IF EXISTS workflow_steps_foreach_parent_check,
+ DROP CONSTRAINT IF EXISTS workflow_steps_foreach_index_check,
+ DROP CONSTRAINT IF EXISTS workflow_steps_foreach_count_check,
+ DROP CONSTRAINT IF EXISTS workflow_foreach_identity,
+ DROP CONSTRAINT IF EXISTS workflow_foreach_parent,
+ DROP CONSTRAINT IF EXISTS workflow_foreach_position,
+ ADD CONSTRAINT workflow_steps_foreach_parent_check CHECK (foreach_parent IS NULL OR (octet_length(foreach_parent) BETWEEN 1 AND 64)),
+ ADD CONSTRAINT workflow_steps_foreach_index_check CHECK (foreach_index IS NULL OR foreach_index BETWEEN 0 AND 127),
+ ADD CONSTRAINT workflow_steps_foreach_count_check CHECK (foreach_count IS NULL OR foreach_count BETWEEN 0 AND 128),
  ADD CONSTRAINT workflow_foreach_identity CHECK ((foreach_parent IS NULL) = (foreach_index IS NULL)
    AND (foreach_parent IS NULL OR (foreach_count IS NULL AND step_name=workflow_foreach_item_name(foreach_parent,foreach_index)))),
  ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY (run_id,foreach_parent) REFERENCES workflow_steps(run_id,step_name) ON DELETE CASCADE,

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE SEQUENCE automation_definition_versions AS bigint;
+CREATE SEQUENCE IF NOT EXISTS automation_definition_versions AS bigint;
 CREATE TABLE IF NOT EXISTS workflow_automation_definitions (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (length(name)>0),
