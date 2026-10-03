@@ -57,3 +57,16 @@ sql:
         emit_interface: true
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+
+  # Independent target role creation and its atomic private receipt.
+  - engine: "postgresql"
+    queries: "pkg/managedpostgres/copyroles/queries.sql"
+    schema: "pkg/managedpostgres/copyroles/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/managedpostgres/copyroles/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true

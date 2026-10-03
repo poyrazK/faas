@@ -4940,3 +4940,62 @@ materialization and dataset verification, unknown-write recovery and ownership
 retirement, writer closure/common-point capture, object/configuration completeness,
 production-preserving promotion/rollback and remote/native acceptance remain
 required for the full one-command stage workflow.
+
+### Private transactional target role seeds (2026-10-03)
+
+The immutable every-database export plan now supplies a deeply copied, private
+role catalogue. A role seed plan explicitly accounts for every captured role,
+including predefined, provider and private maintenance roles. Existing resources
+require pinned target OIDs and identical names/attributes/configuration; matching
+a name cannot adopt ownership. Different provider/private semantics require a
+qualified mapping strategy. Source and target majors and bootstrap SQL pins must
+match. The original role plan, including the pre-write target catalogue, is sealed
+in a separate age namespace and recovered with its original recipient, inventory
+fingerprint, source scope and target fingerprint. Today's source or target cannot
+rebase that encrypted input. Existing central metadata ceilings apply.
+
+New roles retain captured attributes, expiry, connection limit and role settings,
+with LOGIN deferred and PASSWORD NULL. Existing mapped roles remain unchanged.
+Role memberships/grantors, database-scoped settings, comments/security labels,
+parameter ACLs and fresh stage credentials/activation require subsequent global
+materialization. No source password or password hash is copied. Unavailable role
+or parameter authority fails the whole transaction; settings are never omitted.
+PostgreSQL 16 requires explicit SET authority for custom placeholders, including
+when an ordinary CREATEROLE owner can create the role. PostgreSQL's own dump code
+also treats list settings such as search_path specially; the temporary SQL helper
+parses their stored quoted lists and individually quotes each element. This
+preserves comma-containing, quoted, long and empty entries.
+See [PostgreSQL GUC permission checks](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/backend/utils/misc/guc.c)
+and [dump configuration handling](https://github.com/postgres/postgres/blob/REL_16_STABLE/src/bin/pg_dump/dumputils.c).
+
+SQLC owns all statements; dynamic identifiers and literals are quoted only inside
+fixed SECURITY INVOKER temporary functions. An advisory transaction lock serializes
+workers on the bootstrap database, and live dispatch authority is checked again
+after waiting and before commit. Role creation and a private target receipt commit
+atomically. Exact retries verify the original plan, baseline and created role
+identities/attributes, retaining the original OIDs and timestamp without role DDL.
+A lost reply after commit returns no successful receipt; a fresh authenticated
+session can recover the exact sealed plan and committed target receipt. Catalogue
+drift, shared protocol storage and substituted receipts fail closed. This is role
+seeding only, not a credentials, complete globals, dataset or stage-ready receipt.
+
+Verification: seven new role contracts pass against two independent local
+PostgreSQL 16 clusters using ordinary CREATEROLE/CREATEDB owners (1.966 s), including
+explicit narrow SET authority for the custom setting fixture. They qualify private
+encryption/rotation and strict recovery, complete role dispositions, exact settings
+and password reset, unchanged source roles, concurrent first commit, stale waiting
+workers, lost committed replies, permission/precommit rollback, catalogue drift and
+receipt/ACL substitution. All ten inventory and twenty-two archive contracts also
+pass with no skips (1.004 s and 5.369 s), including real encrypted dump/restore.
+An existing inventory test import cycle was fixed by using the shared pgerrors
+identities directly. Normal production builds and inventory/role/archive vet pass.
+The SQLC check now stages and compares every configured generated package; the
+actual make gate passes, including all seventeen generated files.
+
+This private PostgreSQL 16+ primitive is not wired into public cloning. Durable
+control-plane ownership of the sealed role plan and provider worker composition,
+role/global completion and retirement, database creation/import/verification,
+PG14/15 qualification and remote provider acceptance remain required. Public
+database/object clone admission stays closed. Complete writer closure/common-point
+capture, object/configuration coverage, production-preserving promotion/rollback
+and native acceptance remain required for the full one-command stage workflow.
