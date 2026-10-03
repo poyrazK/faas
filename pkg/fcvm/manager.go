@@ -5228,7 +5228,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if cancelled := resumeCtx.Err(); cancelled != nil {
 		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
-	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
+	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease) //nolint:contextcheck // The registered flight recovery context outlives the RPC and is cancelled and joined by Destroy.
 	if resumeErr != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
