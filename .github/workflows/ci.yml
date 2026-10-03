@@ -117,9 +117,10 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
-    # time for setup, build, and the policy gates that follow it.
-    timeout-minutes: 15
+    # golangci-lint alone has an 8-minute cold-cache budget. Cold builds
+    # plus the real nftables and remaining policy gates can exceed 15
+    # minutes; keep a bounded budget that lets every gate finish.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
