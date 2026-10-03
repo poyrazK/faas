@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/globaldirectory"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -55,6 +56,9 @@ type server struct {
 	devBridgeObserver      *devbridge.Observer
 	featureFlagsEnabled    bool
 	regionalComputeEnabled bool
+	globalDirectory        globaldirectory.Store
+	globalVerifier         globaldirectory.Verifier
+	controlPlaneCell       db.CellIdentity
 	flagsWorkloadVerifier  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
@@ -1431,6 +1435,7 @@ func (s *server) handler() http.Handler {
 	// Apps. Internal metrics discovery is mounted only on the dedicated
 	// loopback metrics listener; see metricsDiscoveryHandler.
 	mux.HandleFunc("GET /v1/regions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listComputeRegions))))
+	s.registerGlobalDirectoryRoutes(mux)
 	mux.Handle("PUT /v1/regions/{id}", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.putComputeRegion))))
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))

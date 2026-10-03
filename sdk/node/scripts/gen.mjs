@@ -10,7 +10,7 @@
 import { generate } from 'openapi-typescript-codegen';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses } from './post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchGlobalDirectoryRequests } from './post-process.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -37,6 +37,7 @@ const importsChanged = await rewriteImportsToJs(outDir);
 // The pinned generator declares Blob downloads but its fetch runtime decodes
 // them as text. Preserve binary success bodies while still decoding Problems.
 await patchBinaryResponses(outDir);
+await patchGlobalDirectoryRequests(outDir);
 
 // Post-process pass 2: write the models barrel so customers can
 // `import type { AppResponse } from '@gregale/sdk-node'`.

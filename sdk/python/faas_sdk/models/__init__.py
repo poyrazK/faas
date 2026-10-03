@@ -265,6 +265,7 @@ from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
 from .async_invoke_response import AsyncInvokeResponse
+from .attach_global_app_target_request import AttachGlobalAppTargetRequest
 from .audit_event_response import AuditEventResponse
 from .audit_event_response_data import AuditEventResponseData
 from .audit_event_response_severity import AuditEventResponseSeverity
@@ -321,6 +322,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .cell_app_binding_response import CellAppBindingResponse
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -405,6 +407,7 @@ from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
+from .create_global_app_request import CreateGlobalAppRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
 from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
@@ -908,6 +911,12 @@ from .github_recovery_retry_response_kind import GithubRecoveryRetryResponseKind
 from .github_recovery_status_response import GithubRecoveryStatusResponse
 from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
 from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
+from .global_app_resolution_response import GlobalAppResolutionResponse
+from .global_app_response import GlobalAppResponse
+from .global_app_response_routing_policy import GlobalAppResponseRoutingPolicy
+from .global_app_target_response import GlobalAppTargetResponse
+from .global_app_target_response_resolution_status import GlobalAppTargetResponseResolutionStatus
+from .global_cell_response import GlobalCellResponse
 from .grace_window_response import GraceWindowResponse
 from .import_app_open_api_body import ImportAppOpenAPIBody
 from .import_app_open_api_body_info import ImportAppOpenAPIBodyInfo
@@ -1605,6 +1614,7 @@ from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .put_global_cell_request import PutGlobalCellRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
@@ -2416,6 +2426,7 @@ __all__ = (
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
     "AsyncInvokeResponse",
+    "AttachGlobalAppTargetRequest",
     "AuditEventResponse",
     "AuditEventResponseData",
     "AuditEventResponseSeverity",
@@ -2472,6 +2483,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "CellAppBindingResponse",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -2556,6 +2568,7 @@ __all__ = (
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
     "CreateExecutionArtifactGrantRequest",
+    "CreateGlobalAppRequest",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
     "CreateIssueIngestTokenRequest",
@@ -3047,6 +3060,12 @@ __all__ = (
     "GitHubWebhookActivityStatus",
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
+    "GlobalAppResolutionResponse",
+    "GlobalAppResponse",
+    "GlobalAppResponseRoutingPolicy",
+    "GlobalAppTargetResponse",
+    "GlobalAppTargetResponseResolutionStatus",
+    "GlobalCellResponse",
     "GraceWindowResponse",
     "ImportAppOpenAPIBody",
     "ImportAppOpenAPIBodyInfo",
@@ -3700,6 +3719,7 @@ __all__ = (
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "PutGlobalCellRequest",
     "PutJobRegistryCredentialRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",

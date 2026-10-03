@@ -15,12 +15,15 @@ import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
+import type { AttachGlobalAppTargetRequest } from '../models/AttachGlobalAppTargetRequest.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
+import type { CellAppBindingResponse } from '../models/CellAppBindingResponse.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { ComputeRegionResponse } from '../models/ComputeRegionResponse.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
+import type { CreateGlobalAppRequest } from '../models/CreateGlobalAppRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
@@ -42,6 +45,10 @@ import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListRes
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
+import type { GlobalAppResolutionResponse } from '../models/GlobalAppResolutionResponse.js';
+import type { GlobalAppResponse } from '../models/GlobalAppResponse.js';
+import type { GlobalAppTargetResponse } from '../models/GlobalAppTargetResponse.js';
+import type { GlobalCellResponse } from '../models/GlobalCellResponse.js';
 import type { Issue } from '../models/Issue.js';
 import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
@@ -56,6 +63,7 @@ import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
+import type { PutGlobalCellRequest } from '../models/PutGlobalCellRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -94,6 +102,334 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * List registered regional cell identities.
+   * Directory catalog of operator-registered API origins, enabled policy and registry generations. A registered identity makes no health or capacity claim.
+   * @returns GlobalCellResponse Registered regional cell catalog.
+   * @throws ApiError
+   */
+  public static listGlobalCells(): CancelablePromise<Array<GlobalCellResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-cells',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Declare a global directory cell.
+   * Operator-only complete registry update. Requires an allowlisted operator session, recent MFA step-up, same-origin protection and Idempotency-Key. Cell UUID and region are immutable. Changes to endpoint or enabled policy invalidate previous target verification.
+   * @returns GlobalCellResponse Declared operator cell identity and policy.
+   * @throws ApiError
+   */
+  public static putGlobalCell({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Immutable nonzero UUID of the regional control-plane cell.
+     */
+    id: string,
+    /**
+     * Stable key for this complete registry mutation.
+     */
+    idempotencyKey: string,
+    requestBody: PutGlobalCellRequest,
+  }): CancelablePromise<GlobalCellResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-cells/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List account-owned global app identities.
+   * Requires personal account read access to an enabled separate global directory. Targets report identity verification status, not deployment readiness.
+   * @returns GlobalAppResponse Global app identities owned by this directory account.
+   * @throws ApiError
+   */
+  public static listGlobalApps(): CancelablePromise<Array<GlobalAppResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Register a global app identity.
+   * Requires personal account deploy-write access and verified email. Idempotent for the same account and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions.
+   * @returns GlobalAppResponse Stable registered global app identity.
+   * @throws ApiError
+   */
+  public static createGlobalApp({
+    requestBody,
+  }: {
+    requestBody: CreateGlobalAppRequest,
+  }): CancelablePromise<GlobalAppResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/global-apps',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a global app and its regional identity bindings.
+   * Account-scoped lookup hides identities owned by another account. Target verification does not imply a running deployment.
+   * @returns GlobalAppResponse Requested global app and its selected regional identities.
+   * @throws ApiError
+   */
+  public static getGlobalApp({
+    slug,
+  }: {
+    /**
+     * Global app slug to look up for this account.
+     */
+    slug: string,
+  }): CancelablePromise<GlobalAppResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Verify and attach an existing regional app.
+   * Requires personal directory-account deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional personal account-admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps are unsupported.
+   * @returns GlobalAppTargetResponse Verified identity of the attached regional app.
+   * @throws ApiError
+   */
+  public static attachGlobalAppTarget({
+    slug,
+    region,
+    requestBody,
+  }: {
+    /**
+     * Global app whose existing regional identity is being attached.
+     */
+    slug: string,
+    /**
+     * Canonical region in which existing app ownership is being verified.
+     */
+    region: string,
+    requestBody: AttachGlobalAppTargetRequest,
+  }): CancelablePromise<GlobalAppTargetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/global-apps/{slug}/targets/{region}',
+      path: {
+        'slug': slug,
+        'region': region,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        502: `Regional ownership verification failed; code global_app_target_verification_failed.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Detach a selected regional app identity.
+   * Requires personal directory-account deploy-write access and verified email. Removes only the directory binding; it does not delete the regional app. The immutable regional account mapping remains.
+   * @returns void
+   * @throws ApiError
+   */
+  public static detachGlobalAppTarget({
+    slug,
+    region,
+  }: {
+    /**
+     * Global app whose selected regional identity is being detached.
+     */
+    slug: string,
+    /**
+     * Selected region to remove from this global app identity.
+     */
+    region: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/global-apps/{slug}/targets/{region}',
+      path: {
+        'slug': slug,
+        'region': region,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Resolve a global identity in an explicit region.
+   * Returns the verified regional API origin and local app identity only while the cell is enabled and registry generation matches. Returns global_app_target_reverification_required after endpoint or policy changes. Does not forward the global key, select an implicit region, or establish health/readiness. Responses use Cache-Control no-store.
+   * @returns GlobalAppResolutionResponse Current API origin and identity in the requested region.
+   * @throws ApiError
+   */
+  public static resolveGlobalApp({
+    slug,
+    region,
+  }: {
+    /**
+     * Global app whose explicit regional identity is being resolved.
+     */
+    slug: string,
+    /**
+     * Explicit region whose verified API origin and app identity are requested.
+     */
+    region: string,
+  }): CancelablePromise<GlobalAppResolutionResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/global-apps/{slug}/targets/{region}/resolve',
+      path: {
+        'slug': slug,
+        'region': region,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Verify regional personal account and app identity.
+   * Requires a regional personal account-admin API key and a configured immutable cell identity. Normal auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses use Cache-Control no-store.
+   * @returns CellAppBindingResponse Authenticated personal account and regional app identity.
+   * @throws ApiError
+   */
+  public static getCellAppBinding({
+    slug,
+  }: {
+    /**
+     * Canonical slug of an existing personally owned regional app.
+     */
+    slug: string,
+  }): CancelablePromise<CellAppBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/cell/apps/{slug}/binding',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
   /**
    * List durable compute regions and observed availability.
    * Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat observations, including unavailable regions. Availability follows node lifecycle admission; observed health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional control-plane independence.

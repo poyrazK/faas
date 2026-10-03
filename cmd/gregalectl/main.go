@@ -57,6 +57,7 @@ Commands:
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   regions       Durable compute regions and new-app admission (list|set)
   cell          Initialize or inspect a fresh regional control-plane database (init|status)
+  cells         Register regional cells in the global app directory (list|set)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
@@ -111,6 +112,8 @@ func run(args []string) int {
 	switch args[0] {
 	case "cell":
 		return cmdCellDispatch(args[1:])
+	case "cells":
+		return cmdCellsDispatch(args[1:])
 	case "regions":
 		return cmdRegionsDispatch(args[1:])
 	case "version", "--version", "-v":

@@ -141,6 +141,7 @@ export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResp
 export type { AppWebhookResponse } from './models/AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './models/AppWebhookRetryDeliveryResponse.js';
 export type { AsyncInvokeResponse } from './models/AsyncInvokeResponse.js';
+export type { AttachGlobalAppTargetRequest } from './models/AttachGlobalAppTargetRequest.js';
 export type { AuditEventResponse } from './models/AuditEventResponse.js';
 export type { AuditLogEntry } from './models/AuditLogEntry.js';
 export type { AuthCapabilities } from './models/AuthCapabilities.js';
@@ -169,6 +170,7 @@ export type { CancelPendingWorkRequest } from './models/CancelPendingWorkRequest
 export type { CancelPendingWorkResponse } from './models/CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';
 export type { CapabilityStatus } from './models/CapabilityStatus.js';
+export type { CellAppBindingResponse } from './models/CellAppBindingResponse.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
 export type { CheckRouteRequirementsRequest } from './models/CheckRouteRequirementsRequest.js';
@@ -211,6 +213,7 @@ export type { CreateDevBridgeResponse } from './models/CreateDevBridgeResponse.j
 export type { CreateEdgeRuleRequest } from './models/CreateEdgeRuleRequest.js';
 export type { CreateExecutionArtifactGrantRequest } from './models/CreateExecutionArtifactGrantRequest.js';
 export type { CreateExecutionRequest } from './models/CreateExecutionRequest.js';
+export type { CreateGlobalAppRequest } from './models/CreateGlobalAppRequest.js';
 export type { CreateInboundWebhookEndpointRequest } from './models/CreateInboundWebhookEndpointRequest.js';
 export type { CreateIssueIngestTokenRequest } from './models/CreateIssueIngestTokenRequest.js';
 export type { CreateJobRequest } from './models/CreateJobRequest.js';
@@ -466,6 +469,10 @@ export type { GithubRecoveryRetryResponse } from './models/GithubRecoveryRetryRe
 export type { GithubRecoveryStatusResponse } from './models/GithubRecoveryStatusResponse.js';
 export type { GitHubWebhookActivity } from './models/GitHubWebhookActivity.js';
 export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDeliveryRecord.js';
+export type { GlobalAppResolutionResponse } from './models/GlobalAppResolutionResponse.js';
+export type { GlobalAppResponse } from './models/GlobalAppResponse.js';
+export type { GlobalAppTargetResponse } from './models/GlobalAppTargetResponse.js';
+export type { GlobalCellResponse } from './models/GlobalCellResponse.js';
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { GregaleRelease } from './models/GregaleRelease.js';
 export type { GregaleRevision } from './models/GregaleRevision.js';
@@ -842,6 +849,7 @@ export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
+export type { PutGlobalCellRequest } from './models/PutGlobalCellRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './models/PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentialRequest.js';

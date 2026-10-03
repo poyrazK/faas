@@ -283,6 +283,7 @@ def regen(overwrite: bool = True) -> None:
         shutil.rmtree(wrapper_stash)
 
     _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
+    _protect_global_directory_request(OUT / "faas_sdk")
     _patch_generator_bugs(OUT / "faas_sdk")
 
     # Restore the hand-curated project files that we stashed before
@@ -956,6 +957,28 @@ def _canonicalise_to_head(
             file=sys.stderr,
         )
     return reconciled
+
+
+def _protect_global_directory_request(package: Path) -> None:
+    """Never redirect the regional proof key, even with a custom httpx client."""
+    endpoint = package / "api" / "apps" / "attach_global_app_target.py"
+    model = package / "models" / "attach_global_app_target_request.py"
+    if not endpoint.exists() and not model.exists():
+        return
+    source = endpoint.read_text()
+    anchor = "    return _kwargs"
+    if source.count(anchor) != 1:
+        raise RuntimeError("global directory transport generator anchor missing")
+    endpoint.write_text(source.replace(anchor, '    _kwargs["follow_redirects"] = False\n' + anchor))
+    source = model.read_text()
+    anchor = "    regional_api_key: str\n"
+    if source.count(anchor) != 1:
+        raise RuntimeError("global directory credential model generator anchor missing")
+    source = source.replace(
+        "from attrs import define as _attrs_define",
+        "from attrs import define as _attrs_define\nfrom attrs import field as _attrs_field",
+    )
+    model.write_text(source.replace(anchor, "    regional_api_key: str = _attrs_field(repr=False)\n"))
 
 
 def main() -> None:

@@ -562,6 +562,25 @@ $$;
 
 
 --
+-- Name: assert_global_directory_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assert_global_directory_scope() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Serialize directory writes with cell initialization. This also works
+    -- for an INSERT bypassing initialize_control_plane_cell.
+    LOCK TABLE control_plane_cells IN SHARE MODE;
+    IF EXISTS (SELECT 1 FROM control_plane_cells) THEN
+        RAISE EXCEPTION 'regional databases cannot own the global directory'
+            USING ERRCODE = '23514', CONSTRAINT = 'global_directory_scope';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: automatic_route_check_capture_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -838,6 +857,37 @@ CREATE FUNCTION public.cors_presets_set_updated_at() RETURNS trigger
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: create_global_app(uuid, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.create_global_app(owner_id uuid, wanted_slug text, app_limit integer) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE existing global_apps%ROWTYPE; wanted_id uuid;
+BEGIN
+    PERFORM assert_global_directory_scope();
+    PERFORM 1 FROM accounts WHERE id = owner_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'directory account missing' USING ERRCODE = '23503';
+    END IF;
+    SELECT * INTO existing FROM global_apps WHERE slug = wanted_slug;
+    IF FOUND THEN
+        IF existing.account_id <> owner_id THEN
+            RAISE EXCEPTION 'global slug taken' USING ERRCODE = '23505';
+        END IF;
+        RETURN existing.id;
+    END IF;
+    IF app_limit < 1 OR (SELECT count(*) FROM global_apps WHERE account_id = owner_id) >= app_limit THEN
+        RAISE EXCEPTION 'global app identity limit reached'
+            USING ERRCODE = '23514', CONSTRAINT = 'global_directory_limit';
+    END IF;
+    INSERT INTO global_apps(account_id, slug) VALUES (owner_id, wanted_slug) RETURNING id INTO wanted_id;
+    RETURN wanted_id;
 END;
 $$;
 
@@ -2788,6 +2838,23 @@ $$;
 
 
 --
+-- Name: guard_cell_from_global_directory(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_cell_from_global_directory() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM global_directory_cells) OR EXISTS (SELECT 1 FROM global_apps) THEN
+        RAISE EXCEPTION 'a populated global directory cannot become a regional cell'
+            USING ERRCODE = '23514', CONSTRAINT = 'global_directory_scope';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_invocation_platform_tenant(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3598,6 +3665,49 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'control_plane_cell_fresh';
     END IF;
     DELETE FROM compute_nodes WHERE name = 'default-local';
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_directory(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_directory() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM assert_global_directory_scope();
+    IF TG_TABLE_NAME = 'global_directory_cells' AND TG_OP = 'UPDATE' THEN
+        IF NEW.id IS DISTINCT FROM OLD.id OR NEW.region IS DISTINCT FROM OLD.region THEN
+            RAISE EXCEPTION 'directory cell identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'global_directory_identity';
+        END IF;
+        NEW.generation := OLD.generation + CASE WHEN NEW.api_base IS DISTINCT FROM OLD.api_base OR NEW.enabled IS DISTINCT FROM OLD.enabled THEN 1 ELSE 0 END;
+    ELSIF TG_TABLE_NAME = 'global_apps' AND TG_OP = 'UPDATE' THEN
+        IF NEW.id IS DISTINCT FROM OLD.id OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.slug IS DISTINCT FROM OLD.slug OR NEW.routing_policy IS DISTINCT FROM OLD.routing_policy THEN
+            RAISE EXCEPTION 'global app identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'global_directory_identity';
+        END IF;
+    ELSIF TG_TABLE_NAME = 'global_account_cell_bindings' AND TG_OP = 'UPDATE' THEN
+        IF NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.cell_id IS DISTINCT FROM OLD.cell_id OR NEW.regional_account_id IS DISTINCT FROM OLD.regional_account_id THEN
+            RAISE EXCEPTION 'regional account binding is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'global_directory_identity';
+        END IF;
+    ELSIF TG_TABLE_NAME = 'global_app_targets' AND TG_OP <> 'DELETE' THEN
+        PERFORM 1 FROM global_directory_cells
+            WHERE id = NEW.cell_id AND region = NEW.region AND enabled AND generation = NEW.cell_generation FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'cell changed during target verification'
+                USING ERRCODE = '23514', CONSTRAINT = 'global_directory_stale_cell';
+        END IF;
+        IF TG_OP = 'UPDATE' AND (NEW.global_app_id IS DISTINCT FROM OLD.global_app_id OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.region IS DISTINCT FROM OLD.region OR NEW.cell_id IS DISTINCT FROM OLD.cell_id OR NEW.regional_account_id IS DISTINCT FROM OLD.regional_account_id OR NEW.regional_app_id IS DISTINCT FROM OLD.regional_app_id OR NEW.regional_app_slug IS DISTINCT FROM OLD.regional_app_slug) THEN
+            RAISE EXCEPTION 'regional app binding is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'global_directory_identity';
+        END IF;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END;
 $$;
@@ -8398,6 +8508,71 @@ CREATE TABLE public.github_webhook_secrets (
     secret_value bytea NOT NULL,
     upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
     upgraded_by text DEFAULT 'platform'::text NOT NULL
+);
+
+
+--
+-- Name: global_account_cell_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_account_cell_bindings (
+    account_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    regional_account_id uuid NOT NULL,
+    CONSTRAINT global_account_cell_bindings_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: global_app_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_app_targets (
+    global_app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    region text NOT NULL,
+    cell_generation bigint NOT NULL,
+    regional_account_id uuid NOT NULL,
+    regional_app_id uuid NOT NULL,
+    regional_app_slug text NOT NULL,
+    verified_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT global_app_targets_cell_generation_check CHECK ((cell_generation > 0)),
+    CONSTRAINT global_app_targets_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_app_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+);
+
+
+--
+-- Name: global_apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    routing_policy text DEFAULT 'all_selected_regions'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT global_apps_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_apps_routing_policy_check CHECK ((routing_policy = 'all_selected_regions'::text)),
+    CONSTRAINT global_apps_slug_check CHECK ((((length(slug) >= 3) AND (length(slug) <= 40)) AND (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+);
+
+
+--
+-- Name: global_directory_cells; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_directory_cells (
+    id uuid NOT NULL,
+    region text NOT NULL,
+    api_base text NOT NULL,
+    enabled boolean NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT global_directory_cells_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
+    CONSTRAINT global_directory_cells_generation_check CHECK ((generation > 0)),
+    CONSTRAINT global_directory_cells_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_directory_cells_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
 );
 
 
@@ -14544,6 +14719,94 @@ ALTER TABLE ONLY public.github_webhook_deliveries
 
 ALTER TABLE ONLY public.github_webhook_secrets
     ADD CONSTRAINT github_webhook_secrets_pkey PRIMARY KEY (installation_id);
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_account_id_cell_id_regional_ac_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_account_cell_bindings
+    ADD CONSTRAINT global_account_cell_bindings_account_id_cell_id_regional_ac_key UNIQUE (account_id, cell_id, regional_account_id);
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_cell_id_regional_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_account_cell_bindings
+    ADD CONSTRAINT global_account_cell_bindings_cell_id_regional_account_id_key UNIQUE (cell_id, regional_account_id);
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_account_cell_bindings
+    ADD CONSTRAINT global_account_cell_bindings_pkey PRIMARY KEY (account_id, cell_id);
+
+
+--
+-- Name: global_app_targets global_app_targets_cell_id_regional_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_app_targets_cell_id_regional_app_id_key UNIQUE (cell_id, regional_app_id);
+
+
+--
+-- Name: global_app_targets global_app_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_app_targets_pkey PRIMARY KEY (global_app_id, region);
+
+
+--
+-- Name: global_apps global_apps_id_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_apps
+    ADD CONSTRAINT global_apps_id_account_id_key UNIQUE (id, account_id);
+
+
+--
+-- Name: global_apps global_apps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_apps
+    ADD CONSTRAINT global_apps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: global_apps global_apps_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_apps
+    ADD CONSTRAINT global_apps_slug_key UNIQUE (slug);
+
+
+--
+-- Name: global_directory_cells global_directory_cells_id_region_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_directory_cells
+    ADD CONSTRAINT global_directory_cells_id_region_key UNIQUE (id, region);
+
+
+--
+-- Name: global_directory_cells global_directory_cells_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_directory_cells
+    ADD CONSTRAINT global_directory_cells_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: global_directory_cells global_directory_cells_region_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_directory_cells
+    ADD CONSTRAINT global_directory_cells_region_key UNIQUE (region);
 
 
 --
@@ -21864,6 +22127,13 @@ CREATE TRIGGER consumer_keys_set_updated_at_trg BEFORE UPDATE ON public.consumer
 
 
 --
+-- Name: control_plane_cells control_plane_cell_directory_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER control_plane_cell_directory_guard BEFORE INSERT ON public.control_plane_cells FOR EACH ROW EXECUTE FUNCTION public.guard_cell_from_global_directory();
+
+
+--
 -- Name: control_plane_cells control_plane_cell_identity_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22092,6 +22362,34 @@ CREATE TRIGGER github_deployment_status_changed_trg AFTER INSERT OR UPDATE OF st
 --
 
 CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON public.github_webhook_secrets FOR EACH ROW EXECUTE FUNCTION public.github_webhook_secrets_notify();
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_account_cell_bindings_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_account_cell_bindings FOR EACH ROW EXECUTE FUNCTION public.protect_global_directory();
+
+
+--
+-- Name: global_app_targets global_app_targets_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_app_targets_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_app_targets FOR EACH ROW EXECUTE FUNCTION public.protect_global_directory();
+
+
+--
+-- Name: global_apps global_apps_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_apps_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.protect_global_directory();
+
+
+--
+-- Name: global_directory_cells global_directory_cells_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_directory_cells_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_directory_cells FOR EACH ROW EXECUTE FUNCTION public.protect_global_directory();
 
 
 --
@@ -24658,6 +24956,54 @@ ALTER TABLE ONLY public.github_installations
 
 ALTER TABLE ONLY public.github_installations
     ADD CONSTRAINT github_installations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_account_cell_bindings
+    ADD CONSTRAINT global_account_cell_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_account_cell_bindings global_account_cell_bindings_cell_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_account_cell_bindings
+    ADD CONSTRAINT global_account_cell_bindings_cell_id_fkey FOREIGN KEY (cell_id) REFERENCES public.global_directory_cells(id);
+
+
+--
+-- Name: global_app_targets global_app_targets_account_id_cell_id_regional_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_app_targets_account_id_cell_id_regional_account_id_fkey FOREIGN KEY (account_id, cell_id, regional_account_id) REFERENCES public.global_account_cell_bindings(account_id, cell_id, regional_account_id);
+
+
+--
+-- Name: global_app_targets global_app_targets_cell_id_region_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_app_targets_cell_id_region_fkey FOREIGN KEY (cell_id, region) REFERENCES public.global_directory_cells(id, region);
+
+
+--
+-- Name: global_app_targets global_app_targets_global_app_id_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_app_targets_global_app_id_account_id_fkey FOREIGN KEY (global_app_id, account_id) REFERENCES public.global_apps(id, account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_apps global_apps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_apps
+    ADD CONSTRAINT global_apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

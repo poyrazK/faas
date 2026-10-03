@@ -432,7 +432,8 @@ type Daemons struct {
 // the daemon uses to talk to remote daemons (e.g. schedd → vmmd on
 // a split-box fleet).
 type DaemonConfig struct {
-	RegionalComputeEnabled *bool `yaml:"regional_compute_enabled,omitempty"`
+	GlobalAppDirectoryEnabled *bool `yaml:"global_app_directory_enabled,omitempty"`
+	RegionalComputeEnabled    *bool `yaml:"regional_compute_enabled,omitempty"`
 	// Bind is the local listen address (e.g. `unix:///run/faas/schedd.sock`
 	// or `tcp://0.0.0.0:7100`). The renderer writes this into the
 	// daemon's TOML `socket_path` / `listen_addr` field.

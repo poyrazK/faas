@@ -47,6 +47,7 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"PUT /v1/global-cells/{id}":                           true, // ADR-476: operator cookie session and step-up required.
 	"PUT /v1/regions/{id}":                                true, // ADR-466: operator session, step-up and allowlist required.
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
@@ -543,6 +544,14 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/custom-metrics":                                                    "GetAppCustomMetrics",
 	"PUT /v1/apps/{slug}/custom-metrics/{name}":                                             "PutAppCustomMetric",
 	"DELETE /v1/apps/{slug}/custom-metrics/{name}":                                          "DeleteAppCustomMetric",
+	"GET /v1/global-cells":                                                                  "ListGlobalCells",
+	"GET /v1/global-apps":                                                                   "ListGlobalApps",
+	"POST /v1/global-apps":                                                                  "CreateGlobalApp",
+	"GET /v1/global-apps/{slug}":                                                            "GetGlobalApp",
+	"PUT /v1/global-apps/{slug}/targets/{region}":                                           "AttachGlobalAppTarget",
+	"DELETE /v1/global-apps/{slug}/targets/{region}":                                        "DetachGlobalAppTarget",
+	"GET /v1/global-apps/{slug}/targets/{region}/resolve":                                   "ResolveGlobalApp",
+	"GET /v1/cell/apps/{slug}/binding":                                                      "GetCellAppBinding",
 	"GET /v1/regions":                                                                       "ListComputeRegions",
 	"GET /v1/apps":                                                                          "ListApps",
 	"POST /v1/apps":                                                                         "CreateApp",

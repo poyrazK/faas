@@ -5,6 +5,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | Command | What it does |
 |---|---|
 | [`regions`](#regions) | List durable compute regions and availability |
+| [`global-app`](#global-app) | Register global app identities and verify existing regional apps |
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
@@ -113,6 +114,61 @@ List durable compute regions and availability
 ### regions list
 
 List durable compute regions and availability
+
+
+## global-app
+
+Register global app identities and verify existing regional apps
+
+`gregale global-app [<subcommand>]`
+
+### global-app create
+
+Register a global identity with all selected regions policy
+
+`gregale global-app create <global-slug>`
+
+### global-app list
+
+List global identities and regional verification status
+
+### global-app show
+
+Show one global app identity
+
+`gregale global-app show <global-slug>`
+
+### global-app attach
+
+Verify ownership of an existing regional app
+
+`gregale global-app attach --region <value> --regional-app <value> --regional-token-env <value> <global-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <value>` | selected region (required) | required |
+| `--regional-app <value>` | existing regional app slug (required) | required |
+| `--regional-token-env <value>` | environment variable holding the regional account-admin key (required) | required |
+
+### global-app detach
+
+Detach a regional identity
+
+`gregale global-app detach --region <value> <global-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <value>` | selected region (required) | required |
+
+### global-app resolve
+
+Resolve a verified identity in an explicit region
+
+`gregale global-app resolve --region <value> <global-slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <value>` | selected region (required) | required |
 
 
 ## mcp

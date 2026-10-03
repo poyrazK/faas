@@ -4064,6 +4064,237 @@ paths:
 
   # ─── Apps ─────────────────────────────────────────────────────────────────
 
+  /v1/global-cells:
+    get:
+      tags: [apps]
+      operationId: listGlobalCells
+      summary: List registered regional cell identities.
+      description: "Directory catalog of operator-registered API origins, enabled policy and registry generations. A registered identity makes no health or capacity claim."
+      responses:
+        '200':
+          description: Registered regional cell catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GlobalCellResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-cells/{id}:
+    put:
+      tags: [apps]
+      operationId: putGlobalCell
+      summary: Declare a global directory cell.
+      description: "Operator-only complete registry update. Requires an allowlisted operator session, recent MFA step-up, same-origin protection and Idempotency-Key. Cell UUID and region are immutable. Changes to endpoint or enabled policy invalidate previous target verification."
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          description: Immutable nonzero UUID of the regional control-plane cell.
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          description: Stable key for this complete registry mutation.
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutGlobalCellRequest' }
+      responses:
+        '200':
+          description: Declared operator cell identity and policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalCellResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps:
+    get:
+      tags: [apps]
+      operationId: listGlobalApps
+      summary: List account-owned global app identities.
+      description: "Requires personal account read access to an enabled separate global directory. Targets report identity verification status, not deployment readiness."
+      responses:
+        '200':
+          description: Global app identities owned by this directory account.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GlobalAppResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createGlobalApp
+      summary: Register a global app identity.
+      description: "Requires personal account deploy-write access and verified email. Idempotent for the same account and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGlobalAppRequest' }
+      responses:
+        '201':
+          description: Stable registered global app identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalAppResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}:
+    get:
+      tags: [apps]
+      operationId: getGlobalApp
+      summary: Read a global app and its regional identity bindings.
+      description: "Account-scoped lookup hides identities owned by another account. Target verification does not imply a running deployment."
+      parameters:
+        - name: slug
+          in: path
+          description: Global app slug to look up for this account.
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+      responses:
+        '200':
+          description: Requested global app and its selected regional identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalAppResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}/targets/{region}:
+    put:
+      tags: [apps]
+      operationId: attachGlobalAppTarget
+      summary: Verify and attach an existing regional app.
+      description: "Requires personal directory-account deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional personal account-admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps are unsupported."
+      parameters:
+        - name: slug
+          in: path
+          description: Global app whose existing regional identity is being attached.
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        - name: region
+          in: path
+          description: Canonical region in which existing app ownership is being verified.
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttachGlobalAppTargetRequest' }
+      responses:
+        '200':
+          description: Verified identity of the attached regional app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalAppTargetResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Regional ownership verification failed; code global_app_target_verification_failed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: detachGlobalAppTarget
+      summary: Detach a selected regional app identity.
+      description: "Requires personal directory-account deploy-write access and verified email. Removes only the directory binding; it does not delete the regional app. The immutable regional account mapping remains."
+      parameters:
+        - name: slug
+          in: path
+          description: Global app whose selected regional identity is being detached.
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        - name: region
+          in: path
+          description: Selected region to remove from this global app identity.
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+      responses:
+        '204':
+          description: Regional binding detached.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/global-apps/{slug}/targets/{region}/resolve:
+    get:
+      tags: [apps]
+      operationId: resolveGlobalApp
+      summary: Resolve a global identity in an explicit region.
+      description: "Returns the verified regional API origin and local app identity only while the cell is enabled and registry generation matches. Returns global_app_target_reverification_required after endpoint or policy changes. Does not forward the global key, select an implicit region, or establish health/readiness. Responses use Cache-Control no-store."
+      parameters:
+        - name: slug
+          in: path
+          description: Global app whose explicit regional identity is being resolved.
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        - name: region
+          in: path
+          description: Explicit region whose verified API origin and app identity are requested.
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+      responses:
+        '200':
+          description: Current API origin and identity in the requested region.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GlobalAppResolutionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/cell/apps/{slug}/binding:
+    get:
+      tags: [apps]
+      operationId: getCellAppBinding
+      summary: Verify regional personal account and app identity.
+      description: "Requires a regional personal account-admin API key and a configured immutable cell identity. Normal auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses use Cache-Control no-store."
+      parameters:
+        - name: slug
+          in: path
+          description: Canonical slug of an existing personally owned regional app.
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+      responses:
+        '200':
+          description: Authenticated personal account and regional app identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CellAppBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/regions:
     get:
       tags: [apps]
@@ -30222,6 +30453,87 @@ components:
         target_invalid: { type: integer, format: int64, minimum: 0, description: "Selected app failures with an invalid target header." }
         target_fallback: { type: integer, format: int64, minimum: 0, description: "Valid target failures observed with process-local fallback because central coordination was unavailable." }
 
+    GlobalCellResponse:
+      type: object
+      description: Immutable registered cell identity with mutable HTTPS origin and enabled policy. Generation fences verification.
+      required: [id, region, api_base, enabled, generation]
+      properties:
+        id: { type: string, format: uuid }
+        region: { type: string, minLength: 1, maxLength: 63 }
+        api_base: { type: string, format: uri, maxLength: 2048, description: Canonical HTTPS origin without credentials or path. }
+        enabled: { type: boolean }
+        generation: { type: integer, format: int64, minimum: 1 }
+    PutGlobalCellRequest:
+      type: object
+      description: Complete operator registry policy. UUID and region cannot change after registration.
+      additionalProperties: false
+      required: [region, api_base, enabled]
+      properties:
+        region: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        api_base: { type: string, format: uri, maxLength: 2048, description: Canonical HTTPS API origin. }
+        enabled: { type: boolean }
+    CreateGlobalAppRequest:
+      type: object
+      description: Global identity registration with no regional provisioning.
+      additionalProperties: false
+      required: [slug]
+      properties:
+        slug: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+    GlobalAppResponse:
+      type: object
+      description: Account-owned global identity and selected regional identities. No runtime health or deployment claim.
+      required: [id, slug, routing_policy, created_at, targets]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        routing_policy: { type: string, enum: [all_selected_regions] }
+        created_at: { type: string, format: date-time }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/GlobalAppTargetResponse' }
+    GlobalAppTargetResponse:
+      type: object
+      description: Verified regional app identity with current registry resolution status. This is not readiness or health.
+      required: [cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug, verified_at, resolution_status]
+      properties:
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        cell_generation: { type: integer, format: int64, minimum: 1 }
+        regional_account_id: { type: string, format: uuid }
+        regional_app_id: { type: string, format: uuid }
+        regional_app_slug: { type: string }
+        verified_at: { type: string, format: date-time }
+        resolution_status: { type: string, enum: [verified, cell_disabled, reverify_required] }
+    AttachGlobalAppTargetRequest:
+      type: object
+      description: One-request proof of regional ownership. The key is never retained or returned. Body is bounded to 4096 bytes.
+      additionalProperties: false
+      required: [regional_app_slug, regional_api_key]
+      properties:
+        regional_app_slug: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        regional_api_key: { type: string, writeOnly: true, description: Existing regional personal account-admin API key used only for this verification. }
+    GlobalAppResolutionResponse:
+      type: object
+      description: Explicit regional API origin and app identity. Use independent regional credentials when calling that API.
+      required: [global_app_id, cell_id, region, api_base, regional_app_id, regional_app_slug, cell_generation]
+      properties:
+        global_app_id: { type: string, format: uuid }
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        api_base: { type: string, format: uri }
+        regional_app_id: { type: string, format: uuid }
+        regional_app_slug: { type: string }
+        cell_generation: { type: integer, format: int64, minimum: 1 }
+    CellAppBindingResponse:
+      type: object
+      description: Authenticated regional identity attestation for one personally owned non-deleted app. Not deployment readiness.
+      required: [cell_id, region, account_id, app_id, app_slug]
+      properties:
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
     ComputeRegionResponse:
       type: object
       description: Durable compute locality with admission policy and observed node state. No capacity reservation is implied.

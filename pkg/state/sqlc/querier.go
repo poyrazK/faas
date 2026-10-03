@@ -77,6 +77,8 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error
+	AttachGlobalAppTarget(ctx context.Context, db DBTX, arg AttachGlobalAppTargetParams) (string, error)
 	BindExclusiveWorkSubmission(ctx context.Context, db DBTX, arg BindExclusiveWorkSubmissionParams) error
 	BuildArtifactReferencedForMaterialization(ctx context.Context, db DBTX, buildArtifactKey string) (bool, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
@@ -154,6 +156,7 @@ type Querier interface {
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
 	CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBridgeParams) (int64, error)
 	CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg CreateDevBridgeWebhookReplayParams) (int64, error)
+	CreateGlobalAppIdentity(ctx context.Context, db DBTX, arg CreateGlobalAppIdentityParams) (string, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	CreateJobDefinitionWithComputeRegion(ctx context.Context, db DBTX, arg CreateJobDefinitionWithComputeRegionParams) (Job, error)
 	CreateMirrorSlotLease(ctx context.Context, db DBTX, arg CreateMirrorSlotLeaseParams) (string, error)
@@ -240,6 +243,7 @@ type Querier interface {
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
+	DeleteGlobalAppTarget(ctx context.Context, db DBTX, arg DeleteGlobalAppTargetParams) (int64, error)
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
 	// the caller maps that to ErrNotFound. The 5-min TTL is the
 	// natural expiry path; Delete is the "kill this CI job's
@@ -414,6 +418,11 @@ type Querier interface {
 	// future work needs a transactional read-modify-write (e.g., admin
 	// force-close), add a separate GetUploadSessionForUpdate :one.
 	GetUploadSession(ctx context.Context, db DBTX, id string) (UploadSession, error)
+	GlobalAppIdentity(ctx context.Context, db DBTX, arg GlobalAppIdentityParams) (GlobalAppIdentityRow, error)
+	GlobalDirectoryCellByRegion(ctx context.Context, db DBTX, region string) (GlobalDirectoryCellByRegionRow, error)
+	// ADR-476: global app directory. Writes are apid-owned; all credentials stay
+	// outside these tables. Scope and generation locks precede intent changes.
+	GlobalDirectoryUnbound(ctx context.Context, db DBTX) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
@@ -498,6 +507,7 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	InsertGlobalAccountCellBinding(ctx context.Context, db DBTX, arg InsertGlobalAccountCellBindingParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
@@ -867,6 +877,9 @@ type Querier interface {
 	// successful public request and terminal instances remain for 30 days, which
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
+	ListGlobalAppIdentities(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error)
+	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
+	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListJobExecutionInstances(ctx context.Context, db DBTX, jobID pgtype.UUID) ([]ListJobExecutionInstancesRow, error)
@@ -951,6 +964,8 @@ type Querier interface {
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
 	LockExclusiveWorkAccount(ctx context.Context, db DBTX, accountID string) (LockExclusiveWorkAccountRow, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
+	LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGlobalAppIdentityParams) (LockGlobalAppIdentityRow, error)
+	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
@@ -1190,6 +1205,7 @@ type Querier interface {
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
+	ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg ReadGlobalAccountCellBindingParams) (string, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error)
@@ -1609,6 +1625,7 @@ type Querier interface {
 	// rotation is one statement. upgradedAt + upgradedBy form a §11
 	// audit trail.
 	UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg UpsertGithubWebhookSecretParams) (int64, error)
+	UpsertGlobalDirectoryCell(ctx context.Context, db DBTX, arg UpsertGlobalDirectoryCellParams) (UpsertGlobalDirectoryCellRow, error)
 	UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg UpsertInvoiceSnapshotParams) (UpsertInvoiceSnapshotRow, error)
 	// PK conflict on (account_id, issuer_url) updates the mutable
 	// columns (audience, subject_pattern, algorithms, required_claims,

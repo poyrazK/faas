@@ -218,6 +218,8 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return boolConfigValue(dc.RouteMetricsEnabled, true), nil
 	case "regional_compute_enabled":
 		return boolConfigValue(dc.RegionalComputeEnabled, false), nil
+	case "global_app_directory_enabled":
+		return boolConfigValue(dc.GlobalAppDirectoryEnabled, false), nil
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
 	case "service_proxy_https_listen":
@@ -583,7 +585,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 }
 
 func isTOMLBoolKey(key string) bool {
-	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "regional_compute_enabled"
+	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "regional_compute_enabled" || key == "global_app_directory_enabled"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

@@ -12,6 +12,17 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+/** A regional ownership key in a request body must never follow a redirect. */
+export async function patchGlobalDirectoryRequests(dir) {
+  const path = join(dir, 'core', 'request.ts');
+  const source = await readFile(path, 'utf8');
+  const anchor = '  if (config.WITH_CREDENTIALS) {';
+  const guard = "  if (options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') {\n    request.redirect = 'error';\n  }\n\n";
+  if (source.includes(guard)) return;
+  if (!source.includes(anchor)) throw new Error('global directory transport generator anchor missing');
+  await writeFile(path, source.replace(anchor, guard + anchor), 'utf8');
+}
+
 /** Preserve bytes for generated Blob downloads, including JSON metadata files.
  * Error responses keep the normal JSON/Problem parser. Idempotent and pinned
  * to known generator anchors so a template change cannot silently undo it.

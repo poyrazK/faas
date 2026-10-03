@@ -26,6 +26,9 @@ func (m *Manifest) validateControlPlaneCell() Errors {
 	if c.Region == "" || !api.ValidComputeRegion(c.Region) {
 		errs = append(errs, Error{"control_plane_cell.region", "must be a canonical compute region"})
 	}
+	if apid := m.Daemons.Apid; apid != nil && apid.GlobalAppDirectoryEnabled != nil && *apid.GlobalAppDirectoryEnabled {
+		errs = append(errs, Error{"daemons.apid.global_app_directory_enabled", "requires a separate unbound database; cannot be enabled in a regional cell"})
+	}
 	for i, host := range m.Fleet.Hosts {
 		if host.Region != c.Region || host.Region == "" {
 			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].region", i), "must match control_plane_cell.region"})

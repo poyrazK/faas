@@ -210,6 +210,10 @@ export const sendRequest = async (
     signal: controller.signal,
   };
 
+  if (options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') {
+    request.redirect = 'error';
+  }
+
   if (config.WITH_CREDENTIALS) {
     request.credentials = config.CREDENTIALS;
   }

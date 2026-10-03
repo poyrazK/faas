@@ -111,6 +111,15 @@ var cliCommands = []cliCommand{
 			{Name: "maintenance", Short: "Schedule, update, start, complete, cancel, or list maintenance"},
 		},
 	},
+	{Name: "cells", DocSlug: "global-cells", Short: "Register regional cells in the separate global app directory",
+		Subcommands: []cliSub{{Name: "list", Short: "List registered cell identities and generations"},
+			{Name: "set", Short: "Declare cell endpoint and enabled policy", Flags: []cliFlag{
+				{Name: "cell-id", Short: "immutable regional cell UUID (required)", Req: true},
+				{Name: "region", Short: "canonical region (required)", Req: true},
+				{Name: "api-base", Short: "HTTPS API origin (required)", Req: true},
+				{Name: "enabled", Short: "explicit true or false (required)", Req: true, ClosedSet: []string{"true", "false"}},
+			}}},
+	},
 	{Name: "regions", DocSlug: "regions", Short: "Durable compute regions and new-app admission",
 		Subcommands: []cliSub{{Name: "list", Short: "List regions including unavailable regions"},
 			{Name: "set", Short: "Declare region policy without evicting existing apps", Flags: []cliFlag{

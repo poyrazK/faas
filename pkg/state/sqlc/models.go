@@ -2101,6 +2101,40 @@ type GithubWebhookSecret struct {
 	UpgradedBy     string
 }
 
+type GlobalAccountCellBinding struct {
+	AccountID         pgtype.UUID
+	CellID            pgtype.UUID
+	RegionalAccountID pgtype.UUID
+}
+
+type GlobalApp struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Slug          string
+	RoutingPolicy string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type GlobalAppTarget struct {
+	GlobalAppID       pgtype.UUID
+	AccountID         pgtype.UUID
+	CellID            pgtype.UUID
+	Region            string
+	CellGeneration    int64
+	RegionalAccountID pgtype.UUID
+	RegionalAppID     pgtype.UUID
+	RegionalAppSlug   string
+	VerifiedAt        pgtype.Timestamptz
+}
+
+type GlobalDirectoryCell struct {
+	ID         pgtype.UUID
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	Generation int64
+}
+
 type GooseDbVersion struct {
 	ID        int32
 	VersionID int64

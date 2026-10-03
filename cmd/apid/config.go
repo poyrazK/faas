@@ -38,6 +38,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// GlobalAppDirectoryEnabled exposes the internal cross-cell identity API.
+	// The directory belongs to an unbound database, never a regional cell.
+	GlobalAppDirectoryEnabled bool `toml:"global_app_directory_enabled"`
 	// RegionalComputeEnabled admits new region-bound apps after fleet qualification.
 	// Existing constraints remain enforced when this is turned off.
 	RegionalComputeEnabled bool   `toml:"regional_compute_enabled"`

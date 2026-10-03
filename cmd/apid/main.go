@@ -1405,6 +1405,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	srv.regionalComputeEnabled = cfg.RegionalComputeEnabled
+	srv.controlPlaneCell = db.CellIdentity{ID: deps.getenv(db.ControlPlaneCellIDEnv), Region: deps.getenv(db.ControlPlaneCellRegionEnv)}
+	if err := srv.configureGlobalDirectory(ctx, cfg.GlobalAppDirectoryEnabled, deps.pool); err != nil {
+		return err
+	}
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}

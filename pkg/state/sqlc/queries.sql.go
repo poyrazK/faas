@@ -641,6 +641,52 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const assertGlobalDirectoryScope = `-- name: AssertGlobalDirectoryScope :exec
+SELECT assert_global_directory_scope()
+`
+
+func (q *Queries) AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, assertGlobalDirectoryScope)
+	return err
+}
+
+const attachGlobalAppTarget = `-- name: AttachGlobalAppTarget :one
+INSERT INTO global_app_targets(global_app_id, account_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::bigint,
+        $6::uuid, $7::uuid, $8::text)
+ON CONFLICT (global_app_id, region) DO UPDATE SET cell_generation = EXCLUDED.cell_generation, verified_at = now()
+WHERE global_app_targets.cell_id = EXCLUDED.cell_id AND global_app_targets.regional_account_id = EXCLUDED.regional_account_id
+  AND global_app_targets.regional_app_id = EXCLUDED.regional_app_id AND global_app_targets.regional_app_slug = EXCLUDED.regional_app_slug
+RETURNING global_app_id::text AS global_app_id
+`
+
+type AttachGlobalAppTargetParams struct {
+	GlobalAppID       pgtype.UUID
+	AccountID         pgtype.UUID
+	CellID            pgtype.UUID
+	Region            string
+	CellGeneration    int64
+	RegionalAccountID pgtype.UUID
+	RegionalAppID     pgtype.UUID
+	RegionalAppSlug   string
+}
+
+func (q *Queries) AttachGlobalAppTarget(ctx context.Context, db DBTX, arg AttachGlobalAppTargetParams) (string, error) {
+	row := db.QueryRow(ctx, attachGlobalAppTarget,
+		arg.GlobalAppID,
+		arg.AccountID,
+		arg.CellID,
+		arg.Region,
+		arg.CellGeneration,
+		arg.RegionalAccountID,
+		arg.RegionalAppID,
+		arg.RegionalAppSlug,
+	)
+	var global_app_id string
+	err := row.Scan(&global_app_id)
+	return global_app_id, err
+}
+
 const bindExclusiveWorkSubmission = `-- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
 VALUES($1::text::uuid,$2::bytea,$3::text::uuid)
@@ -2360,6 +2406,23 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const createGlobalAppIdentity = `-- name: CreateGlobalAppIdentity :one
+SELECT create_global_app($1::uuid, $2::text, $3::integer)::text AS global_app_id
+`
+
+type CreateGlobalAppIdentityParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+	AppLimit  int32
+}
+
+func (q *Queries) CreateGlobalAppIdentity(ctx context.Context, db DBTX, arg CreateGlobalAppIdentityParams) (string, error) {
+	row := db.QueryRow(ctx, createGlobalAppIdentity, arg.AccountID, arg.Slug, arg.AppLimit)
+	var global_app_id string
+	err := row.Scan(&global_app_id)
+	return global_app_id, err
+}
+
 const createInstance = `-- name: CreateInstance :one
 insert into instances (id, app_id, deployment_id, state, ram_mb)
 values (gen_random_uuid(), $1, $2, $3, $4)
@@ -3243,6 +3306,25 @@ WHERE mirror_rule_id = $1::uuid
 
 func (q *Queries) DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
 	result, err := db.Exec(ctx, deleteExpiredMirrorSlotLeases, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteGlobalAppTarget = `-- name: DeleteGlobalAppTarget :execrows
+DELETE FROM global_app_targets t USING global_apps a WHERE a.id = t.global_app_id
+AND a.account_id = $1::uuid AND a.slug = $2::text AND t.region = $3::text
+`
+
+type DeleteGlobalAppTargetParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+	Region    string
+}
+
+func (q *Queries) DeleteGlobalAppTarget(ctx context.Context, db DBTX, arg DeleteGlobalAppTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteGlobalAppTarget, arg.AccountID, arg.Slug, arg.Region)
 	if err != nil {
 		return 0, err
 	}
@@ -6618,6 +6700,75 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 	return i, err
 }
 
+const globalAppIdentity = `-- name: GlobalAppIdentity :one
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = $1::uuid AND slug = $2::text
+`
+
+type GlobalAppIdentityParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+}
+
+type GlobalAppIdentityRow struct {
+	GlobalAppID   string
+	AccountID     string
+	Slug          string
+	RoutingPolicy string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GlobalAppIdentity(ctx context.Context, db DBTX, arg GlobalAppIdentityParams) (GlobalAppIdentityRow, error) {
+	row := db.QueryRow(ctx, globalAppIdentity, arg.AccountID, arg.Slug)
+	var i GlobalAppIdentityRow
+	err := row.Scan(
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.Slug,
+		&i.RoutingPolicy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const globalDirectoryCellByRegion = `-- name: GlobalDirectoryCellByRegion :one
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells WHERE region = $1
+`
+
+type GlobalDirectoryCellByRegionRow struct {
+	CellID     string
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	Generation int64
+}
+
+func (q *Queries) GlobalDirectoryCellByRegion(ctx context.Context, db DBTX, region string) (GlobalDirectoryCellByRegionRow, error) {
+	row := db.QueryRow(ctx, globalDirectoryCellByRegion, region)
+	var i GlobalDirectoryCellByRegionRow
+	err := row.Scan(
+		&i.CellID,
+		&i.Region,
+		&i.ApiBase,
+		&i.Enabled,
+		&i.Generation,
+	)
+	return i, err
+}
+
+const globalDirectoryUnbound = `-- name: GlobalDirectoryUnbound :one
+SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound
+`
+
+// ADR-476: global app directory. Writes are apid-owned; all credentials stay
+// outside these tables. Scope and generation locks precede intent changes.
+func (q *Queries) GlobalDirectoryUnbound(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, globalDirectoryUnbound)
+	var unbound bool
+	err := row.Scan(&unbound)
+	return unbound, err
+}
+
 const hasExclusiveSnapshotOwner = `-- name: HasExclusiveSnapshotOwner :one
 SELECT EXISTS(SELECT 1 FROM exclusive_work_operations o JOIN instances i
 ON o.incarnation_id=i.id::text||'/'||i.wake_id::text||'/'||i.node_id::text
@@ -7113,6 +7264,23 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertGlobalAccountCellBinding = `-- name: InsertGlobalAccountCellBinding :exec
+INSERT INTO global_account_cell_bindings(account_id, cell_id, regional_account_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+ON CONFLICT (account_id, cell_id) DO NOTHING
+`
+
+type InsertGlobalAccountCellBindingParams struct {
+	AccountID         pgtype.UUID
+	CellID            pgtype.UUID
+	RegionalAccountID pgtype.UUID
+}
+
+func (q *Queries) InsertGlobalAccountCellBinding(ctx context.Context, db DBTX, arg InsertGlobalAccountCellBindingParams) error {
+	_, err := db.Exec(ctx, insertGlobalAccountCellBinding, arg.AccountID, arg.CellID, arg.RegionalAccountID)
+	return err
 }
 
 const insertInvoiceHistorySnapshot = `-- name: InsertInvoiceHistorySnapshot :one
@@ -11783,6 +11951,143 @@ func (q *Queries) ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context
 	return items, nil
 }
 
+const listGlobalAppIdentities = `-- name: ListGlobalAppIdentities :many
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = $1::uuid ORDER BY slug
+`
+
+type ListGlobalAppIdentitiesRow struct {
+	GlobalAppID   string
+	AccountID     string
+	Slug          string
+	RoutingPolicy string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListGlobalAppIdentities(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error) {
+	rows, err := db.Query(ctx, listGlobalAppIdentities, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalAppIdentitiesRow{}
+	for rows.Next() {
+		var i ListGlobalAppIdentitiesRow
+		if err := rows.Scan(
+			&i.GlobalAppID,
+			&i.AccountID,
+			&i.Slug,
+			&i.RoutingPolicy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGlobalAppTargets = `-- name: ListGlobalAppTargets :many
+SELECT t.global_app_id::text AS global_app_id, t.cell_id::text AS cell_id, t.region, t.cell_generation,
+       t.regional_account_id::text AS regional_account_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
+       c.api_base, c.enabled AS cell_enabled, c.generation AS registry_generation
+FROM global_app_targets t JOIN global_apps a ON a.id = t.global_app_id
+JOIN global_directory_cells c ON c.id = t.cell_id
+WHERE a.account_id = $1::uuid AND a.slug = $2::text ORDER BY t.region
+`
+
+type ListGlobalAppTargetsParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+}
+
+type ListGlobalAppTargetsRow struct {
+	GlobalAppID        string
+	CellID             string
+	Region             string
+	CellGeneration     int64
+	RegionalAccountID  string
+	RegionalAppID      string
+	RegionalAppSlug    string
+	VerifiedAt         pgtype.Timestamptz
+	ApiBase            string
+	CellEnabled        bool
+	RegistryGeneration int64
+}
+
+func (q *Queries) ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error) {
+	rows, err := db.Query(ctx, listGlobalAppTargets, arg.AccountID, arg.Slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalAppTargetsRow{}
+	for rows.Next() {
+		var i ListGlobalAppTargetsRow
+		if err := rows.Scan(
+			&i.GlobalAppID,
+			&i.CellID,
+			&i.Region,
+			&i.CellGeneration,
+			&i.RegionalAccountID,
+			&i.RegionalAppID,
+			&i.RegionalAppSlug,
+			&i.VerifiedAt,
+			&i.ApiBase,
+			&i.CellEnabled,
+			&i.RegistryGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGlobalDirectoryCells = `-- name: ListGlobalDirectoryCells :many
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells ORDER BY region
+`
+
+type ListGlobalDirectoryCellsRow struct {
+	CellID     string
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	Generation int64
+}
+
+func (q *Queries) ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error) {
+	rows, err := db.Query(ctx, listGlobalDirectoryCells)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGlobalDirectoryCellsRow{}
+	for rows.Next() {
+		var i ListGlobalDirectoryCellsRow
+		if err := rows.Scan(
+			&i.CellID,
+			&i.Region,
+			&i.ApiBase,
+			&i.Enabled,
+			&i.Generation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstancesForApp = `-- name: ListInstancesForApp :many
 select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid, 0),
        coalesce(host_ip::text, ''), ram_mb, started_at, last_request_at, parked_at
@@ -13698,6 +14003,68 @@ func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg L
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockGlobalAppIdentity = `-- name: LockGlobalAppIdentity :one
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = $1::uuid AND slug = $2::text FOR UPDATE
+`
+
+type LockGlobalAppIdentityParams struct {
+	AccountID pgtype.UUID
+	Slug      string
+}
+
+type LockGlobalAppIdentityRow struct {
+	GlobalAppID   string
+	AccountID     string
+	Slug          string
+	RoutingPolicy string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGlobalAppIdentityParams) (LockGlobalAppIdentityRow, error) {
+	row := db.QueryRow(ctx, lockGlobalAppIdentity, arg.AccountID, arg.Slug)
+	var i LockGlobalAppIdentityRow
+	err := row.Scan(
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.Slug,
+		&i.RoutingPolicy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockGlobalDirectoryCell = `-- name: LockGlobalDirectoryCell :one
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells
+WHERE id = $1::uuid AND enabled AND generation = $2::bigint FOR SHARE
+`
+
+type LockGlobalDirectoryCellParams struct {
+	CellID     pgtype.UUID
+	Generation int64
+}
+
+type LockGlobalDirectoryCellRow struct {
+	CellID     string
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	Generation int64
+}
+
+func (q *Queries) LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error) {
+	row := db.QueryRow(ctx, lockGlobalDirectoryCell, arg.CellID, arg.Generation)
+	var i LockGlobalDirectoryCellRow
+	err := row.Scan(
+		&i.CellID,
+		&i.Region,
+		&i.ApiBase,
+		&i.Enabled,
+		&i.Generation,
+	)
+	return i, err
 }
 
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
@@ -18078,6 +18445,23 @@ func (q *Queries) ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg Read
 		&i.JobID,
 	)
 	return i, err
+}
+
+const readGlobalAccountCellBinding = `-- name: ReadGlobalAccountCellBinding :one
+SELECT regional_account_id::text AS regional_account_id FROM global_account_cell_bindings
+WHERE account_id = $1::uuid AND cell_id = $2::uuid
+`
+
+type ReadGlobalAccountCellBindingParams struct {
+	AccountID pgtype.UUID
+	CellID    pgtype.UUID
+}
+
+func (q *Queries) ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg ReadGlobalAccountCellBindingParams) (string, error) {
+	row := db.QueryRow(ctx, readGlobalAccountCellBinding, arg.AccountID, arg.CellID)
+	var regional_account_id string
+	err := row.Scan(&regional_account_id)
+	return regional_account_id, err
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
@@ -22804,6 +23188,47 @@ func (q *Queries) UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg Up
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertGlobalDirectoryCell = `-- name: UpsertGlobalDirectoryCell :one
+INSERT INTO global_directory_cells(id, region, api_base, enabled)
+VALUES ($1::uuid, $2::text, $3::text, $4::boolean)
+ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled
+WHERE global_directory_cells.region = EXCLUDED.region
+RETURNING id::text AS cell_id, region, api_base, enabled, generation
+`
+
+type UpsertGlobalDirectoryCellParams struct {
+	CellID  pgtype.UUID
+	Region  string
+	ApiBase string
+	Enabled bool
+}
+
+type UpsertGlobalDirectoryCellRow struct {
+	CellID     string
+	Region     string
+	ApiBase    string
+	Enabled    bool
+	Generation int64
+}
+
+func (q *Queries) UpsertGlobalDirectoryCell(ctx context.Context, db DBTX, arg UpsertGlobalDirectoryCellParams) (UpsertGlobalDirectoryCellRow, error) {
+	row := db.QueryRow(ctx, upsertGlobalDirectoryCell,
+		arg.CellID,
+		arg.Region,
+		arg.ApiBase,
+		arg.Enabled,
+	)
+	var i UpsertGlobalDirectoryCellRow
+	err := row.Scan(
+		&i.CellID,
+		&i.Region,
+		&i.ApiBase,
+		&i.Enabled,
+		&i.Generation,
+	)
+	return i, err
 }
 
 const upsertInvoiceSnapshot = `-- name: UpsertInvoiceSnapshot :one

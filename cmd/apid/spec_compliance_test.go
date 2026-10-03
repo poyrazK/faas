@@ -85,7 +85,8 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"PUT /v1/regions/{id}": true, // ADR-466: operator session, step-up and allowlist required.
+	"PUT /v1/global-cells/{id}":                             true, // ADR-476: verified operator session and step-up required.
+	"PUT /v1/regions/{id}":                                  true, // ADR-466: operator session, step-up and allowlist required.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
 
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates
@@ -823,6 +824,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	sources := []string{
 		filepath.Join(root, "cmd/apid", serverSrcPath),
 		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
+		filepath.Join(root, "cmd/apid", "global_directory.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -1050,6 +1052,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
+		filepath.Join(root, "pkg", "api", "global_apps.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),

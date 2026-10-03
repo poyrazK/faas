@@ -20,6 +20,19 @@ import (
 	"time"
 )
 
+// ADR-476 directory/proof protocol bounds. These do not grant runtime capacity.
+const (
+	GlobalDirectoryRequestMaxBytes     = 4096
+	GlobalDirectoryProofMaxBytes       = 4096
+	GlobalDirectoryAPIOriginMaxBytes   = 2048
+	GlobalDirectoryOriginPortMax       = 65535
+	GlobalDirectoryOriginHostMaxBytes  = 253
+	GlobalDirectoryOriginLabelMaxBytes = 63
+	GlobalDirectoryProofTimeoutSeconds = 10
+	GlobalDirectorySlugMinBytes        = 3
+	GlobalDirectorySlugMaxBytes        = 40
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (

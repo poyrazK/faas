@@ -269,6 +269,19 @@ var templateNames13 = []string{
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
 	{Name: "regions", DocSlug: "regions", Short: "List durable compute regions and availability", Subcommands: []cliSub{{Name: "list", Short: "List durable compute regions and availability"}}},
+	{Name: "global-app", DocSlug: "global-app", Short: "Register global app identities and verify existing regional apps",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Register a global identity with all selected regions policy", Positionals: []string{"<global-slug>"}},
+			{Name: "list", Short: "List global identities and regional verification status"},
+			{Name: "show", Short: "Show one global app identity", Positionals: []string{"<global-slug>"}},
+			{Name: "attach", Short: "Verify ownership of an existing regional app", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{
+				{Name: "region", Short: "selected region (required)", Req: true},
+				{Name: "regional-app", Short: "existing regional app slug (required)", Req: true},
+				{Name: "regional-token-env", Short: "environment variable holding the regional account-admin key (required)", Req: true},
+			}},
+			{Name: "detach", Short: "Detach a regional identity", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "region", Short: "selected region (required)", Req: true}}},
+			{Name: "resolve", Short: "Resolve a verified identity in an explicit region", Positionals: []string{"<global-slug>"}, Flags: []cliFlag{{Name: "region", Short: "selected region (required)", Req: true}}},
+		}},
 
 	mcpCLICommand(),
 	{

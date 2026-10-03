@@ -6372,3 +6372,72 @@ SELECT id::text AS cell_id, compute_region FROM control_plane_cells WHERE single
 
 -- name: InitializeControlPlaneCell :one
 SELECT initialize_control_plane_cell(sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text)::text AS cell_id;
+-- ADR-476: global app directory. Writes are apid-owned; all credentials stay
+-- outside these tables. Scope and generation locks precede intent changes.
+-- name: GlobalDirectoryUnbound :one
+SELECT (NOT EXISTS (SELECT 1 FROM control_plane_cells))::boolean AS unbound;
+
+-- name: AssertGlobalDirectoryScope :exec
+SELECT assert_global_directory_scope();
+
+-- name: UpsertGlobalDirectoryCell :one
+INSERT INTO global_directory_cells(id, region, api_base, enabled)
+VALUES (sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(api_base)::text, sqlc.arg(enabled)::boolean)
+ON CONFLICT (id) DO UPDATE SET api_base = EXCLUDED.api_base, enabled = EXCLUDED.enabled
+WHERE global_directory_cells.region = EXCLUDED.region
+RETURNING id::text AS cell_id, region, api_base, enabled, generation;
+
+-- name: ListGlobalDirectoryCells :many
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells ORDER BY region;
+
+-- name: GlobalDirectoryCellByRegion :one
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells WHERE region = $1;
+
+-- name: LockGlobalDirectoryCell :one
+SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_directory_cells
+WHERE id = sqlc.arg(cell_id)::uuid AND enabled AND generation = sqlc.arg(generation)::bigint FOR SHARE;
+
+-- name: CreateGlobalAppIdentity :one
+SELECT create_global_app(sqlc.arg(account_id)::uuid, sqlc.arg(slug)::text, sqlc.arg(app_limit)::integer)::text AS global_app_id;
+
+-- name: GlobalAppIdentity :one
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid AND slug = sqlc.arg(slug)::text;
+
+-- name: ListGlobalAppIdentities :many
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid ORDER BY slug;
+
+-- name: LockGlobalAppIdentity :one
+SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
+FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid AND slug = sqlc.arg(slug)::text FOR UPDATE;
+
+-- name: InsertGlobalAccountCellBinding :exec
+INSERT INTO global_account_cell_bindings(account_id, cell_id, regional_account_id)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(regional_account_id)::uuid)
+ON CONFLICT (account_id, cell_id) DO NOTHING;
+
+-- name: ReadGlobalAccountCellBinding :one
+SELECT regional_account_id::text AS regional_account_id FROM global_account_cell_bindings
+WHERE account_id = sqlc.arg(account_id)::uuid AND cell_id = sqlc.arg(cell_id)::uuid;
+
+-- name: AttachGlobalAppTarget :one
+INSERT INTO global_app_targets(global_app_id, account_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
+VALUES (sqlc.arg(global_app_id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(cell_generation)::bigint,
+        sqlc.arg(regional_account_id)::uuid, sqlc.arg(regional_app_id)::uuid, sqlc.arg(regional_app_slug)::text)
+ON CONFLICT (global_app_id, region) DO UPDATE SET cell_generation = EXCLUDED.cell_generation, verified_at = now()
+WHERE global_app_targets.cell_id = EXCLUDED.cell_id AND global_app_targets.regional_account_id = EXCLUDED.regional_account_id
+  AND global_app_targets.regional_app_id = EXCLUDED.regional_app_id AND global_app_targets.regional_app_slug = EXCLUDED.regional_app_slug
+RETURNING global_app_id::text AS global_app_id;
+
+-- name: ListGlobalAppTargets :many
+SELECT t.global_app_id::text AS global_app_id, t.cell_id::text AS cell_id, t.region, t.cell_generation,
+       t.regional_account_id::text AS regional_account_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
+       c.api_base, c.enabled AS cell_enabled, c.generation AS registry_generation
+FROM global_app_targets t JOIN global_apps a ON a.id = t.global_app_id
+JOIN global_directory_cells c ON c.id = t.cell_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::text ORDER BY t.region;
+
+-- name: DeleteGlobalAppTarget :execrows
+DELETE FROM global_app_targets t USING global_apps a WHERE a.id = t.global_app_id
+AND a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::text AND t.region = sqlc.arg(region)::text;

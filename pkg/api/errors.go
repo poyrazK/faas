@@ -401,18 +401,21 @@ func (p *Problem) HasHeader(key string) []string {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodeProjectEnvironmentApprovalRequired = "project_environment_approval_required"
-	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
-	CodePlanLimitApps                      = "plan_limit_apps"
-	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
-	CodePlanLimitRAM                       = "plan_limit_ram"
-	CodePlanLimitConcur                    = "plan_limit_concurrency"
-	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                      = "invalid_ram_mb"
-	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile             = "invalid_resource_profile"
-	CodeSourceTooLarge                     = "source_too_large"
-	CodeSourceInvalid                      = "source_invalid"
+	CodeProjectEnvironmentApprovalRequired    = "project_environment_approval_required"
+	CodeProjectEnvironmentApprovalInvalid     = "project_environment_approval_invalid"
+	CodeGlobalAppDirectoryUnavailable         = "global_app_directory_unavailable"
+	CodeGlobalAppTargetReverificationRequired = "global_app_target_reverification_required"
+	CodeGlobalAppTargetVerificationFailed     = "global_app_target_verification_failed"
+	CodePlanLimitApps                         = "plan_limit_apps"
+	CodePlanLimitDeveloperApps                = "plan_limit_developer_apps"
+	CodePlanLimitRAM                          = "plan_limit_ram"
+	CodePlanLimitConcur                       = "plan_limit_concurrency"
+	CodeInvalidAppCPU                         = "invalid_cpu_millicores"
+	CodeInvalidAppRAM                         = "invalid_ram_mb"
+	CodeInvalidCPURAMPair                     = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile                = "invalid_resource_profile"
+	CodeSourceTooLarge                        = "source_too_large"
+	CodeSourceInvalid                         = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -1849,6 +1852,10 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeGlobalAppDirectoryUnavailable, CodeGlobalAppTargetReverificationRequired:
+		return http.StatusServiceUnavailable
+	case CodeGlobalAppTargetVerificationFailed:
+		return http.StatusBadGateway
 	case CodeComputeRegionUnknown, CodeComputeRegionOutsideCell:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,

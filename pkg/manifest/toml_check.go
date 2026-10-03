@@ -194,6 +194,7 @@ var HostKeys = map[string]HostBlock{
 	"apid": {
 		Daemon: "apid",
 		PrivateKeys: []string{
+			"global_app_directory_enabled",
 			"regional_compute_enabled",
 			"socket_path",
 			"metrics_addr",
