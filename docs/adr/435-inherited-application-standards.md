@@ -1436,3 +1436,49 @@ Those consumer bindings, actual native
 Grype/ext4/KVM/leakcheck, logging/egress adoption, controlled rollout/recovery
 and all-create-path multiservice E2E remain required. Public activation is
 disabled.
+
+## Approved source-export consumption
+
+The source branches of `snapshot_boot` (tarball, Dockerfile, GitHub and preview)
+now consult private account/application/deployment publication history before
+conversion. History is only a downgrade guard; it never grants trust. If any
+history exists, the latest build must have a fresh scoped export approval with
+current matching provenance, runtime, owner and approved publisher key. An
+expired, revoked or replaced-build record cannot disappear into unsigned
+legacy conversion, including when signature policy has subsequently relaxed.
+An application requiring signatures or enforcing security policy also refuses
+conversion without publication history. An optional unsigned application with
+no retained history keeps its existing conversion path.
+
+The consumer opens a regular non-symlink export without waiting on a FIFO. It
+copies and hashes the same bounded stream, including tar padding, into a private
+0700 directory and 0400 archive. Size and complete digest must match the current
+approved claim before any OCI parser or rootfs converter consumes that copy.
+Descriptor and DiffID validation remains required; a signed opaque archive does
+not bypass those checks. Replacing or modifying the original export after the
+copy cannot change the consumed layer bytes. Normal success and refusal remove
+the private copy; crash cleanup remains part of consumer recovery integration.
+
+Approved function conversion requires the produced runtime staging path, which
+consumes the verified OCI artifact and avoids reapplying unsigned source bytes.
+The hermetic legacy function seam cannot consume an approved export. After
+conversion, the consumer reloads the application and fresh approval; changed
+approval or a newly required signature blocks this handler's snapshot handoff.
+This recheck is not atomic with the legacy rootfs stamp or later scan/handoff.
+It is not a native boot, restore or promotion authority fence.
+
+The source/function rootfs producer, selected runtime/default base, injected
+runner and guest-init still require durable binding to that retained proof.
+Proof renewal after archive cleanup, atomic final artifact/current-policy
+publication, native consumption and observed standards adoption remain required.
+The transient export copy does not flatten the shared read-only base, private
+writable main or independent read-only sidecar drives. Public activation remains
+disabled.
+
+Consumer tests use authentic company signatures and actual OCI/layer streams.
+They cover all four source kinds, original-export replacement, revoked or
+expired approval, a different latest build, owner scope, signature policy
+changes during conversion and signed malformed OCI refusal. MemStore and real
+PostgreSQL tests preserve scoped history after revocation and erase it with its
+parent. The Go executable payload, injected runner digest and ext4 result are
+fixtures; these checks do not establish native execution or observed adoption.

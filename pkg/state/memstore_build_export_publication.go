@@ -9,6 +9,24 @@ import (
 
 var _ BuildExportPublicationStore = (*MemStore)(nil)
 
+func (m *MemStore) HasBuildExportPublication(ctx context.Context, accountID, appID, depID string) (bool, error) {
+	if !validStandardResourceRead(accountID, appID) || !validStandardResourceRead(depID, depID) {
+		return false, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	for _, p := range m.buildExportPublications {
+		c := p.Input.Claims
+		if c.AccountID == canonicalStandardUUID(accountID) && c.AppID == canonicalStandardUUID(appID) && c.DeploymentID == canonicalStandardUUID(depID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MemStore) RecordBuildExportPublication(ctx context.Context, input BuildExportPublicationInput) (BuildExportPublication, error) {
 	in, hash, err := prepareBuildExportPublication(input)
 	if err != nil {

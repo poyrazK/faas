@@ -7357,6 +7357,24 @@ func (q *Queries) HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instan
 	return exists, err
 }
 
+const hasScopedBuildExportPublication = `-- name: HasScopedBuildExportPublication :one
+SELECT EXISTS(SELECT 1 FROM build_export_publications WHERE account_id=$1::uuid
+ AND app_id=$2::uuid AND deployment_id=$3::uuid)::boolean AS present
+`
+
+type HasScopedBuildExportPublicationParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) HasScopedBuildExportPublication(ctx context.Context, db DBTX, arg HasScopedBuildExportPublicationParams) (bool, error) {
+	row := db.QueryRow(ctx, hasScopedBuildExportPublication, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (

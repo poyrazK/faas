@@ -5957,6 +5957,10 @@ SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid
 SELECT * FROM build_export_publications WHERE build_id=sqlc.arg(build_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid
  AND app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid ORDER BY verified_at DESC,id DESC LIMIT 1;
 
+-- name: HasScopedBuildExportPublication :one
+SELECT EXISTS(SELECT 1 FROM build_export_publications WHERE account_id=sqlc.arg(account_id)::uuid
+ AND app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
+
 -- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
 

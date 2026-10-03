@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
 	"io"
-	"os"
 )
 
 type contextReader struct {
@@ -24,7 +23,7 @@ func (r contextReader) Read(p []byte) (int, error) {
 // MeasureExport hashes the complete opened export, including tar padding.
 // It does not validate OCI content, select layers or confer publisher trust.
 func MeasureExport(ctx context.Context, path string) (string, int64, error) {
-	f, err := os.Open(path) //nolint:forbidigo // Builder-owned completed export or cache lease; the opened descriptor is bounded and checked as regular before reading.
+	f, err := openExportFile(path)
 	if err != nil {
 		return "", 0, err
 	}

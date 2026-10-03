@@ -72,10 +72,15 @@ func completeBuildExportFixture(t *testing.T, s buildExportTestStore, in BuildEx
 
 func buildExportLifecycle(t *testing.T, s buildExportTestStore) {
 	in, app, dep, b, _ := buildExportFixture(t, s)
+	if present, err := s.HasBuildExportPublication(t.Context(), app.AccountID, app.ID, dep.ID); err != nil || present {
+		t.Fatal("unpublished export has retained history", present, err)
+	}
 	value, err := s.RecordBuildExportPublication(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertBuildExportHistory(t, s, app.AccountID, app.ID, dep.ID, true)
+	assertBuildExportHistory(t, s, uuid.NewString(), app.ID, dep.ID, false)
 	if _, err := s.GetFreshBuildExportPublication(t.Context(), app.AccountID, app.ID, dep.ID, b.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatal("uncompleted build approved", err)
 	}
@@ -100,6 +105,14 @@ func buildExportLifecycle(t *testing.T, s buildExportTestStore) {
 	}
 	if _, err := s.RecordBuildExportPublication(t.Context(), in); !errors.Is(err, buildpublisher.ErrInvalid) {
 		t.Fatal("retry bypassed current publisher", err)
+	}
+	assertBuildExportHistory(t, s, app.AccountID, app.ID, dep.ID, true)
+}
+
+func assertBuildExportHistory(t *testing.T, s buildExportTestStore, accountID, appID, depID string, want bool) {
+	t.Helper()
+	if got, err := s.HasBuildExportPublication(t.Context(), accountID, appID, depID); err != nil || got != want {
+		t.Fatal("scoped retained history", got, err, "want", want)
 	}
 }
 
@@ -227,6 +240,7 @@ func buildExportOwnerErasure(t *testing.T, s buildExportTestStore) string {
 	if _, err := s.GetFreshBuildExportPublication(t.Context(), app.AccountID, app.ID, dep.ID, b.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("erased owner retained approval", err)
 	}
+	assertBuildExportHistory(t, s, app.AccountID, app.ID, dep.ID, false)
 	return b.ID
 }
 

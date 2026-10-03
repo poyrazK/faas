@@ -14,6 +14,13 @@ import (
 
 var _ BuildExportPublicationStore = (*PgStore)(nil)
 
+func (s *PgStore) HasBuildExportPublication(ctx context.Context, accountID, appID, depID string) (bool, error) {
+	if !validStandardResourceRead(accountID, appID) || !validStandardResourceRead(depID, depID) {
+		return false, ErrInvalidArgument
+	}
+	return sqlc.New().HasScopedBuildExportPublication(ctx, s.pool, sqlc.HasScopedBuildExportPublicationParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(depID)})
+}
+
 func buildExportError(err error) error {
 	var p *pgconn.PgError
 	if errors.As(err, &p) {

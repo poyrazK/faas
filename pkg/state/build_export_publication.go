@@ -24,6 +24,8 @@ type BuildExportPublication struct {
 type BuildExportPublicationStore interface {
 	RecordBuildExportPublication(context.Context, BuildExportPublicationInput) (BuildExportPublication, error)
 	GetFreshBuildExportPublication(context.Context, string, string, string, string) (BuildExportPublication, error)
+	// Historical presence only denies an unsigned fallback; it grants no trust.
+	HasBuildExportPublication(context.Context, string, string, string) (bool, error)
 }
 
 func prepareBuildExportPublication(in BuildExportPublicationInput) (BuildExportPublicationInput, string, error) {

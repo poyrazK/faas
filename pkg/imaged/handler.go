@@ -3792,11 +3792,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		// produced the OCI source-build tarball. They use the same local
 		// OCI conversion as tarball/dockerfile builds; function apps still
 		// need their runtime runner layered into the result.
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
-				return err
-			}
-		} else if err := h.buildLocalOCIAppLayer(ctx, app, dep, acct); err != nil {
+		if err := h.consumeSourceBuild(ctx, app, dep, acct); err != nil {
 			return err
 		}
 	default:
