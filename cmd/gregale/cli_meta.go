@@ -936,6 +936,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage durable execution workflows",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List workflow runs for an app"},
+			{Name: "schedules", Short: "Inspect recurring workflow schedules and their latest admission", Flags: []cliFlag{{Name: "app", Short: "application slug", Req: true, Value: "SLUG"}}},
 			{Name: "run", Short: "Trigger a new workflow run"},
 			{Name: "status", Short: "Show details of a workflow run"},
 			{Name: "steps", Short: "List steps for a workflow run"},

@@ -16,12 +16,14 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|run|status|steps|attempts|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|run|status|steps|attempts|cancel|events>", "workflows")
 		return 1
 	}
 	switch args[0] {
 	case "list":
 		return cmdWorkflowsList(args[1:])
+	case "schedules":
+		return cmdWorkflowSchedules(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
 	case "status":

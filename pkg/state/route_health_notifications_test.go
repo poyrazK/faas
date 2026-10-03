@@ -302,6 +302,9 @@ func TestRouteHealthNotificationsPostgresRollback(t *testing.T) {
 			}
 			params.Audit.Data = nil
 			params.RequireSafeReleaseLease = false
+			// The lease case intentionally waits long enough to cross a route-health
+			// window boundary. Refresh telemetry so the retry always sees settled evidence.
+			seed(100, 120)
 			if _, _, err := state.NewPgStore(pool).AdvanceCanary(t.Context(), d.ID, params); err != nil {
 				t.Fatal("retry failed", err)
 			}

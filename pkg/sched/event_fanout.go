@@ -128,7 +128,19 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			previous.State == state.PublishedEventRecipientFailed {
 			continue
 		}
-		matched, routeErr := l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+		if len(recipient.Workflow) != 0 && !l.workflowsDispatched {
+			// Keep workflow recipients pending while the preview runtime is
+			// disabled. Ordinary subscriptions can finish independently.
+			routeErrs = append(routeErrs, errors.New("workflow event runtime is disabled"))
+			continue
+		}
+		var matched bool
+		var routeErr error
+		if len(recipient.Workflow) != 0 {
+			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+		} else {
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+		}
 		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, UpdatedAt: now}
 		switch {
 		case routeErr == nil && matched:
