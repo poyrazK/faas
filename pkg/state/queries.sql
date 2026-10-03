@@ -789,6 +789,40 @@ from crons where id = $1;
 insert into events (actor, kind, subject, data)
 values ($1, $2, $3, $4);
 
+-- name: LockWebhookAutomationEndpoint :one
+SELECT * FROM inbound_webhook_endpoints
+WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE;
+
+-- name: GetWebhookAutomationBinding :one
+SELECT * FROM workflow_webhook_bindings WHERE endpoint_id=$1;
+
+-- name: SaveWebhookAutomationBinding :one
+INSERT INTO workflow_webhook_bindings(endpoint_id,workflow_name,event_type,filter,version)
+VALUES($1,$2,$3,$4,nextval('workflow_webhook_binding_revision_seq'))
+ON CONFLICT(endpoint_id) DO UPDATE SET workflow_name=EXCLUDED.workflow_name,
+event_type=EXCLUDED.event_type,filter=EXCLUDED.filter,version=EXCLUDED.version,updated_at=clock_timestamp()
+RETURNING *;
+
+-- name: DeleteWebhookAutomationBinding :execrows
+DELETE FROM workflow_webhook_bindings WHERE endpoint_id=$1 AND version=$2;
+
+-- name: WebhookAutomationLegacyReceiptExists :one
+SELECT EXISTS(SELECT 1 FROM invocations WHERE id=$1);
+
+-- name: InsertWebhookAutomationOutbox :one
+INSERT INTO event_fanout_outbox(account_id,source,event_id,event_type,event_data,payload,recipient_snapshot)
+VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id;
+
+-- name: InsertWebhookAutomationReceipt :exec
+INSERT INTO workflow_webhook_receipts(endpoint_id,provider_event_id,receipt_id,body_hash,workflow_name,recipient_id,outbox_id,status,ignored_reason)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: GetWebhookAutomationReceipt :one
+SELECT r.*, er.run_id, o.recipient_progress
+FROM workflow_webhook_receipts r JOIN event_fanout_outbox o ON o.id=r.outbox_id
+LEFT JOIN workflow_event_receipts er ON er.outbox_id=r.outbox_id AND er.recipient_id=r.recipient_id
+WHERE r.endpoint_id=$1 AND r.provider_event_id=$2;
+
 -- name: ListEvents :many
 select id, at, actor, kind, subject, data
 from events where subject = $1 order by at desc limit $2;
@@ -7185,3 +7219,351 @@ FROM global_population g;
 -- name: ReadActiveRouteMonitorIncident :one
 SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
 WHERE m.app_id=sqlc.arg(app_id)::text::uuid AND m.account_id=sqlc.arg(account_id)::text::uuid;
+
+
+-- name: ListWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, d.id AS deployment_id, d.workflows
+FROM apps a
+JOIN accounts ac ON ac.id = a.account_id
+JOIN LATERAL (
+    SELECT dep.id, app_workflow_definitions(a.id,dep.workflows)::jsonb AS workflows FROM deployments dep
+    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+) d ON true
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR a.id > sqlc.narg(after_app_id)::uuid)
+  AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id = sqlc.narg(owner_node_id)::uuid)
+  AND d.workflows @> '[{"trigger":{"type":"schedule"}}]'::jsonb
+ORDER BY a.id LIMIT sqlc.arg(batch_limit);
+
+-- name: LockWorkflowScheduleTarget :one
+SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a, ac, d;
+
+-- name: LockWorkflowRunAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text, 0));
+
+-- name: CountActiveWorkflowRunsForAdmission :one
+SELECT count(*) FROM workflow_runs
+WHERE app_id = sqlc.arg(app_id) AND status IN ('pending', 'running', 'awaiting_event')
+  AND (sqlc.arg(workflow_name)::text = '' OR workflow_name = sqlc.arg(workflow_name));
+
+-- name: InsertScheduledWorkflowRun :one
+INSERT INTO workflow_runs (id, app_id, workflow_name, status, input, definition_snapshot, scheduled_for)
+VALUES (sqlc.arg(id), sqlc.arg(app_id), sqlc.arg(workflow_name), 'pending', sqlc.arg(input), sqlc.arg(definition_snapshot), sqlc.arg(scheduled_for))
+RETURNING created_at, updated_at;
+
+-- name: GetWorkflowScheduleCursor :one
+SELECT * FROM workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2;
+
+-- name: ListWorkflowScheduleCursors :many
+SELECT * FROM workflow_schedule_cursors WHERE app_id = $1 ORDER BY workflow_name;
+
+-- name: PruneWorkflowScheduleCursors :exec
+DELETE FROM workflow_schedule_cursors c WHERE c.app_id = sqlc.arg(app_id)
+AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(sqlc.arg(workflows)::jsonb) definition
+    WHERE definition->>'name' = c.workflow_name AND definition->'trigger'->>'type' = 'schedule'
+);
+
+-- name: UpsertWorkflowScheduleCursor :one
+INSERT INTO workflow_schedule_cursors (app_id, workflow_name, deployment_id, trigger_snapshot,
+    last_evaluated_at, scheduled_for, status, last_run_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (app_id, workflow_name) DO UPDATE SET
+    deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, updated_at = now()
+RETURNING *;
+
+-- name: ListMatchingEventWorkflows :many
+SELECT recipient::jsonb FROM workflow_event_recipients(sqlc.arg(account_id)::uuid, sqlc.arg(source)::text, sqlc.arg(event_type)::text)
+WHERE recipient->>'id' > sqlc.arg(after_id)::text
+ORDER BY recipient->>'id' LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: LockEventWorkflowRecipient :one
+SELECT o.payload, (SELECT r.recipient FROM jsonb_array_elements(o.recipient_snapshot) r(recipient)
+    WHERE r.recipient->>'id' = sqlc.arg(recipient_id)::text AND r.recipient ? 'workflow')::jsonb AS recipient
+FROM event_fanout_outbox o
+WHERE o.id = sqlc.arg(outbox_id) AND o.claim_token = sqlc.arg(claim_token)::uuid AND o.state = 'processing'
+FOR UPDATE OF o;
+
+-- name: GetEventWorkflowReceipt :one
+SELECT run_id FROM workflow_event_receipts WHERE outbox_id = $1 AND recipient_id = $2;
+
+-- name: LockEventWorkflowTarget :one
+SELECT a.account_id, a.status AS app_status, a.maintenance_mode, a.platform_tenant_required,
+ ac.plan, ac.status AS account_status, ac.abuse_hold_at
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a, ac;
+
+-- name: InsertEventWorkflowRun :exec
+INSERT INTO workflow_runs(id, app_id, workflow_name, status, input, definition_snapshot)
+VALUES($1, $2, $3, 'pending', $4, $5);
+
+-- name: InsertEventWorkflowReceipt :exec
+INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
+
+-- name: ListAutomations :many
+SELECT * FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name;
+
+-- name: SaveAutomation :exec
+INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
+ published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at;
+
+-- name: DeleteAutomation :exec
+DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
+
+-- name: DeleteAutomationScheduleCursor :exec
+DELETE FROM workflow_schedule_cursors WHERE app_id=$1 AND workflow_name=$2;
+
+-- name: AutomationManifest :one
+SELECT id,workflows FROM deployments WHERE app_id=$1 AND status='live' AND scope='default'
+ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1;
+
+-- name: EffectiveWorkflowDefinitions :one
+SELECT app_workflow_definitions(sqlc.arg(app_id)::uuid,sqlc.arg(manifest)::jsonb)::jsonb;
+
+-- name: NextAutomationVersion :one
+SELECT nextval('automation_definition_versions')::bigint;
+-- name: WorkflowOutboundSigningKey :one
+SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_at IS NULL;
+
+-- name: WorkflowOutboundAttempt :one
+SELECT a.account_id, r.app_id, s.outbound_attempt_token
+FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
+AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
+AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
+AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale');
+
+-- name: AuthorizeWorkflowOutbound :one
+SELECT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+ JOIN outbound_app_bindings b ON b.app_id=a.id AND b.account_id=a.account_id
+ JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=a.account_id
+ JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=a.account_id
+ WHERE r.id=sqlc.arg(run_id) AND r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id)
+ AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
+ AND s.outbound_attempt_token=sqlc.arg(attempt_token) AND r.status='running'
+ AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
+ AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+ AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ AND i.id=sqlc.arg(integration_id) AND i.enabled AND i.owner_kind='customer'
+ AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed'
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}'=sqlc.arg(method)::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,path}'=sqlc.arg(path)::text
+);
+
+-- name: WorkflowOutboundBinding :one
+SELECT i.allowed_methods, i.allowed_path_prefixes,
+ b.allowed_methods AS binding_methods, b.allowed_path_prefixes AS binding_paths
+FROM outbound_integrations i JOIN outbound_app_bindings b ON b.integration_id=i.id AND b.account_id=i.account_id
+JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+WHERE i.id=sqlc.arg(integration_id) AND b.app_id=sqlc.arg(app_id) AND i.account_id=sqlc.arg(account_id)
+AND i.enabled AND i.owner_kind='customer' AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed';
+
+-- name: MarkWorkflowOutboundUnknown :exec
+UPDATE workflow_steps s SET status='dead', finished_at=now(),
+ error='outbound result unknown; unsafe to repeat', outbound_attempt_token=NULL
+FROM workflow_runs r
+WHERE s.run_id=r.id AND r.id=sqlc.arg(run_id) AND s.status='running'
+AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}' NOT IN ('GET','HEAD')
+ AND coalesce(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,idempotency_supported}','false') <> 'true' ;
+
+-- name: CloseWorkflowOutboundUnknownAttempts :exec
+UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
+error=CASE WHEN s.status='dead' THEN s.error
+ WHEN s.foreach_parent IS NOT NULL AND jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound') IS DISTINCT FROM 'object'
+ THEN 'for_each item result unknown after recovery' ELSE 'outbound result unknown after recovery' END
+FROM workflow_steps s, workflow_runs r
+WHERE t.run_id=sqlc.arg(run_id) AND s.run_id=t.run_id AND r.id=s.run_id
+AND s.step_name=t.step_name AND s.attempt=t.attempt AND s.status IN ('running','dead') AND t.status='running'
+AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object');
+
+-- name: LockWorkflowRecovery :one
+SELECT status FROM workflow_runs WHERE id=sqlc.arg(run_id) FOR UPDATE;
+
+-- name: ResetWorkflowRunningSteps :exec
+UPDATE workflow_steps s
+SET status='pending',
+attempt=CASE WHEN (s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ THEN s.attempt WHEN r.resume_count>0 THEN s.attempt ELSE GREATEST(s.attempt-1,0) END,
+finished_at=NULL,error=NULL,next_retry_at=NULL,outbound_attempt_token=NULL
+FROM workflow_runs r WHERE s.run_id=r.id AND r.id=sqlc.arg(run_id) AND s.status='running';
+
+-- name: WorkflowOutboundCompletionCurrent :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name)
+ AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ AND (r.status<>'running' OR s.status<>'running' OR s.attempt<>sqlc.arg(attempt)
+  OR ((r.resume_count>0 OR s.foreach_parent IS NOT NULL) AND (r.lease_until IS NULL OR r.lease_until<=clock_timestamp())))
+);
+
+-- name: WorkflowOutboundStartCurrent :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
+ WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name)
+ AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object')
+ AND (r.status<>'running' OR r.lease_until IS NULL OR r.lease_until<=clock_timestamp() OR s.status<>'pending' OR s.attempt<>sqlc.arg(attempt)::integer-1)
+);
+
+-- name: CancelWorkflowOutboundAttempts :exec
+UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),error=sqlc.arg(reason)::text
+FROM workflow_runs r
+WHERE t.run_id=r.id AND r.id=sqlc.arg(run_id) AND t.status='running'
+AND EXISTS(SELECT 1 FROM workflow_steps s WHERE s.run_id=t.run_id AND s.step_name=t.step_name AND (r.resume_count>0 OR s.foreach_parent IS NOT NULL OR jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'outbound')='object'));
+
+-- name: LockWorkflowGuardRun :one
+SELECT status, input, definition_snapshot FROM workflow_runs
+WHERE id=sqlc.arg(run_id) FOR UPDATE;
+
+-- name: LockWorkflowGuardStep :one
+SELECT status, when_matched, when_evaluated_at FROM workflow_steps
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) FOR UPDATE;
+
+-- name: WorkflowGuardOutputs :many
+SELECT step_name, status, output FROM workflow_steps WHERE run_id=sqlc.arg(run_id);
+
+-- name: RecordWorkflowGuardDecision :exec
+UPDATE workflow_steps SET when_matched=sqlc.arg(matched)::boolean, when_evaluated_at=clock_timestamp(),
+status=CASE WHEN sqlc.arg(matched)::boolean THEN status ELSE 'skipped' END,
+skip_reason=CASE WHEN sqlc.arg(matched)::boolean THEN NULL ELSE 'when_false' END,
+finished_at=CASE WHEN sqlc.arg(matched)::boolean THEN finished_at ELSE clock_timestamp() END,
+next_retry_at=CASE WHEN sqlc.arg(matched)::boolean THEN next_retry_at ELSE NULL END
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending' AND when_matched IS NULL;
+
+-- name: SkipPendingWorkflowStep :exec
+UPDATE workflow_steps SET status='skipped',skip_reason=sqlc.arg(reason)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: WorkflowGuardStartAllowed :one
+SELECT NOT EXISTS(
+ SELECT 1 FROM workflow_runs r
+ LEFT JOIN workflow_steps s ON s.run_id=r.id AND s.step_name=sqlc.arg(step_name)
+ WHERE r.id=sqlc.arg(run_id) AND (
+ jsonb_path_exists(r.definition_snapshot, '$.steps[*] ? (@.name == $name && @.join.type() == "object")', jsonb_build_object('name',sqlc.arg(step_name)::text))
+ OR (s.when_matched IS DISTINCT FROM TRUE
+ AND jsonb_path_exists(r.definition_snapshot, '$.steps[*] ? (@.name == $name && @.when.type() == "object")', jsonb_build_object('name',sqlc.arg(step_name)::text)))
+ )
+);
+
+-- name: WorkflowJoinSteps :many
+SELECT step_name, status, output, when_matched, skip_reason
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id);
+
+-- name: CompleteWorkflowJoin :exec
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,
+skip_reason=sqlc.narg(skip_reason)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: WorkflowControlSteps :many
+SELECT step_name,status,attempt,input,output,when_matched,foreach_parent,foreach_index,foreach_count,next_retry_at,retry_base
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id) ORDER BY foreach_index NULLS FIRST,step_name;
+
+-- name: InitializeWorkflowForEach :exec
+UPDATE workflow_steps SET foreach_count=sqlc.arg(item_count)::integer,input=sqlc.arg(items)::jsonb,started_at=clock_timestamp()
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending' AND foreach_count IS NULL;
+
+-- name: CreateWorkflowForEachItem :exec
+INSERT INTO workflow_steps(run_id,step_name,status,input,foreach_parent,foreach_index)
+VALUES(sqlc.arg(run_id),sqlc.arg(step_name),'pending',sqlc.arg(input)::jsonb,sqlc.arg(parent)::text,sqlc.arg(item_index)::integer);
+
+-- name: CompleteWorkflowForEach :exec
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.arg(output)::jsonb,error=sqlc.narg(error)::text,finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name) AND status='pending';
+
+-- name: SkipWorkflowForEachRemaining :exec
+UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp(),next_retry_at=NULL
+WHERE run_id=sqlc.arg(run_id) AND foreach_parent=sqlc.arg(parent) AND status='pending';
+
+-- name: WorkflowForEachStartAllowed :one
+SELECT NOT EXISTS(SELECT 1 FROM workflow_steps s JOIN workflow_runs r ON r.id=s.run_id
+WHERE s.run_id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND (
+ jsonb_typeof(workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)->'for_each')='object'
+ OR (s.foreach_parent IS NOT NULL AND NOT EXISTS(SELECT 1 FROM workflow_steps p
+ WHERE p.run_id=s.run_id AND p.step_name=s.foreach_parent AND p.status='pending' AND p.foreach_count>s.foreach_index
+ AND s.input=sqlc.arg(input)::jsonb AND NOT EXISTS(SELECT 1 FROM workflow_steps prev
+ WHERE prev.run_id=s.run_id AND prev.foreach_parent=s.foreach_parent AND prev.foreach_index<s.foreach_index AND prev.status<>'succeeded')))
+));
+
+-- name: LockWorkflowResumeRun :one
+SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at
+FROM workflow_runs WHERE id=sqlc.arg(run_id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
+
+-- name: WorkflowResumeSteps :many
+SELECT step_name,status,attempt,input,output,skip_reason,foreach_parent,foreach_index,foreach_count,retry_base
+FROM workflow_steps WHERE run_id=sqlc.arg(run_id) ORDER BY step_name FOR UPDATE;
+
+-- name: WorkflowResumeHasRunningAttempts :one
+SELECT EXISTS(SELECT 1 FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id) AND status='running');
+
+-- name: ResetWorkflowResumeStep :exec
+UPDATE workflow_steps SET status='pending',retry_base=attempt,output=NULL,error=NULL,finished_at=NULL,
+ next_retry_at=NULL,next_check_at=NULL,skip_reason=NULL,outbound_attempt_token=NULL
+WHERE run_id=sqlc.arg(run_id) AND step_name=sqlc.arg(step_name);
+
+-- name: EnqueueWorkflowResume :exec
+UPDATE workflow_runs SET status='pending',resume_count=resume_count+1,scheduled_for=clock_timestamp(),
+ finished_at=NULL,last_error=NULL,output=NULL,current_step=NULL,lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(run_id);
+
+-- name: InsertWorkflowResume :one
+INSERT INTO workflow_run_resumes(run_id,resume_number,account_id,previous_status,previous_error,resumed_steps)
+VALUES(sqlc.arg(run_id),sqlc.arg(resume_number),sqlc.arg(account_id),sqlc.arg(previous_status),sqlc.narg(previous_error),sqlc.arg(resumed_steps))
+RETURNING created_at;
+
+-- name: ListWorkflowResumes :many
+SELECT * FROM workflow_run_resumes WHERE run_id=sqlc.arg(run_id) ORDER BY resume_number;
+
+-- name: RecordWorkflowCancellation :exec
+UPDATE workflow_runs SET cancelled_at=clock_timestamp() WHERE id=sqlc.arg(run_id) AND status='failed';
+
+-- name: MarkWorkflowRunStatusFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,output=coalesce(sqlc.narg(output)::jsonb,output),
+ last_error=coalesce(sqlc.narg(last_error)::text,last_error),
+ started_at=CASE WHEN sqlc.arg(status)::text='running' AND started_at IS NULL THEN now() ELSE started_at END,
+ finished_at=CASE WHEN sqlc.arg(status)::text IN ('succeeded','failed','dead') THEN now() ELSE finished_at END,
+ updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND (status NOT IN ('succeeded','failed','dead') OR status=sqlc.arg(status)::text);
+
+-- name: WorkflowGenerationCurrent :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE id=sqlc.arg(run_id)
+ AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer));
+
+-- name: ScheduleWorkflowRunFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,
+ scheduled_for=CASE WHEN status='awaiting_event' AND sqlc.arg(status)::text='awaiting_event'
+ THEN least(scheduled_for,sqlc.arg(scheduled_for)::timestamptz) ELSE sqlc.arg(scheduled_for)::timestamptz END,
+ updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND (status NOT IN ('succeeded','failed','dead') OR status=sqlc.arg(status)::text);
+
+-- name: SetWorkflowRunWakeFenced :execrows
+UPDATE workflow_runs SET status=sqlc.arg(status)::text,scheduled_for=sqlc.arg(scheduled_for),updated_at=now()
+WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer)
+ AND status IN ('running','pending','awaiting_event') AND NOT(status='pending' AND scheduled_for<=now());
+
+-- name: ExtendWorkflowRunLeaseFenced :execrows
+UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
+WHERE id=sqlc.arg(run_id) AND status='running'
+ AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);

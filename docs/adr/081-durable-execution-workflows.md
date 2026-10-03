@@ -1,6 +1,9 @@
 # ADR-081 · Durable-execution wrapper over crons (issue #669)
 
 - **Status:** proposed
+- **Extended by [ADR-431](431-scheduled-workflow-starts.md):**
+  `trigger.type: schedule` admits recurring workflow runs directly, with durable
+  duplicate suppression, overlap protection, and latest-outcome inspection.
 - **Extended by [ADR-262](262-durable-workflow-timers.md):**
   `wait_for_duration` adds durable timers; its cap is now plan-specific:
   30 days on Hobby, 90 days on Pro, and 365 days on Scale. Historical
@@ -691,3 +694,5 @@ first, both consumers follow.
 - Per-app wake rate-limit primitive — Risk #3; either lands as a
   pre-PR (per ADR-080 Risk #1 resolution (a)) or as part of the
   migration PR.
+
+ADR-432 adds [event-triggered workflow starts](432-event-workflow-starts.md).

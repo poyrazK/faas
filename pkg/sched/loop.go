@@ -204,9 +204,13 @@ type Loop struct {
 
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
-	workflowsDispatched bool
-	workflowOrch        *WorkflowOrchestrator
-	workflowRetention   *WorkflowRetention
+	workflowsDispatched      bool
+	workflowScheduleMinute   int64
+	workflowScheduleAfter    string
+	workflowScheduleComplete bool
+	workflowScheduleFailed   bool
+	workflowOrch             *WorkflowOrchestrator
+	workflowRetention        *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -3873,6 +3877,11 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 }
 
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
+	l.submitWork(workWorkflowSchedules, "tick", func() {
+		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
+			l.log.Warn("schedd: workflow schedule tick failed", "err", err)
+		}
+	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
 	l.submitWork(workWorkflowDispatch, key, func() {
 		orch := l.workflowOrch

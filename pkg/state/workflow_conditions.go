@@ -62,7 +62,7 @@ func workflowConditionWake(now, startedAt time.Time, interval, timeout time.Dura
 	return next
 }
 
-func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditionUpdate) (WorkflowConditionOutcome, error) {
+func (m *MemStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowConditionUpdate) (WorkflowConditionOutcome, error) {
 	if err := validateWorkflowConditionUpdate(u); err != nil {
 		return WorkflowConditionOutcome{}, err
 	}
@@ -72,6 +72,10 @@ func (m *MemStore) ResolveWorkflowCondition(_ context.Context, u WorkflowConditi
 	if !ok {
 		return WorkflowConditionOutcome{}, ErrWorkflowRunNotFound
 	}
+	if !WorkflowRunGenerationMatches(ctx, u.RunID, run.ResumeCount) {
+		return WorkflowConditionOutcome{}, ErrWorkflowOutboundAttemptExpired
+	}
+
 	if run.Status == WorkflowRunStatusSucceeded || run.Status == WorkflowRunStatusFailed || run.Status == WorkflowRunStatusDead {
 		return WorkflowConditionOutcome{}, ErrConflict
 	}
@@ -209,6 +213,10 @@ func (s *PgStore) ResolveWorkflowCondition(ctx context.Context, u WorkflowCondit
 	if err != nil {
 		return WorkflowConditionOutcome{}, fmt.Errorf("pgstore: lock condition run: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, u.RunID); err != nil {
+		return WorkflowConditionOutcome{}, err
+	}
+
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return WorkflowConditionOutcome{}, ErrConflict
 	}
