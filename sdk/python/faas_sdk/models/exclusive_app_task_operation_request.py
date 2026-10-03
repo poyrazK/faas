@@ -24,10 +24,19 @@ class ExclusiveAppTaskOperationRequest:
     from trusted platform context."""
     task: CreateAppTaskRequest
     """One manual command to execute against the app's live deployment.
+    verification_deployment_id optionally selects an exact app-owned,
+    materialized live deployment for the reserved service, PostgreSQL,
+    object-storage or configured outbound verification probes only. Generic and smoke commands
+    cannot select a deployment. An explicit probe requires authorized,
+    managed binding metadata and remains live at atomic task admission.
+    The selector is supported only on direct POST /v1/apps/{slug}/tasks;
+    exclusive-operation task admission rejects it.
     `command_shell=false` executes argv directly. Shell mode requires one
     command string and is explicit so clients preserve quoting semantics.
     `__gregale_service_binding_probe_v1__ <service>` is reserved for the
     Gregale HTTPS service-binding canary and is handled by guest-init.
+    `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
+    configured outbound probe; the server supplies immutable gateway routing metadata.
     """
     equivalence_key: str | Unset = UNSET
     """Optional identity for joining accepted app tasks only when their task intents are equivalent."""

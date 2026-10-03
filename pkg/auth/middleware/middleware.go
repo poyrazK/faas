@@ -1439,6 +1439,13 @@ func principalHasScope(p principal, allowed []string) bool {
 	return false
 }
 
+// HasScope uses the same policy as RequireScope for a section of an already
+// authenticated aggregate read. A missing principal always fails closed.
+func HasScope(r *http.Request, allowed ...string) bool {
+	p, ok := principalFrom(r)
+	return ok && principalHasScope(p, allowed)
+}
+
 // --- MFA allowlist -------------------------------------------------------
 
 // mfaAllowlist is the set of paths that stay reachable while the

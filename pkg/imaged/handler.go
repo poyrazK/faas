@@ -2669,16 +2669,17 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 	}
 
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:                cloneEnvMap(cfg.Env),
-		Entrypoint:         entrypoint,
-		Cmd:                cmd,
-		WorkingDir:         cfg.WorkingDir,
-		User:               cfg.User,
-		ExposedPorts:       cfg.ExposedPorts,
-		Healthcheck:        cfg.Healthcheck,
-		StopSignal:         cfg.StopSignal,
-		StopGracePeriodS:   cfg.StopGracePeriodS,
-		SecretReloadSignal: cfg.SecretReloadSignal,
+		Env:                   cloneEnvMap(cfg.Env),
+		Entrypoint:            entrypoint,
+		Cmd:                   cmd,
+		WorkingDir:            cfg.WorkingDir,
+		User:                  cfg.User,
+		ExposedPorts:          cfg.ExposedPorts,
+		Healthcheck:           cfg.Healthcheck,
+		StopSignal:            cfg.StopSignal,
+		StopGracePeriodS:      cfg.StopGracePeriodS,
+		SecretReloadSignal:    cfg.SecretReloadSignal,
+		SecretReloadReadiness: cfg.SecretReloadReadiness,
 	})
 	if err != nil {
 		return api.AppManifest{}, err
@@ -2999,16 +3000,17 @@ func runtimeToEnvSuffix(runtime string) string {
 // is the customer's call).
 func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 	manifest, err := oci.ManifestFromConfig(oci.Config{
-		Env:                cloneEnvMap(cfg.Env),
-		Entrypoint:         append([]string(nil), cfg.Entrypoint...),
-		Cmd:                append([]string(nil), cfg.Cmd...),
-		WorkingDir:         cfg.WorkingDir,
-		User:               cfg.User,
-		ExposedPorts:       cfg.ExposedPorts,
-		Healthcheck:        cfg.Healthcheck,
-		StopSignal:         cfg.StopSignal,
-		SecretReloadSignal: cfg.SecretReloadSignal,
-		StopGracePeriodS:   cfg.StopGracePeriodS,
+		Env:                   cloneEnvMap(cfg.Env),
+		Entrypoint:            append([]string(nil), cfg.Entrypoint...),
+		Cmd:                   append([]string(nil), cfg.Cmd...),
+		WorkingDir:            cfg.WorkingDir,
+		User:                  cfg.User,
+		ExposedPorts:          cfg.ExposedPorts,
+		Healthcheck:           cfg.Healthcheck,
+		StopSignal:            cfg.StopSignal,
+		SecretReloadSignal:    cfg.SecretReloadSignal,
+		SecretReloadReadiness: cfg.SecretReloadReadiness,
+		StopGracePeriodS:      cfg.StopGracePeriodS,
 	})
 	if err != nil {
 		return api.AppManifest{}, err

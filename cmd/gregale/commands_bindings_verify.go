@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,32 +28,45 @@ type serviceBindingProbeClient interface {
 	CancelAppTask(context.Context, string, string) (api.AppTaskResponse, error)
 }
 
-type postgresBindingProbeClient interface {
+type bindingInventoryProbeClient interface {
 	serviceBindingProbeClient
-	ListManagedPostgresDatabases(context.Context) (api.ManagedPostgresDatabaseList, error)
-	ListManagedPostgresBindings(context.Context, string) (api.ManagedPostgresBindingList, error)
+	GetAppBindingInventory(context.Context, string, string) (api.AppBindingInventory, error)
+	ListOutboundAppBindings(context.Context, string) (api.OutboundAppBindingList, error)
 }
 
 type serviceBindingProbeBatchItem struct {
-	Service string                        `json:"service"`
-	Status  string                        `json:"status"`
-	Report  api.ServiceBindingProbeReport `json:"report"`
+	Service             string                               `json:"service,omitempty"`
+	Type                string                               `json:"type"`
+	Name                string                               `json:"name,omitempty"`
+	Binding             string                               `json:"binding"`
+	Scope               string                               `json:"scope"`
+	PostgresReport      *api.PostgresBindingProbeReport      `json:"postgres_report,omitempty"`
+	OutboundReport      *api.OutboundBindingProbeReport      `json:"outbound_report,omitempty"`
+	ObjectStorageReport *api.ObjectStorageBindingProbeReport `json:"object_storage_report,omitempty"`
+	Status              string                               `json:"status"`
+	Report              *api.ServiceBindingProbeReport       `json:"report,omitempty"`
 }
 
 type serviceBindingProbeBatchReport struct {
-	App      string                         `json:"app"`
-	Total    int                            `json:"total"`
-	Checked  int                            `json:"checked"`
-	Passed   int                            `json:"passed"`
-	Failed   int                            `json:"failed"`
-	Skipped  int                            `json:"skipped"`
-	Bindings []serviceBindingProbeBatchItem `json:"bindings"`
+	DeploymentID string                         `json:"deployment_id,omitempty"`
+	App          string                         `json:"app"`
+	Scope        string                         `json:"scope"`
+	Issues       []api.BindingInventoryIssue    `json:"issues,omitempty"`
+	Total        int                            `json:"total"`
+	Checked      int                            `json:"checked"`
+	Passed       int                            `json:"passed"`
+	Failed       int                            `json:"failed"`
+	Skipped      int                            `json:"skipped"`
+	Bindings     []serviceBindingProbeBatchItem `json:"bindings"`
 }
 
 func cmdBindingsVerify(args []string) int {
 	fs := newFlagSet("bindings-verify", flag.ContinueOnError)
-	all := fs.Bool("all", false, "verify every declared service binding")
+	all := fs.Bool("all", false, "verify services, managed PostgreSQL, object storage and configured outbound bindings")
 	postgresKey := fs.String("postgres", "", "verify a managed PostgreSQL binding by environment key")
+	objectStoragePrefix := fs.String("object-storage", "", "verify an object-storage binding by environment prefix (read access only)")
+	outboundID := fs.String("outbound", "", "verify a configured outbound integration by UUID")
+	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
 	flagArgs, positionals := splitArgsForFlags(args)
@@ -61,8 +75,24 @@ func cmdBindingsVerify(args []string) int {
 		return 1
 	}
 	postgresKeyValue := strings.TrimSpace(*postgresKey)
-	invalidSelection := *all && postgresKeyValue != ""
-	if *all || postgresKeyValue != "" {
+	objectStoragePrefixValue := strings.TrimSpace(*objectStoragePrefix)
+	outboundValue := strings.TrimSpace(*outboundID)
+	selections := 0
+	for _, selected := range []bool{*all, postgresKeyValue != "", objectStoragePrefixValue != "", outboundValue != ""} {
+		if selected {
+			selections++
+		}
+	}
+	if outboundValue != "" {
+		id, err := uuid.Parse(outboundValue)
+		if err != nil {
+			printBindingsVerifyUsage()
+			return 1
+		}
+		outboundValue = id.String()
+	}
+	invalidSelection := selections > 1
+	if selections > 0 {
 		invalidSelection = invalidSelection || len(positionals) != 1
 	} else {
 		invalidSelection = len(positionals) != 2
@@ -73,64 +103,64 @@ func cmdBindingsVerify(args []string) int {
 	}
 	slug := strings.TrimSpace(positionals[0])
 	invalidPostgresKey := postgresKeyValue != "" && api.ValidateEnvKey(postgresKeyValue) != nil
-	if !api.ValidAppSlug(slug) || *pollInterval <= 0 || *waitTimeout <= 0 || invalidPostgresKey {
+	invalidObjectStoragePrefix := objectStoragePrefixValue != "" && !api.ValidObjectStorageBindingPrefix(objectStoragePrefixValue)
+	if !api.ValidAppSlug(slug) || *pollInterval <= 0 || *waitTimeout <= 0 || invalidPostgresKey || invalidObjectStoragePrefix || !validBindingDeploymentFlag(*deployment) {
 		printBindingsVerifyUsage()
 		return 1
+	}
+	service := ""
+	if selections == 0 {
+		services, normalizeErr := api.NormalizeServiceBindingTargets([]string{strings.TrimSpace(positionals[1])})
+		if normalizeErr != nil || len(services) != 1 {
+			printBindingsVerifyUsage()
+			return 1
+		}
+		service = services[0]
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	probeClient, err := selectBindingProbeClient(context.Background(), client, slug, *deployment)
+	if err != nil {
+		return printErr("Could not select binding verification deployment", err)
+	}
 	if *all {
-		return runAllServiceBindingProbes(context.Background(), client, slug, *pollInterval, *waitTimeout)
+		return runAllBindingProbes(context.Background(), probeClient, slug, *pollInterval, *waitTimeout)
 	}
 	if postgresKeyValue != "" {
-		return runPostgresBindingProbe(context.Background(), client, slug, postgresKeyValue, *pollInterval, *waitTimeout)
+		return runPostgresBindingProbe(context.Background(), probeClient, slug, postgresKeyValue, *pollInterval, *waitTimeout)
 	}
-	service := strings.TrimSpace(positionals[1])
-	services, err := api.NormalizeServiceBindingTargets([]string{service})
-	if err != nil || len(services) != 1 {
-		printBindingsVerifyUsage()
-		return 1
+	if outboundValue != "" {
+		return runOutboundBindingProbe(context.Background(), probeClient, slug, outboundValue, *pollInterval, *waitTimeout)
 	}
-	service = services[0]
-	return runServiceBindingProbe(context.Background(), client, slug, service, *pollInterval, *waitTimeout)
+	if objectStoragePrefixValue != "" {
+		return runObjectStorageBindingProbe(context.Background(), probeClient, slug, objectStoragePrefixValue, *pollInterval, *waitTimeout)
+	}
+	return runServiceBindingProbe(context.Background(), probeClient, slug, service, *pollInterval, *waitTimeout)
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
-func runPostgresBindingProbe(ctx context.Context, client postgresBindingProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
-	app, err := client.GetApp(ctx, slug)
+func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
+	inventory, err := client.GetAppBindingInventory(ctx, slug, "")
 	if err != nil {
 		return printErr("Could not load app bindings", err)
 	}
-	databases, err := client.ListManagedPostgresDatabases(ctx)
-	if err != nil {
-		return printErr("Could not list managed PostgreSQL bindings", err)
-	}
 	bound := false
-	for _, database := range databases.Items {
-		bindings, err := client.ListManagedPostgresBindings(ctx, database.ID)
-		if err != nil {
-			return printErr("Could not list managed PostgreSQL bindings", err)
-		}
-		for _, binding := range bindings.Items {
-			if binding.AppID == app.ID && binding.EnvironmentKey == environmentKey {
-				if binding.Access == "migration" {
-					return printErr("Migration bindings are restricted to release tasks", fmt.Errorf("verify this connection through the deployment release command"))
-				}
-				bound = true
-				break
+	for _, item := range inventory.Bindings {
+		if item.Type == api.BindingTypePostgres && item.Binding == environmentKey && item.Scope == inventory.VerificationScope {
+			if item.Access == "migration" {
+				return printErr("Migration bindings are restricted to release tasks", fmt.Errorf("verify this connection through the deployment release command"))
 			}
-		}
-		if bound {
+			bound = true
 			break
 		}
 	}
 	if !bound {
-		return printErr("PostgreSQL environment key is not bound to this app", fmt.Errorf("%s has no managed PostgreSQL binding for %s", slug, environmentKey))
+		return printErr("PostgreSQL key is not bound in the selected live scope", fmt.Errorf("%s has no selected managed PostgreSQL binding for %s", slug, environmentKey))
 	}
 
 	report, task, errorTitle, exitCode, err := executePostgresBindingProbe(ctx, client, slug, environmentKey, pollInterval, waitTimeout)
@@ -139,6 +169,10 @@ func runPostgresBindingProbe(ctx context.Context, client postgresBindingProbeCli
 	}
 	if exitCode == 130 {
 		return exitCode
+	}
+	if exitCode == 0 && bindingProbeDeploymentChanged(inventory, task) {
+		report.Error = "live deployment changed during verification; run verification again"
+		exitCode = 1
 	}
 	if jsonOutput {
 		if err := writeJSON(report); err != nil {
@@ -201,6 +235,9 @@ func executePostgresBindingProbe(ctx context.Context, client serviceBindingProbe
 			report.Error = "task did not return a valid PostgreSQL canary report"
 		} else {
 			report = taskReport
+			if report.EnvironmentKey != environmentKey {
+				report.Error = "canary report does not match the selected PostgreSQL key"
+			}
 		}
 	} else {
 		report.Error = "task did not return a PostgreSQL canary report"
@@ -211,7 +248,10 @@ func executePostgresBindingProbe(ctx context.Context, client serviceBindingProbe
 	report.App = slug
 	report.TaskID = task.ID
 	report.DeploymentID = task.DeploymentID
-	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() {
+	if task.OutputTruncated {
+		report.Error = "canary output was truncated"
+	}
+	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() || task.OutputTruncated || report.Error != "" || (task.ExitCode != nil && *task.ExitCode != 0) {
 		if report.Error == "" {
 			report.Error = "PostgreSQL binding canary did not succeed"
 		}
@@ -229,6 +269,13 @@ func newPostgresBindingProbeReport(app, environmentKey string) api.PostgresBindi
 		Connection:     api.PostgresBindingProbeCheck{Status: "not_checked"},
 		Query:          api.PostgresBindingProbeCheck{Status: "not_checked"},
 	}
+}
+
+func bindingProbeDeploymentChanged(inventory api.AppBindingInventory, task api.AppTaskResponse) bool {
+	if inventory.VerificationDeploymentID != "" && !sameBindingDeployment(task.DeploymentID, inventory.VerificationDeploymentID) {
+		return true
+	}
+	return task.DeploymentScope != "" && inventory.VerificationScope != "" && task.DeploymentScope != inventory.VerificationScope
 }
 
 func renderPostgresBindingProbeReport(app string, report api.PostgresBindingProbeReport, task api.AppTaskResponse) {
@@ -294,90 +341,6 @@ func runServiceBindingProbe(ctx context.Context, client serviceBindingProbeClien
 	return exitCode
 }
 
-func runAllServiceBindingProbes(ctx context.Context, client serviceBindingProbeClient, slug string, pollInterval, waitTimeout time.Duration) int {
-	app, err := client.GetApp(ctx, slug)
-	if err != nil {
-		return printErr("Could not load app bindings", err)
-	}
-	declared := make([]string, 0, len(app.ServiceBindings))
-	for _, binding := range app.ServiceBindings {
-		declared = append(declared, binding.Service)
-	}
-	services, err := api.NormalizeServiceBindingTargets(declared)
-	if err != nil {
-		return printErr("Could not read app bindings", err)
-	}
-	if len(services) == 0 {
-		return printErr("No service bindings to verify", fmt.Errorf("%s has no declared service bindings", slug))
-	}
-
-	batch := serviceBindingProbeBatchReport{
-		App:      slug,
-		Total:    len(services),
-		Bindings: make([]serviceBindingProbeBatchItem, 0, len(services)),
-	}
-	batchContext, cancelBatch := context.WithTimeout(ctx, waitTimeout)
-	defer cancelBatch()
-	interrupted := false
-	for _, service := range services {
-		if interrupted || batchContext.Err() != nil {
-			report := newServiceBindingProbeReport(slug, service)
-			if interrupted {
-				report.Error = "not checked because verification was interrupted"
-			} else {
-				report.Error = "not checked before the overall wait timeout"
-			}
-			batch.Skipped++
-			batch.Bindings = append(batch.Bindings, serviceBindingProbeBatchItem{Service: service, Status: "not_checked", Report: report})
-			continue
-		}
-		report, task, errorTitle, exitCode, probeErr := executeServiceBindingProbe(batchContext, client, slug, service, pollInterval, waitTimeout)
-		if errorTitle != "" {
-			report = newServiceBindingProbeReport(slug, service)
-			report.Error = probeErr.Error()
-		}
-		status := "failed"
-		switch exitCode {
-		case 0:
-			status = "passed"
-			batch.Passed++
-		case 130:
-			status = "not_checked"
-			batch.Skipped++
-			interrupted = true
-			report.Error = "verification interrupted before a result was collected"
-		default:
-			batch.Failed++
-			batch.Checked++
-		}
-		batch.Bindings = append(batch.Bindings, serviceBindingProbeBatchItem{
-			Service: service,
-			Status:  status,
-			Report:  report,
-		})
-		if exitCode == 0 {
-			batch.Checked++
-		}
-		if task.OutputTruncated {
-			PrintWarn(osStderr, "canary output for %s was truncated at %d bytes", service, task.MaxOutputBytes)
-		}
-	}
-	if jsonOutput {
-		if err := writeJSON(batch); err != nil {
-			return jsonOut(err)
-		}
-	} else {
-		renderServiceBindingProbeBatch(batch)
-	}
-	if interrupted {
-		return 130
-	}
-	if batch.Failed > 0 || batch.Skipped > 0 {
-		return 1
-	}
-	return 0
-}
-
 func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeClient, slug, service string, pollInterval, waitTimeout time.Duration) (api.ServiceBindingProbeReport, api.AppTaskResponse, string, int, error) {
 	report := newServiceBindingProbeReport(slug, service)
 	request := api.CreateAppTaskRequest{
@@ -426,16 +389,22 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 	}
 
 	if task.StdoutTail != "" {
-		if err := json.Unmarshal([]byte(task.StdoutTail), &report); err != nil {
+		var taskReport api.ServiceBindingProbeReport
+		if err := json.Unmarshal([]byte(task.StdoutTail), &taskReport); err != nil {
 			report.Error = "task did not return a valid canary report"
 			if task.Failure != nil {
 				report.Error += fmt.Sprintf(" (%s: %s)", task.Failure.Code, task.Failure.Message)
 			}
+		} else {
+			report = taskReport
 		}
 	} else if task.Failure != nil {
 		report.Error = task.Failure.Message
 	} else {
 		report.Error = "task did not return a canary report"
+	}
+	if report.Service != service {
+		report.Error = "canary report does not match the selected service"
 	}
 	if report.Service == "" {
 		report.Service = service
@@ -446,7 +415,10 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 	}
 	report.TaskID = task.ID
 	report.DeploymentID = task.DeploymentID
-	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() {
+	if task.OutputTruncated {
+		report.Error = "canary output was truncated"
+	}
+	if task.Status != api.AppTaskStatusSucceeded || !report.Passed() || task.OutputTruncated || report.Error != "" || (task.ExitCode != nil && *task.ExitCode != 0) {
 		if report.Error == "" {
 			if task.Failure != nil {
 				report.Error = task.Failure.Code + ": " + task.Failure.Message
@@ -472,12 +444,26 @@ func newServiceBindingProbeReport(app, service string) api.ServiceBindingProbeRe
 }
 
 func renderServiceBindingProbeBatch(batch serviceBindingProbeBatchReport) {
-	_, _ = fmt.Fprintf(osStdout, "Service binding readiness: %s (%d/%d passed, %d failed, %d not checked)\n", batch.App, batch.Passed, batch.Total, batch.Failed, batch.Skipped)
+	_, _ = fmt.Fprintf(osStdout, "Binding verification: %s scope=%s (%d/%d passed, %d failed, %d not checked)\n", batch.App, batch.Scope, batch.Passed, batch.Total, batch.Failed, batch.Skipped)
 	for _, item := range batch.Bindings {
 		_, _ = fmt.Fprintln(osStdout)
-		renderServiceBindingProbeReport(batch.App, item.Report, api.AppTaskResponse{
-			ID: item.Report.TaskID, DeploymentID: item.Report.DeploymentID,
-		})
+		if item.Report != nil {
+			renderServiceBindingProbeReport(batch.App, *item.Report, api.AppTaskResponse{ID: item.Report.TaskID, DeploymentID: item.Report.DeploymentID})
+		} else if item.OutboundReport != nil {
+			report := *item.OutboundReport
+			renderOutboundBindingProbeReport(batch.App, report, api.AppTaskResponse{ID: report.TaskID, DeploymentID: report.DeploymentID})
+		} else if item.PostgresReport != nil {
+			report := *item.PostgresReport
+			renderPostgresBindingProbeReport(batch.App, report, api.AppTaskResponse{ID: report.TaskID, DeploymentID: report.DeploymentID})
+		} else if item.ObjectStorageReport != nil {
+			report := *item.ObjectStorageReport
+			renderObjectStorageBindingProbeReport(batch.App, report, api.AppTaskResponse{ID: report.TaskID, DeploymentID: report.DeploymentID})
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "%s %s: %s\n", item.Type, item.Binding, item.Status)
+		}
+	}
+	for _, issue := range batch.Issues {
+		PrintWarn(osStderr, "%s", issue.Message)
 	}
 }
 

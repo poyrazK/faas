@@ -57,6 +57,22 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
+| 509 | [Per-target binding adoption diagnostics](509-binding-adoption-target-diagnostics.md) | accepted | Return stable, sanitized workload-secret statuses and blocker reasons in binding checks |
+| 508 | [Process-generation secret acknowledgements](508-process-generation-secret-acknowledgements.md) | accepted | Register each execution before start and require matching generation evidence for strict adoption |
+| 507 | [Wait for the initial secret revision](507-initial-secret-revision-wait.md) | accepted | Bound bootstrap polling for an empty initial revision, cancel on shutdown and serve only after application ACK |
+| 506 | [Startup-safe runtime secret notifications](506-startup-safe-runtime-secret-notifications.md) | accepted | Gate reloads on per-process readiness, skip redundant startup signals and recover queued or failed delivery |
+| 505 | [Atomic runtime secret snapshots](505-atomic-runtime-secret-snapshots.md) | accepted | Publish values, revision and legacy views as one generation; bind application reads and acknowledgements to one envelope |
+| 504 | [Workload secret reload restart consistency](504-workload-secret-reload-restart-consistency.md) | accepted | Prepare projections once, preserve revisions across sidecar restarts and remove revoked credentials from restart environments |
+| 503 | [Main-workload secret reload with sidecars](503-main-secret-reload-with-sidecars.md) | accepted | Independent main and sidecar reload, grants and application receipts in the same deployment |
+| 502 | [Version-bound application adoption for managed bindings](502-binding-application-adoption.md) | accepted | Require an application receipt for the exact deployed binding version |
+| 501 | [Queue consumer readiness at bindings promotion](501-queue-binding-readiness.md) | accepted | Include queue consumer health and poll freshness in promotion checks |
+| 500 | [Deployment-pinned outbound binding verification](500-outbound-binding-verification.md) | accepted | Verify configured outbound probes without disclosing credential material |
+| 499 | [Bindings gate at traffic promotion](499-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
+| 498 | [Deployment selection for bindings verification](498-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
+| 497 | [Bindings preflight policy](497-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
+| 496 | [Object-storage binding verification](496-object-storage-binding-verification.md) | accepted | Verify storage credentials and identity through task guest and rotation metadata |
+| 495 | [Binding runtime configuration freshness](495-binding-runtime-freshness.md) | accepted | Expose configuration and secret revisions for resident instances without reading values |
+| 494 | [Durable binding verification evidence](494-binding-verification-evidence.md) | accepted | Persist versioned verification evidence for exact binding configurations |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
