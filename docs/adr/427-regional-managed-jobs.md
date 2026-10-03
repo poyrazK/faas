@@ -46,6 +46,24 @@ its label, including idle peers and tombstoned definitions. Registry deletion
 and down migration refuse to discard job placement constraints. MemStore
 mirrors admission, instance placement, and node-label guards.
 
+The receiving vmmd also verifies the durable job claim before `BootJob` allocates
+resources. Its registered compute-node identity must match both the request and
+the instance; the instance kind, run, task index and admitted RAM must match.
+The run and definition must belong to the requested account, the definition and
+node must still permit execution, and the node must satisfy the stored region.
+Finally, the task must still claim that instance with the current, unexpired
+lease token. Missing records, unavailable readers, stale claims, and a misrouted
+RPC refuse before boot. The response reports the receiver's verified node ID.
+Pausing new regional admission continues to permit an existing valid claim.
+
+Named vmmd workers use their existing PostgreSQL connection and registered
+identity. A legacy single-box vmmd can load its sole active `default-local` row
+using `db_url`, `FAAS_VMMD_DBURL`, or the existing `DATABASE_URL` daemon setting.
+It does not register or mutate that row. Identity inference is refused when any
+additional compute node exists; shared fleets must configure self-registration.
+Without a claim reader and verified identity, managed Job boots are unavailable.
+Other VM surfaces retain their existing single-box startup behavior.
+
 ## Boundaries
 
 This constrains compute execution in the shared fleet. Image artifacts, job

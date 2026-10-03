@@ -474,6 +474,9 @@ func newUUIDString() string {
 // count-then-insert, transaction-scoped so the count read and insert are
 // atomic. The primitive JobCountByAccount remains available for read paths.
 type JobStore interface {
+	// JobExecutionInstanceByID reads persisted execution ownership for vmmd.
+	// Run/task linkage is corroborated by JobTaskGet's current instance claim.
+	JobExecutionInstanceByID(ctx context.Context, id string) (JobExecutionInstance, error)
 	// --- jobs (template) ---
 
 	// JobCreate inserts a new job row. accountID is the owning tenant.

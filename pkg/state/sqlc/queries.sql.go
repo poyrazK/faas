@@ -5226,6 +5226,33 @@ func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUI
 	return i, err
 }
 
+const getJobExecutionInstance = `-- name: GetJobExecutionInstance :one
+SELECT id, job_id, node_id, kind, state, ram_mb FROM instances WHERE id = $1
+`
+
+type GetJobExecutionInstanceRow struct {
+	ID     pgtype.UUID
+	JobID  pgtype.UUID
+	NodeID pgtype.UUID
+	Kind   string
+	State  string
+	RamMb  int32
+}
+
+func (q *Queries) GetJobExecutionInstance(ctx context.Context, db DBTX, id pgtype.UUID) (GetJobExecutionInstanceRow, error) {
+	row := db.QueryRow(ctx, getJobExecutionInstance, id)
+	var i GetJobExecutionInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.JobID,
+		&i.NodeID,
+		&i.Kind,
+		&i.State,
+		&i.RamMb,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at

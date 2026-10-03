@@ -301,6 +301,7 @@ type Server struct {
 	// a VM after ownership moved away.
 	nodeID            string
 	builderClaimStore BuilderClaimStore
+	jobClaimStore     JobClaimStore
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.
@@ -712,6 +713,10 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	if err := s.validateJobPlacement(ctx, boot); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	inst, err := jobVMM.BootJob(ctx, boot)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
@@ -726,7 +731,7 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 	}
 	return &vmmdpb.JobColdBootResponse{
 		Instance: inst.Lease.Instance,
-		NodeId:   boot.NodeID,
+		NodeId:   s.nodeID,
 	}, nil
 }
 

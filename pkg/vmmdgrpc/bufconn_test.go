@@ -334,11 +334,14 @@ const errNotLive = stringErr("park live-1: not live")
 
 // newServer spins up a vmmdgrpc.Server on a bufconn listener and returns
 // both the listener (kept open by t.Cleanup) and the dialed client.
-func newServer(t *testing.T, fake *fakeVMM) (vmmdpb.VmmdClient, func()) {
+func newServer(t *testing.T, fake *fakeVMM, configure ...func(*vmmdgrpc.Server)) (vmmdpb.VmmdClient, func()) {
 	t.Helper()
 	ops := wire.NewOpsMetrics("vmmd_test")
 	srv := grpc.NewServer()
 	impl := vmmdgrpc.New(fake, ops, "1.0.0", nil)
+	for _, apply := range configure {
+		apply(impl)
+	}
 	impl.Register(srv)
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -439,14 +442,17 @@ func TestJobLifecycle_RoundTripsThroughVmmd(t *testing.T) {
 				OutputManifest: []byte(`{"version":1,"artifacts":[]}`)}, nil
 		},
 	}
-	cli, _ := newServer(t, f)
-	if _, err := cli.JobColdBoot(context.Background(), &vmmdpb.JobColdBootRequest{
+	req := &vmmdpb.JobColdBootRequest{
 		Instance: "job-1", AccountId: "acct-1", NodeId: "node-1", Plan: "pro",
 		RunId: "run-1", TaskIndex: 2, ImageRef: "image", KernelKey: "kernel/1",
 		BaseKey: "base/base.ext4", Command: []string{"/bin/job"},
 		Env: map[string]string{"MODE": "test"}, VcpuCount: 1, MemSizeMib: 256,
 		TaskTimeoutSec: 30, LeaseToken: "lease-1",
-	}); err != nil {
+	}
+	cli, _ := newServer(t, f, func(s *vmmdgrpc.Server) {
+		s.WithNodeID(req.GetNodeId()).WithJobClaimStore(jobClaimsForRequest(req))
+	})
+	if _, err := cli.JobColdBoot(context.Background(), req); err != nil {
 		t.Fatalf("JobColdBoot: %v", err)
 	}
 	if boot.Instance != "job-1" || string(boot.Plan) != "pro" || boot.TaskIndex != 2 || boot.Env["MODE"] != "test" {

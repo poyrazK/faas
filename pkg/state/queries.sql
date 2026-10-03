@@ -5794,3 +5794,6 @@ ON CONFLICT DO NOTHING;
 SELECT EXISTS(SELECT 1 FROM runtime_log_archive_collections c JOIN runtime_log_archive_bindings b ON b.instance_id=c.instance_id
 WHERE c.instance_id=sqlc.arg(instance_id)::text AND c.archive_day=sqlc.arg(archive_day)::date AND c.archive_day < b.expired_before
   AND NOT EXISTS (SELECT 1 FROM runtime_log_archives r WHERE r.instance_id=c.instance_id AND r.archive_day=c.archive_day));
+
+-- name: GetJobExecutionInstance :one
+SELECT id, job_id, node_id, kind, state, ram_mb FROM instances WHERE id = $1;

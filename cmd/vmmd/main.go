@@ -310,8 +310,8 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
-	// openDB / openStore: only invoked when [compute_node].name is set;
-	// the legacy default-local path skips the DB entirely (no upsert).
+	// openDB / openStore: used for self-registration and legacy job claims;
+	// legacy default-local Job verification reads existing rows without an upsert.
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
 	// detectOverlayIP — best-effort, default shelles out to
@@ -700,9 +700,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before the gRPC listener binds. Fail-closed: if the upsert
 	// fails (Postgres down, schema drift), vmmd exits rather than
 	// serving traffic with no identity. The legacy default-local
-	// path (NodeName empty) skips the DB entirely — no migration
-	// is required on a fresh single-box dev install beyond what
-	// already exists.
+	// path (NodeName empty) does not self-register. Managed Job claim
+	// verification can still read the existing single-node state below.
 	var nodeID string
 	var pool *pgxpool.Pool
 	var store state.Store
@@ -1454,6 +1453,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
 		impl.WithBuilderClaimStore(store)
+		impl.WithJobClaimStore(store)
+	}
+	if store == nil {
+		// A single-box vmmd can verify Jobs against its existing default-local
+		// row without changing registration or enabling multi-host migration.
+		dbURL := cfg.DBURL
+		if dbURL == "" {
+			dbURL = envOr("FAAS_VMMD_DBURL", envOr("DATABASE_URL", ""))
+		}
+		if dbURL != "" {
+			jobPool, jobStore, jobNodeID, err := loadLegacyJobClaimStore(ctx, deps, dbURL)
+			if err == nil {
+				defer jobPool.Close()
+				impl.WithNodeID(jobNodeID).WithJobClaimStore(jobStore)
+			} else {
+				// Connection/parser errors may contain a DSN; keep it out of logs.
+				log.Warn("vmmd: legacy job claim verification unavailable; job boots will be refused")
+			}
+		}
 	}
 	if archiveSink != nil {
 		impl.WithRuntimeLogArchiveCapture(archiveSink.Capture, archiveSink.Forget)
