@@ -1,6 +1,6 @@
 package sched
 
-// spec: §6.1, §6.2 — stale watchdog work must preserve resident accounting.
+// spec: §6.1 — stale watchdog work must preserve resident accounting (§6.2).
 
 import (
 	"context"
