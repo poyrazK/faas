@@ -68,7 +68,7 @@ func mergeAutomationDefinitions(manifest json.RawMessage, records []Automation) 
 			return nil, err
 		}
 	}
-	byName := make(map[string]api.WorkflowSpec, len(definitions)+len(records))
+	byName := make(map[string]api.WorkflowSpec)
 	for _, definition := range definitions {
 		byName[definition.Name] = definition
 	}

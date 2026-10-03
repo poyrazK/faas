@@ -1,7 +1,7 @@
 # ADR-081 · Durable-execution wrapper over crons (issue #669)
 
 - **Status:** proposed
-- **Extended by [ADR-431](431-scheduled-workflow-starts.md):**
+- **Extended by [ADR-487](487-scheduled-workflow-starts.md):**
   `trigger.type: schedule` admits recurring workflow runs directly, with durable
   duplicate suppression, overlap protection, and latest-outcome inspection.
 - **Extended by [ADR-262](262-durable-workflow-timers.md):**

@@ -300,6 +300,9 @@ func testWorkflowScheduleDedupSurvivesRunRetention(t *testing.T, store Store) {
 	if err := store.MarkWorkflowRunStatus(ctx, cursor.LastRunID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Expiration compares finish time with the current clock. Let the timestamp
+	// advance so this test doesn't depend on sub-microsecond clock resolution.
+	time.Sleep(time.Millisecond)
 	if deleted, err := store.SweepExpiredWorkflowRuns(ctx, 0); err != nil || deleted < 1 {
 		t.Fatalf("deleted=%d err=%v", deleted, err)
 	}

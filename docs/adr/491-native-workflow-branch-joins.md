@@ -1,10 +1,10 @@
-# ADR-436: Native workflow branch joins
+# ADR-491: Native workflow branch joins
 
 Status: Accepted
 
 ## Context
 
-ADR-435 guards select conditional paths, but an ordinary step depending on both
+ADR-490 guards select conditional paths, but an ordinary step depending on both
 paths inherits an inactive branch's skip. Customers must duplicate every shared
 continuation. Automations need a durable way to merge those paths and explicitly
 select an output without customer code or a race between branch completions.

@@ -132,7 +132,10 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 
 func workflowOutboundRetryAfter(raw string, now time.Time) time.Time {
 	if seconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
-		return now.Add(time.Duration(min(seconds, uint64(time.Hour/time.Second))) * time.Second)
+		if seconds >= uint64(time.Hour/time.Second) {
+			return now.Add(time.Hour)
+		}
+		return now.Add(time.Duration(seconds) * time.Second)
 	}
 	if at, err := http.ParseTime(raw); err == nil && at.After(now) {
 		return minTime(at, now.Add(time.Hour))

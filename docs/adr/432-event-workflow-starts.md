@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-02
-- Amends: ADR-081, ADR-345, ADR-346, ADR-431
+- Amends: ADR-081, ADR-345, ADR-346, ADR-487
 
 ## Context
 

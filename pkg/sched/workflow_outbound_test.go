@@ -1,4 +1,4 @@
-// adr: 434
+// adr: 489
 package sched
 
 import (
@@ -19,6 +19,25 @@ import (
 type workflowRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f workflowRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestWorkflowOutboundRetryAfterIsBounded(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want time.Time
+	}{
+		{name: "delta seconds", raw: "7", want: now.Add(7 * time.Second)},
+		{name: "large unsigned delta is capped before conversion", raw: "18446744073709551615", want: now.Add(time.Hour)},
+		{name: "negative delta is ignored", raw: "-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workflowOutboundRetryAfter(tc.raw, now); !got.Equal(tc.want) {
+				t.Fatalf("workflowOutboundRetryAfter(%q) = %s, want %s", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
 
 type outboundLeaseStub struct{ token atomic.Pointer[string] }
 
