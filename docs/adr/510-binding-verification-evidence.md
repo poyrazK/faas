@@ -1,4 +1,4 @@
-# ADR-494 · Durable binding verification evidence
+# ADR-510 · Durable binding verification evidence
 
 - **Status:** accepted
 - **Date:** 2026-10-02

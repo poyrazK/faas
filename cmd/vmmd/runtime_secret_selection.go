@@ -142,12 +142,18 @@ func runtimeSecretReloadEnabled(ctx context.Context, store runtimeSecretsStore, 
 
 func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName string) (map[string]struct{}, error) {
 	if workloadName == "" {
-		if _, err := runtimeDeploymentHasSidecars(deployment.Sidecars); err != nil {
+		hasSidecars, err := runtimeDeploymentHasSidecars(deployment.Sidecars)
+		if err != nil {
 			return nil, fmt.Errorf("decode deployment sidecars: %w", err)
 		}
 		allowed, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
 		if err != nil {
 			return nil, fmt.Errorf("decode deployment secret allowlist: %w", err)
+		}
+		if hasSidecars && allowed == nil {
+			// Sidecar deployments need an explicit main-workload grant. Keep
+			// the legacy all-secrets fallback only for sidecar-free deploys.
+			return map[string]struct{}{}, nil
 		}
 		return allowed, nil
 	}
@@ -189,9 +195,10 @@ func runtimeDeploymentHasSidecars(raw json.RawMessage) (bool, error) {
 	return len(sidecars) > 0, nil
 }
 
-// A nil allowlist preserves the existing deployment contract: legacy deploys
-// receive all app secrets in their selected scope. A non-empty allowlist is
-// enforced as a positive grant, exactly as the boot delivery path does.
+// For sidecar-free legacy deployments, a nil allowlist preserves the existing
+// contract: receive all app secrets in the selected scope. Deployments with
+// sidecars convert a missing main-workload allowlist to an empty grant set;
+// non-empty allowlists are enforced as positive grants.
 func runtimeSecretAllowlist(raw json.RawMessage) (map[string]struct{}, error) {
 	if len(raw) == 0 {
 		return nil, nil
