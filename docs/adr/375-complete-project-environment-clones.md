@@ -4846,3 +4846,24 @@ remains closed. Full common-point capture, independent dataset completion,
 uncertain-commit recovery and cleanup, complete object/configuration copying,
 production-preserving promotion/rollback and remote/native acceptance remain
 required for the full one-command stage workflow.
+
+### Private encrypted target SQL pins (2026-10-03)
+
+The independently observed bootstrap target descriptor can now be sealed in a
+separate authenticated age namespace. SQL names/OIDs and endpoint pins remain
+inside encryption; the outer original source scope, target owner/project/time,
+descriptor fingerprint, recipient and ciphertext hash bind durable ownership.
+Recovery verifies the entire receipt, strict versioned envelope, namespace and
+canonical all-field target digest before returning private pins. Only identities
+matching the committed recipient are tried, so a substituted recipient cannot
+borrow another available rotation key. Existing central copy envelope/ciphertext
+ceilings bound this metadata; no new quota or credential material is introduced.
+The descriptor supplies neither SQL dispatch nor current placement/dataset proof.
+
+Verification: all 22 archive contracts pass against isolated PostgreSQL 16 with
+no skips (11.765 s), including three new sealing contracts. They qualify exact
+private-name/OID recovery, rotation, timestamp normalization, redacted output,
+outer scope/owner/project/recipient/hash substitution, damaged/truncated ciphertext,
+wrong namespaces, malformed/trailing envelopes, inner SQL/provider pin drift and
+both ciphertext and decrypted-envelope budgets. Existing actual dump/stage/restore
+contracts pass. Public complete clone admission remains closed.
